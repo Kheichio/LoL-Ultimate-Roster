@@ -3,7 +3,7 @@
     import { club, squad, blueEssence, trackStats, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
-    import { getDB, makeUniqueId } from '../../utils/cards.js';
+    import { getDB, makeUniqueId, LEGACY_TIERS } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
 
@@ -26,6 +26,13 @@
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
     $: avgRating = squadReady ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
+    $: coachBonus = (() => { const c=$squad.COACH; if(!c) return 0; return c.rating>=98?5:c.rating>=94?4:c.rating>=90?3:c.rating>=85?2:1; })();
+    $: regionChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.region)).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
+    $: yearChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.year)).size; return s<=1?5:s<=2?4:s<=3?3:s<=4?2:1; })();
+    $: teamChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); return !nl.length||new Set(nl.map(c=>c.team)).size===1?2:0; })();
+    $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
+    $: chemBonus = regionChem + yearChem + teamChem + coachBonus + legacyBonus;
+    $: totalPower = squadReady ? avgRating + chemBonus : 0;
 
     function generateCpuTeam(difficulty) {
         const db = getDB();
@@ -68,14 +75,12 @@
 
     function pickPlay(play) {
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
-        const myTotal = starters.reduce((s, c) => s + (c.stats[play.stat] || 0), 0);
+        const myStatAvg = Math.round(starters.reduce((s, c) => s + (c.stats[play.stat] || 0), 0) / starters.length);
         const cpuCards = Object.values(currentEnemy.cards);
-        const cpuTotal = cpuCards.reduce((s, c) => s + (c.stats[cpuPlay.stat] || 0), 0);
-        const myAvg = Math.round(myTotal / starters.length);
-        const cpuAvg = Math.round(cpuTotal / cpuCards.length);
-        const variance = Math.floor(Math.random() * 11) - 5;
-        const myFinal = myAvg + variance;
-        const cpuFinal = cpuAvg + Math.floor(Math.random() * 11) - 5;
+        const cpuStatAvg = Math.round(cpuCards.reduce((s, c) => s + (c.stats[cpuPlay.stat] || 0), 0) / cpuCards.length);
+        const statEdge = myStatAvg - cpuStatAvg;
+        const myFinal = totalPower + statEdge + Math.floor(Math.random() * 11) - 5;
+        const cpuFinal = currentEnemy.avgRating + Math.floor(Math.random() * 11) - 5;
         const won = myFinal >= cpuFinal;
 
         if (won) playerScore++;

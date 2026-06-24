@@ -32,6 +32,22 @@
         return pool;
     })();
 
+    $: currentSlotCard = pickerRole ? $squad[pickerRole] : null;
+
+    function statDiff(candidate, current) {
+        if (!current || !current.stats || !candidate.stats) return null;
+        const diff = totalStats(candidate) - totalStats(current);
+        return diff;
+    }
+
+    function perStatDiff(candidate, current) {
+        if (!current || !current.stats || !candidate.stats) return [];
+        return ['mec','tmf','frm','cmp','map','ldr'].map(s => ({
+            key: s.toUpperCase(),
+            val: (candidate.stats[s]||0) - (current.stats[s]||0)
+        }));
+    }
+
     function openPicker(role) { pickerRole=role; pickerSearch=''; pickerOpen=true; }
     function closePicker() { pickerOpen=false; pickerRole=null; }
     function assignCard(card) { squad.update(s=>({...s,[pickerRole]:card})); closePicker(); saveGame(); }
@@ -155,7 +171,30 @@
         </div>
         <div class="pk-body">
             {#if pickerPool.length===0}<div class="pk-empty">No eligible cards.</div>
-            {:else}<div class="pk-grid">{#each pickerPool as card (card.uniqueId)}<div class="pk-wrap"><Card {card} mini={true} onclick={() => assignCard(card)} />{#if card.role!==pickerRole&&pickerRole!=='COACH'}<div class="pk-flex">FLEX</div>{/if}</div>{/each}</div>{/if}
+            {:else}<div class="pk-grid">
+                {#each pickerPool as card (card.uniqueId)}
+                    {@const diff = statDiff(card, currentSlotCard)}
+                    {@const perStat = perStatDiff(card, currentSlotCard)}
+                    <div class="pk-wrap">
+                        <Card {card} mini={true} onclick={() => assignCard(card)} />
+                        {#if card.role!==pickerRole&&pickerRole!=='COACH'}<div class="pk-flex">FLEX</div>{/if}
+                        {#if currentSlotCard}
+                            <div class="pk-compare">
+                                <div class="pk-total" class:pk-pos={diff > 0} class:pk-neg={diff < 0} class:pk-neu={diff === 0}>
+                                    {diff > 0 ? '+' : ''}{diff} total
+                                </div>
+                                <div class="pk-stats">
+                                    {#each perStat as s}
+                                        <span class="pk-sd" class:pk-pos={s.val > 0} class:pk-neg={s.val < 0}>
+                                            {s.key} {s.val > 0 ? '+' : ''}{s.val}
+                                        </span>
+                                    {/each}
+                                </div>
+                            </div>
+                        {/if}
+                    </div>
+                {/each}
+            </div>{/if}
         </div>
     </div>
 </div>
@@ -270,4 +309,23 @@
         font-size:8px; font-weight:900; text-align:center;
         padding:3px; border-radius:0 0 14px 14px; letter-spacing:1px;
     }
+
+    /* Stat comparison */
+    .pk-compare {
+        width: 100%; margin-top: 6px;
+        background: rgba(15,23,42,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 10px; padding: 8px; text-align: center;
+    }
+    .pk-total {
+        font-size: 13px; font-weight: 900; margin-bottom: 4px;
+    }
+    .pk-stats {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 6px;
+    }
+    .pk-sd {
+        font-size: 9px; font-weight: 800; color: #475569;
+    }
+    .pk-pos { color: #34d399; }
+    .pk-neg { color: #f87171; }
+    .pk-neu { color: #64748b; }
 </style>
