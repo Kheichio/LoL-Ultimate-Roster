@@ -123,9 +123,9 @@
     .card-unowned { filter: grayscale(1) brightness(0.5); opacity: 0.6; }
 
     /* Signature font overrides */
-    .card-signature { font-family: 'Tangerine', cursive; }
-    .sig-header { font-family: 'Tangerine', cursive; font-size: 18px; letter-spacing: 3px; padding: 10px 12px; }
-    .sig-name { font-family: 'Tangerine', cursive; font-size: 28px; line-height: 1.1; }
+    .card-signature { font-family: 'Marck Script', cursive; }
+    .sig-header { font-family: 'Marck Script', cursive; font-size: 16px; letter-spacing: 2px; padding: 10px 12px; }
+    .sig-name { font-family: 'Marck Script', cursive; font-size: 24px; line-height: 1.2; }
     .card-signature .card-meta,
     .card-signature .card-stats,
     .card-signature .card-team,
