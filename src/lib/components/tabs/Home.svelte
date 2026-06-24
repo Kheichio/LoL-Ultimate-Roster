@@ -1,0 +1,463 @@
+<script>
+    import Card from '../card/Card.svelte';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, saveGame } from '../../stores/game.js';
+    import { switchTab } from '../../stores/ui.js';
+    import { currentUser } from '../../stores/auth.js';
+    import { showToast } from '../../stores/toasts.js';
+    import { TIER_ORDER } from '../../utils/cards.js';
+
+    $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
+    $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
+    $: bestCard = [...$club].sort((a, b) => ((b.signature?1000:0)+(b.holographic?500:0)+b.rating) - ((a.signature?1000:0)+(a.holographic?500:0)+a.rating))[0] || null;
+    $: tierBreakdown = (() => {
+        const counts = {};
+        $club.forEach(c => { counts[c.quality] = (counts[c.quality] || 0) + 1; });
+        return TIER_ORDER.map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0).reverse();
+    })();
+    $: recentCards = [...$club].slice(-5).reverse();
+    $: holoCount = $club.filter(c => c.holographic).length;
+    $: sigCount = $club.filter(c => c.signature).length;
+
+    const tierColors = { Bronze:'from-amber-800 to-amber-700', Silver:'from-slate-400 to-slate-500', Gold:'from-yellow-500 to-amber-500', Platinum:'from-emerald-500 to-green-500', Diamond:'from-blue-500 to-indigo-500', Master:'from-purple-500 to-violet-500', Grandmaster:'from-red-500 to-rose-500', Challenger:'from-amber-400 to-yellow-400' };
+    const iconOptions = ['🛡️','⚔️','🐲','🦅','🐺','🦁','🔥','❄️','⭐','💎','🌟','🏆','👑','🎯','🌙','☀️','🐉','🦊','🐻','🎮'];
+    const colorOptions = ['#3b82f6','#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#eab308','#10b981','#06b6d4','#64748b','#f97316','#14b8a6'];
+
+    let editing = false;
+    let editName = '';
+    let editLogo = '';
+    let editColor = '';
+
+    function startEdit() {
+        editName = $teamIdentity.name;
+        editLogo = $teamIdentity.logo;
+        editColor = $teamIdentity.color || '#3b82f6';
+        editing = true;
+    }
+    function saveEdit() {
+        if (!editName.trim()) { showToast('Enter a team name.', 'error'); return; }
+        teamIdentity.set({ name: editName.trim(), logo: editLogo, color: editColor });
+        saveGame();
+        editing = false;
+        showToast('Team identity updated!', 'success');
+    }
+    function cancelEdit() { editing = false; }
+
+    $: quickActions = [
+        { label: 'Open Packs', tab: 'store', icon: '📦', bg: 'qa-blue', show: true },
+        { label: 'Build Squad', tab: 'squad', icon: '👥', bg: 'qa-teal', show: starters.length < 5 },
+        { label: 'Play Match', tab: 'tournament', icon: '⚔️', bg: 'qa-red', show: starters.length === 5 },
+        { label: 'View Club', tab: 'club', icon: '🏟️', bg: 'qa-slate', show: $club.length > 0 },
+        { label: 'Claim Starter', tab: 'store', icon: '🎁', bg: 'qa-green', show: !$hasBoughtStarter },
+    ].filter(a => a.show);
+
+    $: milestones = [
+        { label: 'Collect 50 cards', current: $club.length, target: 50 },
+        { label: 'Fill your starting 5', current: starters.length, target: 5 },
+        { label: 'Win a tournament', current: $trackStats.tournamentsWon || 0, target: 1 },
+        { label: 'Complete a season split', current: $trackStats.splitsCompleted || 0, target: 1 },
+        { label: 'Earn 100 Trophy Points', current: $weightedTrophies, target: 100 },
+    ];
+
+    const updates = [
+        { ver: '1.0', text: 'New Svelte engine, Bronze tier, POTY/ROTY cards' },
+        { ver: '0.7', text: 'Performance overhaul — cached DB, virtual scroll' },
+        { ver: '0.6.9', text: 'Holographic cards, sound effects, card inspection' },
+    ];
+</script>
+
+<section class="home">
+    <div class="home-grid">
+
+        <!-- LEFT SIDEBAR -->
+        <div class="sidebar">
+            <!-- Team Card -->
+            <div class="panel team-card" style="border-color: {$teamIdentity.color || '#3b82f6'}15;">
+                {#if !editing}
+                    <div class="team-card-logo" style="filter: drop-shadow(0 4px 12px {$teamIdentity.color || '#3b82f6'}40);">{$teamIdentity.logo}</div>
+                    <h2 class="team-card-name">{$teamIdentity.name}</h2>
+                    <div class="team-card-level">Manager Lv {$managerLevel}</div>
+                    {#if $currentUser}
+                        <div class="team-card-user">{$currentUser.displayName || $currentUser.email}</div>
+                    {/if}
+                    <div class="team-card-bar">
+                        <div class="team-card-fill" style="width: {Math.min(100, ($managerLevel % 10) * 10)}%; background: linear-gradient(90deg, {$teamIdentity.color || '#4f46e5'}, {$teamIdentity.color || '#6366f1'}cc);"></div>
+                    </div>
+                    <button class="edit-btn" on:click={startEdit}>✏️ Edit</button>
+                {:else}
+                    <!-- Edit Mode -->
+                    <div class="edit-section">
+                        <div class="edit-label">Team Icon</div>
+                        <div class="icon-grid">
+                            {#each iconOptions as icon}
+                                <button class="icon-opt" class:icon-sel={editLogo === icon} on:click={() => editLogo = icon}>{icon}</button>
+                            {/each}
+                        </div>
+                        <div class="edit-label">Team Name</div>
+                        <input type="text" bind:value={editName} maxlength="20" class="input" style="width:100%; font-size:13px; text-align:center; margin-bottom:10px;">
+                        <div class="edit-label">Team Color</div>
+                        <div class="color-grid">
+                            {#each colorOptions as c}
+                                <button class="color-opt" class:color-sel={editColor === c} style="background:{c};" on:click={() => editColor = c}></button>
+                            {/each}
+                        </div>
+                        <div class="edit-preview" style="border-color:{editColor};">
+                            <span style="font-size:28px;">{editLogo}</span>
+                            <span style="font-size:13px; font-weight:900; color:#e2e8f0;">{editName || 'My Team'}</span>
+                        </div>
+                        <div class="edit-btns">
+                            <button class="btn-primary" style="flex:1; padding:8px; font-size:11px;" on:click={saveEdit}>Save</button>
+                            <button class="btn-secondary" style="flex:1; padding:8px; font-size:11px;" on:click={cancelEdit}>Cancel</button>
+                        </div>
+                    </div>
+                {/if}
+            </div>
+
+            <!-- Best Card -->
+            {#if bestCard}
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label gold">Best Card</div>
+                <div style="display: flex; justify-content: center; margin-top: 8px;">
+                    <Card card={bestCard} mini={true} />
+                </div>
+            </div>
+            {/if}
+
+            <!-- Updates -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label cyan">Latest Updates</div>
+                <div class="update-list">
+                    {#each updates as note}
+                        <div class="update-row">
+                            <span class="update-ver">{note.ver}</span>
+                            <span class="update-text">{note.text}</span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        </div>
+
+        <!-- CENTER -->
+        <div class="center">
+            <!-- Stats Strip -->
+            <div class="stats-strip">
+                {#each [
+                    { icon: '💎', value: $blueEssence.toLocaleString(), label: 'Blue Essence', color: 'color-blue' },
+                    { icon: '🏟️', value: $club.length, label: 'Cards', color: 'color-slate' },
+                    { icon: '⚔️', value: starters.length === 5 ? avgRating : '—', label: 'Squad Power', color: 'color-green' },
+                    { icon: '🏆', value: $weightedTrophies, label: 'Trophies', color: 'color-amber' },
+                    { icon: '⭐', value: $skillPoints, label: 'Skill Points', color: 'color-yellow' },
+                ] as stat}
+                    <div class="stat-tile">
+                        <span class="stat-icon">{stat.icon}</span>
+                        <span class="stat-val {stat.color}">{stat.value}</span>
+                        <span class="stat-lbl">{stat.label}</span>
+                    </div>
+                {/each}
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="actions-grid">
+                {#each quickActions as action}
+                    <button class="action-card {action.bg}" on:click={() => switchTab(action.tab)}>
+                        <span class="action-icon">{action.icon}</span>
+                        <span class="action-label">{action.label}</span>
+                    </button>
+                {/each}
+            </div>
+
+            <!-- Squad Preview -->
+            <div class="panel" style="padding: 20px;">
+                <div class="panel-header">
+                    <div class="panel-label">Active Squad</div>
+                    <button class="panel-link" on:click={() => switchTab('squad')}>Edit →</button>
+                </div>
+                {#if starters.length === 0}
+                    <div class="empty-state">No squad built yet. Open packs and assign players!</div>
+                {:else}
+                    <div class="squad-preview">
+                        {#each ['TOP','JNG','MID','ADC','SUP'] as role}
+                            <div class="sq-slot">
+                                <div class="sq-role">{role}</div>
+                                {#if $squad[role]}
+                                    <div class="sq-card">
+                                        <div class="sq-rating">{$squad[role].rating}</div>
+                                        <div class="sq-name">{$squad[role].name}</div>
+                                    </div>
+                                {:else}
+                                    <div class="sq-empty">—</div>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                    {#if starters.length === 5}
+                        <div class="squad-avg">Avg <span class="color-blue">{avgRating}</span></div>
+                    {/if}
+                {/if}
+            </div>
+
+            <!-- Milestones -->
+            <div class="panel" style="padding: 20px;">
+                <div class="panel-label yellow">Milestones</div>
+                <div class="milestones">
+                    {#each milestones as m}
+                        {@const done = m.current >= m.target}
+                        <div class="milestone">
+                            <div class="ms-check" class:ms-done={done}>{done ? '✓' : ''}</div>
+                            <div class="ms-body">
+                                <div class="ms-label" class:ms-label-done={done}>{m.label}</div>
+                                <div class="ms-bar"><div class="ms-fill" class:ms-fill-done={done} style="width: {Math.min(100, (m.current/m.target)*100)}%"></div></div>
+                            </div>
+                            <div class="ms-count" class:color-green={done}>{m.current}/{m.target}</div>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+
+            <!-- Recent Cards -->
+            {#if recentCards.length > 0}
+            <div class="panel" style="padding: 20px;">
+                <div class="panel-label">Recently Acquired</div>
+                <div class="recent-cards">
+                    {#each recentCards as card (card.uniqueId)}
+                        <Card {card} mini={true} />
+                    {/each}
+                </div>
+            </div>
+            {/if}
+        </div>
+
+        <!-- RIGHT SIDEBAR -->
+        <div class="sidebar">
+            <!-- Collection -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label">Collection</div>
+                {#if tierBreakdown.length === 0}
+                    <div class="empty-state">No cards yet</div>
+                {:else}
+                    <div class="tier-bars">
+                        {#each tierBreakdown as { tier, count }}
+                            <div class="tier-row">
+                                <span class="tier-name">{tier}</span>
+                                <div class="tier-track"><div class="tier-fill bg-gradient-to-r {tierColors[tier] || 'from-slate-500 to-slate-600'}" style="width: {Math.min(100, (count / Math.max(...tierBreakdown.map(t => t.count))) * 100)}%"></div></div>
+                                <span class="tier-count">{count}</span>
+                            </div>
+                        {/each}
+                    </div>
+                    <div class="collection-footer">{holoCount} Holo · {sigCount} Sig</div>
+                {/if}
+            </div>
+
+            <!-- Season -->
+            <div class="panel" style="padding: 16px; text-align: center;">
+                <div class="panel-label blue">Season</div>
+                <div class="season-split">Split {$seasonData.currentSplit}</div>
+                <div class="season-record">{$seasonData.splitWins || 0}W - {$seasonData.splitLosses || 0}L</div>
+                <button class="panel-link" on:click={() => switchTab('season')}>Go to Season →</button>
+            </div>
+
+            <!-- Battle Pass -->
+            <div class="panel bp-panel" style="padding: 16px;">
+                <div class="panel-label amber">Battle Pass</div>
+                <div class="bp-row">
+                    <span class="bp-season">S{$battlePass.season}</span>
+                    <span class="bp-tier">Tier {$battlePass.tier}/30</span>
+                </div>
+                <div class="bp-bar"><div class="bp-fill" style="width: {($battlePass.tier/30)*100}%"></div></div>
+                <button class="panel-link" on:click={() => switchTab('rewards')}>View Rewards →</button>
+            </div>
+
+            <!-- Career -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label">Career Stats</div>
+                <div class="career-list">
+                    {#each [
+                        ['Tournaments', $trackStats.tournamentsWon || 0, ''],
+                        ['Golden Roads', $trackStats.goldenRoads || 0, 'color-yellow'],
+                        ['Splits', $trackStats.splitsCompleted || 0, 'color-blue'],
+                        ['Packs', $trackStats.packs || 0, ''],
+                        ['Cards Sold', $trackStats.soldCount || 0, ''],
+                        ['Worlds', $trackStats.worldsWon || 0, 'color-amber'],
+                    ] as [label, value, cls]}
+                        <div class="career-row">
+                            <span class="career-label">{label}</span>
+                            <span class="career-val {cls}">{value}</span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<style>
+    .home { padding-bottom: 40px; }
+    .home-grid { display: grid; grid-template-columns: 260px 1fr 260px; gap: 20px; }
+    @media (max-width: 1100px) { .home-grid { grid-template-columns: 1fr; } }
+    @media (min-width: 1101px) and (max-width: 1400px) { .home-grid { grid-template-columns: 220px 1fr 220px; gap: 14px; } }
+    .sidebar { display: flex; flex-direction: column; gap: 14px; }
+    .center { display: flex; flex-direction: column; gap: 16px; }
+
+    /* Panel base */
+    .panel {
+        background: rgba(12, 16, 28, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.2);
+        border-radius: 16px;
+        backdrop-filter: blur(6px);
+    }
+    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .panel-label {
+        font-size: 10px; font-weight: 900; text-transform: uppercase;
+        letter-spacing: 1.5px; color: #475569; margin-bottom: 10px;
+    }
+    .panel-label.gold { color: #f59e0b; }
+    .panel-label.cyan { color: #06b6d4; }
+    .panel-label.blue { color: #3b82f6; }
+    .panel-label.yellow { color: #eab308; }
+    .panel-label.amber { color: #f59e0b; }
+    .panel-link {
+        font-size: 10px; font-weight: 700; color: #3b82f6; background: none; border: none;
+        cursor: pointer; transition: color 0.1s;
+    }
+    .panel-link:hover { color: #60a5fa; }
+    .empty-state { color: #334155; font-size: 12px; text-align: center; padding: 20px 0; font-style: italic; }
+
+    /* Colors */
+    .color-blue { color: #60a5fa; }
+    .color-green { color: #34d399; }
+    .color-amber { color: #fbbf24; }
+    .color-yellow { color: #eab308; }
+    .color-slate { color: #94a3b8; }
+
+    /* Team Card */
+    .team-card { padding: 24px 16px; text-align: center; border-color: rgba(79,70,229,0.12); }
+    .team-card-logo { font-size: 40px; margin-bottom: 8px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3)); }
+    .team-card-name { font-size: 16px; font-weight: 900; color: #e2e8f0; }
+    .team-card-level { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .team-card-user { font-size: 10px; color: #4338ca; margin-top: 4px; }
+    .team-card-bar { width: 100%; height: 4px; background: #1e293b; border-radius: 4px; margin-top: 12px; overflow: hidden; }
+    .team-card-fill { height: 100%; background: linear-gradient(90deg, #4f46e5, #6366f1); border-radius: 4px; transition: width 0.5s; }
+
+    /* Stats Strip */
+    .stats-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    @media (max-width: 768px) { .stats-strip { grid-template-columns: repeat(3, 1fr); } }
+    .stat-tile {
+        background: rgba(12,16,28,0.6); border: 1px solid rgba(51,65,85,0.18);
+        border-radius: 14px; padding: 14px 8px; text-align: center;
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    .stat-icon { font-size: 18px; }
+    .stat-val { font-size: 20px; font-weight: 900; }
+    .stat-lbl { font-size: 8px; color: #475569; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+
+    /* Edit Panel */
+    .edit-btn {
+        margin-top: 12px; padding: 5px 16px; border-radius: 8px;
+        font-size: 10px; font-weight: 700; color: #64748b;
+        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.2);
+        cursor: pointer; transition: all 0.12s;
+    }
+    .edit-btn:hover { color: #94a3b8; background: rgba(51,65,85,0.4); }
+    .edit-section { width: 100%; }
+    .edit-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; margin-bottom: 6px; margin-top: 10px; }
+    .icon-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px; }
+    .icon-opt {
+        width: 100%; aspect-ratio: 1; border-radius: 8px; font-size: 18px;
+        background: rgba(15,23,42,0.3); border: 2px solid transparent;
+        cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.1s;
+    }
+    .icon-opt:hover { background: rgba(30,41,59,0.5); }
+    .icon-sel { border-color: #3b82f6 !important; background: rgba(59,130,246,0.1) !important; }
+    .color-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-bottom: 10px; }
+    .color-opt {
+        width: 100%; aspect-ratio: 1; border-radius: 6px;
+        border: 2px solid transparent; cursor: pointer; transition: all 0.1s;
+    }
+    .color-opt:hover { transform: scale(1.1); }
+    .color-sel { border-color: white !important; transform: scale(1.15); box-shadow: 0 0 10px rgba(255,255,255,0.15); }
+    .edit-preview {
+        display: flex; align-items: center; gap: 8px; justify-content: center;
+        padding: 10px; border-radius: 10px; border: 2px solid;
+        background: rgba(15,23,42,0.3); margin-bottom: 10px;
+    }
+    .edit-btns { display: flex; gap: 6px; }
+
+    /* Quick Actions */
+    .actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+    .action-card {
+        padding: 18px 12px; border-radius: 14px; text-align: center;
+        cursor: pointer; border: 1px solid rgba(255,255,255,0.06);
+        transition: transform 0.12s, box-shadow 0.12s;
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .action-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+    .qa-blue { background: linear-gradient(135deg, #1e3a8a, #1e40af); }
+    .qa-teal { background: linear-gradient(135deg, #065f46, #047857); }
+    .qa-red { background: linear-gradient(135deg, #7f1d1d, #991b1b); }
+    .qa-slate { background: linear-gradient(135deg, #1e293b, #334155); }
+    .qa-green { background: linear-gradient(135deg, #14532d, #166534); }
+    .action-icon { font-size: 24px; }
+    .action-label { font-size: 11px; font-weight: 900; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Squad Preview */
+    .squad-preview { display: flex; gap: 10px; justify-content: center; }
+    .sq-slot { text-align: center; flex: 1; }
+    .sq-role { font-size: 8px; font-weight: 900; color: #475569; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 1px; }
+    .sq-card {
+        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3);
+        border-radius: 10px; padding: 10px 6px;
+    }
+    .sq-rating { font-size: 20px; font-weight: 900; color: #e2e8f0; }
+    .sq-name { font-size: 9px; color: #64748b; font-weight: 700; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sq-empty {
+        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.3);
+        border-radius: 10px; padding: 14px 6px; color: #1e293b; font-size: 16px;
+    }
+    .squad-avg { text-align: center; margin-top: 10px; font-size: 12px; font-weight: 700; color: #475569; }
+
+    /* Milestones */
+    .milestones { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+    .milestone { display: flex; align-items: center; gap: 10px; }
+    .ms-check {
+        width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+        background: #1e293b; display: flex; align-items: center; justify-content: center;
+        font-size: 10px; font-weight: 900; color: transparent;
+    }
+    .ms-done { background: #059669; color: white; }
+    .ms-body { flex: 1; min-width: 0; }
+    .ms-label { font-size: 12px; font-weight: 700; color: #94a3b8; }
+    .ms-label-done { color: #475569; text-decoration: line-through; }
+    .ms-bar { width: 100%; height: 4px; background: #1e293b; border-radius: 4px; margin-top: 4px; overflow: hidden; }
+    .ms-fill { height: 100%; background: #3b82f6; border-radius: 4px; transition: width 0.5s; }
+    .ms-fill-done { background: #059669; }
+    .ms-count { font-size: 10px; font-weight: 700; color: #475569; flex-shrink: 0; width: 40px; text-align: right; }
+
+    /* Recent Cards */
+    .recent-cards { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; margin-top: 4px; }
+
+    /* Tier bars */
+    .tier-bars { display: flex; flex-direction: column; gap: 6px; }
+    .tier-row { display: flex; align-items: center; gap: 6px; }
+    .tier-name { font-size: 9px; font-weight: 800; color: #64748b; width: 70px; text-align: right; }
+    .tier-track { flex: 1; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+    .tier-fill { height: 100%; border-radius: 4px; transition: width 0.5s; min-width: 2px; }
+    .tier-count { font-size: 9px; font-weight: 700; color: #475569; width: 20px; }
+    .collection-footer { text-align: center; font-size: 9px; color: #334155; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(51,65,85,0.15); }
+
+    /* Season */
+    .season-split { font-size: 24px; font-weight: 900; color: #93c5fd; margin: 6px 0 2px; }
+    .season-record { font-size: 11px; color: #475569; margin-bottom: 8px; }
+
+    /* Battle Pass */
+    .bp-panel { border-color: rgba(245,158,11,0.1); }
+    .bp-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px; }
+    .bp-season { font-weight: 800; color: #f59e0b; }
+    .bp-tier { color: #475569; font-weight: 600; }
+    .bp-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+    .bp-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); border-radius: 4px; transition: width 0.5s; }
+
+    /* Career */
+    .career-list { display: flex; flex-direction: column; gap: 4px; }
+    .career-row { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; }
+    .career-label { color: #475569; }
+    .career-val { font-weight: 800; color: #94a3b8; }
+</style>

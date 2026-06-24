@@ -1,0 +1,23 @@
+{
+  "name": "lol-ultimate-roster",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "lol",
+    "card-game",
+    "esports"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^2.5.3",
+    "svelte": "^4.2.20",
+    "vite": "^4.5.14"
+  }
+}

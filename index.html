@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LoL Ultimate Roster</title>
+    <link rel="icon" type="image/png" href="/icons/Specialist_icon.png">
+    <meta name="description" content="Build your ultimate League of Legends roster. Open packs, assemble your squad, compete in tournaments.">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0a0e1a">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Tangerine:wght@700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app"></div>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyDJYp1aHd3ndiVfl7fLpjPNFy_JNMM9OzA",
+            authDomain: "lol-ultimate-team.firebaseapp.com",
+            projectId: "lol-ultimate-team",
+        };
+        firebase.initializeApp(firebaseConfig);
+        window.fbAuth = firebase.auth();
+        window.fbDb = firebase.firestore();
+    </script>
+    <script src="/src/data/database.js"></script>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
