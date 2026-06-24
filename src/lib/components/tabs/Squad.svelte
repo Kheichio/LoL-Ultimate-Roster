@@ -70,7 +70,7 @@
             <!-- Coach -->
             <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
             <div class="slot slot-sm" on:click={() => openPicker('COACH')}>
-                {#if $squad.COACH}<Card card={$squad.COACH} mini={true} /><button class="rm" on:click|stopPropagation={() => removeCard('COACH')}>✕</button>
+                {#if $squad.COACH}<Card card={$squad.COACH} mini={true} onclick={() => openPicker('COACH')} /><button class="rm" on:click|stopPropagation={() => removeCard('COACH')}>✕</button>
                 {:else}<div class="empty-sm"><img src={roleIcons.COACH} alt="" class="empty-icon"><span>Coach</span></div>{/if}
             </div>
             <!-- Bench placeholders -->
@@ -88,7 +88,7 @@
                     {#each ['TOP'] as role}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                         <div class="slot" on:click={() => openPicker(role)}>
-                            {#if $squad[role]}<Card card={$squad[role]} mini={true} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
+                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => openPicker(role)} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
                             {:else}<div class="empty"><img src={roleIcons[role]} alt="" class="empty-icon"><span class="empty-role">{role}</span></div>{/if}
                         </div>
                     {/each}
@@ -98,7 +98,7 @@
                     {#each ['JNG','MID'] as role}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                         <div class="slot" on:click={() => openPicker(role)}>
-                            {#if $squad[role]}<Card card={$squad[role]} mini={true} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
+                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => openPicker(role)} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
                             {:else}<div class="empty"><img src={roleIcons[role]} alt="" class="empty-icon"><span class="empty-role">{role}</span></div>{/if}
                         </div>
                     {/each}
@@ -108,7 +108,7 @@
                     {#each ['ADC','SUP'] as role}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                         <div class="slot" on:click={() => openPicker(role)}>
-                            {#if $squad[role]}<Card card={$squad[role]} mini={true} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
+                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => openPicker(role)} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
                             {:else}<div class="empty"><img src={roleIcons[role]} alt="" class="empty-icon"><span class="empty-role">{role}</span></div>{/if}
                         </div>
                     {/each}
