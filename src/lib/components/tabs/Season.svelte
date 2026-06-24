@@ -55,6 +55,34 @@
     $: wins = ($seasonData.matchResults || []).filter(r => r === true).length;
     $: losses = ($seasonData.matchResults || []).filter(r => r === false).length;
 
+    // --- Meta system ---
+    $: metaPhase = matchIndex < 5 ? 0 : 1;
+    $: currentMeta = ($seasonData.meta || [])[metaPhase] || null;
+    $: splitActive = ($seasonData.opponents || []).length > 0 && !splitComplete;
+
+    function generateMeta() {
+        const db = getDB();
+        if (!db) return [];
+        const allTeams = [...new Set(db.map(c => c.team))];
+        const shuffled = allTeams.sort(() => Math.random() - 0.5);
+        const phase1Buffed = shuffled.slice(0, 5);
+        const phase1Nerfed = shuffled.slice(5, 10);
+        const shuffled2 = [...allTeams].sort(() => Math.random() - 0.5);
+        const phase2Buffed = shuffled2.slice(0, 5);
+        const phase2Nerfed = shuffled2.slice(5, 10);
+        return [
+            { buffed: phase1Buffed, nerfed: phase1Nerfed },
+            { buffed: phase2Buffed, nerfed: phase2Nerfed },
+        ];
+    }
+
+    function getMetaModifier(card) {
+        if (!currentMeta || !card) return 0;
+        if (currentMeta.buffed.includes(card.team)) return 3;
+        if (currentMeta.nerfed.includes(card.team)) return -3;
+        return 0;
+    }
+
     $: splitTitle = (() => {
         if (!splitComplete) return null;
         return SPLIT_TITLES.find(t => wins >= t.wins) || SPLIT_TITLES[SPLIT_TITLES.length - 1];
@@ -106,7 +134,10 @@
 
     function startSplit() {
         if (!squadReady) { showToast('Fill all 5 starting positions.', 'error'); return; }
+        const meta = generateMeta();
+        seasonData.update(s => ({ ...s, meta, lockedSquad: JSON.parse(JSON.stringify(get(squad))) }));
         generateOpponents();
+        saveGame();
         phase = 'schedule';
     }
 
@@ -121,7 +152,7 @@
 
     function pickPlay(play) {
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
-        const myTotal = starters.reduce((s, c) => s + (c.stats[play.stat] || 0), 0);
+        const myTotal = starters.reduce((s, c) => s + (c.stats[play.stat] || 0) + getMetaModifier(c), 0);
         const cpuCards = Object.values(currentOpponent.cards);
         const cpuTotal = cpuCards.reduce((s, c) => s + (c.stats[cpuPlay.stat] || 0), 0);
         const myAvg = Math.round(myTotal / starters.length);
@@ -191,6 +222,8 @@
             splitWins: 0,
             splitLosses: 0,
             splitComplete: false,
+            meta: [],
+            lockedSquad: null,
             trophyCase: [...(s.trophyCase || []), { split: s.currentSplit, name: splitName, year: splitYear, wins, losses, title: splitTitle.title, reward: reward.be }]
         }));
 
@@ -276,6 +309,33 @@
             </div>
             <button class="sn-back" on:click={() => { phase = 'overview'; }}>← Overview</button>
         </div>
+
+        <!-- Meta Panel -->
+        {#if currentMeta}
+            <div class="meta-panel">
+                <div class="meta-header">
+                    <span class="meta-badge">Team Meta — Phase {metaPhase + 1}/2</span>
+                    <span class="meta-note">{metaPhase === 0 ? 'Changes after game 5' : 'Final phase'}</span>
+                </div>
+                <div class="meta-grid">
+                    <div class="meta-col">
+                        <div class="meta-col-label meta-buff">▲ Buffed Teams (+3)</div>
+                        {#each currentMeta.buffed as team}
+                            <div class="meta-team meta-team-buff">{team}</div>
+                        {/each}
+                    </div>
+                    <div class="meta-col">
+                        <div class="meta-col-label meta-nerf">▼ Slumping Teams (-3)</div>
+                        {#each currentMeta.nerfed as team}
+                            <div class="meta-team meta-team-nerf">{team}</div>
+                        {/each}
+                    </div>
+                </div>
+                {#if splitActive}
+                    <div class="meta-lock">🔒 Squad is locked for this split. Only bench swaps allowed.</div>
+                {/if}
+            </div>
+        {/if}
 
         <div class="schedule-list">
             {#each opponents as opp, i}
@@ -517,4 +577,35 @@
     .rb-be { font-size: 24px; font-weight: 900; color: #60a5fa; }
     .rb-label { font-size: 10px; color: #64748b; }
     .rb-trophy { font-size: 10px; font-weight: 800; color: #fbbf24; margin-top: 2px; }
+
+    /* Meta panel */
+    .meta-panel {
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 16px; padding: 20px; margin-bottom: 20px;
+    }
+    .meta-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .meta-badge {
+        font-size: 11px; font-weight: 900; color: #a78bfa;
+        text-transform: uppercase; letter-spacing: 1.5px;
+    }
+    .meta-note { font-size: 10px; color: #475569; }
+    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 600px) { .meta-grid { grid-template-columns: 1fr; } }
+    .meta-col { display: flex; flex-direction: column; gap: 4px; }
+    .meta-col-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .meta-buff { color: #34d399; }
+    .meta-nerf { color: #f87171; }
+    .meta-team {
+        padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700;
+    }
+    .meta-team-buff {
+        background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.12); color: #6ee7b7;
+    }
+    .meta-team-nerf {
+        background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.1); color: #fca5a5;
+    }
+    .meta-lock {
+        text-align: center; font-size: 10px; font-weight: 700; color: #f59e0b;
+        margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(51,65,85,0.15);
+    }
 </style>

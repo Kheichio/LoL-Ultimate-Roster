@@ -36,11 +36,20 @@
     function closePicker() { pickerOpen=false; pickerRole=null; }
     function assignCard(card) { squad.update(s=>({...s,[pickerRole]:card})); closePicker(); saveGame(); }
     function removeCard(role) { squad.update(s=>({...s,[role]:null})); saveGame(); }
+    function totalStats(c) {
+        if (!c.stats) return 0;
+        return (c.stats.mec||0)+(c.stats.tmf||0)+(c.stats.frm||0)+(c.stats.cmp||0)+(c.stats.map||0)+(c.stats.ldr||0);
+    }
     function autofill() {
         const s={...$squad}; const used=new Set(); ALL_SLOTS.forEach(r=>{if(s[r])used.add(s[r].uniqueId);});
-        ROLES.forEach(role=>{ if(s[role]) return; const best=$club.filter(c=>c.role===role&&!used.has(c.uniqueId)).sort((a,b)=>b.rating-a.rating)[0]||$club.filter(c=>LEGACY_TIERS.includes(c.quality)&&!used.has(c.uniqueId)).sort((a,b)=>b.rating-a.rating)[0]; if(best){s[role]=best;used.add(best.uniqueId);} });
-        if(!s.COACH){const c=$club.filter(c=>c.role==='COACH'&&!used.has(c.uniqueId)).sort((a,b)=>b.rating-a.rating)[0]; if(c)s.COACH=c;}
-        squad.set(s); saveGame(); showToast('Squad auto-filled.','success');
+        ROLES.forEach(role=>{
+            if(s[role]) return;
+            const best=$club.filter(c=>c.role===role&&!used.has(c.uniqueId)).sort((a,b)=>totalStats(b)-totalStats(a))[0]
+                ||$club.filter(c=>LEGACY_TIERS.includes(c.quality)&&!used.has(c.uniqueId)).sort((a,b)=>totalStats(b)-totalStats(a))[0];
+            if(best){s[role]=best;used.add(best.uniqueId);}
+        });
+        if(!s.COACH){const c=$club.filter(c=>c.role==='COACH'&&!used.has(c.uniqueId)).sort((a,b)=>totalStats(b)-totalStats(a))[0]; if(c)s.COACH=c;}
+        squad.set(s); saveGame(); showToast('Squad auto-filled by best total stats.','success');
     }
     function disband() { squad.set({COACH:null,TOP:null,JNG:null,MID:null,ADC:null,SUP:null}); saveGame(); }
 </script>

@@ -144,122 +144,108 @@
     }
 </script>
 
-<section class="max-w-5xl mx-auto pb-10 pt-2">
-
+<section class="trn">
     {#if phase === 'lobby'}
-        <h2 style="font-size:18px; font-weight:900; color:#e2e8f0; margin-bottom:4px;">Competitive Arenas</h2>
-        <p style="font-size:11px; color:#475569; margin-bottom:20px;">Test your roster against CPU opponents.</p>
+        <div class="trn-head">
+            <h2 class="trn-title">Competitive Arenas</h2>
+            <p class="trn-desc">Test your roster against CPU opponents.</p>
+        </div>
 
         <!-- Season Banner -->
         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div style="background:linear-gradient(135deg, rgba(30,58,138,0.25), rgba(15,23,42,0.6)); border:1px solid rgba(59,130,246,0.12); border-radius:16px; padding:24px; margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; cursor:pointer;" on:click={() => switchTab('season')}>
-            <div>
-                <div style="font-size:9px; font-weight:900; color:#3b82f6; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;">Season Splits</div>
-                <div style="font-size:20px; font-weight:900; color:#93c5fd;">Play Season Matches</div>
-                <div style="font-size:11px; color:#475569; margin-top:4px;">10 opponents per split · Earn regional trophies</div>
+        <div class="season-banner" on:click={() => switchTab('season')}>
+            <div class="sb-glow"></div>
+            <div class="sb-content">
+                <div class="sb-badge">Season Splits</div>
+                <div class="sb-title">Play Season Matches</div>
+                <div class="sb-sub">10 opponents per split · Earn regional trophies</div>
             </div>
-            <div class="btn-primary" style="flex-shrink:0;">Open Season →</div>
+            <button class="btn-primary" style="flex-shrink:0; position:relative;">Open Season →</button>
         </div>
 
-        <!-- Gaming Cafe Tournament -->
-        <div class="bg-gradient-to-br from-green-950/60 via-slate-900 to-slate-800 p-6 rounded-2xl border border-green-700/30 text-center relative overflow-hidden">
-            <div class="absolute -right-8 -top-8 opacity-5 text-[120px]">☕</div>
-            <h3 class="text-2xl font-black text-green-300 mb-1 tracking-widest uppercase">Gaming Cafe Tournament</h3>
-            <p class="text-slate-400 text-xs mb-4">3 rounds against local opponents. CPU capped at Gold tier.</p>
-            <div class="flex justify-center gap-3 mb-5 text-[10px] font-mono">
-                <span class="bg-black/30 px-3 py-1.5 rounded-lg border border-green-800/40 text-green-300">Free Entry</span>
-                <span class="bg-black/30 px-3 py-1.5 rounded-lg border border-emerald-800/40 text-emerald-300">Win: 300 BE</span>
-                <span class="bg-black/30 px-3 py-1.5 rounded-lg border border-slate-700/40 text-slate-400">2nd: 150 BE</span>
+        <!-- Gaming Cafe -->
+        <div class="mode-card mode-cafe">
+            <div class="mode-bg">☕</div>
+            <h3 class="mode-title mode-title-green">Gaming Cafe Tournament</h3>
+            <p class="mode-desc">3 rounds against local opponents. CPU capped at Gold tier.</p>
+            <div class="mode-tags">
+                <span class="tag tag-green">Free Entry</span>
+                <span class="tag tag-emerald">Win: 300 BE</span>
+                <span class="tag tag-slate">2nd: 150 BE</span>
             </div>
             {#if squadReady}
-                <button class="bg-green-600 hover:bg-green-500 text-white px-10 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer shadow-lg transition" on:click={startTournament}>Enter Tournament</button>
+                <button class="btn-success" on:click={startTournament}>Enter Tournament</button>
             {:else}
-                <p class="text-red-400 text-xs font-bold">Fill all 5 starting positions to enter.</p>
-                <button class="mt-2 text-blue-400 text-xs cursor-pointer hover:text-blue-300 font-bold" on:click={() => switchTab('squad')}>Go to Squad →</button>
+                <p class="mode-warn">Fill all 5 starting positions to enter.</p>
+                <button class="mode-link" on:click={() => switchTab('squad')}>Go to Squad →</button>
             {/if}
         </div>
 
-        <!-- More modes placeholder -->
-        <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Locked Modes -->
+        <div class="modes-grid">
             {#each [
-                { name: 'Regional Split', icon: '🏟️', desc: 'Win Season Matches to unlock.', color: 'border-slate-700/30' },
-                { name: 'First Stand', icon: '🟠', desc: 'Beat a Playoff Split to unlock.', color: 'border-slate-700/30' },
-                { name: 'World Championship', icon: '🏆', desc: 'Win MSI to unlock.', color: 'border-slate-700/30' },
+                { name: 'Regional Split', icon: '🏟️', desc: 'Win Season Matches to unlock.' },
+                { name: 'First Stand', icon: '🟠', desc: 'Beat a Playoff Split to unlock.' },
+                { name: 'World Championship', icon: '🏆', desc: 'Win MSI to unlock.' },
             ] as mode}
-                <div class="bg-slate-800/30 p-5 rounded-xl border {mode.color} text-center opacity-50">
-                    <div class="text-2xl mb-2">{mode.icon}</div>
-                    <h4 class="text-sm font-black text-slate-500 uppercase tracking-wider">{mode.name}</h4>
-                    <p class="text-[10px] text-slate-600 mt-1">{mode.desc}</p>
-                    <div class="text-[10px] text-red-400 font-bold mt-2">🔒 Locked</div>
+                <div class="mode-locked">
+                    <span class="ml-icon">{mode.icon}</span>
+                    <h4 class="ml-name">{mode.name}</h4>
+                    <p class="ml-desc">{mode.desc}</p>
+                    <span class="ml-lock">🔒 Locked</span>
                 </div>
             {/each}
         </div>
 
     {:else if phase === 'bracket'}
-        <!-- Bracket View -->
-        <div class="text-center mb-6">
-            <h2 class="text-lg font-black text-green-300 uppercase tracking-widest">Gaming Cafe — Round {round + 1}/3</h2>
-            <div class="flex justify-center gap-2 mt-3">
+        <div class="phase-center">
+            <h2 class="phase-title phase-title-green">Gaming Cafe — Round {round + 1}/3</h2>
+            <div class="bracket-dots">
                 {#each [0, 1, 2] as r}
-                    <div class="w-10 h-10 rounded-lg flex items-center justify-center text-xs font-black border-2 {
-                        r < roundResults.length ? (roundResults[r] ? 'bg-emerald-900/60 border-emerald-500 text-emerald-300' : 'bg-red-900/60 border-red-500 text-red-300') :
-                        r === round ? 'bg-blue-900/60 border-blue-500 text-blue-300 animate-pulse' :
-                        'bg-slate-800 border-slate-700 text-slate-600'
-                    }">
+                    <div class="bdot" class:bdot-w={r < roundResults.length && roundResults[r]} class:bdot-l={r < roundResults.length && !roundResults[r]} class:bdot-active={r === round && r >= roundResults.length} class:bdot-future={r > round || (r >= roundResults.length && r !== round)}>
                         {r < roundResults.length ? (roundResults[r] ? 'W' : 'L') : r + 1}
                     </div>
                 {/each}
             </div>
         </div>
 
-        <div class="bg-slate-800/60 p-6 rounded-2xl border border-slate-700/40 text-center">
-            <div class="flex items-center justify-center gap-8 mb-6">
-                <div>
-                    <div class="text-3xl font-black text-blue-400">{avgRating}</div>
-                    <div class="text-[10px] text-slate-500 uppercase font-bold mt-1">Your Squad</div>
-                </div>
-                <div class="text-xl font-black text-slate-600">VS</div>
-                <div>
-                    <div class="text-3xl font-black text-red-400">{enemies[round]?.avgRating || '?'}</div>
-                    <div class="text-[10px] text-slate-500 uppercase font-bold mt-1">{enemies[round]?.name || 'CPU'}</div>
-                </div>
-            </div>
-            <button class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={startMatch}>Start Match</button>
+        <div class="vs-card">
+            <div class="vs-side"><span class="vs-rating vs-blue">{avgRating}</span><span class="vs-label">Your Squad</span></div>
+            <span class="vs-x">VS</span>
+            <div class="vs-side"><span class="vs-rating vs-red">{enemies[round]?.avgRating || '?'}</span><span class="vs-label">{enemies[round]?.name || 'CPU'}</span></div>
         </div>
+        <div class="phase-center"><button class="btn-primary" on:click={startMatch}>Start Match</button></div>
 
     {:else if phase === 'match'}
-        <!-- Match in Progress -->
-        <div class="text-center mb-4">
-            <h2 class="text-sm font-black text-slate-400 uppercase tracking-widest">Round {round + 1} — vs {currentEnemy.name}</h2>
-            <div class="flex justify-center gap-6 mt-2">
-                <span class="text-lg font-black text-blue-400">{playerScore}</span>
-                <span class="text-lg font-black text-slate-600">—</span>
-                <span class="text-lg font-black text-red-400">{cpuScore}</span>
+        <div class="match-header">
+            <div class="mh-label">Round {round + 1} — vs {currentEnemy.name}</div>
+            <div class="mh-score">
+                <span class="mh-blue">{playerScore}</span>
+                <span class="mh-sep">—</span>
+                <span class="mh-red">{cpuScore}</span>
             </div>
         </div>
 
-        <!-- Match Log -->
         {#if matchLog.length > 0}
-            <div class="space-y-2 mb-5">
+            <div class="log-list">
                 {#each matchLog as log}
-                    <div class="bg-slate-800/60 p-3 rounded-xl border {log.won ? 'border-emerald-700/40' : 'border-red-700/40'} flex items-center justify-between text-xs">
-                        <span class="font-bold {log.won ? 'text-emerald-400' : 'text-red-400'}">{log.won ? '✓ Won' : '✗ Lost'}</span>
-                        <span class="text-slate-400">You: {log.myPlay.icon} {log.myPlay.label} ({log.myVal}) vs CPU: {log.cpuPlay.icon} {log.cpuPlay.label} ({log.cpuVal})</span>
+                    <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
+                        <span class="log-result">{log.won ? '✓ Won' : '✗ Lost'}</span>
+                        <span class="log-detail">You: {log.myPlay.icon} {log.myPlay.label} ({log.myVal}) vs CPU: {log.cpuPlay.icon} {log.cpuPlay.label} ({log.cpuVal})</span>
                     </div>
                 {/each}
             </div>
         {/if}
 
-        <!-- Pick a Play -->
         {#if playerScore < 2 && cpuScore < 2}
-            <div class="bg-slate-800/40 p-5 rounded-2xl border border-slate-700/30">
-                <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 text-center">Choose Your Play</h3>
-                <div class="grid grid-cols-3 gap-3">
+            <div class="play-picker">
+                <div class="play-label">Choose Your Play</div>
+                <div class="play-grid">
                     {#each PLAYS as play}
-                        <button class="bg-slate-700 hover:bg-slate-600 p-4 rounded-xl text-center cursor-pointer transition hover:scale-[1.03] border border-slate-600/50 hover:border-blue-500/30" on:click={() => pickPlay(play)}>
-                            <div class="text-2xl mb-1">{play.icon}</div>
-                            <div class="text-xs font-black text-slate-200">{play.label}</div>
-                            <div class="text-[10px] text-slate-500 mt-1 uppercase">{play.stat.toUpperCase()}</div>
+                        <button class="play-btn" on:click={() => pickPlay(play)}>
+                            <span class="pb-icon">{play.icon}</span>
+                            <span class="pb-name">{play.label}</span>
+                            <span class="pb-stat">{play.stat.toUpperCase()}</span>
                         </button>
                     {/each}
                 </div>
@@ -267,28 +253,168 @@
         {/if}
 
     {:else if phase === 'roundEnd'}
-        <div class="bg-emerald-950/30 p-8 rounded-2xl border border-emerald-700/30 text-center">
-            <div class="text-4xl mb-3">✓</div>
-            <h2 class="text-xl font-black text-emerald-400 mb-2">Round {round + 1} Won!</h2>
-            <p class="text-slate-400 text-xs mb-5">Score: {playerScore}-{cpuScore}. Next opponent is tougher.</p>
-            <button class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={nextRound}>Next Round →</button>
+        <div class="result-card result-win">
+            <div class="result-icon">✓</div>
+            <h2 class="result-title rt-win">Round {round + 1} Won!</h2>
+            <p class="result-sub">Score: {playerScore}-{cpuScore}. Next opponent is tougher.</p>
+            <button class="btn-primary" style="margin-top:20px;" on:click={nextRound}>Next Round →</button>
         </div>
 
     {:else if phase === 'result'}
-        <div class="p-8 rounded-2xl border text-center {tournamentResult.won ? 'bg-emerald-950/30 border-emerald-700/30' : 'bg-red-950/20 border-red-700/30'}">
-            <div class="text-5xl mb-3">{tournamentResult.won ? '🏆' : tournamentResult.isFinalist ? '🥈' : '💀'}</div>
-            <h2 class="text-2xl font-black mb-2 {tournamentResult.won ? 'text-emerald-400' : 'text-red-400'}">
+        <div class="result-card" class:result-win={tournamentResult.won} class:result-lose={!tournamentResult.won}>
+            <div class="result-icon" style="font-size:48px;">{tournamentResult.won ? '🏆' : tournamentResult.isFinalist ? '🥈' : '💀'}</div>
+            <h2 class="result-title" class:rt-win={tournamentResult.won} class:rt-lose={!tournamentResult.won}>
                 {tournamentResult.won ? 'Tournament Champion!' : tournamentResult.isFinalist ? 'Runner Up' : 'Eliminated'}
             </h2>
-            <p class="text-slate-400 text-sm mb-2">
-                {tournamentResult.won ? `Swept all 3 rounds.` : `Eliminated in round ${tournamentResult.round}.`}
-            </p>
+            <p class="result-sub">{tournamentResult.won ? 'Swept all 3 rounds.' : `Eliminated in round ${tournamentResult.round}.`}</p>
             {#if tournamentResult.reward > 0}
-                <p class="text-lg font-black text-blue-400 mb-5">+{tournamentResult.reward} BE</p>
+                <div class="result-reward">+{tournamentResult.reward} BE</div>
             {:else}
-                <p class="text-slate-500 text-xs mb-5">No payout.</p>
+                <div class="result-none">No payout.</div>
             {/if}
-            <button class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={backToLobby}>Back to Lobby</button>
+            <button class="btn-secondary" style="margin-top:20px;" on:click={backToLobby}>Back to Lobby</button>
         </div>
     {/if}
 </section>
+
+<style>
+    .trn { max-width: 900px; margin: 0 auto; padding-bottom: 40px; }
+    .trn-head { margin-bottom: 20px; }
+    .trn-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
+    .trn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
+
+    /* Season banner */
+    .season-banner {
+        position: relative; display: flex; align-items: center; justify-content: space-between;
+        padding: 24px 28px; border-radius: 16px; margin-bottom: 20px; cursor: pointer;
+        background: linear-gradient(135deg, rgba(30,58,138,0.25), rgba(15,23,42,0.6));
+        border: 1px solid rgba(59,130,246,0.12); overflow: hidden;
+        transition: border-color 0.15s;
+    }
+    .season-banner:hover { border-color: rgba(59,130,246,0.25); }
+    .sb-glow { position: absolute; inset: 0; background: radial-gradient(ellipse at 20% 50%, rgba(59,130,246,0.06), transparent 60%); pointer-events: none; }
+    .sb-content { position: relative; }
+    .sb-badge { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #3b82f6; margin-bottom: 4px; }
+    .sb-title { font-size: 20px; font-weight: 900; color: #93c5fd; }
+    .sb-sub { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+    /* Mode cards */
+    .mode-card {
+        position: relative; text-align: center; overflow: hidden;
+        padding: 32px 24px; border-radius: 20px; margin-bottom: 24px;
+    }
+    .mode-cafe {
+        background: linear-gradient(160deg, rgba(6,78,59,0.2), rgba(15,23,42,0.6));
+        border: 1px solid rgba(16,185,129,0.15);
+    }
+    .mode-bg {
+        position: absolute; right: -10px; top: -20px; font-size: 100px; opacity: 0.04; pointer-events: none;
+    }
+    .mode-title { font-size: 22px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 6px; position: relative; }
+    .mode-title-green { color: #6ee7b7; }
+    .mode-desc { font-size: 12px; color: #64748b; margin-bottom: 16px; position: relative; }
+    .mode-tags { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; position: relative; }
+    .tag {
+        font-size: 10px; font-weight: 800; font-family: monospace;
+        padding: 5px 14px; border-radius: 8px; border: 1px solid;
+        background: rgba(0,0,0,0.25);
+    }
+    .tag-green { color: #6ee7b7; border-color: rgba(16,185,129,0.2); }
+    .tag-emerald { color: #34d399; border-color: rgba(16,185,129,0.15); }
+    .tag-slate { color: #94a3b8; border-color: rgba(71,85,105,0.2); }
+    .mode-warn { font-size: 12px; font-weight: 700; color: #f87171; margin-bottom: 8px; position: relative; }
+    .mode-link { font-size: 11px; font-weight: 700; color: #60a5fa; background: none; border: none; cursor: pointer; position: relative; }
+    .mode-link:hover { color: #93c5fd; }
+
+    /* Locked modes grid */
+    .modes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    @media (max-width: 700px) { .modes-grid { grid-template-columns: 1fr; } }
+    .mode-locked {
+        text-align: center; padding: 24px 16px; border-radius: 16px; opacity: 0.45;
+        background: rgba(12,16,28,0.4); border: 1px solid rgba(51,65,85,0.15);
+    }
+    .ml-icon { font-size: 24px; display: block; margin-bottom: 8px; }
+    .ml-name { font-size: 12px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+    .ml-desc { font-size: 10px; color: #475569; margin-top: 4px; }
+    .ml-lock { font-size: 10px; font-weight: 800; color: #f87171; display: block; margin-top: 8px; }
+
+    /* Phase shared */
+    .phase-center { text-align: center; margin-bottom: 20px; }
+    .phase-title { font-size: 18px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 12px; }
+    .phase-title-green { color: #6ee7b7; }
+
+    /* Bracket dots */
+    .bracket-dots { display: flex; justify-content: center; gap: 8px; }
+    .bdot {
+        width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+        font-size: 12px; font-weight: 900; border: 2px solid;
+    }
+    .bdot-w { background: rgba(6,78,59,0.4); border-color: #10b981; color: #6ee7b7; }
+    .bdot-l { background: rgba(127,29,29,0.4); border-color: #ef4444; color: #fca5a5; }
+    .bdot-active { background: rgba(30,58,138,0.4); border-color: #3b82f6; color: #93c5fd; }
+    .bdot-future { background: rgba(15,23,42,0.4); border-color: #334155; color: #475569; }
+
+    /* VS card */
+    .vs-card {
+        display: flex; align-items: center; justify-content: center; gap: 32px;
+        padding: 28px; border-radius: 16px; margin-bottom: 20px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+    }
+    .vs-side { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .vs-rating { font-size: 36px; font-weight: 900; }
+    .vs-blue { color: #60a5fa; } .vs-red { color: #f87171; }
+    .vs-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+    .vs-x { font-size: 18px; font-weight: 900; color: #334155; }
+
+    /* Match header */
+    .match-header { text-align: center; margin-bottom: 20px; }
+    .mh-label { font-size: 12px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
+    .mh-score { display: flex; justify-content: center; gap: 16px; margin-top: 8px; }
+    .mh-blue { font-size: 24px; font-weight: 900; color: #60a5fa; }
+    .mh-red { font-size: 24px; font-weight: 900; color: #f87171; }
+    .mh-sep { font-size: 24px; font-weight: 900; color: #334155; }
+
+    /* Log */
+    .log-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+    .log-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 16px; border-radius: 12px; font-size: 12px;
+        background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15);
+    }
+    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
+    .log-result { font-weight: 900; }
+    .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
+    .log-detail { color: #64748b; font-size: 11px; }
+
+    /* Play picker */
+    .play-picker {
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 16px; padding: 24px;
+    }
+    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
+    .play-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .play-btn {
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        padding: 20px 12px; border-radius: 14px; cursor: pointer;
+        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3);
+        transition: all 0.12s;
+    }
+    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
+    .pb-icon { font-size: 26px; }
+    .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
+    .pb-stat { font-size: 9px; color: #475569; text-transform: uppercase; }
+
+    /* Results */
+    .result-card {
+        text-align: center; padding: 40px 24px; border-radius: 20px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+    }
+    .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }
+    .result-lose { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
+    .result-icon { font-size: 40px; margin-bottom: 12px; }
+    .result-title { font-size: 24px; font-weight: 900; margin-bottom: 8px; }
+    .rt-win { color: #34d399; } .rt-lose { color: #f87171; }
+    .result-sub { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+    .result-reward { font-size: 22px; font-weight: 900; color: #60a5fa; margin-top: 12px; }
+    .result-none { font-size: 11px; color: #475569; margin-top: 8px; }
+</style>

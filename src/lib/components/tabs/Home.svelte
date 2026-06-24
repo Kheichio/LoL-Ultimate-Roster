@@ -18,6 +18,27 @@
     $: holoCount = $club.filter(c => c.holographic).length;
     $: sigCount = $club.filter(c => c.signature).length;
 
+    // Next season game
+    $: seasonOpponents = $seasonData.opponents || [];
+    $: seasonMatchIndex = ($seasonData.matchResults || []).filter(r => r !== null).length;
+    $: nextSeasonOpp = seasonOpponents[seasonMatchIndex] || null;
+    $: seasonSplitActive = seasonOpponents.length > 0 && seasonMatchIndex < 10;
+
+    // Leaderboard title
+    function getTitle(tp) {
+        if (tp >= 200) return 'Immortal';
+        if (tp >= 150) return 'Legend';
+        if (tp >= 100) return 'Hall of Fame';
+        if (tp >= 70) return 'President';
+        if (tp >= 50) return 'Executive';
+        if (tp >= 30) return 'GM';
+        if (tp >= 15) return 'Director';
+        if (tp >= 5) return 'Manager';
+        return 'Scout';
+    }
+    $: prestigeTitle = getTitle($weightedTrophies);
+    $: nextTitleThreshold = [5,15,30,50,70,100,150,200].find(t => t > $weightedTrophies) || null;
+
     function hexToRgb(hex) {
         const h = hex.replace('#', '');
         return `${parseInt(h.substring(0,2),16)}, ${parseInt(h.substring(2,4),16)}, ${parseInt(h.substring(4,6),16)}`;
@@ -253,12 +274,41 @@
                 {/if}
             </div>
 
-            <!-- Season -->
-            <div class="panel" style="padding: 16px; text-align: center;">
-                <div class="panel-label blue">Season</div>
-                <div class="season-split">Split {$seasonData.currentSplit}</div>
+            <!-- Season + Next Game -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label blue">Season Split {$seasonData.currentSplit}</div>
                 <div class="season-record">{$seasonData.splitWins || 0}W - {$seasonData.splitLosses || 0}L</div>
-                <button class="panel-link" on:click={() => switchTab('season')}>Go to Season →</button>
+                {#if nextSeasonOpp && seasonSplitActive}
+                    <div class="next-game">
+                        <div class="ng-label">Next Match</div>
+                        <div class="ng-row">
+                            <span class="ng-num">#{seasonMatchIndex + 1}</span>
+                            <span class="ng-name">{nextSeasonOpp.name}</span>
+                            <span class="ng-pwr">{nextSeasonOpp.avgRating}</span>
+                        </div>
+                    </div>
+                {:else if !seasonSplitActive && seasonOpponents.length === 0}
+                    <div class="season-idle">No split in progress</div>
+                {:else}
+                    <div class="season-idle">Split complete!</div>
+                {/if}
+                <button class="panel-link" on:click={() => switchTab('season')}>{seasonSplitActive ? 'Continue Split →' : 'Go to Season →'}</button>
+            </div>
+
+            <!-- Leaderboard Preview -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label amber">Your Ranking</div>
+                <div class="lb-preview">
+                    <div class="lb-title-display">{prestigeTitle}</div>
+                    <div class="lb-tp">{$weightedTrophies} Trophy Points</div>
+                    {#if nextTitleThreshold}
+                        <div class="lb-next">Next: {nextTitleThreshold - $weightedTrophies} TP to {getTitle(nextTitleThreshold)}</div>
+                        <div class="lb-bar"><div class="lb-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%"></div></div>
+                    {:else}
+                        <div class="lb-max">Max title reached!</div>
+                    {/if}
+                </div>
+                <button class="panel-link" on:click={() => switchTab('leaderboard')}>View Leaderboard →</button>
             </div>
 
             <!-- Battle Pass -->
@@ -452,8 +502,28 @@
     .collection-footer { text-align: center; font-size: 9px; color: #334155; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(51,65,85,0.15); }
 
     /* Season */
-    .season-split { font-size: 24px; font-weight: 900; color: #93c5fd; margin: 6px 0 2px; }
-    .season-record { font-size: 11px; color: #475569; margin-bottom: 8px; }
+    .season-record { font-size: 12px; color: #64748b; margin-bottom: 10px; font-weight: 700; }
+    .season-idle { font-size: 11px; color: #334155; font-style: italic; margin-bottom: 8px; }
+
+    /* Next Game */
+    .next-game {
+        background: rgba(30,58,138,0.12); border: 1px solid rgba(59,130,246,0.12);
+        border-radius: 10px; padding: 10px; margin-bottom: 10px;
+    }
+    .ng-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #3b82f6; margin-bottom: 6px; }
+    .ng-row { display: flex; align-items: center; gap: 8px; }
+    .ng-num { font-size: 11px; font-weight: 900; color: #60a5fa; }
+    .ng-name { flex: 1; font-size: 12px; font-weight: 800; color: #e2e8f0; }
+    .ng-pwr { font-size: 12px; font-weight: 900; color: #f87171; }
+
+    /* Leaderboard Preview */
+    .lb-preview { text-align: center; margin-bottom: 10px; }
+    .lb-title-display { font-size: 18px; font-weight: 900; color: #fbbf24; margin-bottom: 2px; }
+    .lb-tp { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+    .lb-next { font-size: 9px; color: #475569; margin-bottom: 6px; }
+    .lb-bar { width: 100%; height: 4px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 6px; }
+    .lb-fill { height: 100%; background: linear-gradient(90deg, #d97706, #fbbf24); border-radius: 4px; transition: width 0.5s; }
+    .lb-max { font-size: 9px; color: #fbbf24; font-weight: 800; }
 
     /* Battle Pass */
     .bp-panel { border-color: rgba(245,158,11,0.1); }

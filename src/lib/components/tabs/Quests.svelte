@@ -138,29 +138,25 @@
     $: doneAchievements = achievements.filter(a => achievementsClaimed[a.id]).length;
 </script>
 
-<section class="max-w-5xl mx-auto pb-10 pt-2">
-    <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-black text-yellow-400 tracking-wide">Quests & Achievements</h2>
+<section class="quests-page">
+    <div class="page-header">
+        <h2 class="page-title">Quests & Achievements</h2>
     </div>
 
     <!-- Sub tabs -->
-    <div class="flex gap-2 mb-5 bg-slate-800/40 p-1.5 rounded-xl border border-slate-700/30">
+    <div class="tab-bar">
         {#each [
             { id: 'milestones', label: '🏆 Milestones', count: `${doneMilestones}/${totalMilestones}` },
             { id: 'contracts', label: '🔄 Contracts', count: '' },
             { id: 'achievements', label: '🎖️ Achievements', count: `${doneAchievements}/${totalAchievements}` },
         ] as tab}
             <button
-                class="flex-1 py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer transition {
-                    activeSubTab === tab.id
-                        ? 'bg-yellow-600/20 border border-yellow-500/40 text-yellow-300 shadow-inner'
-                        : 'text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 border border-transparent'
-                }"
+                class="tab-btn {activeSubTab === tab.id ? 'tab-active' : ''}"
                 on:click={() => { activeSubTab = tab.id; }}
             >
                 {tab.label}
                 {#if tab.count}
-                    <span class="ml-1 text-[9px] font-mono opacity-60">{tab.count}</span>
+                    <span class="tab-count">{tab.count}</span>
                 {/if}
             </button>
         {/each}
@@ -168,51 +164,63 @@
 
     <!-- MILESTONES -->
     {#if activeSubTab === 'milestones'}
-        <div class="space-y-4">
+        <div class="section-list">
             {#each questCategories as cat}
                 {@const quests = milestoneByCat[cat.id]}
                 {@const comp = catCompletion[cat.id]}
                 {@const allDone = comp.done === comp.total}
-                <div class="bg-slate-800/40 rounded-xl border border-slate-700/30 overflow-hidden">
+                {@const colors = {
+                    blue:    { text: '#60a5fa', bar: '#3b82f6', doneBorder: 'rgba(29,78,216,0.4)',  doneBg: 'rgba(23,37,84,0.2)',  btnBg: '#3b82f6', btnHover: '#60a5fa' },
+                    emerald: { text: '#34d399', bar: '#10b981', doneBorder: 'rgba(4,120,87,0.4)',   doneBg: 'rgba(2,44,34,0.2)',   btnBg: '#10b981', btnHover: '#34d399' },
+                    amber:   { text: '#fbbf24', bar: '#f59e0b', doneBorder: 'rgba(180,83,9,0.4)',   doneBg: 'rgba(69,26,3,0.2)',   btnBg: '#f59e0b', btnHover: '#fbbf24' },
+                    purple:  { text: '#c084fc', bar: '#a855f7', doneBorder: 'rgba(126,34,206,0.4)', doneBg: 'rgba(59,7,100,0.2)',  btnBg: '#a855f7', btnHover: '#c084fc' },
+                }[cat.color]}
+                <div class="cat-panel">
                     <!-- Category header -->
                     <button
-                        class="w-full flex items-center justify-between p-4 cursor-pointer hover:bg-slate-700/20 transition text-left"
+                        class="cat-header"
                         on:click={() => { document.getElementById(`cat-${cat.id}`)?.classList.toggle('hidden'); }}
                     >
-                        <div class="flex items-center gap-2">
-                            <h3 class="text-xs font-black {cat.textColor} uppercase tracking-widest">{cat.label}</h3>
+                        <div class="cat-header-left">
+                            <h3 class="cat-label" style="color: {colors.text}">{cat.label}</h3>
                             {#if allDone}
-                                <span class="text-[9px] font-black bg-emerald-900/40 text-emerald-400 px-2 py-0.5 rounded-full">✓ COMPLETE</span>
+                                <span class="complete-badge">✓ COMPLETE</span>
                             {/if}
                         </div>
-                        <span class="text-[10px] font-mono text-slate-500">{comp.done}/{comp.total}</span>
+                        <span class="cat-count">{comp.done}/{comp.total}</span>
                     </button>
                     <!-- Quest rows -->
-                    <div id="cat-{cat.id}" class="{allDone ? 'hidden' : ''} px-4 pb-4 space-y-1.5">
+                    <div id="cat-{cat.id}" class="cat-body {allDone ? 'hidden' : ''}">
                         {#each quests as q}
                             {@const progress = getProgress(q.stat)}
                             {@const isDone = progress >= q.target}
                             {@const isClaimed = claimed[q.id]}
-                            <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg border {
-                                isClaimed ? 'border-slate-800 bg-slate-900/30 opacity-40' :
-                                isDone ? cat.doneRow :
-                                'border-slate-700/40 bg-slate-800/40'
-                            }">
-                                <div class="flex-1 min-w-0">
-                                    <div class="text-xs font-bold {isClaimed ? 'text-slate-600 line-through' : 'text-slate-200'}">{q.desc}</div>
-                                    <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden mt-1.5 border border-slate-700/30">
-                                        <div class="{cat.barColor} h-full rounded-full transition-all" style="width: {Math.min(100, (progress / q.target) * 100)}%"></div>
+                            <div
+                                class="quest-row"
+                                style="
+                                    {isClaimed ? 'border-color: rgba(30,41,59,0.6); background: rgba(15,23,42,0.3); opacity: 0.4;' :
+                                     isDone ? `border-color: ${colors.doneBorder}; background: ${colors.doneBg};` :
+                                     'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
+                                "
+                            >
+                                <div class="quest-info">
+                                    <div class="quest-desc" style="{isClaimed ? 'color: #475569; text-decoration: line-through;' : 'color: #e2e8f0;'}">{q.desc}</div>
+                                    <div class="progress-track">
+                                        <div class="progress-fill" style="width: {Math.min(100, (progress / q.target) * 100)}%; background: {colors.bar}"></div>
                                     </div>
                                 </div>
                                 {#if isClaimed}
-                                    <span class="text-[10px] font-bold text-slate-600 shrink-0">Claimed</span>
+                                    <span class="claimed-label">Claimed</span>
                                 {:else if isDone}
                                     <button
-                                        class="shrink-0 {cat.claimBtn} px-3 py-1.5 rounded-lg font-black cursor-pointer transition text-[10px] uppercase"
+                                        class="claim-btn"
+                                        style="background: {colors.btnBg}; color: #0f172a;"
+                                        on:mouseenter={(e) => e.currentTarget.style.background = colors.btnHover}
+                                        on:mouseleave={(e) => e.currentTarget.style.background = colors.btnBg}
                                         on:click={() => claimMilestone(q)}
                                     >Claim {q.reward} BE</button>
                                 {:else}
-                                    <span class="shrink-0 text-[10px] font-mono text-slate-500 w-16 text-right">{progress}/{q.target}</span>
+                                    <span class="progress-label">{progress}/{q.target}</span>
                                 {/if}
                             </div>
                         {/each}
@@ -223,33 +231,40 @@
 
     <!-- CONTRACTS -->
     {:else if activeSubTab === 'contracts'}
-        <div class="space-y-2">
-            <p class="text-[10px] text-slate-500 mb-3">Repeatable quests — progress resets after each claim. Infinite completions.</p>
+        <div class="section-list contracts">
+            <p class="section-hint">Repeatable quests — progress resets after each claim. Infinite completions.</p>
             {#each repeatableQuests as q}
                 {@const progress = getRepeatableProgress(q)}
                 {@const isDone = progress >= q.target}
                 {@const times = repeatableCounts[q.id] || 0}
-                <div class="flex items-center gap-3 px-4 py-3 rounded-xl border {
-                    isDone ? 'border-cyan-700/40 bg-cyan-950/20' : 'border-slate-700/40 bg-slate-800/40'
-                }">
-                    <div class="flex-1 min-w-0">
-                        <div class="text-xs font-bold text-slate-200">
+                <div
+                    class="quest-row"
+                    style="
+                        {isDone ? 'border-color: rgba(14,116,144,0.4); background: rgba(8,51,68,0.2);' :
+                         'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
+                    "
+                >
+                    <div class="quest-info">
+                        <div class="quest-desc" style="color: #e2e8f0;">
                             {q.desc}
                             {#if times > 0}
-                                <span class="text-cyan-500 ml-1">×{times}</span>
+                                <span style="color: #06b6d4; margin-left: 4px;">×{times}</span>
                             {/if}
                         </div>
-                        <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden mt-1.5 border border-slate-700/30">
-                            <div class="bg-cyan-500 h-full rounded-full transition-all" style="width: {Math.min(100, (progress / q.target) * 100)}%"></div>
+                        <div class="progress-track">
+                            <div class="progress-fill" style="width: {Math.min(100, (progress / q.target) * 100)}%; background: #06b6d4;"></div>
                         </div>
                     </div>
                     {#if isDone}
                         <button
-                            class="shrink-0 bg-cyan-500 hover:bg-cyan-400 text-slate-900 px-3 py-1.5 rounded-lg font-black cursor-pointer transition text-[10px] uppercase"
+                            class="claim-btn"
+                            style="background: #06b6d4; color: #0f172a;"
+                            on:mouseenter={(e) => e.currentTarget.style.background = '#22d3ee'}
+                            on:mouseleave={(e) => e.currentTarget.style.background = '#06b6d4'}
                             on:click={() => claimRepeatable(q)}
                         >Claim {q.reward} BE</button>
                     {:else}
-                        <span class="shrink-0 text-[10px] font-mono text-slate-500 w-16 text-right">{progress}/{q.target}</span>
+                        <span class="progress-label">{progress}/{q.target}</span>
                     {/if}
                 </div>
             {/each}
@@ -257,35 +272,259 @@
 
     <!-- ACHIEVEMENTS -->
     {:else if activeSubTab === 'achievements'}
-        <div class="space-y-2">
-            <p class="text-[10px] text-slate-500 mb-3">Live state checks — progress updates based on your current squad, club, and stats.</p>
+        <div class="section-list contracts">
+            <p class="section-hint">Live state checks — progress updates based on your current squad, club, and stats.</p>
             {#each achievements as a}
                 {@const progress = getAchievementProgress(a)}
                 {@const isDone = progress >= a.target}
                 {@const isClaimed = achievementsClaimed[a.id]}
-                <div class="flex items-center gap-3 px-4 py-3 rounded-xl border {
-                    isClaimed ? 'border-slate-800 bg-slate-900/30 opacity-40' :
-                    isDone ? 'border-violet-700/40 bg-violet-950/20' :
-                    'border-slate-700/40 bg-slate-800/40'
-                }">
-                    <div class="flex-1 min-w-0">
-                        <div class="text-xs font-bold {isClaimed ? 'text-slate-600 line-through' : 'text-slate-200'}">{a.desc}</div>
-                        <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden mt-1.5 border border-slate-700/30">
-                            <div class="bg-violet-500 h-full rounded-full transition-all" style="width: {Math.min(100, (progress / a.target) * 100)}%"></div>
+                <div
+                    class="quest-row"
+                    style="
+                        {isClaimed ? 'border-color: rgba(30,41,59,0.6); background: rgba(15,23,42,0.3); opacity: 0.4;' :
+                         isDone ? 'border-color: rgba(109,40,217,0.4); background: rgba(46,16,101,0.2);' :
+                         'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
+                    "
+                >
+                    <div class="quest-info">
+                        <div class="quest-desc" style="{isClaimed ? 'color: #475569; text-decoration: line-through;' : 'color: #e2e8f0;'}">{a.desc}</div>
+                        <div class="progress-track">
+                            <div class="progress-fill" style="width: {Math.min(100, (progress / a.target) * 100)}%; background: #8b5cf6;"></div>
                         </div>
                     </div>
                     {#if isClaimed}
-                        <span class="text-[10px] font-bold text-slate-600 shrink-0">Claimed</span>
+                        <span class="claimed-label">Claimed</span>
                     {:else if isDone}
                         <button
-                            class="shrink-0 bg-violet-500 hover:bg-violet-400 text-white px-3 py-1.5 rounded-lg font-black cursor-pointer transition text-[10px] uppercase"
+                            class="claim-btn"
+                            style="background: #8b5cf6; color: #fff;"
+                            on:mouseenter={(e) => e.currentTarget.style.background = '#a78bfa'}
+                            on:mouseleave={(e) => e.currentTarget.style.background = '#8b5cf6'}
                             on:click={() => claimAchievement(a)}
                         >Claim {a.reward} BE</button>
                     {:else}
-                        <span class="shrink-0 text-[10px] font-mono text-slate-500 w-16 text-right">{Math.min(progress, a.target)}/{a.target}</span>
+                        <span class="progress-label">{Math.min(progress, a.target)}/{a.target}</span>
                     {/if}
                 </div>
             {/each}
         </div>
     {/if}
 </section>
+
+<style>
+    /* Page layout */
+    .quests-page {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 8px 0 40px;
+    }
+
+    .page-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .page-title {
+        font-size: 22px;
+        font-weight: 900;
+        color: #facc15;
+        letter-spacing: 0.5px;
+    }
+
+    /* Tab bar */
+    .tab-bar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+        background: rgba(12,16,28,0.5);
+        padding: 6px;
+        border-radius: 14px;
+        border: 1px solid rgba(51,65,85,0.2);
+    }
+
+    .tab-btn {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        cursor: pointer;
+        transition: all 0.12s;
+        color: #64748b;
+        background: transparent;
+        border: 1px solid transparent;
+    }
+
+    .tab-btn:hover {
+        color: #e2e8f0;
+        background: rgba(51,65,85,0.35);
+    }
+
+    .tab-btn.tab-active {
+        background: rgba(202,138,4,0.2);
+        border-color: rgba(234,179,8,0.4);
+        color: #fde047;
+        box-shadow: inset 0 1px 4px rgba(0,0,0,0.15);
+    }
+
+    .tab-count {
+        margin-left: 4px;
+        font-size: 9px;
+        font-family: monospace;
+        opacity: 0.6;
+    }
+
+    /* Section list spacing */
+    .section-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .section-list.contracts {
+        gap: 8px;
+    }
+
+    .section-hint {
+        font-size: 10px;
+        color: #64748b;
+        margin-bottom: 4px;
+    }
+
+    /* Category panel */
+    .cat-panel {
+        background: rgba(12,16,28,0.5);
+        border-radius: 16px;
+        border: 1px solid rgba(51,65,85,0.2);
+        overflow: hidden;
+    }
+
+    .cat-header {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px;
+        cursor: pointer;
+        background: transparent;
+        border: none;
+        text-align: left;
+        transition: background 0.12s;
+    }
+
+    .cat-header:hover {
+        background: rgba(51,65,85,0.15);
+    }
+
+    .cat-header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .cat-label {
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+    }
+
+    .complete-badge {
+        font-size: 9px;
+        font-weight: 900;
+        background: rgba(4,120,87,0.25);
+        color: #34d399;
+        padding: 2px 10px;
+        border-radius: 100px;
+    }
+
+    .cat-count {
+        font-size: 10px;
+        font-family: monospace;
+        color: #64748b;
+    }
+
+    .cat-body {
+        padding: 0 16px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .cat-body.hidden {
+        display: none;
+    }
+
+    /* Quest row */
+    .quest-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid;
+        transition: opacity 0.12s;
+    }
+
+    .quest-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .quest-desc {
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    /* Progress bar */
+    .progress-track {
+        width: 100%;
+        height: 6px;
+        background: rgba(15,23,42,0.8);
+        border-radius: 100px;
+        overflow: hidden;
+        margin-top: 6px;
+        border: 1px solid rgba(51,65,85,0.2);
+    }
+
+    .progress-fill {
+        height: 100%;
+        border-radius: 100px;
+        transition: width 0.3s;
+    }
+
+    /* Labels */
+    .claimed-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: #475569;
+        flex-shrink: 0;
+    }
+
+    .progress-label {
+        flex-shrink: 0;
+        font-size: 10px;
+        font-family: monospace;
+        color: #64748b;
+        width: 60px;
+        text-align: right;
+    }
+
+    /* Claim button */
+    .claim-btn {
+        flex-shrink: 0;
+        padding: 6px 12px;
+        border-radius: 10px;
+        font-weight: 900;
+        font-size: 10px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.12s;
+        border: none;
+        letter-spacing: 0.3px;
+    }
+</style>

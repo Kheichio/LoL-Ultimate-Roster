@@ -92,31 +92,28 @@
     }
 </script>
 
-<section class="max-w-4xl mx-auto pb-10 pt-2">
-    <h2 class="text-xl font-black text-yellow-400 tracking-wide mb-1">Upgrade Lab</h2>
-    <p class="text-xs text-slate-500 mb-5">Combine cards of the same role and tier to forge a higher-tier card.</p>
+<section class="upgrade-page">
+    <h2 class="page-title">Upgrade Lab</h2>
+    <p class="page-subtitle">Combine cards of the same role and tier to forge a higher-tier card.</p>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+    <div class="main-grid">
         <!-- Left: Upgrade Path Selector -->
-        <div class="lg:col-span-1 space-y-3">
-            <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Upgrade</h3>
+        <div class="paths-column">
+            <h3 class="section-label">Select Upgrade</h3>
             {#each upgradePaths as path}
                 {@const isSelected = selectedPath.from === path.from}
                 <button
-                    class="w-full text-left p-3 rounded-xl border cursor-pointer transition {
-                        isSelected
-                            ? 'bg-yellow-900/20 border-yellow-600/40 shadow-inner'
-                            : 'bg-slate-800/40 border-slate-700/30 hover:bg-slate-700/40'
-                    }"
+                    class="path-btn"
+                    class:path-btn--active={isSelected}
                     on:click={() => { selectedPath = path; }}
                 >
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-xs font-black {isSelected ? 'text-yellow-300' : 'text-slate-300'}">
+                    <div class="path-btn__header">
+                        <span class="path-btn__name" class:path-btn__name--active={isSelected}>
                             {path.from} → {path.to}
                         </span>
-                        <span class="text-[9px] font-mono text-slate-500">{path.cost} BE</span>
+                        <span class="path-btn__cost">{path.cost} BE</span>
                     </div>
-                    <div class="text-[9px] text-slate-500">
+                    <div class="path-btn__req">
                         Requires {path.count} × {path.from} cards (same role)
                     </div>
                 </button>
@@ -124,85 +121,85 @@
         </div>
 
         <!-- Center + Right: Role + Preview -->
-        <div class="lg:col-span-2 space-y-4">
+        <div class="detail-column">
             <!-- Role Selector -->
-            <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700/30">
-                <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Select Role</h3>
-                <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            <div class="panel">
+                <h3 class="section-label">Select Role</h3>
+                <div class="role-grid">
                     {#each roles as role}
                         {@const count = pathCounts[selectedPath.from]?.[role] || 0}
                         {@const enough = count >= selectedPath.count}
                         <button
-                            class="p-3 rounded-xl text-center cursor-pointer transition border {
-                                selectedRole === role
-                                    ? 'bg-blue-900/30 border-blue-500/50'
-                                    : 'bg-slate-800/60 border-slate-700/40 hover:bg-slate-700/50'
-                            }"
+                            class="role-btn"
+                            class:role-btn--active={selectedRole === role}
                             on:click={() => { selectedRole = role; }}
                         >
-                            <img src={roleIcons[role]} alt={role} class="w-6 h-6 mx-auto mb-1 {selectedRole === role ? 'opacity-100' : 'opacity-40'}">
-                            <div class="text-[10px] font-black {selectedRole === role ? 'text-blue-300' : 'text-slate-500'}">{role}</div>
-                            <div class="text-[9px] font-mono {enough ? 'text-emerald-400' : 'text-slate-600'}">{count}/{selectedPath.count}</div>
+                            <img
+                                src={roleIcons[role]}
+                                alt={role}
+                                class="role-btn__icon"
+                                class:role-btn__icon--active={selectedRole === role}
+                            >
+                            <div class="role-btn__label" class:role-btn__label--active={selectedRole === role}>{role}</div>
+                            <div class="role-btn__count" class:role-btn__count--enough={enough}>{count}/{selectedPath.count}</div>
                         </button>
                     {/each}
                 </div>
             </div>
 
             <!-- Upgrade Summary -->
-            <div class="bg-slate-800/40 p-5 rounded-xl border border-slate-700/30">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Upgrade Preview</h3>
+            <div class="panel panel--preview">
+                <div class="preview-header">
+                    <h3 class="section-label">Upgrade Preview</h3>
                 </div>
 
-                <div class="flex items-center justify-center gap-4 mb-5">
+                <div class="preview-visual">
                     <!-- From -->
-                    <div class="text-center">
-                        <div class="w-20 h-28 bg-slate-700/40 border-2 border-dashed border-slate-600 rounded-xl flex flex-col items-center justify-center">
-                            <div class="text-lg font-black text-slate-500">{selectedPath.count}×</div>
-                            <div class="text-[9px] text-slate-600 font-bold">{selectedPath.from}</div>
+                    <div class="preview-slot">
+                        <div class="preview-card preview-card--from">
+                            <div class="preview-card__count">{selectedPath.count}×</div>
+                            <div class="preview-card__tier">{selectedPath.from}</div>
                         </div>
-                        <div class="text-[9px] text-slate-500 mt-1 font-mono">{selectedRole}</div>
+                        <div class="preview-slot__label">{selectedRole}</div>
                     </div>
 
                     <!-- Arrow -->
-                    <div class="flex flex-col items-center gap-1">
-                        <div class="text-xl text-yellow-500">→</div>
-                        <div class="text-[9px] text-slate-500 font-mono">{selectedPath.cost} BE</div>
+                    <div class="preview-arrow">
+                        <div class="preview-arrow__icon">→</div>
+                        <div class="preview-arrow__cost">{selectedPath.cost} BE</div>
                     </div>
 
                     <!-- To -->
-                    <div class="text-center">
-                        <div class="w-20 h-28 bg-yellow-900/20 border-2 border-yellow-600/40 rounded-xl flex flex-col items-center justify-center">
-                            <div class="text-lg font-black text-yellow-400">?</div>
-                            <div class="text-[9px] text-yellow-600 font-bold">{selectedPath.to}</div>
+                    <div class="preview-slot">
+                        <div class="preview-card preview-card--to">
+                            <div class="preview-card__mystery">?</div>
+                            <div class="preview-card__tier preview-card__tier--to">{selectedPath.to}</div>
                         </div>
-                        <div class="text-[9px] text-yellow-500 mt-1 font-mono">Random {selectedRole}</div>
+                        <div class="preview-slot__label preview-slot__label--to">Random {selectedRole}</div>
                     </div>
                 </div>
 
                 <!-- Status -->
-                <div class="space-y-1.5 mb-4 text-xs">
-                    <div class="flex justify-between py-1 px-2 rounded bg-slate-900/40">
-                        <span class="text-slate-500">Cards available</span>
-                        <span class="{eligible.length >= selectedPath.count ? 'text-emerald-400' : 'text-red-400'} font-bold">{eligible.length} / {selectedPath.count}</span>
+                <div class="status-rows">
+                    <div class="status-row">
+                        <span class="status-row__label">Cards available</span>
+                        <span class="status-row__value" class:status-row__value--ok={eligible.length >= selectedPath.count} class:status-row__value--bad={eligible.length < selectedPath.count}>{eligible.length} / {selectedPath.count}</span>
                     </div>
-                    <div class="flex justify-between py-1 px-2 rounded bg-slate-900/40">
-                        <span class="text-slate-500">Cost</span>
-                        <span class="{$blueEssence >= selectedPath.cost ? 'text-emerald-400' : 'text-red-400'} font-bold">{selectedPath.cost} BE</span>
+                    <div class="status-row">
+                        <span class="status-row__label">Cost</span>
+                        <span class="status-row__value" class:status-row__value--ok={$blueEssence >= selectedPath.cost} class:status-row__value--bad={$blueEssence < selectedPath.cost}>{selectedPath.cost} BE</span>
                     </div>
-                    <div class="flex justify-between py-1 px-2 rounded bg-slate-900/40">
-                        <span class="text-slate-500">Your balance</span>
-                        <span class="text-blue-400 font-bold">{$blueEssence} BE</span>
+                    <div class="status-row">
+                        <span class="status-row__label">Your balance</span>
+                        <span class="status-row__value status-row__value--balance">{$blueEssence} BE</span>
                     </div>
                 </div>
 
                 <!-- Upgrade button -->
                 <button
-                    class="w-full py-3 rounded-xl font-black text-sm uppercase tracking-widest cursor-pointer transition {
-                        canUpgrade
-                            ? 'bg-yellow-600 hover:bg-yellow-500 text-slate-900 shadow-lg'
-                            : 'bg-slate-700 text-slate-600 cursor-not-allowed'
-                    }"
+                    class="upgrade-btn"
+                    class:upgrade-btn--ready={canUpgrade}
+                    class:upgrade-btn--disabled={!canUpgrade}
                     disabled={!canUpgrade}
                     on:click={performUpgrade}
                 >
@@ -218,20 +215,20 @@
 
             <!-- Cards that would be consumed -->
             {#if eligible.length > 0}
-                <div class="bg-slate-800/30 p-4 rounded-xl border border-slate-700/20">
-                    <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
+                <div class="panel panel--eligible">
+                    <h3 class="section-label eligible-heading">
                         Eligible Cards ({eligible.length})
                         {#if eligible.length >= selectedPath.count}
-                            <span class="text-red-400 ml-1">— lowest {selectedPath.count} will be consumed</span>
+                            <span class="consumed-warning">— lowest {selectedPath.count} will be consumed</span>
                         {/if}
                     </h3>
-                    <div class="flex flex-wrap gap-2 justify-center">
+                    <div class="eligible-grid">
                         {#each eligible as card, i (card.uniqueId)}
-                            <div class="relative">
+                            <div class="eligible-card-wrap">
                                 <Card {card} mini={true} />
                                 {#if i < selectedPath.count}
-                                    <div class="absolute inset-0 bg-red-900/40 rounded-xl flex items-center justify-center">
-                                        <span class="text-red-300 text-xs font-black bg-red-950/80 px-2 py-1 rounded">CONSUMED</span>
+                                    <div class="consumed-overlay">
+                                        <span class="consumed-badge">CONSUMED</span>
                                     </div>
                                 {/if}
                             </div>
@@ -247,21 +244,465 @@
 {#if showResult && resultCard}
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="fixed inset-0 z-[80] bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-4" on:click={closeResult}>
-    <div class="text-xs font-black text-yellow-400 uppercase tracking-widest mb-4">Upgrade Complete!</div>
+<div class="result-overlay" on:click={closeResult}>
+    <div class="result-title">Upgrade Complete!</div>
     <div class="animate-card-reveal">
         <Card card={resultCard} />
     </div>
-    <button class="mt-6 bg-slate-700 hover:bg-slate-600 text-slate-200 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click|stopPropagation={closeResult}>
+    <button class="result-continue" on:click|stopPropagation={closeResult}>
         Continue
     </button>
 </div>
 {/if}
 
 <style>
+    /* ── Page Layout ── */
+    .upgrade-page {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 8px 0 40px;
+    }
+
+    .page-title {
+        font-size: 22px;
+        font-weight: 900;
+        color: #eab308;
+        letter-spacing: 0.05em;
+        margin: 0 0 4px;
+    }
+
+    .page-subtitle {
+        font-size: 12px;
+        color: #64748b;
+        margin: 0 0 20px;
+    }
+
+    .main-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    @media (min-width: 1024px) {
+        .main-grid {
+            grid-template-columns: 1fr 2fr;
+        }
+    }
+
+    /* ── Section Label ── */
+    .section-label {
+        font-size: 10px;
+        font-weight: 900;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin: 0 0 10px;
+    }
+
+    /* ── Panel ── */
+    .panel {
+        background: rgba(12, 16, 28, 0.5);
+        border: 1px solid rgba(51, 65, 85, 0.2);
+        border-radius: 16px;
+        padding: 16px;
+    }
+
+    .panel--preview {
+        padding: 20px;
+    }
+
+    .panel--eligible {
+        background: rgba(12, 16, 28, 0.35);
+        border-color: rgba(51, 65, 85, 0.15);
+    }
+
+    /* ── Paths Column ── */
+    .paths-column {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .paths-column > .section-label {
+        margin-bottom: 0;
+    }
+
+    /* ── Detail Column ── */
+    .detail-column {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* ── Path Buttons ── */
+    .path-btn {
+        width: 100%;
+        text-align: left;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        background: rgba(30, 41, 59, 0.4);
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+    }
+
+    .path-btn:hover {
+        background: rgba(51, 65, 85, 0.4);
+    }
+
+    .path-btn--active {
+        background: rgba(113, 63, 18, 0.2);
+        border-color: rgba(202, 138, 4, 0.4);
+        box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .path-btn--active:hover {
+        background: rgba(113, 63, 18, 0.25);
+    }
+
+    .path-btn__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 4px;
+    }
+
+    .path-btn__name {
+        font-size: 12px;
+        font-weight: 900;
+        color: #cbd5e1;
+    }
+
+    .path-btn__name--active {
+        color: #fde047;
+    }
+
+    .path-btn__cost {
+        font-size: 9px;
+        font-family: monospace;
+        color: #64748b;
+    }
+
+    .path-btn__req {
+        font-size: 9px;
+        color: #64748b;
+    }
+
+    /* ── Role Grid ── */
+    .role-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    @media (min-width: 640px) {
+        .role-grid {
+            grid-template-columns: repeat(6, 1fr);
+        }
+    }
+
+    .role-btn {
+        padding: 12px;
+        border-radius: 12px;
+        text-align: center;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+        border: 1px solid rgba(51, 65, 85, 0.4);
+        background: rgba(30, 41, 59, 0.6);
+    }
+
+    .role-btn:hover {
+        background: rgba(51, 65, 85, 0.5);
+    }
+
+    .role-btn--active {
+        background: rgba(30, 58, 138, 0.3);
+        border-color: rgba(59, 130, 246, 0.5);
+    }
+
+    .role-btn--active:hover {
+        background: rgba(30, 58, 138, 0.35);
+    }
+
+    .role-btn__icon {
+        width: 24px;
+        height: 24px;
+        margin: 0 auto 4px;
+        opacity: 0.4;
+    }
+
+    .role-btn__icon--active {
+        opacity: 1;
+    }
+
+    .role-btn__label {
+        font-size: 10px;
+        font-weight: 900;
+        color: #64748b;
+    }
+
+    .role-btn__label--active {
+        color: #93c5fd;
+    }
+
+    .role-btn__count {
+        font-size: 9px;
+        font-family: monospace;
+        color: #475569;
+    }
+
+    .role-btn__count--enough {
+        color: #34d399;
+    }
+
+    /* ── Preview Visual ── */
+    .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .preview-header .section-label {
+        margin-bottom: 0;
+    }
+
+    .preview-visual {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        margin-bottom: 20px;
+    }
+
+    .preview-slot {
+        text-align: center;
+    }
+
+    .preview-card {
+        width: 80px;
+        height: 112px;
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .preview-card--from {
+        background: rgba(51, 65, 85, 0.4);
+        border: 2px dashed #475569;
+    }
+
+    .preview-card--to {
+        background: rgba(113, 63, 18, 0.2);
+        border: 2px solid rgba(202, 138, 4, 0.4);
+    }
+
+    .preview-card__count {
+        font-size: 18px;
+        font-weight: 900;
+        color: #64748b;
+    }
+
+    .preview-card__mystery {
+        font-size: 18px;
+        font-weight: 900;
+        color: #eab308;
+    }
+
+    .preview-card__tier {
+        font-size: 9px;
+        font-weight: 700;
+        color: #475569;
+    }
+
+    .preview-card__tier--to {
+        color: #ca8a04;
+    }
+
+    .preview-slot__label {
+        font-size: 9px;
+        font-family: monospace;
+        color: #64748b;
+        margin-top: 4px;
+    }
+
+    .preview-slot__label--to {
+        color: #eab308;
+    }
+
+    .preview-arrow {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .preview-arrow__icon {
+        font-size: 20px;
+        color: #eab308;
+    }
+
+    .preview-arrow__cost {
+        font-size: 9px;
+        font-family: monospace;
+        color: #64748b;
+    }
+
+    /* ── Status Rows ── */
+    .status-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 16px;
+        font-size: 12px;
+    }
+
+    .status-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: rgba(15, 23, 42, 0.4);
+    }
+
+    .status-row__label {
+        color: #64748b;
+    }
+
+    .status-row__value {
+        font-weight: 700;
+    }
+
+    .status-row__value--ok {
+        color: #34d399;
+    }
+
+    .status-row__value--bad {
+        color: #f87171;
+    }
+
+    .status-row__value--balance {
+        color: #60a5fa;
+    }
+
+    /* ── Upgrade Button ── */
+    .upgrade-btn {
+        width: 100%;
+        padding: 12px;
+        border-radius: 12px;
+        font-weight: 900;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        cursor: pointer;
+        transition: background 0.15s;
+        border: none;
+    }
+
+    .upgrade-btn--ready {
+        background: #ca8a04;
+        color: #0f172a;
+        box-shadow: 0 4px 12px rgba(202, 138, 4, 0.3);
+    }
+
+    .upgrade-btn--ready:hover {
+        background: #eab308;
+    }
+
+    .upgrade-btn--disabled {
+        background: #334155;
+        color: #475569;
+        cursor: not-allowed;
+    }
+
+    /* ── Eligible Cards ── */
+    .eligible-heading {
+        margin-bottom: 12px;
+    }
+
+    .consumed-warning {
+        color: #f87171;
+        margin-left: 4px;
+    }
+
+    .eligible-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+    }
+
+    .eligible-card-wrap {
+        position: relative;
+    }
+
+    .consumed-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(127, 29, 29, 0.4);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .consumed-badge {
+        color: #fca5a5;
+        font-size: 12px;
+        font-weight: 900;
+        background: rgba(69, 10, 10, 0.8);
+        padding: 4px 8px;
+        border-radius: 6px;
+    }
+
+    /* ── Result Overlay ── */
+    .result-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(4px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+    }
+
+    .result-title {
+        font-size: 12px;
+        font-weight: 900;
+        color: #eab308;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 16px;
+    }
+
     .animate-card-reveal {
         animation: upgradeReveal 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     }
+
+    .result-continue {
+        margin-top: 24px;
+        background: #334155;
+        color: #e2e8f0;
+        padding: 10px 32px;
+        border-radius: 12px;
+        font-weight: 900;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        cursor: pointer;
+        transition: background 0.15s;
+        border: none;
+    }
+
+    .result-continue:hover {
+        background: #475569;
+    }
+
     @keyframes upgradeReveal {
         from { opacity: 0; transform: scale(0.5) rotateY(90deg); }
         to { opacity: 1; transform: scale(1) rotateY(0deg); }

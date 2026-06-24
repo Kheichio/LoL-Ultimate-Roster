@@ -9,17 +9,17 @@
     let sortBy = 'team';
 
     const categories = [
-        { id: 'regular', label: '⚔️ Regular Season', activeClass: 'bg-blue-600/20 border-blue-500/50 text-blue-300' },
-        { id: 'firststand', label: '🟠 First Stand', activeClass: 'bg-orange-600/20 border-orange-500/50 text-orange-300' },
-        { id: 'msi', label: '🌊 MSI', activeClass: 'bg-teal-600/20 border-teal-500/50 text-teal-300' },
-        { id: 'finalists', label: '🥈 Finalists', activeClass: 'bg-slate-600/20 border-slate-500/50 text-slate-300' },
-        { id: 'champion', label: '🏆 Champion', activeClass: 'bg-amber-600/20 border-amber-500/50 text-amber-300' },
-        { id: 'mvp', label: '✨ MVP', activeClass: 'bg-pink-600/20 border-pink-500/50 text-pink-300' },
-        { id: 'poty', label: '🌟 Player of Year', activeClass: 'bg-red-600/20 border-red-500/50 text-red-300' },
-        { id: 'roty', label: '🌱 Rookie of Year', activeClass: 'bg-cyan-600/20 border-cyan-500/50 text-cyan-300' },
-        { id: 'toty', label: '👑 Team of Year', activeClass: 'bg-yellow-600/20 border-yellow-500/50 text-yellow-300' },
-        { id: 'gpoty', label: '🌍 Global POTY', activeClass: 'bg-purple-600/20 border-purple-500/50 text-purple-300' },
-        { id: 'x', label: '✕ Community Pick', activeClass: 'bg-rose-600/20 border-rose-500/50 text-rose-300' },
+        { id: 'regular', label: '⚔️ Regular Season', color: '#93c5fd', bg: 'rgba(37,99,235,0.2)', border: 'rgba(59,130,246,0.5)' },
+        { id: 'firststand', label: '🟠 First Stand', color: '#fdba74', bg: 'rgba(234,88,12,0.2)', border: 'rgba(249,115,22,0.5)' },
+        { id: 'msi', label: '🌊 MSI', color: '#5eead4', bg: 'rgba(13,148,136,0.2)', border: 'rgba(20,184,166,0.5)' },
+        { id: 'finalists', label: '🥈 Finalists', color: '#cbd5e1', bg: 'rgba(100,116,139,0.2)', border: 'rgba(148,163,184,0.5)' },
+        { id: 'champion', label: '🏆 Champion', color: '#fcd34d', bg: 'rgba(217,119,6,0.2)', border: 'rgba(245,158,11,0.5)' },
+        { id: 'mvp', label: '✨ MVP', color: '#f9a8d4', bg: 'rgba(219,39,119,0.2)', border: 'rgba(236,72,153,0.5)' },
+        { id: 'poty', label: '🌟 Player of Year', color: '#fca5a5', bg: 'rgba(220,38,38,0.2)', border: 'rgba(239,68,68,0.5)' },
+        { id: 'roty', label: '🌱 Rookie of Year', color: '#67e8f9', bg: 'rgba(8,145,178,0.2)', border: 'rgba(6,182,212,0.5)' },
+        { id: 'toty', label: '👑 Team of Year', color: '#fde047', bg: 'rgba(202,138,4,0.2)', border: 'rgba(234,179,8,0.5)' },
+        { id: 'gpoty', label: '🌍 Global POTY', color: '#d8b4fe', bg: 'rgba(147,51,234,0.2)', border: 'rgba(168,85,247,0.5)' },
+        { id: 'x', label: '✕ Community Pick', color: '#fda4af', bg: 'rgba(225,29,72,0.2)', border: 'rgba(244,63,94,0.5)' },
     ];
 
     const regions = ['LCK', 'LPL', 'LEC', 'LCS', 'LCP'];
@@ -86,23 +86,21 @@
     const roleOrder = { TOP: 1, JNG: 2, MID: 3, ADC: 4, SUP: 5, COACH: 6 };
 </script>
 
-<section class="pb-10 pt-2">
-    <div class="flex items-center justify-between mb-4">
+<section class="archive">
+    <div class="archive-header">
         <div>
-            <h2 class="text-xl font-black text-yellow-200 tracking-wide">Archive</h2>
-            <p class="text-xs text-slate-500 font-mono">{ownedCards}/{totalCards} collected ({completionPct}%)</p>
+            <h2 class="archive-title">Archive</h2>
+            <p class="archive-subtitle">{ownedCards}/{totalCards} collected ({completionPct}%)</p>
         </div>
     </div>
 
     <!-- Category Tabs -->
-    <div class="flex flex-wrap gap-1.5 mb-4">
+    <div class="pill-bar">
         {#each categories as cat}
             <button
-                class="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer transition border {
-                    activeCategory === cat.id
-                        ? cat.activeClass
-                        : 'bg-slate-800 border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-700'
-                }"
+                class="pill"
+                class:pill-inactive={activeCategory !== cat.id}
+                style={activeCategory === cat.id ? `color: ${cat.color}; background: ${cat.bg}; border-color: ${cat.border};` : ''}
                 on:click={() => { activeCategory = cat.id; }}
             >{cat.label}</button>
         {/each}
@@ -110,14 +108,11 @@
 
     <!-- Region tabs (regular only) -->
     {#if activeCategory === 'regular'}
-        <div class="flex gap-2 mb-4">
+        <div class="region-bar">
             {#each regions as r}
                 <button
-                    class="flex-1 py-2 px-3 rounded-lg text-xs font-bold cursor-pointer transition border {
-                        activeRegion === r
-                            ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
-                            : 'bg-slate-800 border-transparent text-slate-500 hover:bg-slate-700'
-                    }"
+                    class="region-tab"
+                    class:region-active={activeRegion === r}
                     on:click={() => { activeRegion = r; }}
                 >{regionLabels[r]}</button>
             {/each}
@@ -125,18 +120,17 @@
     {/if}
 
     <!-- Search + Sort -->
-    <div class="flex flex-wrap gap-3 mb-5 items-center">
-        <input type="text" bind:value={search} placeholder="Search player or team..." class="input" style="flex:1; min-width:150px; padding:8px 12px; font-size:12px;">
-        <div class="flex gap-1">
+    <div class="controls-bar">
+        <input type="text" bind:value={search} placeholder="Search player or team..." class="input archive-search">
+        <div class="sort-group">
             {#each [
                 { value: 'team', label: 'Teams' },
                 { value: 'completion', label: 'Completion' },
                 { value: 'least', label: 'Least Cards' },
             ] as s}
                 <button
-                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest cursor-pointer transition {
-                        sortBy === s.value ? 'bg-slate-600 border border-slate-500 text-slate-100' : 'bg-slate-800 border border-transparent text-slate-500 hover:text-slate-300'
-                    }"
+                    class="sort-btn"
+                    class:sort-active={sortBy === s.value}
                     on:click={() => { sortBy = s.value; }}
                 >{s.label}</button>
             {/each}
@@ -145,24 +139,24 @@
 
     <!-- Card Grid by Team -->
     {#if grouped.length === 0}
-        <div class="text-center py-16">
-            <p class="text-slate-600 font-mono text-sm">{search ? 'No cards match your search.' : 'No cards in this category yet.'}</p>
+        <div class="empty-state">
+            <p>{search ? 'No cards match your search.' : 'No cards in this category yet.'}</p>
         </div>
     {:else}
-        <div class="space-y-4">
+        <div class="team-list">
             {#each grouped as group}
                 {@const pct = group.cards.length > 0 ? Math.round((group.owned / group.cards.length) * 100) : 0}
                 {@const isComplete = group.owned === group.cards.length && group.cards.length > 0}
-                <div class="bg-slate-800/40 p-4 rounded-xl border {isComplete ? 'border-emerald-700/40' : 'border-slate-700/30'}">
+                <div class="team-panel" class:team-complete={isComplete}>
                     <!-- Team Header -->
-                    <div class="flex items-center justify-between mb-3 border-b border-slate-700/40 pb-2">
-                        <h3 class="text-sm font-black {isComplete ? 'text-emerald-400' : 'text-slate-300'}">{group.team}</h3>
-                        <span class="text-[10px] font-mono {isComplete ? 'text-emerald-400' : 'text-slate-500'}">
+                    <div class="team-header">
+                        <h3 class="team-name" class:team-name-complete={isComplete}>{group.team}</h3>
+                        <span class="team-stats" class:team-stats-complete={isComplete}>
                             {isComplete ? '✓' : ''} {group.owned}/{group.cards.length} ({pct}%)
                         </span>
                     </div>
                     <!-- Cards -->
-                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; justify-items:center;">
+                    <div class="card-grid">
                         {#each group.cards.sort((a, b) => b.year !== a.year ? b.year - a.year : (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99)) as card (card.id)}
                             {@const isOwned = !!$collectionRegistry[card.id]}
                             <Card {card} mini={true} showOwned={true} owned={isOwned} />
@@ -173,3 +167,203 @@
         </div>
     {/if}
 </section>
+
+<style>
+    .archive {
+        padding: 8px 0 40px;
+    }
+
+    .archive-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .archive-title {
+        font-size: 22px;
+        font-weight: 900;
+        color: #fde68a;
+        letter-spacing: 0.025em;
+    }
+
+    .archive-subtitle {
+        font-size: 12px;
+        color: #64748b;
+        font-family: monospace;
+    }
+
+    /* ── Category pill bar ── */
+    .pill-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 16px;
+    }
+
+    .pill {
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 10px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: 1px solid transparent;
+        background: none;
+    }
+
+    .pill-inactive {
+        background: rgba(30, 41, 59, 0.8);
+        border-color: transparent;
+        color: #64748b;
+    }
+
+    .pill-inactive:hover {
+        color: #e2e8f0;
+        background: rgba(51, 65, 85, 0.6);
+    }
+
+    /* ── Region tabs ── */
+    .region-bar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+    }
+
+    .region-tab {
+        flex: 1;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: 1px solid transparent;
+        background: rgba(30, 41, 59, 0.8);
+        color: #64748b;
+    }
+
+    .region-tab:hover {
+        background: rgba(51, 65, 85, 0.6);
+    }
+
+    .region-active {
+        background: rgba(37, 99, 235, 0.2);
+        border-color: rgba(59, 130, 246, 0.5);
+        color: #93c5fd;
+    }
+
+    /* ── Search + sort controls ── */
+    .controls-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 20px;
+        align-items: center;
+    }
+
+    .archive-search {
+        flex: 1;
+        min-width: 150px;
+        padding: 8px 12px;
+        font-size: 12px;
+    }
+
+    .sort-group {
+        display: flex;
+        gap: 4px;
+    }
+
+    .sort-btn {
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: 1px solid transparent;
+        background: rgba(30, 41, 59, 0.8);
+        color: #64748b;
+    }
+
+    .sort-btn:hover {
+        color: #e2e8f0;
+    }
+
+    .sort-active {
+        background: rgba(71, 85, 105, 0.8);
+        border-color: rgba(100, 116, 139, 0.6);
+        color: #f1f5f9;
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+        text-align: center;
+        padding: 64px 0;
+    }
+
+    .empty-state p {
+        color: #475569;
+        font-family: monospace;
+        font-size: 14px;
+    }
+
+    /* ── Team panels ── */
+    .team-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .team-panel {
+        background: rgba(12, 16, 28, 0.5);
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(51, 65, 85, 0.2);
+    }
+
+    .team-complete {
+        border-color: rgba(5, 150, 105, 0.4);
+    }
+
+    .team-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+    }
+
+    .team-name {
+        font-size: 14px;
+        font-weight: 900;
+        color: #e2e8f0;
+    }
+
+    .team-name-complete {
+        color: #34d399;
+    }
+
+    .team-stats {
+        font-size: 10px;
+        font-family: monospace;
+        color: #64748b;
+    }
+
+    .team-stats-complete {
+        color: #34d399;
+    }
+
+    /* ── Card grid ── */
+    .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 10px;
+        justify-items: center;
+    }
+</style>
