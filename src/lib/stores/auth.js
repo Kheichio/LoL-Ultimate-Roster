@@ -50,6 +50,19 @@ export async function signOut() {
     showToast('Signed out.', 'info');
 }
 
+export async function resetPassword(email) {
+    if (!window.fbAuth) { showToast('Firebase not available.', 'error'); return false; }
+    if (!email) { showToast('Enter your email address first.', 'error'); return false; }
+    try {
+        await window.fbAuth.sendPasswordResetEmail(email);
+        showToast('Password reset email sent! Check your inbox.', 'success');
+        return true;
+    } catch (e) {
+        showToast(e.message.replace('Firebase: ', ''), 'error');
+        return false;
+    }
+}
+
 export async function cloudSave() {
     const user = get(currentUser);
     if (!user || !window.fbDb) { showToast('Sign in first.', 'error'); return; }

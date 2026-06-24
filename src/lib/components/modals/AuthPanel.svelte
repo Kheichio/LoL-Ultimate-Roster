@@ -1,6 +1,6 @@
 <script>
     import { showAuthPanel, soundMuted, lightMode, toggleLightMode, openConfirmModal } from '../../stores/ui.js';
-    import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad } from '../../stores/auth.js';
+    import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad, resetPassword } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
     import { club } from '../../stores/game.js';
@@ -130,6 +130,9 @@
                     <button class="primary-btn" on:click={handleSignIn} disabled={$authLoading}>
                         {$authLoading ? 'Signing in...' : 'Sign In'}
                     </button>
+                    <button class="reset-link" on:click={() => resetPassword(email)}>
+                        Forgot password?
+                    </button>
 
                 {:else if view === 'register'}
                     <div class="section-title">Create Account</div>
@@ -243,6 +246,14 @@
     }
     .primary-btn:hover:not(:disabled) { box-shadow: 0 6px 20px rgba(59,130,246,0.4); transform: translateY(-1px); }
     .primary-btn:disabled { opacity: 0.5; cursor: wait; }
+
+    .reset-link {
+        display: block; width: 100%; margin-top: 10px;
+        background: none; border: none; cursor: pointer;
+        font-size: 11px; font-weight: 700; color: #64748b;
+        text-align: center; transition: color 0.12s;
+    }
+    .reset-link:hover { color: #93c5fd; }
 
     .success-btn {
         width: 100%; padding: 12px;
