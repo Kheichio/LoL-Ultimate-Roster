@@ -25,6 +25,7 @@
     $: isSig = card.signature;
 
     function inspect(e) {
+        if (onclick) return;
         e.stopPropagation();
         inspectingCard.set(card);
     }
@@ -41,8 +42,7 @@
     class:clickable={onclick}
     data-quality={card.quality}
     data-text={textColor}
-    on:click={onclick}
-    on:dblclick={inspect}
+    on:click={onclick || inspect}
 >
     <!-- Tier Header -->
     <div class="card-header" class:sig-header={isSig}>
@@ -90,7 +90,7 @@
 
 <style>
     .card {
-        width: 220px;
+        width: 250px;
         border-radius: 16px;
         overflow: hidden;
         position: relative;
@@ -98,7 +98,7 @@
         flex-direction: column;
         box-shadow: 0 8px 24px rgba(0,0,0,0.4);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
-        cursor: default;
+        cursor: pointer;
         user-select: none;
         font-family: 'Quicksand', sans-serif;
     }
@@ -106,17 +106,19 @@
         transform: translateY(-4px) scale(1.02);
         box-shadow: 0 12px 32px rgba(0,0,0,0.5);
     }
-    .card-mini { width: 170px; font-size: 13px; }
-    .card-mini .card-header { font-size: 8px; padding: 5px 8px; }
-    .card-mini .card-body { padding: 8px 10px 10px; }
-    .card-mini .card-rating { font-size: 1.8rem; }
-    .card-mini .card-avatar { width: 40px; height: 40px; }
-    .card-mini .card-name { font-size: 12px; margin-top: 5px; }
-    .card-mini .card-team { font-size: 9px; }
-    .card-mini .card-stats { font-size: 10px; padding-top: 5px; gap: 1px 8px; }
-    .card-mini .stat-label { font-size: 8px; }
-    .card-mini .role-icon { width: 10px; height: 10px; }
-    .card-mini .card-meta { font-size: 8px; }
+    .card-mini { width: 180px; font-size: 13px; }
+    .card-mini .card-header { font-size: 9px; padding: 7px 10px; }
+    .card-mini .card-body { padding: 10px 14px 14px; }
+    .card-mini .card-identity { margin-top: 8px; }
+    .card-mini .card-rating { font-size: 2.4rem; }
+    .card-mini .card-avatar { width: 46px; height: 46px; }
+    .card-mini .avatar-initials { font-size: 14px; }
+    .card-mini .card-name { font-size: 14px; margin-top: 6px; }
+    .card-mini .card-team { font-size: 10px; }
+    .card-mini .card-stats { font-size: 12px; padding-top: 8px; gap: 4px 14px; }
+    .card-mini .stat-label { font-size: 9px; }
+    .card-mini .role-icon { width: 12px; height: 12px; }
+    .card-mini .card-meta { font-size: 10px; }
     .clickable { cursor: pointer; }
     .card-unowned { filter: grayscale(1) brightness(0.5); opacity: 0.6; }
 
@@ -132,10 +134,10 @@
     /* Header */
     .card-header {
         text-align: center;
-        padding: 8px 12px;
-        font-size: 10px;
+        padding: 10px 14px;
+        font-size: 11px;
         font-weight: 900;
-        letter-spacing: 2px;
+        letter-spacing: 2.5px;
         text-transform: uppercase;
         border-bottom: 1px solid rgba(255,255,255,0.1);
         background: rgba(0,0,0,0.25);
@@ -143,13 +145,14 @@
 
     /* Body */
     .card-body {
-        padding: 14px 16px 16px;
+        flex: 1;
+        padding: 18px 20px 20px;
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 2px;
     }
-    .card-mini .card-body { padding: 10px 12px 12px; }
+    .card-mini .card-body { padding: 10px 14px 14px; }
 
     /* Meta row */
     .card-meta {
@@ -157,41 +160,42 @@
         justify-content: space-between;
         align-items: center;
         width: 100%;
-        font-size: 10px;
+        font-size: 11px;
         font-weight: 800;
         text-transform: uppercase;
     }
     .card-role {
         background: rgba(0,0,0,0.2);
-        padding: 3px 8px;
+        padding: 4px 10px;
         border-radius: 6px;
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 5px;
     }
-    .role-icon { width: 14px; height: 14px; display: inline-block; vertical-align: middle; flex-shrink: 0; }
+    .role-icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; flex-shrink: 0; }
     .card-mini .role-icon { width: 12px; height: 12px; }
-    .card-region { opacity: 0.7; letter-spacing: 0.5px; font-size: 9px; }
+    .card-region { letter-spacing: 0.5px; font-size: 10px; }
 
     /* Identity */
     .card-identity {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         width: 100%;
-        margin-top: 10px;
+        margin-top: 16px;
+        margin-bottom: 4px;
     }
     .card-rating {
-        font-size: 2.8rem;
+        font-size: 4.2rem;
         font-weight: 900;
-        letter-spacing: -2px;
+        letter-spacing: -3px;
         text-shadow: 0 2px 8px rgba(0,0,0,0.3);
         line-height: 1;
     }
-    .card-mini .card-rating { font-size: 2rem; }
+    .card-mini .card-rating { font-size: 2.4rem; }
     .card-avatar {
-        width: 58px;
-        height: 58px;
+        width: 72px;
+        height: 72px;
         border-radius: 50%;
         border: 2px solid rgba(255,255,255,0.2);
         background: rgba(0,0,0,0.25);
@@ -205,68 +209,66 @@
     .card-mini .card-avatar { width: 46px; height: 46px; }
     .avatar-role-bg {
         position: absolute;
-        width: 36px; height: 36px;
+        width: 44px; height: 44px;
         opacity: 0.08;
     }
-    .card-mini .avatar-role-bg { width: 28px; height: 28px; }
+    .card-mini .avatar-role-bg { width: 30px; height: 30px; }
     .avatar-initials {
         position: relative;
         font-weight: 900;
-        font-size: 16px;
+        font-size: 22px;
         z-index: 1;
     }
-    .card-mini .avatar-initials { font-size: 13px; }
+    .card-mini .avatar-initials { font-size: 14px; }
 
     /* Name + Team */
     .card-name {
         font-weight: 900;
-        font-size: 15px;
+        font-size: 20px;
         text-align: center;
         width: 100%;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        margin-top: 8px;
-        text-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        margin-top: 10px;
     }
-    .card-mini .card-name { font-size: 13px; margin-top: 6px; }
+    .card-mini .card-name { font-size: 14px; margin-top: 6px; }
     .card-team {
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 700;
         text-align: center;
-        opacity: 0.55;
         margin-bottom: 6px;
     }
-    .card-mini .card-team { font-size: 9px; }
+    .card-mini .card-team { font-size: 10px; }
 
     /* Stats */
     .card-stats {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 2px 12px;
+        gap: 8px 28px;
         width: 100%;
         border-top: 1px solid rgba(255,255,255,0.1);
-        padding-top: 8px;
-        font-size: 12px;
+        padding-top: 14px;
+        font-size: 18px;
         font-weight: 800;
     }
-    .card-mini .card-stats { gap: 1px 8px; font-size: 10px; padding-top: 6px; }
-    .card-stat { display: flex; gap: 4px; align-items: baseline; }
-    .stat-label { opacity: 0.45; font-size: 9px; min-width: 26px; }
-    .card-mini .stat-label { font-size: 8px; min-width: 22px; }
+    .card-mini .card-stats { gap: 5px 16px; font-size: 14px; padding-top: 10px; }
+    .card-stat { display: flex; gap: 6px; align-items: baseline; }
+    .stat-label { font-size: 13px; min-width: 36px; }
+    .card-mini .stat-label { font-size: 10px; min-width: 26px; }
 
     /* Text colors */
     [data-text="light"] .card-header, [data-text="light"] .card-role, [data-text="light"] .card-rating,
-    [data-text="light"] .avatar-initials, [data-text="light"] .card-name, [data-text="light"] .stat-value { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.4); }
-    [data-text="light"] .card-region, [data-text="light"] .card-team { color: rgba(255,255,255,0.6); }
-    [data-text="light"] .stat-label { color: rgba(255,255,255,0.45); }
+    [data-text="light"] .avatar-initials, [data-text="light"] .card-name, [data-text="light"] .stat-value { color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.5); }
+    [data-text="light"] .card-region, [data-text="light"] .card-team { color: rgba(255,255,255,0.7); text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+    [data-text="light"] .stat-label { color: rgba(255,255,255,0.55); }
     [data-text="light"] .card-stats { border-color: rgba(255,255,255,0.12); }
 
     [data-text="dark"] .card-header, [data-text="dark"] .card-role, [data-text="dark"] .card-rating,
-    [data-text="dark"] .avatar-initials, [data-text="dark"] .card-name, [data-text="dark"] .stat-value { color: #0f172a; text-shadow: none; }
-    [data-text="dark"] .card-region, [data-text="dark"] .card-team { color: rgba(15,23,42,0.6); }
-    [data-text="dark"] .stat-label { color: rgba(15,23,42,0.45); }
-    [data-text="dark"] .card-stats { border-color: rgba(0,0,0,0.12); }
+    [data-text="dark"] .avatar-initials, [data-text="dark"] .card-name, [data-text="dark"] .stat-value { color: #1e1e2e; text-shadow: 0 1px 0 rgba(255,255,255,0.2); }
+    [data-text="dark"] .card-region, [data-text="dark"] .card-team { color: rgba(15,23,42,0.7); }
+    [data-text="dark"] .stat-label { color: rgba(15,23,42,0.55); }
+    [data-text="dark"] .card-stats { border-color: rgba(0,0,0,0.15); }
 
     /* === TIER BACKGROUNDS === */
     .tier-bronze { background: linear-gradient(145deg, #92643a 0%, #6b4423 40%, #4a2f15 100%); border: 3px solid #8b6239; }

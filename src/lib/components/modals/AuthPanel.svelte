@@ -1,9 +1,10 @@
 <script>
-    import { showAuthPanel, soundMuted, lightMode, toggleLightMode } from '../../stores/ui.js';
+    import { showAuthPanel, soundMuted, lightMode, toggleLightMode, openConfirmModal } from '../../stores/ui.js';
     import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
     import { club } from '../../stores/game.js';
+    import { clearStorage } from '../../utils/storage.js';
 
     let view = 'signin'; // signin | register | settings
     let email = '';
@@ -20,6 +21,14 @@
     function close() {
         showAuthPanel.set(false);
         view = 'signin';
+    }
+
+    function wipeAccount() {
+        openConfirmModal('This will erase ALL local data — cards, squad, progress, quests, everything. You cannot undo this.', () => {
+            clearStorage();
+            showToast('Account wiped. Reloading...', 'info');
+            setTimeout(() => location.reload(), 800);
+        });
     }
 
     async function handleSignIn() {
@@ -70,6 +79,11 @@
                             <div><div class="s-title">{$soundMuted ? '🔇' : '🔊'} Sound</div><div class="s-desc">{$soundMuted ? 'Muted' : 'Enabled'}</div></div>
                             <button class="toggle {$soundMuted ? 't-red' : 't-green'}" on:click={handleMute}>{$soundMuted ? 'Off' : 'On'}</button>
                         </div>
+                    </div>
+                    <div class="wipe-section">
+                        <div class="wipe-label">Danger Zone</div>
+                        <button class="wipe-btn" on:click={wipeAccount}>🗑️ Wipe All Local Data</button>
+                        <div class="wipe-hint">Erases everything — cards, squad, progress, quests. Cannot be undone.</div>
                     </div>
                 {:else}
                     <!-- ACCOUNT INFO -->
@@ -138,6 +152,11 @@
                             <div><div class="s-title">{$soundMuted ? '🔇' : '🔊'} Sound</div><div class="s-desc">{$soundMuted ? 'Muted' : 'Enabled'}</div></div>
                             <button class="toggle {$soundMuted ? 't-red' : 't-green'}" on:click={handleMute}>{$soundMuted ? 'Off' : 'On'}</button>
                         </div>
+                    </div>
+                    <div class="wipe-section">
+                        <div class="wipe-label">Danger Zone</div>
+                        <button class="wipe-btn" on:click={wipeAccount}>🗑️ Wipe All Local Data</button>
+                        <div class="wipe-hint">Erases everything — cards, squad, progress, quests. Cannot be undone.</div>
                     </div>
                 {/if}
             </div>
@@ -305,4 +324,27 @@
     .t-yellow { background: rgba(234,179,8,0.1); color: #fbbf24; border-color: rgba(234,179,8,0.2); }
     .t-green { background: rgba(16,185,129,0.1); color: #34d399; border-color: rgba(16,185,129,0.15); }
     .t-red { background: rgba(239,68,68,0.08); color: #f87171; border-color: rgba(239,68,68,0.15); }
+
+    /* Wipe / Danger Zone */
+    .wipe-section {
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(239,68,68,0.1);
+    }
+    .wipe-label {
+        font-size: 10px; font-weight: 900; text-transform: uppercase;
+        letter-spacing: 1.5px; color: #ef4444; margin-bottom: 10px;
+    }
+    .wipe-btn {
+        width: 100%; padding: 11px;
+        background: rgba(127,29,29,0.2); color: #f87171;
+        font-size: 12px; font-weight: 800;
+        border: 1px solid rgba(239,68,68,0.2); border-radius: 10px;
+        cursor: pointer; transition: all 0.12s ease;
+    }
+    .wipe-btn:hover { background: rgba(127,29,29,0.4); border-color: rgba(239,68,68,0.4); }
+    .wipe-hint {
+        font-size: 9px; color: #475569; text-align: center;
+        margin-top: 6px; line-height: 1.4;
+    }
 </style>

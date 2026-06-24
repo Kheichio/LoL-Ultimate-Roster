@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, saveGame } from '../../stores/game.js';
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
@@ -18,7 +18,13 @@
     $: holoCount = $club.filter(c => c.holographic).length;
     $: sigCount = $club.filter(c => c.signature).length;
 
-    const tierColors = { Bronze:'from-amber-800 to-amber-700', Silver:'from-slate-400 to-slate-500', Gold:'from-yellow-500 to-amber-500', Platinum:'from-emerald-500 to-green-500', Diamond:'from-blue-500 to-indigo-500', Master:'from-purple-500 to-violet-500', Grandmaster:'from-red-500 to-rose-500', Challenger:'from-amber-400 to-yellow-400' };
+    function hexToRgb(hex) {
+        const h = hex.replace('#', '');
+        return `${parseInt(h.substring(0,2),16)}, ${parseInt(h.substring(2,4),16)}, ${parseInt(h.substring(4,6),16)}`;
+    }
+    $: teamRgb = hexToRgb($teamIdentity.color || '#3b82f6');
+
+    const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)' };
     const iconOptions = ['🛡️','⚔️','🐲','🦅','🐺','🦁','🔥','❄️','⭐','💎','🌟','🏆','👑','🎯','🌙','☀️','🐉','🦊','🐻','🎮'];
     const colorOptions = ['#3b82f6','#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#eab308','#10b981','#06b6d4','#64748b','#f97316','#14b8a6'];
 
@@ -65,7 +71,7 @@
     ];
 </script>
 
-<section class="home">
+<section class="home" style="--team-rgb: {teamRgb}; --team-color: {$teamIdentity.color || '#3b82f6'};">
     <div class="home-grid">
 
         <!-- LEFT SIDEBAR -->
@@ -80,7 +86,7 @@
                         <div class="team-card-user">{$currentUser.displayName || $currentUser.email}</div>
                     {/if}
                     <div class="team-card-bar">
-                        <div class="team-card-fill" style="width: {Math.min(100, ($managerLevel % 10) * 10)}%; background: linear-gradient(90deg, {$teamIdentity.color || '#4f46e5'}, {$teamIdentity.color || '#6366f1'}cc);"></div>
+                        <div class="team-card-fill" style="width: {Math.min(100, ($managerXP / ($managerLevel * 500)) * 100)}%; background: linear-gradient(90deg, {$teamIdentity.color || '#4f46e5'}, {$teamIdentity.color || '#6366f1'}cc);"></div>
                     </div>
                     <button class="edit-btn" on:click={startEdit}>✏️ Edit</button>
                 {:else}
@@ -238,7 +244,7 @@
                         {#each tierBreakdown as { tier, count }}
                             <div class="tier-row">
                                 <span class="tier-name">{tier}</span>
-                                <div class="tier-track"><div class="tier-fill bg-gradient-to-r {tierColors[tier] || 'from-slate-500 to-slate-600'}" style="width: {Math.min(100, (count / Math.max(...tierBreakdown.map(t => t.count))) * 100)}%"></div></div>
+                                <div class="tier-track"><div class="tier-fill" style="width: {Math.min(100, (count / Math.max(...tierBreakdown.map(t => t.count))) * 100)}%; background: {tierGradients[tier] || 'linear-gradient(90deg, #64748b, #475569)'}"></div></div>
                                 <span class="tier-count">{count}</span>
                             </div>
                         {/each}
@@ -299,8 +305,8 @@
 
     /* Panel base */
     .panel {
-        background: rgba(12, 16, 28, 0.6);
-        border: 1px solid rgba(51, 65, 85, 0.2);
+        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.04) 0%, rgba(12, 16, 28, 0.6) 40%);
+        border: 1px solid rgba(var(--team-rgb), 0.08);
         border-radius: 16px;
         backdrop-filter: blur(6px);
     }
@@ -341,7 +347,8 @@
     .stats-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
     @media (max-width: 768px) { .stats-strip { grid-template-columns: repeat(3, 1fr); } }
     .stat-tile {
-        background: rgba(12,16,28,0.6); border: 1px solid rgba(51,65,85,0.18);
+        background: linear-gradient(160deg, rgba(var(--team-rgb), 0.05) 0%, rgba(12,16,28,0.6) 50%);
+        border: 1px solid rgba(var(--team-rgb), 0.06);
         border-radius: 14px; padding: 14px 8px; text-align: center;
         display: flex; flex-direction: column; align-items: center; gap: 2px;
     }
@@ -403,7 +410,8 @@
     .sq-slot { text-align: center; flex: 1; }
     .sq-role { font-size: 8px; font-weight: 900; color: #475569; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 1px; }
     .sq-card {
-        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3);
+        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.06) 0%, rgba(30,41,59,0.4) 60%);
+        border: 1px solid rgba(var(--team-rgb), 0.1);
         border-radius: 10px; padding: 10px 6px;
     }
     .sq-rating { font-size: 20px; font-weight: 900; color: #e2e8f0; }
@@ -454,6 +462,16 @@
     .bp-tier { color: #475569; font-weight: 600; }
     .bp-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
     .bp-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); border-radius: 4px; transition: width 0.5s; }
+
+    /* Updates */
+    .update-list { display: flex; flex-direction: column; gap: 6px; }
+    .update-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+    .update-ver {
+        flex-shrink: 0; font-size: 9px; font-weight: 900; color: #06b6d4;
+        background: rgba(6, 182, 212, 0.08); padding: 2px 8px; border-radius: 6px;
+        border: 1px solid rgba(6, 182, 212, 0.1);
+    }
+    .update-text { color: #475569; line-height: 1.4; }
 
     /* Career */
     .career-list { display: flex; flex-direction: column; gap: 4px; }
