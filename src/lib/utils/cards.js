@@ -50,6 +50,23 @@ export function isMidCard(quality) {
     return ['Master', 'Grandmaster'].includes(quality);
 }
 
+export function getEffectiveStats(card) {
+    if (!card || !card.stats) return card?.stats || {};
+    const bonus = (card.signature ? 2 : 0) + (card.holographic ? 1 : 0);
+    if (bonus === 0) return card.stats;
+    const out = {};
+    for (const k in card.stats) out[k] = (card.stats[k] || 0) + bonus;
+    return out;
+}
+
+export const TIER_COLORS = {
+    Bronze: '#b45309', Silver: '#94a3b8', Gold: '#eab308', Platinum: '#10b981',
+    Diamond: '#3b82f6', Master: '#a855f7', Grandmaster: '#ef4444', Challenger: '#f59e0b',
+    Champion: '#d97706', MVP: '#ec4899', Finalist: '#94a3b8', MSI: '#2dd4bf',
+    FirstStand: '#fb923c', POTY: '#e94560', ROTY: '#00b4d8', TOTY: '#fca311',
+    GPOTY: '#e0aaff', X: '#ff6b6b',
+};
+
 export function makeUniqueId(prefix = '') {
     return prefix + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 }

@@ -3,7 +3,7 @@
     import { inspectingCard } from '../../stores/ui.js';
     import { club, squad, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { getDB } from '../../utils/cards.js';
+    import { getDB, getEffectiveStats, TIER_COLORS } from '../../utils/cards.js';
 
     let rotX = 0, rotY = 0;
 
@@ -149,9 +149,10 @@
                         {/if}
                     </div>
 
-                    <div class="stats-title">Stats</div>
+                    <div class="stats-title">Stats {card.signature || card.holographic ? `(+${(card.signature ? 2 : 0) + (card.holographic ? 1 : 0)} bonus)` : ''}</div>
+                    {@const eStats = getEffectiveStats(card)}
                     <div class="stats-grid">
-                        {#each [['MEC', card.stats.mec], ['TMF', card.stats.tmf], ['FRM', card.stats.frm], ['CMP', card.stats.cmp], ['MAP', card.stats.map], ['LDR', card.stats.ldr]] as [label, val]}
+                        {#each [['MEC', eStats.mec], ['TMF', eStats.tmf], ['FRM', eStats.frm], ['CMP', eStats.cmp], ['MAP', eStats.map], ['LDR', eStats.ldr]] as [label, val]}
                             <div class="stat-bar-row">
                                 <span class="sb-label">{label}</span>
                                 <div class="sb-track"><div class="sb-fill" style="width: {val}%"></div></div>
@@ -164,11 +165,12 @@
                 {:else if activeTab === 'alts'}
                     <div class="alt-list">
                         {#each altVersions as alt}
+                            {@const tc = TIER_COLORS[alt.quality] || '#64748b'}
                             <!-- svelte-ignore a11y-no-static-element-interactions -->
-                            <div class="alt-row" on:click={() => viewAlt(alt)}>
+                            <div class="alt-row" style="border-left: 3px solid {tc};" on:click={() => viewAlt(alt)}>
                                 <div class="alt-info">
                                     <span class="alt-name">{alt.team} [{alt.year}]</span>
-                                    <span class="alt-tier">{alt.quality} · {alt.role}</span>
+                                    <span class="alt-tier" style="color: {tc};">{alt.quality} · {alt.role}</span>
                                 </div>
                                 <div class="alt-rating">{alt.rating}</div>
                                 <div class="alt-owned">{ownedIds.has(alt.id) ? '✓' : ''}</div>
@@ -181,11 +183,12 @@
                     <div class="roster-header">{card.team} [{card.year}]</div>
                     <div class="alt-list">
                         {#each teamRoster as mate}
+                            {@const tc = TIER_COLORS[mate.quality] || '#64748b'}
                             <!-- svelte-ignore a11y-no-static-element-interactions -->
-                            <div class="alt-row" on:click={() => viewAlt(mate)}>
+                            <div class="alt-row" style="border-left: 3px solid {tc};" on:click={() => viewAlt(mate)}>
                                 <div class="alt-info">
                                     <span class="alt-name">{mate.name}</span>
-                                    <span class="alt-tier">{mate.role} · {mate.quality}</span>
+                                    <span class="alt-tier" style="color: {tc};">{mate.role} · {mate.quality}</span>
                                 </div>
                                 <div class="alt-rating">{mate.rating}</div>
                                 <div class="alt-owned">{ownedIds.has(mate.id) ? '✓' : ''}</div>

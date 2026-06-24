@@ -1,5 +1,5 @@
 <script>
-    import { isDarkCard, isMidCard } from '../../utils/cards.js';
+    import { isDarkCard, isMidCard, getEffectiveStats } from '../../utils/cards.js';
     import { inspectingCard } from '../../stores/ui.js';
 
     export let card;
@@ -23,6 +23,7 @@
     $: flag = regionFlags[card.region] || '';
     $: roleIcon = roleIconMap[card.role] || null;
     $: isSig = card.signature;
+    $: eStats = getEffectiveStats(card);
 
     function inspect(e) {
         if (onclick) return;
@@ -78,7 +79,7 @@
 
         <!-- Stats Grid -->
         <div class="card-stats">
-            {#each [['MEC', card.stats.mec], ['TMF', card.stats.tmf], ['FRM', card.stats.frm], ['CMP', card.stats.cmp], ['MAP', card.stats.map], ['LDR', card.stats.ldr]] as [label, val]}
+            {#each [['MEC', eStats.mec], ['TMF', eStats.tmf], ['FRM', eStats.frm], ['CMP', eStats.cmp], ['MAP', eStats.map], ['LDR', eStats.ldr]] as [label, val]}
                 <div class="card-stat">
                     <span class="stat-label">{label}</span>
                     <span class="stat-value">{val}</span>

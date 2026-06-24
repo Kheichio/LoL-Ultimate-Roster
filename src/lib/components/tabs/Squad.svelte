@@ -2,7 +2,7 @@
     import Card from '../card/Card.svelte';
     import { club, squad, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { LEGACY_TIERS } from '../../utils/cards.js';
+    import { LEGACY_TIERS, getEffectiveStats } from '../../utils/cards.js';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const ALL_SLOTS = [...ROLES, 'COACH'];
@@ -53,8 +53,8 @@
     function assignCard(card) { squad.update(s=>({...s,[pickerRole]:card})); closePicker(); saveGame(); }
     function removeCard(role) { squad.update(s=>({...s,[role]:null})); saveGame(); }
     function totalStats(c) {
-        if (!c.stats) return 0;
-        return (c.stats.mec||0)+(c.stats.tmf||0)+(c.stats.frm||0)+(c.stats.cmp||0)+(c.stats.map||0)+(c.stats.ldr||0);
+        const s = getEffectiveStats(c);
+        return (s.mec||0)+(s.tmf||0)+(s.frm||0)+(s.cmp||0)+(s.map||0)+(s.ldr||0);
     }
     function autofill() {
         const s={...$squad}; const used=new Set(); ALL_SLOTS.forEach(r=>{if(s[r])used.add(s[r].uniqueId);});
