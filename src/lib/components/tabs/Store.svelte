@@ -21,7 +21,7 @@
 
     function buyPack(pack) {
         const db = getDB();
-        if (!db) return;
+        if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
         const be = get(blueEssence);
         if (be < pack.cost) { showToast('Not enough BE.', 'error'); return; }
 
@@ -55,7 +55,8 @@
 
     function buyStarterPack() {
         const db = getDB();
-        if (!db || get(hasBoughtStarter)) return;
+        if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
+        if (get(hasBoughtStarter)) return;
         const roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];
         const pulled = [];
         roles.forEach(role => {
@@ -204,8 +205,8 @@
             {#each pulledCards as card, i}
                 {#if i < revealedCount}
                     <div class="pull-card-slot pull-reveal">
-                        <div class="pull-card-inner" on:click={() => inspectPulled(card)}>
-                            <Card {card} mini={true} />
+                        <div class="pull-card-inner">
+                            <Card {card} mini={true} onclick={() => inspectPulled(card)} />
                         </div>
                         <div class="pull-card-controls">
                             <button

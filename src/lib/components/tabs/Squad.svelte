@@ -153,13 +153,13 @@
 {/if}
 
 <style>
-    .sq { padding-bottom: 40px; }
-    .sq-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
-    .sq-h { font-size:18px; font-weight:900; color:#e2e8f0; }
-    .sq-sub { font-size:11px; color:#475569; margin-top:2px; }
+    .sq { padding-bottom: 40px; max-width: 1400px; margin: 0 auto; }
+    .sq-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+    .sq-h { font-size:22px; font-weight:900; color:#e2e8f0; }
+    .sq-sub { font-size:12px; color:#64748b; margin-top:2px; }
     .sq-btns { display:flex; gap:8px; }
 
-    .sq-grid { display:grid; grid-template-columns:180px 1fr 280px; gap:20px; }
+    .sq-grid { display:grid; grid-template-columns:200px 1fr 300px; gap:24px; }
     @media(max-width:1100px) { .sq-grid { grid-template-columns:1fr; } }
     .side-label { font-size:9px; font-weight:900; text-transform:uppercase; letter-spacing:1.5px; color:#334155; margin-bottom:10px; }
 
@@ -226,20 +226,39 @@
     .avg-s { display:block; font-size:7px; font-weight:800; color:#334155; text-transform:uppercase; }
     .avg-v { display:block; font-size:16px; font-weight:900; color:#94a3b8; margin-top:1px; }
 
-    /* Picker */
-    .pk-over { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column; justify-content:flex-end; }
-    .pk-bg { position:absolute; inset:0; background:rgba(0,0,0,.5); }
-    .pk-panel { position:relative; background:#0a0e1a; border-top:1px solid rgba(51,65,85,.2); border-radius:18px 18px 0 0; max-height:60vh; display:flex; flex-direction:column; }
-    .pk-head { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid rgba(51,65,85,.12); }
-    .pk-left { display:flex; align-items:center; gap:8px; }
-    .pk-right { display:flex; align-items:center; gap:8px; }
-    .pk-title { font-size:13px; font-weight:900; color:#93c5fd; letter-spacing:1px; }
-    .pk-ct { font-size:10px; color:#334155; }
-    .pk-x { width:28px; height:28px; border-radius:8px; background:rgba(51,65,85,.25); border:none; color:#475569; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
-    .pk-x:hover { background:rgba(239,68,68,.12); color:#f87171; }
-    .pk-body { flex:1; overflow-y:auto; padding:14px; }
-    .pk-empty { text-align:center; color:#1e293b; padding:30px; font-size:11px; }
-    .pk-grid { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+    /* Picker — full overlay */
+    .pk-over { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; }
+    .pk-bg { position:absolute; inset:0; background:rgba(0,0,0,.75); backdrop-filter:blur(8px); }
+    .pk-panel {
+        position:relative; background:linear-gradient(170deg, #0d1224 0%, #0a0f1c 100%);
+        border:1px solid rgba(71,85,105,.2); border-radius:20px;
+        width:100%; max-width:1100px; max-height:85vh;
+        display:flex; flex-direction:column;
+        box-shadow:0 25px 80px rgba(0,0,0,.6);
+    }
+    .pk-head {
+        display:flex; justify-content:space-between; align-items:center;
+        padding:18px 24px; border-bottom:1px solid rgba(51,65,85,.15);
+    }
+    .pk-left { display:flex; align-items:center; gap:10px; }
+    .pk-right { display:flex; align-items:center; gap:10px; }
+    .pk-title { font-size:16px; font-weight:900; color:#93c5fd; letter-spacing:1px; }
+    .pk-ct { font-size:11px; color:#475569; font-weight:700; }
+    .pk-x {
+        width:32px; height:32px; border-radius:10px;
+        background:rgba(51,65,85,.3); border:1px solid rgba(71,85,105,.2);
+        color:#64748b; font-size:14px; font-weight:700; cursor:pointer;
+        display:flex; align-items:center; justify-content:center;
+    }
+    .pk-x:hover { background:rgba(239,68,68,.15); color:#f87171; }
+    .pk-body { flex:1; overflow-y:auto; padding:20px 24px; }
+    .pk-empty { text-align:center; color:#475569; padding:40px; font-size:13px; }
+    .pk-grid { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; }
     .pk-wrap { position:relative; }
-    .pk-flex { position:absolute; bottom:0; left:0; right:0; background:rgba(217,119,6,.85); color:#fff; font-size:7px; font-weight:900; text-align:center; padding:2px; border-radius:0 0 14px 14px; letter-spacing:1px; }
+    .pk-flex {
+        position:absolute; bottom:0; left:0; right:0;
+        background:rgba(217,119,6,.85); color:#fff;
+        font-size:8px; font-weight:900; text-align:center;
+        padding:3px; border-radius:0 0 14px 14px; letter-spacing:1px;
+    }
 </style>

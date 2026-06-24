@@ -202,146 +202,138 @@
 
 </script>
 
-<section class="max-w-4xl mx-auto pb-10 pt-2">
-
+<section class="sn">
     {#if phase === 'overview'}
-        <h2 class="text-xl font-black text-blue-300 tracking-wide mb-1">Season Splits</h2>
-        <p class="text-xs text-slate-500 mb-5">Play through 10 matches per split. Each split counts as a regional trophy.</p>
-
-        <!-- Current Split Info -->
-        <div class="bg-gradient-to-br from-blue-950/50 via-slate-900 to-slate-800 p-6 rounded-2xl border border-blue-700/30 text-center mb-6">
-            <div class="text-[10px] text-blue-400 font-black uppercase tracking-widest mb-1">Current Split</div>
-            <div class="text-3xl font-black text-blue-200 mb-1">{splitName} Split — Year {splitYear}</div>
-            <div class="text-xs text-slate-400 font-mono">Split #{$seasonData.currentSplit}</div>
-
-            {#if opponents.length > 0 && !splitComplete}
-                <div class="mt-4 flex justify-center gap-6 text-sm">
-                    <span class="text-emerald-400 font-black">{wins}W</span>
-                    <span class="text-red-400 font-black">{losses}L</span>
-                    <span class="text-slate-500">{GAMES_PER_SPLIT - matchIndex} remaining</span>
-                </div>
-                <button class="mt-4 bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={() => { phase = 'schedule'; }}>
-                    Continue Split →
-                </button>
-            {:else if !squadReady}
-                <p class="text-red-400 text-xs font-bold mt-4">Fill all 5 positions to start.</p>
-            {:else}
-                <button class="mt-4 bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={startSplit}>
-                    Start {splitName} Split
-                </button>
-            {/if}
-        </div>
-
-        <!-- Reward Tiers -->
-        <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700/30 mb-6">
-            <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Split Reward Tiers</h3>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {#each SPLIT_REWARDS as r}
-                    {@const t = SPLIT_TITLES.find(x => x.wins === r.wins)}
-                    <div class="bg-slate-900/40 p-2.5 rounded-lg text-center">
-                        <div class="text-lg">{t?.icon || '—'}</div>
-                        <div class="text-[10px] font-black {t?.color || 'text-slate-400'}">{t?.title || '—'}</div>
-                        <div class="text-[9px] text-slate-500">{r.wins === 0 ? '0-3' : r.wins}+ wins</div>
-                        <div class="text-xs font-bold text-blue-400 mt-1">{r.be} BE</div>
-                    </div>
-                {/each}
+        <div class="sn-head">
+            <div>
+                <h2 class="sn-title">Season Splits</h2>
+                <p class="sn-desc">Play through 10 matches per split. Each split counts as a regional trophy.</p>
             </div>
         </div>
 
-        <!-- Trophy Case -->
-        {#if ($seasonData.trophyCase || []).length > 0}
-            <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700/30">
-                <h3 class="text-[10px] font-black text-amber-400 uppercase tracking-widest mb-3">🏅 Trophy Case</h3>
-                <div class="space-y-1.5">
-                    {#each [...($seasonData.trophyCase || [])].reverse() as trophy}
-                        {@const t = SPLIT_TITLES.find(x => x.title === trophy.title)}
-                        <div class="flex items-center justify-between bg-slate-900/40 px-3 py-2 rounded-lg">
-                            <div>
-                                <span class="text-xs font-bold text-slate-200">{trophy.name} Split Y{trophy.year}</span>
-                                <span class="ml-2 text-[10px] {t?.color || 'text-slate-400'}">{t?.icon} {trophy.title}</span>
-                            </div>
-                            <div class="text-right">
-                                <span class="text-[10px] text-slate-400">{trophy.wins}W-{trophy.losses}L</span>
-                                <span class="ml-2 text-[10px] text-emerald-400">+{trophy.reward} BE</span>
-                            </div>
+        <!-- Current Split Hero -->
+        <div class="split-hero">
+            <div class="split-hero-glow"></div>
+            <div class="split-badge">Current Split</div>
+            <div class="split-name">{splitName} Split — Year {splitYear}</div>
+            <div class="split-num">Split #{$seasonData.currentSplit}</div>
+            {#if opponents.length > 0 && !splitComplete}
+                <div class="split-record">
+                    <span class="sr-w">{wins}W</span>
+                    <span class="sr-l">{losses}L</span>
+                    <span class="sr-rem">{GAMES_PER_SPLIT - matchIndex} remaining</span>
+                </div>
+                <button class="btn-primary" style="margin-top:16px;" on:click={() => { phase = 'schedule'; }}>Continue Split →</button>
+            {:else if !squadReady}
+                <p class="split-warn">Fill all 5 positions to start.</p>
+            {:else}
+                <button class="btn-primary" style="margin-top:16px;" on:click={startSplit}>Start {splitName} Split</button>
+            {/if}
+        </div>
+
+        <!-- Rewards + Trophy in two columns -->
+        <div class="sn-two-col">
+            <div class="sn-panel">
+                <div class="sn-label">Split Reward Tiers</div>
+                <div class="reward-grid">
+                    {#each SPLIT_REWARDS as r}
+                        {@const t = SPLIT_TITLES.find(x => x.wins === r.wins)}
+                        <div class="reward-tile">
+                            <span class="rw-icon">{t?.icon || '—'}</span>
+                            <span class="rw-title">{t?.title || '—'}</span>
+                            <span class="rw-req">{r.wins === 0 ? '0-3' : r.wins}+ wins</span>
+                            <span class="rw-be">{r.be} BE</span>
                         </div>
                     {/each}
                 </div>
             </div>
-        {/if}
 
-    {:else if phase === 'schedule'}
-        <!-- Schedule View -->
-        <div class="flex items-center justify-between mb-4">
-            <div>
-                <h2 class="text-lg font-black text-blue-300">{splitName} Split — Schedule</h2>
-                <p class="text-xs text-slate-500 font-mono">{wins}W - {losses}L · Match {matchIndex + 1} of {GAMES_PER_SPLIT}</p>
-            </div>
-            <button class="text-xs text-slate-500 hover:text-slate-300 cursor-pointer font-bold" on:click={() => { phase = 'overview'; }}>← Overview</button>
+            {#if ($seasonData.trophyCase || []).length > 0}
+                <div class="sn-panel">
+                    <div class="sn-label sn-label-gold">Trophy Case</div>
+                    <div class="trophy-list">
+                        {#each [...($seasonData.trophyCase || [])].reverse() as trophy}
+                            {@const t = SPLIT_TITLES.find(x => x.title === trophy.title)}
+                            <div class="trophy-row">
+                                <span class="tr-icon">{t?.icon || '—'}</span>
+                                <div class="tr-info">
+                                    <span class="tr-name">{trophy.name} Split Y{trophy.year}</span>
+                                    <span class="tr-sub">{trophy.wins}W-{trophy.losses}L · {trophy.title}</span>
+                                </div>
+                                <span class="tr-be">+{trophy.reward}</span>
+                            </div>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
         </div>
 
-        <div class="space-y-2">
+    {:else if phase === 'schedule'}
+        <div class="sn-topbar">
+            <div>
+                <h2 class="sn-title-sm">{splitName} Split — Schedule</h2>
+                <p class="sn-mono">{wins}W - {losses}L · Match {matchIndex + 1} of {GAMES_PER_SPLIT}</p>
+            </div>
+            <button class="sn-back" on:click={() => { phase = 'overview'; }}>← Overview</button>
+        </div>
+
+        <div class="schedule-list">
             {#each opponents as opp, i}
                 {@const result = ($seasonData.matchResults || [])[i]}
                 {@const isNext = i === matchIndex}
                 {@const played = result !== null && result !== undefined}
-                <div class="flex items-center gap-4 px-4 py-3 rounded-xl border {
-                    played ? (result ? 'border-emerald-700/30 bg-emerald-950/10' : 'border-red-700/30 bg-red-950/10') :
-                    isNext ? 'border-blue-500/40 bg-blue-950/20 animate-pulse' :
-                    'border-slate-700/30 bg-slate-800/30 opacity-50'
-                }">
-                    <span class="text-xs font-black w-6 text-center {played ? (result ? 'text-emerald-400' : 'text-red-400') : isNext ? 'text-blue-400' : 'text-slate-600'}">{i + 1}</span>
-                    <div class="flex-1">
-                        <span class="text-xs font-bold {played ? 'text-slate-400' : 'text-slate-200'}">{opp.name}</span>
-                        <span class="text-[10px] text-slate-500 ml-2">Power: {opp.avgRating}</span>
+                <div class="sch-row" class:sch-win={played && result} class:sch-loss={played && !result} class:sch-next={isNext && !played} class:sch-future={!played && !isNext}>
+                    <span class="sch-num">{i + 1}</span>
+                    <div class="sch-info">
+                        <span class="sch-name">{opp.name}</span>
+                        <span class="sch-pwr">Power: {opp.avgRating}</span>
                     </div>
                     {#if played}
-                        <span class="text-xs font-black {result ? 'text-emerald-400' : 'text-red-400'}">{result ? 'WIN' : 'LOSS'}</span>
+                        <span class="sch-result" class:sch-result-w={result} class:sch-result-l={!result}>{result ? 'WIN' : 'LOSS'}</span>
                     {:else if isNext}
-                        <button class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-wider cursor-pointer transition" on:click={() => startMatch(i)}>Play</button>
+                        <button class="btn-primary" style="padding:8px 18px; font-size:10px;" on:click={() => startMatch(i)}>Play</button>
                     {:else}
-                        <span class="text-[10px] text-slate-600">—</span>
+                        <span class="sch-dash">—</span>
                     {/if}
                 </div>
             {/each}
         </div>
 
     {:else if phase === 'match'}
-        <!-- Match -->
-        <div class="text-center mb-4">
-            <h2 class="text-sm font-black text-slate-400 uppercase tracking-widest">Match {currentOpponent.index + 1} — vs {currentOpponent.name}</h2>
-            <div class="flex justify-center gap-4 mt-2 text-xs">
-                <span class="font-black text-blue-400">You {avgRating}</span>
-                <span class="font-black text-slate-600">vs</span>
-                <span class="font-black text-red-400">{currentOpponent.name} {currentOpponent.avgRating}</span>
+        <div class="match-header">
+            <div class="match-label">Match {currentOpponent.index + 1} — vs {currentOpponent.name}</div>
+            <div class="match-vs">
+                <div class="vs-side"><span class="vs-rating vs-blue">{avgRating}</span><span class="vs-name">Your Squad</span></div>
+                <span class="vs-x">VS</span>
+                <div class="vs-side"><span class="vs-rating vs-red">{currentOpponent.avgRating}</span><span class="vs-name">{currentOpponent.name}</span></div>
             </div>
-            <div class="flex justify-center gap-6 mt-2">
-                <span class="text-lg font-black text-blue-400">{playerScore}</span>
-                <span class="text-lg font-black text-slate-600">—</span>
-                <span class="text-lg font-black text-red-400">{cpuScore}</span>
+            <div class="match-score">
+                <span class="ms-blue">{playerScore}</span>
+                <span class="ms-sep">—</span>
+                <span class="ms-red">{cpuScore}</span>
             </div>
-            <p class="text-[9px] text-slate-500 mt-1">Best of 5 — first to 3</p>
+            <div class="match-bo5">Best of 5 — first to 3</div>
         </div>
 
         {#if matchLog.length > 0}
-            <div class="space-y-1.5 mb-5">
+            <div class="log-list">
                 {#each matchLog as log, i}
-                    <div class="bg-slate-800/60 p-2.5 rounded-lg border {log.won ? 'border-emerald-700/30' : 'border-red-700/30'} flex items-center justify-between text-xs">
-                        <span class="font-bold {log.won ? 'text-emerald-400' : 'text-red-400'}">R{i + 1} {log.won ? 'Won' : 'Lost'}</span>
-                        <span class="text-slate-400">{log.myPlay.icon} {log.myVal} vs {log.cpuPlay.icon} {log.cpuVal}</span>
+                    <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
+                        <span class="log-result">R{i + 1} {log.won ? 'Won' : 'Lost'}</span>
+                        <span class="log-detail">{log.myPlay.icon} {log.myVal} vs {log.cpuPlay.icon} {log.cpuVal}</span>
                     </div>
                 {/each}
             </div>
         {/if}
 
         {#if playerScore < 3 && cpuScore < 3}
-            <div class="bg-slate-800/40 p-5 rounded-2xl border border-slate-700/30">
-                <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 text-center">Choose Your Play</h3>
-                <div class="grid grid-cols-3 sm:grid-cols-5 gap-2">
+            <div class="play-picker">
+                <div class="play-label">Choose Your Play</div>
+                <div class="play-grid">
                     {#each PLAYS as play}
-                        <button class="bg-slate-700 hover:bg-slate-600 p-3 rounded-xl text-center cursor-pointer transition hover:scale-[1.03] border border-slate-600/50 hover:border-blue-500/30" on:click={() => pickPlay(play)}>
-                            <div class="text-xl mb-1">{play.icon}</div>
-                            <div class="text-[10px] font-black text-slate-200">{play.label}</div>
+                        <button class="play-btn" on:click={() => pickPlay(play)}>
+                            <span class="pb-icon">{play.icon}</span>
+                            <span class="pb-name">{play.label}</span>
                         </button>
                     {/each}
                 </div>
@@ -350,38 +342,179 @@
 
     {:else if phase === 'matchResult'}
         {@const matchWon = playerScore >= 3}
-        <div class="p-8 rounded-2xl border text-center {matchWon ? 'bg-emerald-950/20 border-emerald-700/30' : 'bg-red-950/20 border-red-700/30'}">
-            <div class="text-4xl mb-3">{matchWon ? '✓' : '✗'}</div>
-            <h2 class="text-xl font-black {matchWon ? 'text-emerald-400' : 'text-red-400'} mb-2">{matchWon ? 'Match Won!' : 'Match Lost'}</h2>
-            <p class="text-slate-400 text-xs mb-2">Score: {playerScore}-{cpuScore} vs {currentOpponent.name}</p>
-            <p class="text-sm font-mono text-slate-500 mb-5">Split record: {wins}W - {losses}L ({GAMES_PER_SPLIT - matchIndex} remaining)</p>
-            <button class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={backToSchedule}>
+        <div class="result-card" class:result-win={matchWon} class:result-lose={!matchWon}>
+            <div class="result-icon">{matchWon ? '✓' : '✗'}</div>
+            <h2 class="result-title" class:rt-win={matchWon} class:rt-lose={!matchWon}>{matchWon ? 'Match Won!' : 'Match Lost'}</h2>
+            <p class="result-score">Score: {playerScore}-{cpuScore} vs {currentOpponent.name}</p>
+            <p class="result-record">Split record: {wins}W - {losses}L ({GAMES_PER_SPLIT - matchIndex} remaining)</p>
+            <button class="btn-secondary" style="margin-top:20px;" on:click={backToSchedule}>
                 {matchIndex >= GAMES_PER_SPLIT ? 'View Split Results' : 'Back to Schedule'}
             </button>
         </div>
 
     {:else if phase === 'splitEnd'}
-        <div class="p-8 rounded-2xl border text-center {wins >= 6 ? 'bg-emerald-950/20 border-emerald-700/30' : 'bg-slate-800/40 border-slate-700/30'}">
-            <div class="text-5xl mb-3">{splitTitle?.icon || '—'}</div>
-            <h2 class="text-2xl font-black {splitTitle?.color || 'text-slate-300'} mb-1">{splitTitle?.title || 'Split Complete'}</h2>
-            <p class="text-lg font-black text-slate-200 mb-1">{splitName} Split — Year {splitYear}</p>
-            <p class="text-sm text-slate-400 mb-4">Final Record: {wins}W - {losses}L</p>
-
+        <div class="result-card" class:result-win={wins >= 6}>
+            <div class="result-icon" style="font-size:48px;">{splitTitle?.icon || '—'}</div>
+            <h2 class="result-title rt-win" style="font-size:24px;">{splitTitle?.title || 'Split Complete'}</h2>
+            <p class="result-sub">{splitName} Split — Year {splitYear}</p>
+            <p class="result-record">Final Record: {wins}W - {losses}L</p>
             {#if splitReward}
-                <div class="bg-slate-900/50 inline-block px-6 py-3 rounded-xl mb-5">
-                    <div class="text-2xl font-black text-blue-400">+{splitReward.be} BE</div>
-                    <div class="text-[10px] text-slate-500">{splitReward.label}</div>
-                    {#if wins >= 6}
-                        <div class="text-[10px] text-amber-400 font-bold mt-1">+1 Regional Trophy</div>
-                    {/if}
+                <div class="reward-box">
+                    <span class="rb-be">+{splitReward.be} BE</span>
+                    <span class="rb-label">{splitReward.label}</span>
+                    {#if wins >= 6}<span class="rb-trophy">+1 Regional Trophy</span>{/if}
                 </div>
             {/if}
-
-            <div>
-                <button class="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest cursor-pointer transition" on:click={claimSplitReward}>
-                    Claim & Start Next Split
-                </button>
-            </div>
+            <button class="btn-success" style="margin-top:20px;" on:click={claimSplitReward}>Claim & Start Next Split</button>
         </div>
     {/if}
 </section>
+
+<style>
+    .sn { max-width: 900px; margin: 0 auto; padding-bottom: 40px; }
+    .sn-head { margin-bottom: 20px; }
+    .sn-title { font-size: 22px; font-weight: 900; color: #93c5fd; letter-spacing: 0.5px; }
+    .sn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
+
+    /* Split hero */
+    .split-hero {
+        position: relative; text-align: center; padding: 40px 24px 32px;
+        background: linear-gradient(160deg, rgba(30,58,138,0.25), rgba(15,23,42,0.6));
+        border: 1px solid rgba(59,130,246,0.12); border-radius: 20px;
+        margin-bottom: 24px; overflow: hidden;
+    }
+    .split-hero-glow { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0%, rgba(59,130,246,0.08), transparent 60%); pointer-events: none; }
+    .split-badge { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; color: #3b82f6; margin-bottom: 8px; position: relative; }
+    .split-name { font-size: 28px; font-weight: 900; color: #bfdbfe; position: relative; }
+    .split-num { font-size: 12px; color: #64748b; font-family: monospace; margin-top: 4px; position: relative; }
+    .split-record { display: flex; justify-content: center; gap: 20px; margin-top: 16px; font-size: 14px; font-weight: 900; position: relative; }
+    .sr-w { color: #34d399; } .sr-l { color: #f87171; } .sr-rem { color: #64748b; font-weight: 600; }
+    .split-warn { color: #f87171; font-size: 12px; font-weight: 700; margin-top: 16px; position: relative; }
+
+    /* Two column layout */
+    .sn-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 700px) { .sn-two-col { grid-template-columns: 1fr; } }
+    .sn-panel {
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 16px; padding: 20px;
+    }
+    .sn-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; margin-bottom: 14px; }
+    .sn-label-gold { color: #f59e0b; }
+
+    /* Reward tiles */
+    .reward-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .reward-tile {
+        background: rgba(15,23,42,0.4); border: 1px solid rgba(51,65,85,0.15);
+        border-radius: 10px; padding: 10px 8px; text-align: center;
+        display: flex; flex-direction: column; gap: 2px;
+    }
+    .rw-icon { font-size: 16px; }
+    .rw-title { font-size: 10px; font-weight: 900; color: #94a3b8; }
+    .rw-req { font-size: 9px; color: #475569; }
+    .rw-be { font-size: 12px; font-weight: 900; color: #60a5fa; }
+
+    /* Trophy list */
+    .trophy-list { display: flex; flex-direction: column; gap: 6px; }
+    .trophy-row {
+        display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+        background: rgba(15,23,42,0.3); border-radius: 10px;
+    }
+    .tr-icon { font-size: 18px; flex-shrink: 0; }
+    .tr-info { flex: 1; min-width: 0; }
+    .tr-name { display: block; font-size: 12px; font-weight: 800; color: #e2e8f0; }
+    .tr-sub { display: block; font-size: 10px; color: #64748b; }
+    .tr-be { font-size: 12px; font-weight: 900; color: #34d399; flex-shrink: 0; }
+
+    /* Schedule */
+    .sn-topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .sn-title-sm { font-size: 18px; font-weight: 900; color: #93c5fd; }
+    .sn-mono { font-size: 11px; color: #64748b; font-family: monospace; margin-top: 2px; }
+    .sn-back { font-size: 11px; font-weight: 700; color: #64748b; background: none; border: none; cursor: pointer; }
+    .sn-back:hover { color: #e2e8f0; }
+
+    .schedule-list { display: flex; flex-direction: column; gap: 6px; }
+    .sch-row {
+        display: flex; align-items: center; gap: 14px; padding: 14px 18px;
+        border-radius: 12px; border: 1px solid rgba(51,65,85,0.2);
+        background: rgba(12,16,28,0.4); transition: all 0.12s;
+    }
+    .sch-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }
+    .sch-loss { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
+    .sch-next { border-color: rgba(59,130,246,0.3); background: rgba(30,58,138,0.12); }
+    .sch-future { opacity: 0.4; }
+    .sch-num { font-size: 13px; font-weight: 900; color: #475569; width: 24px; text-align: center; }
+    .sch-win .sch-num { color: #34d399; } .sch-loss .sch-num { color: #f87171; } .sch-next .sch-num { color: #60a5fa; }
+    .sch-info { flex: 1; }
+    .sch-name { font-size: 13px; font-weight: 800; color: #e2e8f0; }
+    .sch-pwr { font-size: 10px; color: #64748b; margin-left: 8px; }
+    .sch-result { font-size: 12px; font-weight: 900; }
+    .sch-result-w { color: #34d399; } .sch-result-l { color: #f87171; }
+    .sch-dash { font-size: 11px; color: #1e293b; }
+
+    /* Match */
+    .match-header { text-align: center; margin-bottom: 20px; }
+    .match-label { font-size: 11px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
+    .match-vs { display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 12px; }
+    .vs-side { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .vs-rating { font-size: 32px; font-weight: 900; }
+    .vs-blue { color: #60a5fa; } .vs-red { color: #f87171; }
+    .vs-name { font-size: 10px; color: #64748b; font-weight: 700; text-transform: uppercase; }
+    .vs-x { font-size: 16px; font-weight: 900; color: #334155; }
+    .match-score { display: flex; justify-content: center; gap: 16px; margin-top: 12px; }
+    .ms-blue { font-size: 22px; font-weight: 900; color: #60a5fa; }
+    .ms-red { font-size: 22px; font-weight: 900; color: #f87171; }
+    .ms-sep { font-size: 22px; font-weight: 900; color: #334155; }
+    .match-bo5 { font-size: 9px; color: #475569; margin-top: 4px; }
+
+    .log-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 20px; }
+    .log-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 14px; border-radius: 10px; font-size: 12px;
+        background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15);
+    }
+    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
+    .log-result { font-weight: 900; }
+    .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
+    .log-detail { color: #64748b; }
+
+    /* Play picker */
+    .play-picker {
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 16px; padding: 24px;
+    }
+    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
+    .play-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    @media (max-width: 600px) { .play-grid { grid-template-columns: repeat(3, 1fr); } }
+    .play-btn {
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        padding: 16px 8px; border-radius: 12px; cursor: pointer;
+        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3);
+        transition: all 0.12s;
+    }
+    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.04); }
+    .pb-icon { font-size: 22px; }
+    .pb-name { font-size: 10px; font-weight: 900; color: #e2e8f0; }
+
+    /* Results */
+    .result-card {
+        text-align: center; padding: 40px 24px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 20px;
+    }
+    .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }
+    .result-lose { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
+    .result-icon { font-size: 40px; margin-bottom: 12px; }
+    .result-title { font-size: 22px; font-weight: 900; margin-bottom: 8px; }
+    .rt-win { color: #34d399; } .rt-lose { color: #f87171; }
+    .result-score { font-size: 12px; color: #94a3b8; }
+    .result-sub { font-size: 16px; font-weight: 900; color: #e2e8f0; margin-bottom: 4px; }
+    .result-record { font-size: 12px; color: #64748b; font-family: monospace; }
+
+    .reward-box {
+        display: inline-flex; flex-direction: column; align-items: center; gap: 2px;
+        background: rgba(15,23,42,0.4); padding: 16px 28px; border-radius: 14px; margin-top: 16px;
+    }
+    .rb-be { font-size: 24px; font-weight: 900; color: #60a5fa; }
+    .rb-label { font-size: 10px; color: #64748b; }
+    .rb-trophy { font-size: 10px; font-weight: 800; color: #fbbf24; margin-top: 2px; }
+</style>
