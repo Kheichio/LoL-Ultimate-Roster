@@ -1,5 +1,5 @@
 <script>
-    import { isDarkCard, isMidCard, getEffectiveStats } from '../../utils/cards.js';
+    import { isDarkCard, isMidCard, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
     import { inspectingCard } from '../../stores/ui.js';
 
     export let card;
@@ -24,6 +24,7 @@
     $: roleIcon = roleIconMap[card.role] || null;
     $: isSig = card.signature;
     $: eStats = getEffectiveStats(card);
+    $: eRating = getEffectiveRating(card);
 
     function inspect(e) {
         if (onclick) return;
@@ -64,7 +65,7 @@
 
         <!-- Rating + Avatar -->
         <div class="card-identity">
-            <span class="card-rating">{card.rating}</span>
+            <span class="card-rating">{eRating}</span>
             <div class="card-avatar">
                 {#if roleIcon}
                     <img src={roleIcon} alt="" class="avatar-role-bg">

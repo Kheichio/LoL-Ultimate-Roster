@@ -2,7 +2,7 @@
     import Card from '../card/Card.svelte';
     import { club, squad, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { LEGACY_TIERS, getEffectiveStats } from '../../utils/cards.js';
+    import { LEGACY_TIERS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const ALL_SLOTS = [...ROLES, 'COACH'];
@@ -12,7 +12,7 @@
 
     $: starters = ROLES.map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
-    $: avgRating = squadReady ? Math.round(starters.reduce((s,c) => s + c.rating, 0) / starters.length) : 0;
+    $: avgRating = squadReady ? Math.round(starters.reduce((s,c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
     $: avgStats = squadReady ? (() => { const sm={mec:0,tmf:0,frm:0,cmp:0,map:0,ldr:0}; starters.forEach(c=>{for(const k in sm) sm[k]+=c.stats[k]||0;}); for(const k in sm) sm[k]=Math.round(sm[k]/starters.length); return sm; })() : null;
     $: coachBonus = (() => { const c=$squad.COACH; if(!c) return 0; return c.rating>=98?5:c.rating>=94?4:c.rating>=90?3:c.rating>=85?2:1; })();
     $: regionChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.region)).size; return s<=1?5:s<=2?3:s<=3?2:1; })();

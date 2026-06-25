@@ -59,6 +59,12 @@ export function getEffectiveStats(card) {
     return out;
 }
 
+export function getEffectiveRating(card) {
+    if (!card) return 0;
+    const bonus = (card.signature ? 2 : 0) + (card.holographic ? 1 : 0);
+    return card.rating + bonus;
+}
+
 export const TIER_COLORS = {
     Bronze: '#b45309', Silver: '#94a3b8', Gold: '#eab308', Platinum: '#10b981',
     Diamond: '#3b82f6', Master: '#a855f7', Grandmaster: '#ef4444', Challenger: '#f59e0b',

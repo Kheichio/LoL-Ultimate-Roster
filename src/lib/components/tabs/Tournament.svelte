@@ -3,7 +3,7 @@
     import { club, squad, blueEssence, trackStats, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
-    import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats } from '../../utils/cards.js';
+    import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
 
@@ -25,7 +25,7 @@
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
-    $: avgRating = squadReady ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
+    $: avgRating = squadReady ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
     $: coachBonus = (() => { const c=$squad.COACH; if(!c) return 0; return c.rating>=98?5:c.rating>=94?4:c.rating>=90?3:c.rating>=85?2:1; })();
     $: regionChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.region)).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
     $: yearChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.year)).size; return s<=1?5:s<=2?4:s<=3?3:s<=4?2:1; })();

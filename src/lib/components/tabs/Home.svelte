@@ -4,10 +4,10 @@
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
-    import { TIER_ORDER } from '../../utils/cards.js';
+    import { TIER_ORDER, getEffectiveRating } from '../../utils/cards.js';
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
-    $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
+    $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
     $: bestCard = [...$club].sort((a, b) => ((b.signature?1000:0)+(b.holographic?500:0)+b.rating) - ((a.signature?1000:0)+(a.holographic?500:0)+a.rating))[0] || null;
     $: tierBreakdown = (() => {
         const counts = {};

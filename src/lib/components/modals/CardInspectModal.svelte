@@ -3,7 +3,7 @@
     import { inspectingCard } from '../../stores/ui.js';
     import { club, squad, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { getDB, getEffectiveStats, TIER_COLORS } from '../../utils/cards.js';
+    import { getDB, getEffectiveStats, getEffectiveRating, TIER_COLORS } from '../../utils/cards.js';
 
     let rotX = 0, rotY = 0;
 
@@ -133,7 +133,7 @@
                         </div>
                         <div class="detail-row">
                             <span class="d-label">Rating</span>
-                            <span class="d-value d-rating">{card.rating}</span>
+                            <span class="d-value d-rating">{getEffectiveRating(card)}</span>
                         </div>
                         {#if card.holographic}
                             <div class="detail-row">
