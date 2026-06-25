@@ -17,6 +17,29 @@
     let upgradeChoices = [];
     let totalBEEarned = 0;
 
+    function saveTowerRun() {
+        localStorage.setItem('lur_tower_run', JSON.stringify({ floor, towerBuffs, totalBEEarned }));
+    }
+    function loadTowerRun() {
+        try {
+            const raw = localStorage.getItem('lur_tower_run');
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch(e) { return null; }
+    }
+    function clearTowerRun() {
+        localStorage.removeItem('lur_tower_run');
+    }
+
+    // Load saved run on mount
+    const savedRun = loadTowerRun();
+    if (savedRun && savedRun.floor > 0) {
+        floor = savedRun.floor;
+        towerBuffs = savedRun.towerBuffs || [];
+        totalBEEarned = savedRun.totalBEEarned || 0;
+        phase = 'lobby';
+    }
+
     const PLAYS = [
         { id: 'mec', label: 'Mechanical', stat: 'mec', icon: '⚡' },
         { id: 'tmf', label: 'Teamfight', stat: 'tmf', icon: '🔥' },
@@ -122,6 +145,12 @@
     function startTower() {
         if (!squadReady) { showToast('Fill all 5 positions.', 'error'); return; }
         floor = 0; towerBuffs = []; totalBEEarned = 0;
+        clearTowerRun();
+        nextFloor();
+    }
+
+    function continueTower() {
+        if (!squadReady) { showToast('Fill all 5 positions.', 'error'); return; }
         nextFloor();
     }
 
@@ -155,11 +184,13 @@
                     showToast(`Floor ${floor} cleared! +${reward} BE`, 'success');
                 }
                 if (floor > bestFloor) trackStats.update(s => ({ ...s, towerHighestFloor: floor }));
+                saveTowerRun();
                 saveGame();
                 phase = 'upgrade';
             } else {
                 playSound('lose');
                 if (floor > bestFloor) trackStats.update(s => ({ ...s, towerHighestFloor: floor - 1 }));
+                clearTowerRun();
                 saveGame();
                 phase = 'dead';
             }
@@ -168,11 +199,16 @@
 
     function pickUpgrade(upgrade) {
         towerBuffs = [...towerBuffs, upgrade];
+        saveTowerRun();
         showToast(`${upgrade.label} applied!`, 'success');
         nextFloor();
     }
 
-    function endRun() { phase = 'lobby'; }
+    function endRun() {
+        clearTowerRun();
+        floor = 0; towerBuffs = []; totalBEEarned = 0;
+        phase = 'lobby';
+    }
 </script>
 
 <section class="tower">
@@ -186,7 +222,19 @@
                 <span class="twb-num">{bestFloor}</span>
                 <span class="twb-label">Best Floor</span>
             </div>
-            {#if squadReady}
+            {#if floor > 0}
+                <div class="tw-saved">
+                    <span class="tws-label">Run in progress — Floor {floor} · {towerBuffs.length} buffs · {totalBEEarned} BE</span>
+                </div>
+                {#if squadReady}
+                    <div class="tw-btn-row">
+                        <button class="tw-start" on:click={continueTower}>Continue Floor {floor + 1} →</button>
+                        <button class="tw-abandon" on:click={endRun}>Abandon Run</button>
+                    </div>
+                {:else}
+                    <p class="tw-warn">Fill all 5 squad positions to continue.</p>
+                {/if}
+            {:else if squadReady}
                 <button class="tw-start" on:click={startTower}>Begin Climb</button>
             {:else}
                 <p class="tw-warn">Fill all 5 squad positions to enter.</p>
@@ -313,6 +361,15 @@
     .tw-start { padding: 14px 40px; border-radius: 12px; background: linear-gradient(135deg, #dc2626, #ef4444); color: white; font-weight: 900; font-size: 14px; border: none; cursor: pointer; box-shadow: 0 4px 15px rgba(239,68,68,0.3); transition: all 0.15s; }
     .tw-start:hover { box-shadow: 0 6px 20px rgba(239,68,68,0.45); transform: translateY(-1px); }
     .tw-warn { font-size: 12px; color: #f87171; font-weight: 700; }
+    .tw-saved { margin-bottom: 16px; }
+    .tws-label { font-size: 13px; font-weight: 800; color: #fbbf24; }
+    .tw-btn-row { display: flex; gap: 10px; justify-content: center; }
+    .tw-abandon {
+        padding: 14px 28px; border-radius: 12px;
+        background: rgba(51,65,85,0.4); border: 1px solid rgba(71,85,105,0.3);
+        color: #94a3b8; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.12s;
+    }
+    .tw-abandon:hover { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.2); color: #f87171; }
     .tw-back { display: block; margin: 12px auto 0; padding: 8px 20px; border-radius: 10px; background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3); color: #94a3b8; font-size: 11px; font-weight: 800; cursor: pointer; transition: all 0.12s; }
     .tw-back:hover { background: rgba(51,65,85,0.5); color: #e2e8f0; }
 
