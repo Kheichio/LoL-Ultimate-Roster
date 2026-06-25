@@ -26,18 +26,18 @@
 
     // Leaderboard title
     function getTitle(tp) {
-        if (tp >= 200) return 'Immortal';
-        if (tp >= 150) return 'Legend';
-        if (tp >= 100) return 'Hall of Fame';
-        if (tp >= 70) return 'President';
-        if (tp >= 50) return 'Executive';
-        if (tp >= 30) return 'GM';
-        if (tp >= 15) return 'Director';
-        if (tp >= 5) return 'Manager';
+        if (tp >= 1000) return 'Immortal';
+        if (tp >= 600) return 'Legend';
+        if (tp >= 400) return 'Hall of Fame';
+        if (tp >= 250) return 'President';
+        if (tp >= 150) return 'Executive';
+        if (tp >= 75) return 'GM';
+        if (tp >= 30) return 'Director';
+        if (tp >= 10) return 'Manager';
         return 'Scout';
     }
     $: prestigeTitle = getTitle($weightedTrophies);
-    $: nextTitleThreshold = [5,15,30,50,70,100,150,200].find(t => t > $weightedTrophies) || null;
+    $: nextTitleThreshold = [10,30,75,150,250,400,600,1000].find(t => t > $weightedTrophies) || null;
 
     function hexToRgb(hex) {
         const h = hex.replace('#', '');

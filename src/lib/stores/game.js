@@ -28,6 +28,9 @@ export const unlocks = writable({ firstStand: false, msi: false, worlds: false, 
 export const seasonData = writable({ currentSplit: 1, splitWins: 0, splitLosses: 0, trophyCase: [], opponents: [], matchResults: [] });
 export const battlePass = writable({ season: 1, tier: 0, xp: 0, claimed: [] });
 
+// === Daily Login ===
+export const dailyLogin = writable({ lastClaim: null, streak: 0, totalDays: 0 });
+
 // === Quests ===
 export const questsClaimed = writable({});
 export const questsRepeatableBaselines = writable({});
@@ -59,6 +62,7 @@ export function saveGame() {
         saveToStorage('lur_unlocks', get(unlocks));
         saveToStorage('lur_season', get(seasonData));
         saveToStorage('lur_battlepass', get(battlePass));
+        saveToStorage('lur_dailylogin', get(dailyLogin));
         saveToStorage('lur_quests_claimed', get(questsClaimed));
         saveToStorage('lur_quests_rbase', get(questsRepeatableBaselines));
         saveToStorage('lur_quests_rcounts', get(questsRepeatableCounts));
@@ -104,6 +108,9 @@ export function initGame() {
 
     const bp = loadFromStorage('lur_battlepass');
     if (bp) battlePass.set({ ...get(battlePass), ...bp });
+
+    const dl = loadFromStorage('lur_dailylogin');
+    if (dl) dailyLogin.set({ ...get(dailyLogin), ...dl });
 
     const qc = loadFromStorage('lur_quests_claimed');
     if (qc) questsClaimed.set(qc);

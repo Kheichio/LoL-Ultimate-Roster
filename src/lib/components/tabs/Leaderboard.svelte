@@ -1,9 +1,9 @@
 <script>
     import ProfileModal from '../modals/ProfileModal.svelte';
-    import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, weightedTrophies, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, weightedTrophies, skills, saveGame } from '../../stores/game.js';
     import { currentUser, cloudSave } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
-    import { getEffectiveRating } from '../../utils/cards.js';
+    import { getEffectiveRating, LEGACY_TIERS, getEra } from '../../utils/cards.js';
     import { get, derived } from 'svelte/store';
     import { onDestroy } from 'svelte';
 
@@ -16,6 +16,7 @@
     const columns = [
         { key: 'trophies', label: 'Trophies', color: '#34d399' },
         { key: 'totalPower', label: 'Power', color: '#22c55e' },
+        { key: 'rawPower', label: 'Raw', color: '#60a5fa' },
         { key: 'splitsCompleted', label: 'Splits', color: '#94a3b8' },
         { key: 'goldenRoads', label: 'GR', color: '#eab308' },
         { key: 'clubSize', label: 'Cards', color: '#94a3b8' },
@@ -24,20 +25,28 @@
     ];
 
     function getTitle(tp) {
-        if (tp >= 200) return 'Immortal';
-        if (tp >= 150) return 'Legend';
-        if (tp >= 100) return 'Hall of Fame';
-        if (tp >= 70) return 'President';
-        if (tp >= 50) return 'Executive';
-        if (tp >= 30) return 'GM';
-        if (tp >= 15) return 'Director';
-        if (tp >= 5) return 'Manager';
+        if (tp >= 1000) return 'Immortal';
+        if (tp >= 600) return 'Legend';
+        if (tp >= 400) return 'Hall of Fame';
+        if (tp >= 250) return 'President';
+        if (tp >= 150) return 'Executive';
+        if (tp >= 75) return 'GM';
+        if (tp >= 30) return 'Director';
+        if (tp >= 10) return 'Manager';
         return 'Scout';
     }
 
     function buildMyEntry() {
-        const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => get(squad)[r]).filter(Boolean);
-        const avg = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
+        const sq = get(squad);
+        const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => sq[r]).filter(Boolean);
+        const rawAvg = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
+        const coachB = (() => { const c = sq.COACH; if (!c) return 0; return c.rating >= 98 ? 5 : c.rating >= 94 ? 4 : c.rating >= 90 ? 3 : c.rating >= 85 ? 2 : 1; })();
+        const nl = starters.filter(c => !LEGACY_TIERS.includes(c.quality));
+        const regChem = !starters.length ? 0 : !nl.length ? 5 : (() => { const s = new Set(nl.map(c => c.region)).size; return s <= 1 ? 5 : s <= 2 ? 3 : s <= 3 ? 2 : 1; })();
+        const yrChem = !starters.length ? 0 : !nl.length ? 5 : (() => { const s = new Set(nl.map(c => getEra(c.year))).size; return s <= 1 ? 5 : s <= 2 ? 3 : s <= 3 ? 2 : 1; })();
+        const tmChem = !starters.length ? 0 : !nl.length ? 2 : new Set(nl.map(c => c.team)).size === 1 ? 2 : 0;
+        const legB = (() => { const c = starters.filter(c => LEGACY_TIERS.includes(c.quality)).length; return c >= 4 ? 2 : c >= 2 ? 1 : 0; })();
+        const totalPwr = rawAvg + regChem + yrChem + tmChem + coachB + legB;
         const ts = get(trackStats);
         return {
             id: get(currentUser)?.uid || 'local',
@@ -49,8 +58,8 @@
             managerLevel: get(managerLevel),
             prestigeTitle: getTitle(get(weightedTrophies)),
             trophies: get(weightedTrophies),
-            totalPower: avg,
-            rawPower: avg,
+            totalPower: totalPwr,
+            rawPower: rawAvg,
             totalBE: get(blueEssence),
             clubSize: get(club).length,
             signatureCards: get(club).filter(c => c.signature).length,
@@ -87,6 +96,7 @@
                 prestigeTitle: entry.prestigeTitle,
                 trophies: entry.trophies,
                 totalPower: entry.totalPower,
+                rawPower: entry.rawPower,
                 clubSize: entry.clubSize,
                 signatureCards: entry.signatureCards,
                 holographicCards: entry.holographicCards,
@@ -129,7 +139,7 @@
                         prestigeTitle: d.prestigeTitle || getTitle(d.trophies || 0),
                         trophies: d.trophies || 0,
                         totalPower: d.totalPower || 0,
-                        rawPower: d.totalPower || 0,
+                        rawPower: d.rawPower || d.totalPower || 0,
                         totalBE: 0,
                         clubSize: d.clubSize || 0,
                         signatureCards: d.signatureCards || 0,

@@ -23,7 +23,21 @@
 <CardInspectModal />
 <AuthPanel />
 
+<div class="version-badge">Beta 1.0.7 public build</div>
+
 <style>
+    .version-badge {
+        position: fixed;
+        bottom: 12px;
+        right: 16px;
+        font-size: 9px;
+        font-weight: 700;
+        color: #334155;
+        letter-spacing: 0.5px;
+        z-index: 10;
+        pointer-events: none;
+        user-select: none;
+    }
     .app-shell {
         min-height: 100vh;
         display: flex;

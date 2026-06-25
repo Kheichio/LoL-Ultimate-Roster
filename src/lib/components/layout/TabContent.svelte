@@ -12,6 +12,8 @@
     import Season from '../tabs/Season.svelte';
     import Leaderboard from '../tabs/Leaderboard.svelte';
     import Trade from '../tabs/Trade.svelte';
+    import Rewards from '../tabs/Rewards.svelte';
+    import Guide from '../tabs/Guide.svelte';
 
     export let tab;
 </script>
@@ -43,6 +45,10 @@
         <Leaderboard />
     {:else if tab === 'trade'}
         <Trade />
+    {:else if tab === 'rewards'}
+        <Rewards />
+    {:else if tab === 'guide'}
+        <Guide />
     {:else}
         <section class="max-w-3xl mx-auto pt-10">
             <p class="text-slate-500 text-center font-mono text-sm">{tab} — coming soon</p>

@@ -73,6 +73,15 @@ export const TIER_COLORS = {
     GPOTY: '#e0aaff', X: '#ff6b6b',
 };
 
+export function getEra(year) {
+    if (year <= 2013) return 1;
+    if (year <= 2016) return 2;
+    if (year <= 2019) return 3;
+    if (year <= 2022) return 4;
+    if (year <= 2025) return 5;
+    return 6;
+}
+
 export function makeUniqueId(prefix = '') {
     return prefix + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 }
@@ -101,6 +110,30 @@ export function rollPackTier(packType) {
     if (packType === 'starter') {
         if (rng > 70) return 'Silver';
         return 'Bronze';
+    }
+    if (packType === 'champion') {
+        if (rng > 92) return 'Champion';
+        if (rng > 70) return 'Finalist';
+        if (rng > 40) return 'Diamond';
+        return 'Platinum';
+    }
+    if (packType === 'mvp') {
+        if (rng > 95) return 'MVP';
+        if (rng > 80) return 'Champion';
+        if (rng > 55) return 'Finalist';
+        return 'Diamond';
+    }
+    if (packType === 'msi') {
+        if (rng > 90) return 'MSI';
+        if (rng > 65) return 'Diamond';
+        if (rng > 35) return 'Platinum';
+        return 'Gold';
+    }
+    if (packType === 'firststand') {
+        if (rng > 90) return 'FirstStand';
+        if (rng > 65) return 'Diamond';
+        if (rng > 35) return 'Platinum';
+        return 'Gold';
     }
     return 'Bronze';
 }

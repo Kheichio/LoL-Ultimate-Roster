@@ -1,13 +1,14 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
-    import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
+    import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
 
     let phase = 'lobby';
+    let activeMode = null;
     let round = 0;
     let enemies = [];
     let currentEnemy = null;
@@ -16,6 +17,7 @@
     let cpuScore = 0;
     let roundResults = [];
     let tournamentResult = null;
+    let goldenRoadStage = 0;
 
     const PLAYS = [
         { id: 'mec', label: 'Mechanical', stat: 'mec', icon: '⚡' },
@@ -35,53 +37,89 @@
     $: avgRating = squadReady ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
     $: coachBonus = (() => { const c=$squad.COACH; if(!c) return 0; return c.rating>=98?5:c.rating>=94?4:c.rating>=90?3:c.rating>=85?2:1; })();
     $: regionChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.region)).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
-    $: yearChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.year)).size; return s<=1?5:s<=2?4:s<=3?3:s<=4?2:1; })();
+    $: eraChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>getEra(c.year))).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
     $: teamChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); return !nl.length||new Set(nl.map(c=>c.team)).size===1?2:0; })();
     $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
-    $: chemBonus = regionChem + yearChem + teamChem + coachBonus + legacyBonus;
+    $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus;
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
 
     $: myStatAvgs = squadReady ? (() => {
-        const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
-            r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
-        }); return r;
+        try { const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => { r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length); }); return r; } catch(e) { return {}; }
     })() : {};
     $: cpuStatAvgs = currentEnemy ? (() => {
-        const cards = Object.values(currentEnemy.cards);
-        const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
-            r[s] = cards.length > 0 ? Math.round(cards.reduce((sum, c) => sum + (c.stats[s]||0), 0) / cards.length) : 0;
-        }); return r;
+        try { const cards = Object.values(currentEnemy.cards || {}).filter(c => c && c.stats); const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => { r[s] = cards.length > 0 ? Math.round(cards.reduce((sum, c) => sum + (c.stats[s]||0), 0) / cards.length) : 0; }); return r; } catch(e) { return {}; }
     })() : {};
 
-    function generateCpuTeam(difficulty) {
+    // Unlock conditions
+    $: ts = $trackStats;
+    $: canRegional = (ts.splitsCompleted || 0) >= 1;
+    $: canFirstStand = (ts.regionalSplitWon || 0) >= 1;
+    $: canMSI = ($unlocks.firstStand || (ts.regionalSplitWon || 0) >= 1);
+    $: canWorlds = ($unlocks.msi || (ts.regionalSplitWon || 0) >= 1);
+    $: canGoldenRoad = canRegional;
+
+    const MODES = {
+        cafe: { name: 'Gaming Cafe', icon: '☕', rounds: 3, minRating: 60, maxRating: 80, pool: 'regular', reward: 300, second: 150, color: '#10b981' },
+        regional: { name: 'Regional Trophy', icon: '🏟️', rounds: 5, minRating: 75, maxRating: 92, pool: 'all', reward: 1500, second: 500, color: '#3b82f6', statKey: 'regionalSplitWon' },
+        firststand: { name: 'First Stand', icon: '🟠', rounds: 5, minRating: 82, maxRating: 96, pool: 'all', reward: 3000, second: 1000, color: '#f97316', statKey: 'firstStandWon' },
+        msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 88, maxRating: 98, pool: 'elite', reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
+        worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 92, maxRating: 99, pool: 'elite', reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
+    };
+
+    const GOLDEN_STAGES = ['regional', 'firststand', 'msi', 'worlds'];
+
+    function generateCpuTeam(mode, roundIdx) {
         const db = getDB();
         if (!db) return null;
-        const pool = db.filter(p => p.role !== 'COACH' && ['Bronze', 'Silver', 'Gold'].includes(p.quality));
+        const m = MODES[mode];
+        const rating = m.minRating + Math.round((m.maxRating - m.minRating) * (roundIdx / Math.max(1, m.rounds - 1)));
+        let pool;
+        if (m.pool === 'regular') pool = db.filter(p => p.role !== 'COACH' && ['Bronze','Silver','Gold'].includes(p.quality));
+        else if (m.pool === 'elite') pool = db.filter(p => p.role !== 'COACH');
+        else pool = db.filter(p => p.role !== 'COACH' && !['POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const team = {};
         const used = new Set();
         roles.forEach(role => {
-            let rolePool = pool.filter(p => p.role === role && !used.has(p.id));
-            if (rolePool.length === 0) rolePool = pool.filter(p => !used.has(p.id));
-            rolePool.sort((a, b) => b.rating - a.rating);
-            const cutoff = Math.min(rolePool.length, Math.max(3, Math.floor(rolePool.length * (1 - difficulty * 0.15))));
-            const pick = rolePool[Math.floor(Math.random() * cutoff)];
+            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= rating - 8 && p.rating <= rating + 5);
+            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id)).sort((a,b) => b.rating - a.rating).slice(0, 8);
+            rp.sort((a,b) => b.rating - a.rating);
+            const cut = Math.max(1, Math.min(rp.length, 5));
+            const pick = rp[Math.floor(Math.random() * cut)];
             if (pick) { team[role] = pick; used.add(pick.id); }
         });
-        const teamCards = Object.values(team);
-        const avg = teamCards.length > 0 ? Math.round(teamCards.reduce((s, c) => s + c.rating, 0) / teamCards.length) : 60;
-        const names = ['Iron Wolves', 'Silver Fangs', 'Bronze Legion', 'Rookie Squad', 'Cafe Regulars', 'Local Heroes', 'Ladder Climbers', 'Weekend Warriors'];
+        const cards = Object.values(team);
+        const avg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : rating;
+        const names = ['Iron Wolves','Silver Fangs','Bronze Legion','Rookie Squad','Cafe Regulars','Local Heroes','Storm Dragons','Crystal Bears','Dark Knights','Solar Flare','Frost Giants','Thunder Hawks','Crimson Vipers','Neon Tigers','Iron Phoenix'];
         return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: avg };
     }
 
-    function startTournament() {
-        if (!squadReady) { showToast('Fill all 5 starting positions first.', 'error'); return; }
-        enemies = [generateCpuTeam(1), generateCpuTeam(2), generateCpuTeam(3)];
+    function startTournament(mode) {
+        if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
+        activeMode = mode;
+        const m = MODES[mode];
+        enemies = [];
+        for (let i = 0; i < m.rounds; i++) enemies.push(generateCpuTeam(mode, i));
         round = 0;
         roundResults = [];
         tournamentResult = null;
-        phase = 'bracket';
         matchLog = [];
+        phase = 'bracket';
+    }
+
+    function startGoldenRoad() {
+        if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
+        activeMode = 'goldenroad';
+        goldenRoadStage = 0;
+        const mode = GOLDEN_STAGES[0];
+        const m = MODES[mode];
+        enemies = [];
+        for (let i = 0; i < m.rounds; i++) enemies.push(generateCpuTeam(mode, i));
+        round = 0;
+        roundResults = [];
+        tournamentResult = null;
+        matchLog = [];
+        phase = 'bracket';
     }
 
     function startMatch() {
@@ -102,27 +140,17 @@
         const myFinal = totalPower + statEdge + Math.floor(Math.random() * 11) - 5;
         const cpuFinal = currentEnemy.avgRating + Math.floor(Math.random() * 11) - 5;
         const won = myFinal >= cpuFinal;
-
-        if (won) playerScore++;
-        else cpuScore++;
-
-        matchLog = [...matchLog, {
-            round: matchLog.length + 1,
-            myPlay: play,
-            cpuPlay: cpuPlay,
-            myVal: myFinal,
-            cpuVal: cpuFinal,
-            won
-        }];
+        if (won) playerScore++; else cpuScore++;
+        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won }];
         rollRoundPlays();
 
-        if (playerScore >= 2 || cpuScore >= 2) {
-            const matchWon = playerScore >= 2;
+        const winsNeeded = activeMode === 'goldenroad' ? 2 : 2;
+        if (playerScore >= winsNeeded || cpuScore >= winsNeeded) {
+            const matchWon = playerScore >= winsNeeded;
             roundResults = [...roundResults, matchWon];
-
             if (!matchWon) {
                 endTournament(false);
-            } else if (round >= 2) {
+            } else if (round >= enemies.length - 1) {
                 endTournament(true);
             } else {
                 phase = 'roundEnd';
@@ -130,32 +158,65 @@
         }
     }
 
-    function nextRound() {
-        round++;
-        phase = 'bracket';
-        matchLog = [];
-    }
+    function nextRound() { round++; phase = 'bracket'; matchLog = []; }
 
     function endTournament(won) {
-        const isFinalist = round >= 1 && !won;
-        const reward = won ? 300 : isFinalist ? 150 : 0;
+        const mode = activeMode === 'goldenroad' ? GOLDEN_STAGES[goldenRoadStage] : activeMode;
+        const m = MODES[mode];
+        const isFinalist = round >= Math.floor(enemies.length / 2) && !won;
+
+        if (activeMode === 'goldenroad') {
+            if (!won) {
+                trackStats.update(s => ({ ...s, losses: (s.losses || 0) + 1 }));
+                playSound('lose');
+                tournamentResult = { won: false, reward: 0, round: round + 1, isFinalist: false, goldenRoadFailed: true, stage: goldenRoadStage };
+                phase = 'result';
+                saveGame();
+                return;
+            }
+            if (goldenRoadStage < GOLDEN_STAGES.length - 1) {
+                goldenRoadStage++;
+                const nextMode = GOLDEN_STAGES[goldenRoadStage];
+                const nm = MODES[nextMode];
+                enemies = [];
+                for (let i = 0; i < nm.rounds; i++) enemies.push(generateCpuTeam(nextMode, i));
+                round = 0; roundResults = []; matchLog = [];
+                showToast(`Golden Road: Advancing to ${nm.name}!`, 'success');
+                phase = 'bracket';
+                return;
+            }
+            // Won the whole Golden Road!
+            const reward = 25000;
+            blueEssence.update(v => v + reward);
+            trackStats.update(s => ({ ...s, tournamentsWon: (s.tournamentsWon||0)+1, goldenRoads: (s.goldenRoads||0)+1, worldsWon: (s.worldsWon||0)+1 }));
+            playSound('win');
+            tournamentResult = { won: true, reward, goldenRoad: true };
+            phase = 'result';
+            saveGame();
+            return;
+        }
+
+        const reward = won ? m.reward : isFinalist ? m.second : 0;
         blueEssence.update(v => v + reward);
 
         if (won) {
-            trackStats.update(s => ({ ...s, tournamentsWon: (s.tournamentsWon || 0) + 1, cafeWins: (s.cafeWins || 0) + 1 }));
+            trackStats.update(s => {
+                const u = { ...s, tournamentsWon: (s.tournamentsWon||0)+1 };
+                if (m.statKey) u[m.statKey] = (s[m.statKey]||0) + 1;
+                if (mode === 'cafe') u.cafeWins = (s.cafeWins||0) + 1;
+                return u;
+            });
+            if (mode === 'firststand') unlocks.update(u => ({ ...u, firstStand: true }));
+            if (mode === 'msi') unlocks.update(u => ({ ...u, msi: true }));
+            if (mode === 'worlds') unlocks.update(u => ({ ...u, worlds: true }));
             playSound('win');
         } else {
-            trackStats.update(s => ({ ...s, losses: (s.losses || 0) + 1 }));
+            trackStats.update(s => ({ ...s, losses: (s.losses||0)+1 }));
+            // 2nd place in regional or first stand still unlocks next
+            if (isFinalist && mode === 'regional') unlocks.update(u => ({ ...u, firstStand: true }));
+            if (isFinalist && mode === 'firststand') unlocks.update(u => ({ ...u, msi: true }));
             playSound('lose');
         }
-
-        starters.forEach(c => {
-            trackStats.update(s => {
-                const mp = { ...s.matchesPlayed };
-                mp[c.name] = (mp[c.name] || 0) + 1;
-                return { ...s, matchesPlayed: mp };
-            });
-        });
 
         saveGame();
         tournamentResult = { won, reward, round: round + 1, isFinalist };
@@ -163,18 +224,18 @@
     }
 
     function backToLobby() {
-        phase = 'lobby';
-        tournamentResult = null;
-        enemies = [];
-        matchLog = [];
+        phase = 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
     }
+
+    $: currentModeName = activeMode === 'goldenroad' ? `Golden Road — ${MODES[GOLDEN_STAGES[goldenRoadStage]]?.name || ''}` : (MODES[activeMode]?.name || '');
+    $: currentModeColor = activeMode === 'goldenroad' ? '#fbbf24' : (MODES[activeMode]?.color || '#10b981');
 </script>
 
 <section class="trn">
     {#if phase === 'lobby'}
         <div class="trn-head">
             <h2 class="trn-title">Competitive Arenas</h2>
-            <p class="trn-desc">Test your roster against CPU opponents.</p>
+            <p class="trn-desc">Test your roster against CPU opponents. Win tournaments to unlock higher tiers.</p>
         </div>
 
         <!-- Season Banner -->
@@ -186,162 +247,150 @@
                 <div class="sb-title">Play Season Matches</div>
                 <div class="sb-sub">10 opponents per split · Earn regional trophies</div>
             </div>
-            <button class="btn-primary" style="flex-shrink:0; position:relative;">Open Season →</button>
+            <button class="mode-enter-btn" style="background: linear-gradient(135deg, #3b82f6, #6366f1);">Open Season →</button>
         </div>
 
-        <!-- Gaming Cafe -->
-        <div class="mode-card mode-cafe">
-            <div class="mode-bg">☕</div>
-            <h3 class="mode-title mode-title-green">Gaming Cafe Tournament</h3>
-            <p class="mode-desc">3 rounds against local opponents. CPU capped at Gold tier.</p>
-            <div class="mode-tags">
-                <span class="tag tag-green">Free Entry</span>
-                <span class="tag tag-emerald">Win: 300 BE</span>
-                <span class="tag tag-slate">2nd: 150 BE</span>
-            </div>
-            {#if squadReady}
-                <button class="btn-success" on:click={startTournament}>Enter Tournament</button>
-            {:else}
-                <p class="mode-warn">Fill all 5 starting positions to enter.</p>
-                <button class="mode-link" on:click={() => switchTab('squad')}>Go to Squad →</button>
-            {/if}
-        </div>
-
-        <!-- Locked Modes -->
-        <div class="modes-grid">
-            {#each [
-                { name: 'Regional Split', icon: '🏟️', desc: 'Win Season Matches to unlock.' },
-                { name: 'First Stand', icon: '🟠', desc: 'Beat a Playoff Split to unlock.' },
-                { name: 'World Championship', icon: '🏆', desc: 'Win MSI to unlock.' },
-            ] as mode}
-                <div class="mode-locked">
-                    <span class="ml-icon">{mode.icon}</span>
-                    <h4 class="ml-name">{mode.name}</h4>
-                    <p class="ml-desc">{mode.desc}</p>
-                    <span class="ml-lock">🔒 Locked</span>
+        <!-- Mode Cards -->
+        <div class="modes-list">
+            <!-- Gaming Cafe -->
+            <div class="mode-row" style="border-color: {MODES.cafe.color}20;">
+                <span class="mode-icon">☕</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {MODES.cafe.color};">Gaming Cafe Tournament</h3>
+                    <p class="mode-sub">3 rounds · CPU capped at Gold · Free Entry</p>
+                    <div class="mode-prizes"><span class="mp-w">Win: {MODES.cafe.reward} BE</span><span class="mp-l">2nd: {MODES.cafe.second} BE</span></div>
                 </div>
-            {/each}
+                {#if squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.cafe.color};" on:click={() => startTournament('cafe')}>Enter</button>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Regional -->
+            <div class="mode-row" class:mode-locked={!canRegional} style="border-color: {MODES.regional.color}20;">
+                <span class="mode-icon">🏟️</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canRegional ? MODES.regional.color : '#334155'};">Regional Trophy</h3>
+                    <p class="mode-sub">{canRegional ? '5 rounds · Mixed tiers' : 'Complete 1 Season Split to unlock'}</p>
+                    {#if canRegional}<div class="mode-prizes"><span class="mp-w">Win: {MODES.regional.reward} BE</span><span class="mp-l">2nd: {MODES.regional.second} BE</span></div>{/if}
+                </div>
+                {#if canRegional && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.regional.color};" on:click={() => startTournament('regional')}>Enter</button>
+                {:else if !canRegional}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- First Stand -->
+            <div class="mode-row" class:mode-locked={!canFirstStand} style="border-color: {MODES.firststand.color}20;">
+                <span class="mode-icon">🟠</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canFirstStand ? MODES.firststand.color : '#334155'};">First Stand</h3>
+                    <p class="mode-sub">{canFirstStand ? '5 rounds · Tough opponents' : 'Win/2nd Regional to unlock'}</p>
+                    {#if canFirstStand}<div class="mode-prizes"><span class="mp-w">Win: {MODES.firststand.reward} BE</span><span class="mp-l">2nd: {MODES.firststand.second} BE</span></div>{/if}
+                </div>
+                {#if canFirstStand && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.firststand.color};" on:click={() => startTournament('firststand')}>Enter</button>
+                {:else if !canFirstStand}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- MSI -->
+            <div class="mode-row" class:mode-locked={!canMSI} style="border-color: {MODES.msi.color}20;">
+                <span class="mode-icon">🌊</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canMSI ? MODES.msi.color : '#334155'};">MSI</h3>
+                    <p class="mode-sub">{canMSI ? '7 rounds · Elite competition' : 'Win First Stand or Regional to unlock'}</p>
+                    {#if canMSI}<div class="mode-prizes"><span class="mp-w">Win: {MODES.msi.reward} BE</span><span class="mp-l">2nd: {MODES.msi.second} BE</span></div>{/if}
+                </div>
+                {#if canMSI && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.msi.color};" on:click={() => startTournament('msi')}>Enter</button>
+                {:else if !canMSI}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Worlds -->
+            <div class="mode-row" class:mode-locked={!canWorlds} style="border-color: {MODES.worlds.color}20;">
+                <span class="mode-icon">🏆</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canWorlds ? MODES.worlds.color : '#334155'};">World Championship</h3>
+                    <p class="mode-sub">{canWorlds ? '7 rounds · The ultimate challenge' : 'Win Regional or MSI/2nd to unlock'}</p>
+                    {#if canWorlds}<div class="mode-prizes"><span class="mp-w">Win: {MODES.worlds.reward} BE</span><span class="mp-l">2nd: {MODES.worlds.second} BE</span></div>{/if}
+                </div>
+                {#if canWorlds && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.worlds.color};" on:click={() => startTournament('worlds')}>Enter</button>
+                {:else if !canWorlds}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Golden Road -->
+            <div class="mode-row mode-golden" class:mode-locked={!canGoldenRoad} style="border-color: #fbbf2440;">
+                <span class="mode-icon">👑</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canGoldenRoad ? '#fbbf24' : '#334155'};">Golden Road</h3>
+                    <p class="mode-sub">{canGoldenRoad ? 'Win Regional → First Stand → MSI → Worlds without losing' : 'Complete 1 Split to unlock'}</p>
+                    {#if canGoldenRoad}<div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">Win: 25,000 BE + Glory</span></div>{/if}
+                </div>
+                {#if canGoldenRoad && squadReady}
+                    <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={startGoldenRoad}>Begin</button>
+                {:else if !canGoldenRoad}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
         </div>
 
     {:else if phase === 'bracket'}
         <div class="phase-center">
-            <h2 class="phase-title phase-title-green">Gaming Cafe — Round {round + 1}/3</h2>
+            <h2 class="phase-title" style="color: {currentModeColor};">{currentModeName} — Round {round + 1}/{enemies.length}</h2>
+            {#if activeMode === 'goldenroad'}
+                <div class="gr-stages">
+                    {#each GOLDEN_STAGES as stg, si}
+                        <span class="gr-stage" class:gr-done={si < goldenRoadStage} class:gr-active={si === goldenRoadStage} class:gr-future={si > goldenRoadStage}>{MODES[stg].icon}</span>
+                    {/each}
+                </div>
+            {/if}
             <div class="bracket-dots">
-                {#each [0, 1, 2] as r}
+                {#each Array(enemies.length) as _, r}
                     <div class="bdot" class:bdot-w={r < roundResults.length && roundResults[r]} class:bdot-l={r < roundResults.length && !roundResults[r]} class:bdot-active={r === round && r >= roundResults.length} class:bdot-future={r > round || (r >= roundResults.length && r !== round)}>
                         {r < roundResults.length ? (roundResults[r] ? 'W' : 'L') : r + 1}
                     </div>
                 {/each}
             </div>
         </div>
-
         <div class="vs-card">
-            <div class="vs-side"><span class="vs-rating vs-blue">{avgRating}</span><span class="vs-label">Your Squad</span></div>
+            <div class="vs-side"><span class="vs-rating vs-blue">{totalPower}</span><span class="vs-label">Your Squad</span></div>
             <span class="vs-x">VS</span>
             <div class="vs-side"><span class="vs-rating vs-red">{enemies[round]?.avgRating || '?'}</span><span class="vs-label">{enemies[round]?.name || 'CPU'}</span></div>
         </div>
-        <div class="phase-center"><button class="btn-primary" on:click={startMatch}>Start Match</button></div>
+        <div class="phase-center"><button class="mode-enter-btn" style="background: {currentModeColor};" on:click={startMatch}>Start Match</button></div>
 
-    {:else if phase === 'match'}
+    {:else if phase === 'match' && currentEnemy}
         <div class="match-header">
-            <div class="mh-label">Round {round + 1} — vs {currentEnemy.name}</div>
-            <div class="mh-score">
-                <span class="mh-blue">{playerScore}</span>
-                <span class="mh-sep">—</span>
-                <span class="mh-red">{cpuScore}</span>
-            </div>
+            <div class="mh-label">{currentModeName} — Round {round + 1}</div>
+            <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>
         </div>
-
         <div class="match-layout">
-            <!-- Left: Your team -->
             <div class="team-block">
                 <div class="arena-label arena-label-blue">Your Squad ({totalPower})</div>
                 <div class="arena-grid-2x3">
-                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
-                        {#each pair as role}
-                            <div class="arena-cell">
-                                {#if $squad[role]}
-                                    <Card card={$squad[role]} mini={true} />
-                                {:else}
-                                    <div class="arena-empty">{role}</div>
-                                {/if}
-                            </div>
-                        {/each}
-                    {/each}
+                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if $squad[role]}<Card card={$squad[role]} mini={true} />{:else}<div class="arena-empty">{role}</div>{/if}</div>{/each}{/each}
                 </div>
             </div>
-
-            <!-- Center: Combat -->
             <div class="arena-center">
-                <!-- Stat comparison -->
                 <div class="stat-compare">
                     <div class="sc-title">Available Plays</div>
-                    {#each roundPlays as play}
-                        {@const myVal = myStatAvgs[play.stat] || 0}
-                        {@const cpuVal = cpuStatAvgs[play.stat] || 0}
-                        {@const diff = myVal - cpuVal}
-                        <div class="sc-row">
-                            <span class="sc-val sc-val-blue">{myVal}</span>
-                            <div class="sc-bar-wrap">
-                                <div class="sc-label">{play.icon} {play.label}</div>
-                                <div class="sc-bar">
-                                    <div class="sc-fill-blue" style="width: {Math.min(100, (myVal / Math.max(myVal, cpuVal, 1)) * 50)}%"></div>
-                                    <div class="sc-fill-red" style="width: {Math.min(100, (cpuVal / Math.max(myVal, cpuVal, 1)) * 50)}%; margin-left: auto;"></div>
-                                </div>
-                                <div class="sc-diff" class:sc-diff-pos={diff > 0} class:sc-diff-neg={diff < 0}>{diff > 0 ? '+' : ''}{diff}</div>
-                            </div>
-                            <span class="sc-val sc-val-red">{cpuVal}</span>
-                        </div>
+                    {#each roundPlays as play}{@const myVal = myStatAvgs[play.stat]||0}{@const cpuVal = cpuStatAvgs[play.stat]||0}{@const diff = myVal - cpuVal}
+                        <div class="sc-row"><span class="sc-val sc-val-blue">{myVal}</span><div class="sc-bar-wrap"><div class="sc-label">{play.icon} {play.label}</div><div class="sc-bar"><div class="sc-fill-blue" style="width:{Math.min(100,(myVal/Math.max(myVal,cpuVal,1))*50)}%"></div><div class="sc-fill-red" style="width:{Math.min(100,(cpuVal/Math.max(myVal,cpuVal,1))*50)}%;margin-left:auto;"></div></div><div class="sc-diff" class:sc-diff-pos={diff>0} class:sc-diff-neg={diff<0}>{diff>0?'+':''}{diff}</div></div><span class="sc-val sc-val-red">{cpuVal}</span></div>
                     {/each}
                 </div>
-
-                {#if matchLog.length > 0}
-                    <div class="log-list">
-                        {#each matchLog as log}
-                            <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
-                                <span class="log-result">{log.won ? '✓' : '✗'}</span>
-                                <span class="log-detail">{log.myPlay.icon} {log.myVal} vs {log.cpuPlay.icon} {log.cpuVal}</span>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-
+                {#if matchLog.length > 0}<div class="log-list">{#each matchLog as log}<div class="log-row" class:log-w={log.won} class:log-l={!log.won}><span class="log-result">{log.won?'✓':'✗'}</span><span class="log-detail">{log.myPlay.icon} {log.myVal} vs {log.cpuPlay.icon} {log.cpuVal}</span></div>{/each}</div>{/if}
                 {#if playerScore < 2 && cpuScore < 2}
-                    <div class="play-picker">
-                        <div class="play-label">Choose Your Play (3 of {PLAYS.length})</div>
-                        <div class="play-grid">
-                            {#each roundPlays as play}
-                                {@const myVal = myStatAvgs[play.stat] || 0}
-                                {@const cpuVal = cpuStatAvgs[play.stat] || 0}
-                                {@const edge = myVal - cpuVal}
-                                <button class="play-btn" on:click={() => pickPlay(play)}>
-                                    <span class="pb-icon">{play.icon}</span>
-                                    <span class="pb-name">{play.label}</span>
-                                    <span class="pb-edge" class:pb-edge-pos={edge > 0} class:pb-edge-neg={edge < 0}>{edge > 0 ? '+' : ''}{edge}</span>
-                                </button>
-                            {/each}
-                        </div>
+                    <div class="play-picker"><div class="play-label">Choose Your Play (3 of 5)</div>
+                        <div class="play-grid">{#each roundPlays as play}{@const edge = (myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>{edge>0?'+':''}{edge}</span></button>{/each}</div>
                     </div>
                 {/if}
             </div>
-
-            <!-- Right: CPU team -->
             <div class="team-block">
                 <div class="arena-label arena-label-red">{currentEnemy.name} ({currentEnemy.avgRating})</div>
                 <div class="arena-grid-2x3">
-                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
-                        {#each pair as role}
-                            <div class="arena-cell">
-                                {#if currentEnemy.cards[role]}
-                                    <Card card={currentEnemy.cards[role]} mini={true} />
-                                {:else if role !== 'COACH'}
-                                    <div class="arena-empty">{role}</div>
-                                {:else}
-                                    <div class="arena-empty-sm"></div>
-                                {/if}
-                            </div>
-                        {/each}
-                    {/each}
+                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if currentEnemy.cards[role]}<Card card={currentEnemy.cards[role]} mini={true} />{:else if role!=='COACH'}<div class="arena-empty">{role}</div>{:else}<div class="arena-empty-sm"></div>{/if}</div>{/each}{/each}
                 </div>
             </div>
         </div>
@@ -351,22 +400,27 @@
             <div class="result-icon">✓</div>
             <h2 class="result-title rt-win">Round {round + 1} Won!</h2>
             <p class="result-sub">Score: {playerScore}-{cpuScore}. Next opponent is tougher.</p>
-            <button class="btn-primary" style="margin-top:20px;" on:click={nextRound}>Next Round →</button>
+            <button class="mode-enter-btn" style="background: {currentModeColor}; margin-top:20px;" on:click={nextRound}>Next Round →</button>
         </div>
 
     {:else if phase === 'result'}
-        <div class="result-card" class:result-win={tournamentResult.won} class:result-lose={!tournamentResult.won}>
-            <div class="result-icon" style="font-size:48px;">{tournamentResult.won ? '🏆' : tournamentResult.isFinalist ? '🥈' : '💀'}</div>
-            <h2 class="result-title" class:rt-win={tournamentResult.won} class:rt-lose={!tournamentResult.won}>
-                {tournamentResult.won ? 'Tournament Champion!' : tournamentResult.isFinalist ? 'Runner Up' : 'Eliminated'}
+        <div class="result-card" class:result-win={tournamentResult?.won} class:result-lose={!tournamentResult?.won}>
+            <div class="result-icon" style="font-size:48px;">
+                {#if tournamentResult?.goldenRoad}👑
+                {:else if tournamentResult?.won}🏆
+                {:else if tournamentResult?.goldenRoadFailed}💀
+                {:else if tournamentResult?.isFinalist}🥈
+                {:else}💀{/if}
+            </div>
+            <h2 class="result-title" class:rt-win={tournamentResult?.won} class:rt-lose={!tournamentResult?.won}>
+                {#if tournamentResult?.goldenRoad}Golden Road Complete!
+                {:else if tournamentResult?.goldenRoadFailed}Golden Road Failed — Stage {(tournamentResult?.stage||0)+1}/4
+                {:else if tournamentResult?.won}Champion!
+                {:else if tournamentResult?.isFinalist}Runner Up
+                {:else}Eliminated{/if}
             </h2>
-            <p class="result-sub">{tournamentResult.won ? 'Swept all 3 rounds.' : `Eliminated in round ${tournamentResult.round}.`}</p>
-            {#if tournamentResult.reward > 0}
-                <div class="result-reward">+{tournamentResult.reward} BE</div>
-            {:else}
-                <div class="result-none">No payout.</div>
-            {/if}
-            <button class="btn-secondary" style="margin-top:20px;" on:click={backToLobby}>Back to Lobby</button>
+            {#if tournamentResult?.reward > 0}<div class="result-reward">+{tournamentResult.reward.toLocaleString()} BE</div>{/if}
+            <button class="sn-back-btn" style="margin-top:20px;" on:click={backToLobby}>Back to Lobby</button>
         </div>
     {/if}
 </section>
@@ -377,14 +431,7 @@
     .trn-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
     .trn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
 
-    /* Season banner */
-    .season-banner {
-        position: relative; display: flex; align-items: center; justify-content: space-between;
-        padding: 24px 28px; border-radius: 16px; margin-bottom: 20px; cursor: pointer;
-        background: linear-gradient(135deg, rgba(30,58,138,0.25), rgba(15,23,42,0.6));
-        border: 1px solid rgba(59,130,246,0.12); overflow: hidden;
-        transition: border-color 0.15s;
-    }
+    .season-banner { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 24px 28px; border-radius: 16px; margin-bottom: 20px; cursor: pointer; background: linear-gradient(135deg, rgba(30,58,138,0.25), rgba(15,23,42,0.6)); border: 1px solid rgba(59,130,246,0.12); overflow: hidden; transition: border-color 0.15s; }
     .season-banner:hover { border-color: rgba(59,130,246,0.25); }
     .sb-glow { position: absolute; inset: 0; background: radial-gradient(ellipse at 20% 50%, rgba(59,130,246,0.06), transparent 60%); pointer-events: none; }
     .sb-content { position: relative; }
@@ -392,75 +439,55 @@
     .sb-title { font-size: 20px; font-weight: 900; color: #93c5fd; }
     .sb-sub { font-size: 11px; color: #64748b; margin-top: 4px; }
 
-    /* Mode cards */
-    .mode-card {
-        position: relative; text-align: center; overflow: hidden;
-        padding: 32px 24px; border-radius: 20px; margin-bottom: 24px;
+    /* Mode list */
+    .modes-list { display: flex; flex-direction: column; gap: 8px; }
+    .mode-row {
+        display: flex; align-items: center; gap: 16px; padding: 18px 22px;
+        border-radius: 14px; background: rgba(12,16,28,0.5); border: 1px solid;
+        transition: all 0.12s;
     }
-    .mode-cafe {
-        background: linear-gradient(160deg, rgba(6,78,59,0.2), rgba(15,23,42,0.6));
-        border: 1px solid rgba(16,185,129,0.15);
+    .mode-row:hover:not(.mode-locked) { background: rgba(15,20,35,0.6); }
+    .mode-locked { opacity: 0.35; }
+    .mode-golden { border-color: rgba(251,191,36,0.15) !important; background: rgba(251,191,36,0.03); }
+    .mode-icon { font-size: 28px; flex-shrink: 0; }
+    .mode-info { flex: 1; min-width: 0; }
+    .mode-name { font-size: 15px; font-weight: 900; }
+    .mode-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .mode-prizes { display: flex; gap: 12px; margin-top: 6px; font-size: 10px; font-weight: 800; }
+    .mp-w { color: #34d399; } .mp-l { color: #94a3b8; }
+    .mode-enter-btn {
+        padding: 10px 24px; border-radius: 10px; color: white; font-weight: 900;
+        font-size: 12px; border: none; cursor: pointer; flex-shrink: 0;
+        transition: all 0.15s; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     }
-    .mode-bg {
-        position: absolute; right: -10px; top: -20px; font-size: 100px; opacity: 0.04; pointer-events: none;
-    }
-    .mode-title { font-size: 22px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 6px; position: relative; }
-    .mode-title-green { color: #6ee7b7; }
-    .mode-desc { font-size: 12px; color: #64748b; margin-bottom: 16px; position: relative; }
-    .mode-tags { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; position: relative; }
-    .tag {
-        font-size: 10px; font-weight: 800; font-family: monospace;
-        padding: 5px 14px; border-radius: 8px; border: 1px solid;
-        background: rgba(0,0,0,0.25);
-    }
-    .tag-green { color: #6ee7b7; border-color: rgba(16,185,129,0.2); }
-    .tag-emerald { color: #34d399; border-color: rgba(16,185,129,0.15); }
-    .tag-slate { color: #94a3b8; border-color: rgba(71,85,105,0.2); }
-    .mode-warn { font-size: 12px; font-weight: 700; color: #f87171; margin-bottom: 8px; position: relative; }
-    .mode-link { font-size: 11px; font-weight: 700; color: #60a5fa; background: none; border: none; cursor: pointer; position: relative; }
-    .mode-link:hover { color: #93c5fd; }
+    .mode-enter-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
+    .mode-lock-badge { font-size: 18px; flex-shrink: 0; opacity: 0.5; }
+    .mode-need { font-size: 10px; color: #f87171; font-weight: 700; flex-shrink: 0; }
 
-    /* Locked modes grid */
-    .modes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-    @media (max-width: 700px) { .modes-grid { grid-template-columns: 1fr; } }
-    .mode-locked {
-        text-align: center; padding: 24px 16px; border-radius: 16px; opacity: 0.45;
-        background: rgba(12,16,28,0.4); border: 1px solid rgba(51,65,85,0.15);
-    }
-    .ml-icon { font-size: 24px; display: block; margin-bottom: 8px; }
-    .ml-name { font-size: 12px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
-    .ml-desc { font-size: 10px; color: #475569; margin-top: 4px; }
-    .ml-lock { font-size: 10px; font-weight: 800; color: #f87171; display: block; margin-top: 8px; }
+    /* Golden Road stages */
+    .gr-stages { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
+    .gr-stage { font-size: 24px; padding: 6px; border-radius: 10px; }
+    .gr-done { background: rgba(16,185,129,0.15); border: 2px solid #10b981; }
+    .gr-active { background: rgba(251,191,36,0.15); border: 2px solid #fbbf24; animation: pulse 1.5s ease-in-out infinite; }
+    .gr-future { opacity: 0.25; }
+    @keyframes pulse { 0%,100% { box-shadow: none; } 50% { box-shadow: 0 0 16px rgba(251,191,36,0.4); } }
 
-    /* Phase shared */
+    /* Bracket/VS/Match — reused from before */
     .phase-center { text-align: center; margin-bottom: 20px; }
     .phase-title { font-size: 18px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 12px; }
-    .phase-title-green { color: #6ee7b7; }
-
-    /* Bracket dots */
-    .bracket-dots { display: flex; justify-content: center; gap: 8px; }
-    .bdot {
-        width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
-        font-size: 12px; font-weight: 900; border: 2px solid;
-    }
+    .bracket-dots { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+    .bdot { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 900; border: 2px solid; }
     .bdot-w { background: rgba(6,78,59,0.4); border-color: #10b981; color: #6ee7b7; }
     .bdot-l { background: rgba(127,29,29,0.4); border-color: #ef4444; color: #fca5a5; }
     .bdot-active { background: rgba(30,58,138,0.4); border-color: #3b82f6; color: #93c5fd; }
     .bdot-future { background: rgba(15,23,42,0.4); border-color: #334155; color: #475569; }
 
-    /* VS card */
-    .vs-card {
-        display: flex; align-items: center; justify-content: center; gap: 32px;
-        padding: 28px; border-radius: 16px; margin-bottom: 20px;
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-    }
+    .vs-card { display: flex; align-items: center; justify-content: center; gap: 32px; padding: 28px; border-radius: 16px; margin-bottom: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
     .vs-side { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-    .vs-rating { font-size: 36px; font-weight: 900; }
-    .vs-blue { color: #60a5fa; } .vs-red { color: #f87171; }
+    .vs-rating { font-size: 36px; font-weight: 900; } .vs-blue { color: #60a5fa; } .vs-red { color: #f87171; }
     .vs-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
     .vs-x { font-size: 18px; font-weight: 900; color: #334155; }
 
-    /* Match header */
     .match-header { text-align: center; margin-bottom: 20px; }
     .mh-label { font-size: 12px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
     .mh-score { display: flex; justify-content: center; gap: 16px; margin-top: 8px; }
@@ -468,102 +495,50 @@
     .mh-red { font-size: 24px; font-weight: 900; color: #f87171; }
     .mh-sep { font-size: 24px; font-weight: 900; color: #334155; }
 
-    /* Log */
-    .log-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
-    .log-row {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 12px 16px; border-radius: 12px; font-size: 12px;
-        background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15);
-    }
-    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; }
-    .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-detail { color: #64748b; font-size: 11px; }
-
-    /* Play picker */
-    .play-picker {
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        border-radius: 16px; padding: 24px;
-    }
-    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
-    .play-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .play-btn {
-        display: flex; flex-direction: column; align-items: center; gap: 6px;
-        padding: 20px 12px; border-radius: 14px; cursor: pointer;
-        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3);
-        transition: all 0.12s;
-    }
-    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
-    .pb-icon { font-size: 26px; }
-    .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
-
-
-    /* Results */
-    .result-card {
-        text-align: center; padding: 40px 24px; border-radius: 20px;
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-    }
-    .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }
-    .result-lose { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
-    .result-icon { font-size: 40px; margin-bottom: 12px; }
-    .result-title { font-size: 24px; font-weight: 900; margin-bottom: 8px; }
-    .rt-win { color: #34d399; } .rt-lose { color: #f87171; }
-    .result-sub { font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
-    .result-reward { font-size: 22px; font-weight: 900; color: #60a5fa; margin-top: 12px; }
-    .result-none { font-size: 11px; color: #475569; margin-top: 8px; }
-
-    /* Match layout - 3 columns: cards | combat | cards */
     .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
     @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
     .team-block { display: flex; flex-direction: column; gap: 6px; }
-    .arena-label {
-        font-size: 10px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; padding: 8px 12px;
-        border-radius: 10px; text-align: center;
-    }
+    .arena-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; padding: 8px 12px; border-radius: 10px; text-align: center; }
     .arena-label-blue { color: #93c5fd; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.15); }
     .arena-label-red { color: #fca5a5; background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.15); }
-
-
     .arena-grid-2x3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .arena-cell { display: flex; justify-content: center; }
-    .arena-empty {
-        width: 180px; height: 80px; border-radius: 12px;
-        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2);
-        display: flex; align-items: center; justify-content: center;
-        font-size: 10px; font-weight: 800; color: #1e293b; text-transform: uppercase;
-    }
+    .arena-empty { width: 180px; height: 80px; border-radius: 12px; background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; color: #1e293b; }
     .arena-empty-sm { width: 180px; height: 40px; }
-
-    /* Arena center */
     .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
-    /* Stat comparison */
-    .stat-compare {
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        border-radius: 14px; padding: 16px;
-    }
-    .sc-title {
-        font-size: 9px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px;
-    }
+    .stat-compare { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 14px; padding: 16px; }
+    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; }
     .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; }
-    .sc-val-blue { color: #60a5fa; }
-    .sc-val-red { color: #f87171; }
+    .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; } .sc-val-blue { color: #60a5fa; } .sc-val-red { color: #f87171; }
     .sc-bar-wrap { flex: 1; text-align: center; }
     .sc-label { font-size: 10px; font-weight: 800; color: #94a3b8; margin-bottom: 4px; }
-    .sc-bar {
-        display: flex; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden;
-    }
+    .sc-bar { display: flex; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
     .sc-fill-blue { background: linear-gradient(90deg, #1e40af, #3b82f6); border-radius: 4px 0 0 4px; }
     .sc-fill-red { background: linear-gradient(90deg, #ef4444, #991b1b); border-radius: 0 4px 4px 0; }
-    .sc-diff { font-size: 11px; font-weight: 900; color: #64748b; margin-top: 2px; }
-    .sc-diff-pos { color: #34d399; }
-    .sc-diff-neg { color: #f87171; }
+    .sc-diff { font-size: 11px; font-weight: 900; color: #64748b; margin-top: 2px; } .sc-diff-pos { color: #34d399; } .sc-diff-neg { color: #f87171; }
 
-    /* Play button edge indicator */
-    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
-    .pb-edge-pos { color: #34d399; }
-    .pb-edge-neg { color: #f87171; }
+    .log-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .log-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: 10px; font-size: 12px; background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15); }
+    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
+    .log-result { font-weight: 900; } .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
+    .log-detail { color: #64748b; font-size: 11px; }
+
+    .play-picker { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 16px; padding: 24px; }
+    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
+    .play-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .play-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 12px; border-radius: 14px; cursor: pointer; background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s; }
+    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
+    .pb-icon { font-size: 26px; } .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
+    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; } .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
+
+    .result-card { text-align: center; padding: 40px 24px; border-radius: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
+    .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }
+    .result-lose { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
+    .result-icon { font-size: 40px; margin-bottom: 12px; }
+    .result-title { font-size: 24px; font-weight: 900; margin-bottom: 8px; } .rt-win { color: #34d399; } .rt-lose { color: #f87171; }
+    .result-sub { font-size: 12px; color: #94a3b8; }
+    .result-reward { font-size: 22px; font-weight: 900; color: #60a5fa; margin-top: 12px; }
+    .sn-back-btn { padding: 12px 32px; border-radius: 12px; background: rgba(51,65,85,0.5); color: #94a3b8; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border: 1px solid rgba(71,85,105,0.4); cursor: pointer; transition: all 0.12s; }
+    .sn-back-btn:hover { background: rgba(71,85,105,0.6); color: #e2e8f0; }
 </style>

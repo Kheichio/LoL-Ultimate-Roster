@@ -2,7 +2,7 @@
     import Card from '../card/Card.svelte';
     import { club, squad, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { LEGACY_TIERS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
+    import { LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const ALL_SLOTS = [...ROLES, 'COACH'];
@@ -16,10 +16,10 @@
     $: avgStats = squadReady ? (() => { const sm={mec:0,tmf:0,frm:0,cmp:0,map:0,ldr:0}; starters.forEach(c=>{for(const k in sm) sm[k]+=c.stats[k]||0;}); for(const k in sm) sm[k]=Math.round(sm[k]/starters.length); return sm; })() : null;
     $: coachBonus = (() => { const c=$squad.COACH; if(!c) return 0; return c.rating>=98?5:c.rating>=94?4:c.rating>=90?3:c.rating>=85?2:1; })();
     $: regionChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.region)).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
-    $: yearChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>c.year)).size; return s<=1?5:s<=2?4:s<=3?3:s<=4?2:1; })();
+    $: eraChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>getEra(c.year))).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
     $: teamChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); return !nl.length||new Set(nl.map(c=>c.team)).size===1?2:0; })();
     $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
-    $: totalPower = squadReady ? avgRating+regionChem+yearChem+teamChem+coachBonus+legacyBonus : 0;
+    $: totalPower = squadReady ? avgRating+regionChem+eraChem+teamChem+coachBonus+legacyBonus : 0;
 
     $: pickerPool = (() => {
         if (!pickerRole) return [];
@@ -143,11 +143,11 @@
                     <div class="stat-box stat-green"><div class="stat-big">{totalPower}</div><div class="stat-sub">Power</div></div>
                 </div>
                 <div class="chem-list">
-                    {#each [['Region',regionChem+'/5'],['Year',yearChem+'/5'],['Team','+'+teamChem],['Coach','+'+coachBonus],['Legacy','+'+legacyBonus]] as [l,v]}
+                    {#each [['Region',regionChem+'/5'],['Era',eraChem+'/5'],['Team','+'+teamChem],['Coach','+'+coachBonus],['Legacy','+'+legacyBonus]] as [l,v]}
                         <div class="chem-row"><span>{l}</span><span class="chem-v">{v}</span></div>
                     {/each}
                 </div>
-                <div class="formula-bar">{avgRating}+{regionChem}+{yearChem}+{teamChem}+{coachBonus}+{legacyBonus} = <b>{totalPower}</b></div>
+                <div class="formula-bar">{avgRating}+{regionChem}+{eraChem}+{teamChem}+{coachBonus}+{legacyBonus} = <b>{totalPower}</b></div>
                 {#if avgStats}
                     <div class="avg-label">Avg Stats</div>
                     <div class="avg-grid">

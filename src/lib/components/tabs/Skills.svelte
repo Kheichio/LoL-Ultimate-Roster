@@ -6,14 +6,14 @@
 
     const TITLES = [
         { tp: 0, title: 'Scout', color: '#64748b' },
-        { tp: 5, title: 'Manager', color: '#94a3b8' },
-        { tp: 15, title: 'Director', color: '#60a5fa' },
-        { tp: 30, title: 'GM', color: '#a855f7' },
-        { tp: 50, title: 'Executive', color: '#10b981' },
-        { tp: 70, title: 'President', color: '#f59e0b' },
-        { tp: 100, title: 'Hall of Fame', color: '#ec4899' },
-        { tp: 150, title: 'Legend', color: '#ef4444' },
-        { tp: 200, title: 'Immortal', color: '#fbbf24' },
+        { tp: 10, title: 'Manager', color: '#94a3b8' },
+        { tp: 30, title: 'Director', color: '#60a5fa' },
+        { tp: 75, title: 'GM', color: '#a855f7' },
+        { tp: 150, title: 'Executive', color: '#10b981' },
+        { tp: 250, title: 'President', color: '#f59e0b' },
+        { tp: 400, title: 'Hall of Fame', color: '#ec4899' },
+        { tp: 600, title: 'Legend', color: '#ef4444' },
+        { tp: 1000, title: 'Immortal', color: '#fbbf24' },
     ];
 
     $: currentTitleIdx = (() => {

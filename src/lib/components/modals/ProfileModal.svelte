@@ -139,7 +139,9 @@
     .pm-overlay {
         position: fixed; inset: 0; z-index: 100;
         background: rgba(0,0,0,0.8); backdrop-filter: blur(8px);
-        display: flex; align-items: center; justify-content: center; padding: 16px;
+        display: flex; align-items: start; justify-content: center;
+        padding: 90px 16px 16px;
+        overflow-y: auto;
     }
     .pm-modal {
         position: relative; width: 100%; max-width: 700px;
