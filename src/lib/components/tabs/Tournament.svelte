@@ -96,11 +96,11 @@
     $: canGoldenRoad = canRegional;
 
     const MODES = {
-        cafe: { name: 'Gaming Cafe', icon: '☕', rounds: 3, minRating: 60, maxRating: 80, pool: 'regular', reward: 300, second: 150, color: '#10b981' },
-        regional: { name: 'Regional Trophy', icon: '🏟️', rounds: 5, minRating: 75, maxRating: 92, pool: 'all', reward: 1500, second: 500, color: '#3b82f6', statKey: 'regionalSplitWon' },
-        firststand: { name: 'First Stand', icon: '🟠', rounds: 5, minRating: 82, maxRating: 96, pool: 'all', reward: 3000, second: 1000, color: '#f97316', statKey: 'firstStandWon' },
-        msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 88, maxRating: 98, pool: 'elite', reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
-        worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 92, maxRating: 99, pool: 'elite', reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
+        cafe: { name: 'Gaming Cafe', icon: '☕', rounds: 3, minRating: 60, maxRating: 80, pool: 'regular', cpuBonus: 0, reward: 300, second: 150, color: '#10b981' },
+        regional: { name: 'Regional Trophy', icon: '🏟️', rounds: 5, minRating: 75, maxRating: 95, pool: 'all', cpuBonus: 5, reward: 1500, second: 500, color: '#3b82f6', statKey: 'regionalSplitWon' },
+        firststand: { name: 'First Stand', icon: '🟠', rounds: 5, minRating: 85, maxRating: 98, pool: 'elite', cpuBonus: 10, reward: 3000, second: 1000, color: '#f97316', statKey: 'firstStandWon' },
+        msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 90, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
+        worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 93, maxRating: 99, pool: 'elite', cpuBonus: 20, reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
     };
 
     const GOLDEN_STAGES = ['regional', 'firststand', 'msi', 'worlds'];
@@ -126,9 +126,12 @@
             if (pick) { team[role] = pick; used.add(pick.id); }
         });
         const cards = Object.values(team);
-        const avg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : rating;
+        const rawAvg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : rating;
+        const roundBonus = Math.round((m.cpuBonus || 0) * ((roundIdx + 1) / m.rounds));
+        const grStageBonus = activeMode === 'goldenroad' ? goldenRoadStage * 5 : 0;
+        const totalAvg = rawAvg + roundBonus + grStageBonus;
         const names = ['Iron Wolves','Silver Fangs','Bronze Legion','Rookie Squad','Cafe Regulars','Local Heroes','Storm Dragons','Crystal Bears','Dark Knights','Solar Flare','Frost Giants','Thunder Hawks','Crimson Vipers','Neon Tigers','Iron Phoenix'];
-        return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: avg };
+        return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: totalAvg };
     }
 
     function startTournament(mode) {
@@ -374,6 +377,18 @@
                     <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={startGoldenRoad}>Begin</button>
                 {:else if !canGoldenRoad}<span class="mode-lock-badge">🔒</span>
                 {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Infinity Tower -->
+            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+            <div class="mode-row" style="border-color: rgba(239,68,68,0.2);" on:click={() => switchTab('tower')}>
+                <span class="mode-icon">🗼</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: #f87171;">Infinity Tower</h3>
+                    <p class="mode-sub">Endless floors · Upgrades after each fight · How high can you go?</p>
+                    <div class="mode-prizes"><span class="mp-w">BE every 10 floors</span></div>
+                </div>
+                <button class="mode-enter-btn" style="background: linear-gradient(135deg, #dc2626, #ef4444);" on:click|stopPropagation={() => switchTab('tower')}>Enter</button>
             </div>
         </div>
 

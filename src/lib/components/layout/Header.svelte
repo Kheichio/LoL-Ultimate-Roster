@@ -1,7 +1,23 @@
 <script>
-    import { blueEssence, teamIdentity } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
+    import { loadFromStorage } from '../../utils/storage.js';
+
+    function isSameDay(d1, d2) {
+        if (!d1 || !d2) return false;
+        const a = new Date(d1), b = new Date(d2);
+        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    }
+
+    $: dailyAvailable = !isSameDay($dailyLogin.lastClaim, Date.now());
+    $: bpCanLevel = ($battlePass.xp || 0) >= 1000;
+    $: spAvailable = $skillPoints > 0;
+
+    $: notifications = {
+        rewards: (dailyAvailable ? 1 : 0) + (bpCanLevel ? 1 : 0),
+        skills: spAvailable ? $skillPoints : 0,
+    };
 
     const leftTabs = [
         { id: 'home', label: 'Home', accent: true },
@@ -58,12 +74,18 @@
                 </button>
 
                 {#each rightTabs as t}
-                    <button class="nt" class:nt-on={$activeTab === t.id} class:nt-accent={t.accent} on:click={() => navTo(t.id)}>{t.label}</button>
+                    <button class="nt" class:nt-on={$activeTab === t.id} class:nt-accent={t.accent} on:click={() => navTo(t.id)}>
+                        {t.label}
+                        {#if notifications[t.id]}<span class="nav-badge">{notifications[t.id]}</span>{/if}
+                    </button>
                 {/each}
             </div>
             <div class="row-2">
                 {#each subTabs as t}
-                    <button class="st" class:st-on={$activeTab === t.id} on:click={() => navTo(t.id)}>{t.label}</button>
+                    <button class="st" class:st-on={$activeTab === t.id} on:click={() => navTo(t.id)}>
+                        {t.label}
+                        {#if notifications[t.id]}<span class="nav-badge">{notifications[t.id]}</span>{/if}
+                    </button>
                 {/each}
             </div>
         </div>
@@ -155,6 +177,15 @@
     .nt-accent { color: #7b8fa8; font-weight: 800; }
     .nt-accent:hover { color: #cbd5e1; }
     .nt-accent.nt-on { color: #93c5fd !important; font-weight: 900; }
+
+    /* Notification badge */
+    .nav-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 16px; height: 16px; padding: 0 4px;
+        border-radius: 100px; font-size: 9px; font-weight: 900;
+        background: #ef4444; color: white;
+        margin-left: 4px; line-height: 1;
+    }
 
     /* PLAY */
     .play {

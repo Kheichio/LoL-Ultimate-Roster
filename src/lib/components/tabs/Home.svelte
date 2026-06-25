@@ -333,6 +333,7 @@
                         ['Packs', $trackStats.packs || 0, ''],
                         ['Cards Sold', $trackStats.soldCount || 0, ''],
                         ['Worlds', $trackStats.worldsWon || 0, 'color-amber'],
+                        ['Tower Best', $trackStats.towerHighestFloor || 0, 'color-red'],
                     ] as [label, value, cls]}
                         <div class="career-row">
                             <span class="career-label">{label}</span>
@@ -383,6 +384,7 @@
     .color-amber { color: #fbbf24; }
     .color-yellow { color: #eab308; }
     .color-slate { color: #94a3b8; }
+    .color-red { color: #f87171; }
 
     /* Team Card */
     .team-card { padding: 24px 16px; text-align: center; border-color: rgba(79,70,229,0.12); }

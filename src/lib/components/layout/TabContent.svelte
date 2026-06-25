@@ -14,6 +14,7 @@
     import Trade from '../tabs/Trade.svelte';
     import Rewards from '../tabs/Rewards.svelte';
     import Guide from '../tabs/Guide.svelte';
+    import Tower from '../tabs/Tower.svelte';
 
     export let tab;
 </script>
@@ -49,6 +50,8 @@
         <Rewards />
     {:else if tab === 'guide'}
         <Guide />
+    {:else if tab === 'tower'}
+        <Tower />
     {:else}
         <section class="max-w-3xl mx-auto pt-10">
             <p class="text-slate-500 text-center font-mono text-sm">{tab} — coming soon</p>
