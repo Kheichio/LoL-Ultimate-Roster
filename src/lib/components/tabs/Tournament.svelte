@@ -15,6 +15,43 @@
     let matchLog = [];
     let playerScore = 0;
     let cpuScore = 0;
+    let grCooldownEnd = 0;
+    let grCooldownLeft = 0;
+    let grTimer = null;
+
+    import { onDestroy } from 'svelte';
+
+    function startGRCooldown() {
+        grCooldownEnd = Date.now() + 30 * 60 * 1000;
+        localStorage.setItem('lur_gr_cooldown', String(grCooldownEnd));
+        updateGRCooldown();
+        if (grTimer) clearInterval(grTimer);
+        grTimer = setInterval(updateGRCooldown, 1000);
+    }
+    function updateGRCooldown() {
+        const r = Math.max(0, Math.ceil((grCooldownEnd - Date.now()) / 1000));
+        grCooldownLeft = r;
+        if (r <= 0 && grTimer) { clearInterval(grTimer); grTimer = null; }
+    }
+    function initGRCooldown() {
+        const saved = localStorage.getItem('lur_gr_cooldown');
+        if (saved) {
+            grCooldownEnd = Number(saved);
+            if (grCooldownEnd > Date.now()) {
+                updateGRCooldown();
+                grTimer = setInterval(updateGRCooldown, 1000);
+            }
+        }
+    }
+    initGRCooldown();
+    onDestroy(() => { if (grTimer) clearInterval(grTimer); });
+
+    $: grOnCooldown = grCooldownLeft > 0;
+    $: grCooldownDisplay = (() => {
+        const m = Math.floor(grCooldownLeft / 60);
+        const s = grCooldownLeft % 60;
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    })();
     let roundResults = [];
     let tournamentResult = null;
     let goldenRoadStage = 0;
@@ -171,6 +208,7 @@
                 playSound('lose');
                 tournamentResult = { won: false, reward: 0, round: round + 1, isFinalist: false, goldenRoadFailed: true, stage: goldenRoadStage };
                 phase = 'result';
+                startGRCooldown();
                 saveGame();
                 return;
             }
@@ -192,6 +230,7 @@
             playSound('win');
             tournamentResult = { won: true, reward, goldenRoad: true };
             phase = 'result';
+            startGRCooldown();
             saveGame();
             return;
         }
@@ -329,7 +368,9 @@
                     <p class="mode-sub">{canGoldenRoad ? 'Win Regional → First Stand → MSI → Worlds without losing' : 'Complete 1 Split to unlock'}</p>
                     {#if canGoldenRoad}<div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">Win: 25,000 BE + Glory</span></div>{/if}
                 </div>
-                {#if canGoldenRoad && squadReady}
+                {#if grOnCooldown}
+                    <span class="mode-cooldown">{grCooldownDisplay}</span>
+                {:else if canGoldenRoad && squadReady}
                     <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={startGoldenRoad}>Begin</button>
                 {:else if !canGoldenRoad}<span class="mode-lock-badge">🔒</span>
                 {:else}<span class="mode-need">Need squad</span>{/if}
@@ -463,6 +504,11 @@
     .mode-enter-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
     .mode-lock-badge { font-size: 18px; flex-shrink: 0; opacity: 0.5; }
     .mode-need { font-size: 10px; color: #f87171; font-weight: 700; flex-shrink: 0; }
+    .mode-cooldown {
+        padding: 8px 16px; border-radius: 10px; font-size: 14px; font-weight: 900;
+        color: #f59e0b; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.15);
+        font-family: monospace; flex-shrink: 0;
+    }
 
     /* Golden Road stages */
     .gr-stages { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
