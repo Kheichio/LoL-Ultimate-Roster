@@ -50,10 +50,18 @@
         return r;
     })();
 
+    $: baseStatAvgs = squadReady ? (() => {
+        try {
+            const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
+                r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
+            }); return r;
+        } catch(e) { return {}; }
+    })() : {};
+
     $: myStatAvgs = squadReady ? (() => {
         try {
             const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
-                const base = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
+                const base = baseStatAvgs[s] || 0;
                 const withFlat = base + (buffSummary.flat[s] || 0);
                 const withPct = Math.round(withFlat * (1 + (buffSummary.pct[s] || 0) / 100));
                 r[s] = withPct;
@@ -212,28 +220,49 @@
                         <div class="play-grid">{#each roundPlays as play}{@const edge=(myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>{edge>0?'+':''}{edge}</span></button>{/each}</div>
                     </div>
                 {/if}
-                <!-- Buff Summary -->
-                {#if towerBuffs.length > 0}
-                    <div class="buff-panel">
-                        <div class="buff-title">Active Buffs ({towerBuffs.length})</div>
-                        <div class="buff-stats">
-                            {#if buffSummary.power > 0}<div class="buff-stat"><span class="bs-label">Power</span><span class="bs-val bs-pos">+{buffSummary.power}</span></div>{/if}
+                <!-- Stat Chart with Buffs -->
+                <div class="buff-panel">
+                    <div class="buff-header">
+                        <span class="buff-title">Squad Stats {towerBuffs.length > 0 ? `· ${towerBuffs.length} buffs` : ''}</span>
+                        {#if buffSummary.power > 0}<span class="buff-power">Power +{buffSummary.power}</span>{/if}
+                    </div>
+                    <div class="buff-chart">
+                        {#each ['mec','tmf','map','frm','cmp'] as s}
+                            {@const base = baseStatAvgs[s] || 0}
+                            {@const buffed = myStatAvgs[s] || 0}
+                            {@const bonus = buffed - base}
+                            {@const maxVal = Math.max(120, buffed + 10)}
+                            <div class="bc-row">
+                                <span class="bc-icon">{STAT_ICONS[s]}</span>
+                                <span class="bc-label">{STAT_NAMES[s]}</span>
+                                <div class="bc-bar-wrap">
+                                    <div class="bc-bar-base" style="width: {(base / maxVal) * 100}%"></div>
+                                    {#if bonus > 0}
+                                        <div class="bc-bar-buff" style="left: {(base / maxVal) * 100}%; width: {(bonus / maxVal) * 100}%"></div>
+                                    {/if}
+                                </div>
+                                <span class="bc-val">{base}</span>
+                                {#if bonus > 0}
+                                    <span class="bc-bonus">+{bonus}</span>
+                                {/if}
+                                <span class="bc-total">{buffed}</span>
+                            </div>
+                        {/each}
+                    </div>
+                    {#if towerBuffs.length > 0}
+                        <div class="buff-breakdown">
                             {#each ['mec','tmf','map','frm','cmp'] as s}
                                 {#if buffSummary.flat[s] > 0 || buffSummary.pct[s] > 0}
-                                    <div class="buff-stat">
-                                        <span class="bs-icon">{STAT_ICONS[s]}</span>
-                                        <span class="bs-label">{STAT_NAMES[s]}</span>
-                                        <span class="bs-val bs-pos">
-                                            {#if buffSummary.flat[s] > 0}+{buffSummary.flat[s]}{/if}
-                                            {#if buffSummary.flat[s] > 0 && buffSummary.pct[s] > 0} · {/if}
-                                            {#if buffSummary.pct[s] > 0}+{buffSummary.pct[s]}%{/if}
-                                        </span>
-                                    </div>
+                                    <span class="bb-tag">
+                                        {STAT_ICONS[s]}
+                                        {#if buffSummary.flat[s] > 0}+{buffSummary.flat[s]}{/if}
+                                        {#if buffSummary.pct[s] > 0} ×{100 + buffSummary.pct[s]}%{/if}
+                                    </span>
                                 {/if}
                             {/each}
                         </div>
-                    </div>
-                {/if}
+                    {/if}
+                </div>
             </div>
             <div class="team-block">
                 <div class="arena-label arena-label-red">{currentEnemy.name} ({currentEnemy.avgRating})</div>
@@ -352,23 +381,45 @@
     .upg-tier-epic { color: #fbbf24; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.2); }
     .upg-tier-rare { color: #818cf8; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); }
 
-    /* Buff summary */
+    /* Buff chart */
     .buff-panel {
         background: rgba(12,16,28,0.5); border: 1px solid rgba(16,185,129,0.12);
-        border-radius: 12px; padding: 14px 16px;
+        border-radius: 14px; padding: 16px;
     }
-    .buff-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #34d399; margin-bottom: 8px; text-align: center; }
-    .buff-stats { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
-    .buff-stat {
-        display: flex; align-items: center; gap: 4px;
-        padding: 4px 10px; border-radius: 8px;
+    .buff-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .buff-title { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #34d399; }
+    .buff-power { font-size: 12px; font-weight: 900; color: #60a5fa; background: rgba(59,130,246,0.08); padding: 2px 10px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.12); }
+    .buff-chart { display: flex; flex-direction: column; gap: 8px; }
+    .bc-row { display: flex; align-items: center; gap: 6px; }
+    .bc-icon { font-size: 14px; width: 20px; text-align: center; flex-shrink: 0; }
+    .bc-label { font-size: 10px; font-weight: 900; color: #64748b; width: 32px; flex-shrink: 0; }
+    .bc-bar-wrap {
+        flex: 1; height: 14px; background: #1e293b; border-radius: 4px;
+        position: relative; overflow: hidden;
+    }
+    .bc-bar-base {
+        position: absolute; left: 0; top: 0; height: 100%; border-radius: 4px;
+        background: linear-gradient(90deg, #1e40af, #3b82f6);
+    }
+    .bc-bar-buff {
+        position: absolute; top: 0; height: 100%;
+        background: linear-gradient(90deg, #059669, #34d399);
+        border-radius: 0 4px 4px 0;
+        animation: buffGrow 0.4s ease-out;
+    }
+    @keyframes buffGrow { from { width: 0 !important; } }
+    .bc-val { font-size: 11px; font-weight: 800; color: #64748b; width: 26px; text-align: right; flex-shrink: 0; }
+    .bc-bonus { font-size: 11px; font-weight: 900; color: #34d399; width: 32px; text-align: right; flex-shrink: 0; }
+    .bc-total { font-size: 13px; font-weight: 900; color: #f1f5f9; width: 30px; text-align: right; flex-shrink: 0; }
+    .buff-breakdown {
+        display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+        margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(51,65,85,0.15);
+    }
+    .bb-tag {
+        font-size: 9px; font-weight: 800; color: #34d399;
         background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.1);
-        font-size: 11px;
+        padding: 2px 8px; border-radius: 6px;
     }
-    .bs-icon { font-size: 12px; }
-    .bs-label { font-weight: 800; color: #94a3b8; }
-    .bs-val { font-weight: 900; }
-    .bs-pos { color: #34d399; }
 
     /* Results */
     .result-card { text-align: center; padding: 40px 24px; border-radius: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
