@@ -1,8 +1,29 @@
 <script>
-    import { skills, skillPoints, managerXP, managerLevel, saveGame } from '../../stores/game.js';
+    import { skills, skillPoints, managerXP, managerLevel, weightedTrophies, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
+
+    const TITLES = [
+        { tp: 0, title: 'Scout', color: '#64748b' },
+        { tp: 5, title: 'Manager', color: '#94a3b8' },
+        { tp: 15, title: 'Director', color: '#60a5fa' },
+        { tp: 30, title: 'GM', color: '#a855f7' },
+        { tp: 50, title: 'Executive', color: '#10b981' },
+        { tp: 70, title: 'President', color: '#f59e0b' },
+        { tp: 100, title: 'Hall of Fame', color: '#ec4899' },
+        { tp: 150, title: 'Legend', color: '#ef4444' },
+        { tp: 200, title: 'Immortal', color: '#fbbf24' },
+    ];
+
+    $: currentTitleIdx = (() => {
+        for (let i = TITLES.length - 1; i >= 0; i--) {
+            if ($weightedTrophies >= TITLES[i].tp) return i;
+        }
+        return 0;
+    })();
+    $: currentTitle = TITLES[currentTitleIdx];
+    $: nextTitle = TITLES[currentTitleIdx + 1] || null;
 
     const skillDefs = [
         { id: 'scouting', name: 'Scouting Network', icon: '🔍', maxLevel: 5,
@@ -117,6 +138,36 @@
             <span>Earn XP: Packs (+50), Wins (+200), Trades (+25)</span>
             <span>Lv {$managerLevel + 1} → +1 SP</span>
         </div>
+    </div>
+
+    <!-- Manager Title Progress -->
+    <div class="title-panel">
+        <div class="title-header">
+            <div>
+                <div class="title-label">Manager Title</div>
+                <div class="title-current" style="color: {currentTitle.color};">{currentTitle.title}</div>
+            </div>
+            <div class="title-tp">{$weightedTrophies} TP</div>
+        </div>
+        {#if nextTitle}
+            <div class="title-next">Next: <span style="color: {nextTitle.color};">{nextTitle.title}</span> — {nextTitle.tp - $weightedTrophies} TP needed</div>
+            <div class="title-bar"><div class="title-fill" style="width: {Math.min(100, (($weightedTrophies - currentTitle.tp) / (nextTitle.tp - currentTitle.tp)) * 100)}%; background: {currentTitle.color};"></div></div>
+        {:else}
+            <div class="title-max">Maximum title reached!</div>
+        {/if}
+        <div class="title-list">
+            {#each TITLES as t, i}
+                {@const achieved = $weightedTrophies >= t.tp}
+                {@const isCurrent = i === currentTitleIdx}
+                <div class="title-row" class:title-row-done={achieved} class:title-row-current={isCurrent}>
+                    <span class="tr-dot" style="background: {achieved ? t.color : '#1e293b'};"></span>
+                    <span class="tr-title" style="color: {achieved ? t.color : '#334155'};">{t.title}</span>
+                    <span class="tr-req">{t.tp} TP</span>
+                    {#if isCurrent}<span class="tr-you">← You</span>{/if}
+                </div>
+            {/each}
+        </div>
+        <div class="title-hint">Earn Trophy Points from: Worlds (×6), MSI (×4), First Stand (×2), Regional (×1), Golden Road (×10)</div>
     </div>
 
     <!-- Skills Grid -->
@@ -310,6 +361,28 @@
         font-size: 9px;
         color: #475569;
     }
+
+    /* ---------- Title Panel ---------- */
+    .title-panel {
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+        border-radius: 16px; padding: 20px; margin-bottom: 20px;
+    }
+    .title-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .title-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
+    .title-current { font-size: 22px; font-weight: 900; margin-top: 2px; }
+    .title-tp { font-size: 18px; font-weight: 900; color: #fbbf24; }
+    .title-next { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+    .title-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 14px; }
+    .title-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+    .title-max { font-size: 11px; font-weight: 800; color: #fbbf24; margin-bottom: 14px; }
+    .title-list { display: flex; flex-direction: column; gap: 4px; }
+    .title-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+    .title-row-current { font-weight: 900; }
+    .tr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .tr-title { font-size: 12px; font-weight: 700; flex: 1; }
+    .tr-req { font-size: 10px; color: #475569; font-family: monospace; }
+    .tr-you { font-size: 9px; font-weight: 900; color: #60a5fa; }
+    .title-hint { font-size: 9px; color: #334155; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(51,65,85,0.15); }
 
     /* ---------- Skills Grid ---------- */
     .skills-grid {

@@ -1,12 +1,17 @@
 <script>
     import ProfileModal from '../modals/ProfileModal.svelte';
-    import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, weightedTrophies } from '../../stores/game.js';
-    import { currentUser } from '../../stores/auth.js';
-    import { get } from 'svelte/store';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, weightedTrophies, saveGame } from '../../stores/game.js';
+    import { currentUser, cloudSave } from '../../stores/auth.js';
+    import { showToast } from '../../stores/toasts.js';
+    import { getEffectiveRating } from '../../utils/cards.js';
+    import { get, derived } from 'svelte/store';
+    import { onDestroy } from 'svelte';
 
     let sortBy = 'trophies';
     let selectedPlayer = null;
     let players = [];
+    let loading = false;
+    let lastSync = null;
 
     const columns = [
         { key: 'trophies', label: 'Trophies', color: '#34d399' },
@@ -18,17 +23,24 @@
         { key: 'holographicCards', label: 'Holo', color: '#fbbf24' },
     ];
 
-    function loadLeaderboard() {
-        const myData = buildMyEntry();
-        players = [myData];
+    function getTitle(tp) {
+        if (tp >= 200) return 'Immortal';
+        if (tp >= 150) return 'Legend';
+        if (tp >= 100) return 'Hall of Fame';
+        if (tp >= 70) return 'President';
+        if (tp >= 50) return 'Executive';
+        if (tp >= 30) return 'GM';
+        if (tp >= 15) return 'Director';
+        if (tp >= 5) return 'Manager';
+        return 'Scout';
     }
 
     function buildMyEntry() {
         const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => get(squad)[r]).filter(Boolean);
-        const avg = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
+        const avg = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
         const ts = get(trackStats);
         return {
-            id: 'me',
+            id: get(currentUser)?.uid || 'local',
             isMe: true,
             displayName: get(currentUser)?.displayName || 'You',
             teamName: get(teamIdentity).name,
@@ -61,17 +73,112 @@
         };
     }
 
-    function getTitle(tp) {
-        if (tp >= 200) return 'Immortal';
-        if (tp >= 150) return 'Legend';
-        if (tp >= 100) return 'Hall of Fame';
-        if (tp >= 70) return 'President';
-        if (tp >= 50) return 'Executive';
-        if (tp >= 30) return 'GM';
-        if (tp >= 15) return 'Director';
-        if (tp >= 5) return 'Manager';
-        return 'Scout';
+    async function pushToLeaderboard() {
+        const user = get(currentUser);
+        if (!user || !window.fbDb) return;
+        const entry = buildMyEntry();
+        try {
+            await window.fbDb.collection('leaderboard').doc(user.uid).set({
+                displayName: entry.displayName,
+                teamName: entry.teamName,
+                teamLogo: entry.teamLogo,
+                teamColor: entry.teamColor,
+                managerLevel: entry.managerLevel,
+                prestigeTitle: entry.prestigeTitle,
+                trophies: entry.trophies,
+                totalPower: entry.totalPower,
+                clubSize: entry.clubSize,
+                signatureCards: entry.signatureCards,
+                holographicCards: entry.holographicCards,
+                splitsCompleted: entry.splitsCompleted,
+                goldenRoads: entry.goldenRoads,
+                cafeWins: entry.cafeWins,
+                regionalWins: entry.regionalWins,
+                msiWins: entry.msiWins,
+                worldsWins: entry.worldsWins,
+                losses: entry.losses,
+                packsOpened: entry.packsOpened,
+                updatedAt: Date.now(),
+            });
+        } catch(e) {}
     }
+
+    async function loadLeaderboard() {
+        loading = true;
+        const myData = buildMyEntry();
+        let others = [];
+
+        if (window.fbDb) {
+            try {
+                const snap = await window.fbDb.collection('leaderboard')
+                    .orderBy('trophies', 'desc')
+                    .limit(50)
+                    .get();
+                const myUid = get(currentUser)?.uid;
+                snap.forEach(doc => {
+                    if (doc.id === myUid) return;
+                    const d = doc.data();
+                    others.push({
+                        id: doc.id,
+                        isMe: false,
+                        displayName: d.displayName || 'Unknown',
+                        teamName: d.teamName || 'Team',
+                        teamLogo: d.teamLogo || '🛡️',
+                        teamColor: d.teamColor || '#3b82f6',
+                        managerLevel: d.managerLevel || 1,
+                        prestigeTitle: d.prestigeTitle || getTitle(d.trophies || 0),
+                        trophies: d.trophies || 0,
+                        totalPower: d.totalPower || 0,
+                        rawPower: d.totalPower || 0,
+                        totalBE: 0,
+                        clubSize: d.clubSize || 0,
+                        signatureCards: d.signatureCards || 0,
+                        holographicCards: d.holographicCards || 0,
+                        splitsCompleted: d.splitsCompleted || 0,
+                        goldenRoads: d.goldenRoads || 0,
+                        towerBest: 0,
+                        cafeWins: d.cafeWins || 0,
+                        regionalWins: d.regionalWins || 0,
+                        msiWins: d.msiWins || 0,
+                        worldsWins: d.worldsWins || 0,
+                        draftWins: 0,
+                        salaryWins: 0,
+                        losses: d.losses || 0,
+                        packsOpened: d.packsOpened || 0,
+                        favouriteTeam: 'N/A',
+                        mostPlayedMode: '',
+                        squad: {},
+                        showcaseCards: [],
+                    });
+                });
+            } catch(e) {}
+        }
+
+        await pushToLeaderboard();
+        players = [myData, ...others].sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0));
+        lastSync = new Date().toLocaleTimeString();
+        loading = false;
+    }
+
+    // Auto-save interval
+    const AUTO_SAVE_MS = 10 * 60 * 1000;
+    let autoSaveInterval = null;
+
+    async function autoSave() {
+        saveGame();
+        if (get(currentUser) && window.fbDb) {
+            await cloudSave();
+            await pushToLeaderboard();
+        }
+    }
+
+    function startAutoSave() {
+        if (autoSaveInterval) clearInterval(autoSaveInterval);
+        autoSaveInterval = setInterval(autoSave, AUTO_SAVE_MS);
+    }
+
+    startAutoSave();
+    onDestroy(() => { if (autoSaveInterval) clearInterval(autoSaveInterval); });
 
     function changeSort(key) {
         sortBy = key;
@@ -88,9 +195,14 @@
     <div class="lb-head">
         <div>
             <h2 class="lb-title">Global Leaderboard</h2>
-            <p class="lb-desc">Compete against managers worldwide. Connect Firebase to see other players.</p>
+            <p class="lb-desc">
+                {#if lastSync}Last synced: {lastSync}{:else}Loading...{/if}
+                · Auto-saves every 10 min
+            </p>
         </div>
-        <button class="lb-refresh" on:click={loadLeaderboard}>Refresh</button>
+        <button class="lb-refresh" on:click={loadLeaderboard} disabled={loading}>
+            {loading ? 'Syncing...' : 'Refresh & Sync'}
+        </button>
     </div>
 
     <!-- Sort -->
@@ -103,7 +215,6 @@
 
     <!-- Table -->
     <div class="lb-table">
-        <!-- Header -->
         <div class="lb-row lb-header">
             <span class="lb-rank">#</span>
             <span class="lb-manager">Manager</span>
@@ -113,7 +224,6 @@
             <span class="lb-col">Title</span>
         </div>
 
-        <!-- Rows -->
         {#each players as p, i}
             {@const rank = i + 1}
             {@const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : ''}
@@ -136,10 +246,8 @@
             </div>
         {/each}
 
-        {#if players.length <= 1}
-            <div class="lb-empty">
-                Sign in and connect to Firebase to see other players on the leaderboard.
-            </div>
+        {#if players.length <= 1 && !loading}
+            <div class="lb-empty">Sign in to see other players and sync your data to the leaderboard.</div>
         {/if}
     </div>
 </section>
@@ -148,9 +256,9 @@
 
 <style>
     .lb { padding-bottom: 40px; }
-    .lb-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .lb-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
     .lb-title { font-size: 22px; font-weight: 900; color: #fbbf24; }
-    .lb-desc { font-size: 12px; color: #64748b; margin-top: 3px; }
+    .lb-desc { font-size: 11px; color: #64748b; margin-top: 3px; }
     .lb-refresh {
         padding: 10px 20px; border-radius: 12px;
         background: linear-gradient(135deg, #d97706, #f59e0b);
@@ -160,8 +268,8 @@
         box-shadow: 0 4px 12px rgba(245,158,11,0.2);
     }
     .lb-refresh:hover { box-shadow: 0 6px 20px rgba(245,158,11,0.35); transform: translateY(-1px); }
+    .lb-refresh:disabled { opacity: 0.5; cursor: wait; }
 
-    /* Sort */
     .lb-sort { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 16px; }
     .sort-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; margin-right: 4px; }
     .sort-btn {
@@ -176,22 +284,17 @@
         color: #1c1917 !important; border-color: transparent !important;
     }
 
-    /* Table */
     .lb-table {
         background: rgba(12,16,28,0.5); border: 1px solid rgba(251,191,36,0.1);
         border-radius: 16px; overflow: hidden;
     }
-    .lb-row {
-        display: flex; align-items: center; gap: 8px;
-        padding: 0 20px;
-    }
+    .lb-row { display: flex; align-items: center; gap: 8px; padding: 0 20px; }
     .lb-header {
         padding-top: 14px; padding-bottom: 14px;
         background: rgba(15,23,42,0.5); border-bottom: 1px solid rgba(51,65,85,0.2);
     }
     .lb-header .lb-rank, .lb-header .lb-manager, .lb-header .lb-col {
-        font-size: 9px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; color: #475569;
+        font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569;
     }
     .lb-data {
         padding-top: 12px; padding-bottom: 12px;
@@ -199,7 +302,7 @@
         cursor: pointer; transition: background 0.1s;
     }
     .lb-data:hover { background: rgba(255,255,255,0.02) !important; }
-    .lb-me { border-left: 3px solid var(--team-color, #3b82f6); }
+    .lb-me { border-left: 3px solid #3b82f6; }
 
     .lb-rank { width: 32px; text-align: center; font-size: 12px; font-weight: 900; color: #475569; flex-shrink: 0; }
     .lb-rank-top { color: #fbbf24; }
@@ -212,11 +315,7 @@
     .lb-col-active { color: #fbbf24 !important; }
     .lb-val { font-size: 12px; font-weight: 800; color: #94a3b8; }
     .lb-title-cell { font-size: 10px; color: #64748b; width: 70px; }
-
-    .lb-empty {
-        text-align: center; padding: 40px 20px;
-        font-size: 12px; color: #475569; font-style: italic;
-    }
+    .lb-empty { text-align: center; padding: 40px 20px; font-size: 12px; color: #475569; font-style: italic; }
 
     @media (max-width: 800px) {
         .lb-col { width: 44px; font-size: 9px; }
