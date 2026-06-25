@@ -64,48 +64,76 @@
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
     const STAT_KEYS = ['mec','tmf','map','frm','cmp'];
     $: myStatAvgs = squadReady ? (() => {
-        const r = {}; STAT_KEYS.forEach(s => {
-            r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
-        }); return r;
+        try {
+            const r = {}; STAT_KEYS.forEach(s => {
+                r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
+            }); return r;
+        } catch(e) { return {}; }
     })() : {};
     $: cpuStatAvgs = currentOpponent ? (() => {
-        const cards = Object.values(currentOpponent.cards);
-        const r = {}; STAT_KEYS.forEach(s => {
-            r[s] = cards.length > 0 ? Math.round(cards.reduce((sum, c) => sum + (c.stats[s]||0), 0) / cards.length) : 0;
-        }); return r;
+        try {
+            const cards = Object.values(currentOpponent.cards || {}).filter(c => c && c.stats);
+            const r = {}; STAT_KEYS.forEach(s => {
+                r[s] = cards.length > 0 ? Math.round(cards.reduce((sum, c) => sum + (c.stats[s]||0), 0) / cards.length) : 0;
+            }); return r;
+        } catch(e) { return {}; }
     })() : {};
     $: splitName = SPLIT_NAMES[($seasonData.currentSplit - 1) % 4];
     $: splitYear = Math.floor(($seasonData.currentSplit - 1) / 4) + 1;
-    $: matchIndex = ($seasonData.matchResults || []).filter(r => r !== null).length;
+    $: matchIndex = ($seasonData.matchResults || []).filter(r => r === true || r === false).length;
     $: splitComplete = matchIndex >= GAMES_PER_SPLIT;
     $: wins = ($seasonData.matchResults || []).filter(r => r === true).length;
     $: losses = ($seasonData.matchResults || []).filter(r => r === false).length;
 
     // --- Meta system ---
     $: metaPhase = matchIndex < 5 ? 0 : 1;
-    $: currentMeta = ($seasonData.meta || [])[metaPhase] || null;
+    $: currentMeta = (() => {
+        const raw = ($seasonData.meta || [])[metaPhase];
+        if (!raw) return null;
+        if (raw.buffed && raw.buffed.length > 0 && typeof raw.buffed[0] === 'string') return null;
+        return raw;
+    })();
     $: splitActive = ($seasonData.opponents || []).length > 0 && !splitComplete;
+    $: affectedSquad = (() => {
+        if (!currentMeta) return { buffed: {}, nerfed: {} };
+        const all = ['TOP','JNG','MID','ADC','SUP','COACH'].map(r => $squad[r]).filter(Boolean);
+        const b = {}, n = {};
+        for (const entry of (currentMeta.buffed || [])) {
+            const hit = all.filter(c => c.team === entry.team);
+            if (hit.length > 0) b[entry.team] = hit;
+        }
+        for (const entry of (currentMeta.nerfed || [])) {
+            const hit = all.filter(c => c.team === entry.team);
+            if (hit.length > 0) n[entry.team] = hit;
+        }
+        return { buffed: b, nerfed: n };
+    })();
+
+    function randRange(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
 
     function generateMeta() {
         const db = getDB();
         if (!db) return [];
         const allTeams = [...new Set(db.map(c => c.team))];
-        const shuffled = allTeams.sort(() => Math.random() - 0.5);
-        const phase1Buffed = shuffled.slice(0, 5);
-        const phase1Nerfed = shuffled.slice(5, 10);
-        const shuffled2 = [...allTeams].sort(() => Math.random() - 0.5);
-        const phase2Buffed = shuffled2.slice(0, 5);
-        const phase2Nerfed = shuffled2.slice(5, 10);
-        return [
-            { buffed: phase1Buffed, nerfed: phase1Nerfed },
-            { buffed: phase2Buffed, nerfed: phase2Nerfed },
-        ];
+
+        function buildPhase() {
+            const shuffled = [...allTeams].sort(() => Math.random() - 0.5);
+            const buffed = shuffled.slice(0, 5).map(t => ({ team: t, amount: randRange(8, 25) }));
+            const nerfed = shuffled.slice(5, 10).map(t => ({ team: t, amount: randRange(8, 25) }));
+            return { buffed, nerfed };
+        }
+
+        return [buildPhase(), buildPhase()];
     }
 
     function getMetaModifier(card) {
         if (!currentMeta || !card) return 0;
-        if (currentMeta.buffed.includes(card.team)) return 3;
-        if (currentMeta.nerfed.includes(card.team)) return -3;
+        try {
+            const buff = currentMeta.buffed?.find(b => b.team === card.team);
+            if (buff) return buff.amount || 0;
+            const nerf = currentMeta.nerfed?.find(n => n.team === card.team);
+            if (nerf) return -(nerf.amount || 0);
+        } catch(e) {}
         return 0;
     }
 
@@ -124,27 +152,69 @@
     function generateOpponents() {
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return false; }
-        const pool = db.filter(p => p.role !== 'COACH' && !['Champion','MVP','Finalist','MSI','FirstStand','POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
+        const regularPool = db.filter(p => p.role !== 'COACH' && !['Champion','MVP','Finalist','MSI','FirstStand','POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
+        const elitePool = db.filter(p => p.role !== 'COACH');
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const teamNames = ['Shadow Wolves', 'Storm Dragons', 'Iron Phoenix', 'Crystal Bears', 'Neon Tigers',
                           'Dark Knights', 'Solar Flare', 'Frost Giants', 'Thunder Hawks', 'Crimson Vipers'];
-        const opps = [];
 
+        const hardCount = randRange(1, 6);
+        const impossibleCount = randRange(0, 2);
+        const hardSlots = new Set();
+        const impossibleSlots = new Set();
+
+        while (impossibleSlots.size < impossibleCount) {
+            impossibleSlots.add(randRange(Math.max(5, GAMES_PER_SPLIT - 4), GAMES_PER_SPLIT - 1));
+        }
+        while (hardSlots.size < hardCount) {
+            const s = randRange(3, GAMES_PER_SPLIT - 1);
+            if (!impossibleSlots.has(s)) hardSlots.add(s);
+        }
+
+        const opps = [];
         for (let i = 0; i < GAMES_PER_SPLIT; i++) {
-            const difficulty = 60 + (i * 3);
+            const isImpossible = impossibleSlots.has(i);
+            const isHard = hardSlots.has(i);
+            let difficulty, pool, tag;
+
+            if (isImpossible) {
+                difficulty = randRange(110, 120);
+                pool = elitePool;
+                tag = 'BOSS';
+            } else if (isHard) {
+                difficulty = randRange(88, 100);
+                pool = elitePool;
+                tag = 'HARD';
+            } else {
+                difficulty = 60 + (i * 3);
+                pool = regularPool;
+                tag = null;
+            }
+
             const team = {};
             const used = new Set();
             roles.forEach(role => {
-                let rolePool = pool.filter(p => p.role === role && !used.has(p.id) && p.rating <= difficulty + 10);
-                if (rolePool.length < 3) rolePool = pool.filter(p => p.role === role && !used.has(p.id));
+                let rolePool;
+                if (isImpossible) {
+                    rolePool = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= 95);
+                    if (rolePool.length < 2) rolePool = pool.filter(p => p.role === role && !used.has(p.id)).sort((a, b) => b.rating - a.rating).slice(0, 5);
+                } else if (isHard) {
+                    rolePool = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= 85);
+                    if (rolePool.length < 3) rolePool = pool.filter(p => p.role === role && !used.has(p.id)).sort((a, b) => b.rating - a.rating).slice(0, 10);
+                } else {
+                    rolePool = pool.filter(p => p.role === role && !used.has(p.id) && p.rating <= difficulty + 10);
+                    if (rolePool.length < 3) rolePool = pool.filter(p => p.role === role && !used.has(p.id));
+                }
                 rolePool.sort((a, b) => b.rating - a.rating);
-                const cutoff = Math.max(1, Math.min(rolePool.length, Math.floor(rolePool.length * 0.5)));
+                const cutoff = Math.max(1, Math.min(rolePool.length, isImpossible ? 3 : isHard ? 5 : Math.floor(rolePool.length * 0.5)));
                 const pick = rolePool[Math.floor(Math.random() * cutoff)];
                 if (pick) { team[role] = pick; used.add(pick.id); }
             });
+
             const cards = Object.values(team);
-            const avg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : difficulty;
-            opps.push({ name: teamNames[i], cards: team, avgRating: avg, index: i });
+            let avg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : difficulty;
+            if (isImpossible) avg = Math.max(avg, randRange(110, 120));
+            opps.push({ name: teamNames[i], cards: team, avgRating: avg, index: i, tag });
         }
 
         seasonData.update(s => ({
@@ -159,6 +229,9 @@
         return true;
     }
 
+    function goOverview() { phase = 'overview'; }
+    function goPlayMenu() { switchTab('tournament'); }
+
     function startSplit() {
         if (!squadReady) { showToast('Fill all 5 starting positions.', 'error'); return; }
         const meta = generateMeta();
@@ -170,13 +243,24 @@
     }
 
     function startMatch(oppIndex) {
-        if (oppIndex !== matchIndex) return;
-        currentOpponent = opponents[oppIndex];
-        playerScore = 0;
-        cpuScore = 0;
-        matchLog = [];
-        rollRoundPlays();
-        phase = 'match';
+        try {
+            if (oppIndex !== matchIndex) {
+                showToast(`Can't play this match yet. Next: #${matchIndex + 1}`, 'error');
+                return;
+            }
+            if (!opponents[oppIndex]) {
+                showToast('Opponent data missing. Try starting a new split.', 'error');
+                return;
+            }
+            currentOpponent = opponents[oppIndex];
+            playerScore = 0;
+            cpuScore = 0;
+            matchLog = [];
+            rollRoundPlays();
+            phase = 'match';
+        } catch (e) {
+            showToast('Error starting match: ' + e.message, 'error');
+        }
     }
 
     function pickPlay(play) {
@@ -285,7 +369,7 @@
                     <span class="sr-l">{losses}L</span>
                     <span class="sr-rem">{GAMES_PER_SPLIT - matchIndex} remaining</span>
                 </div>
-                <button class="sn-action-btn" on:click={() => { phase = 'schedule'; }}>Continue Split →</button>
+                <button class="sn-action-btn" on:click={() => phase = 'schedule'}>Continue Split →</button>
             {:else if !squadReady}
                 <p class="split-warn">Fill all 5 positions to start.</p>
             {:else}
@@ -337,8 +421,8 @@
                 <p class="sn-mono">{wins}W - {losses}L · Match {matchIndex + 1} of {GAMES_PER_SPLIT}</p>
             </div>
             <div class="sn-topbar-btns">
-                <button class="sn-nav-btn" on:click={() => { phase = 'overview'; }}>← Overview</button>
-                <button class="sn-nav-btn" on:click={() => switchTab('tournament')}>← Play Menu</button>
+                <button class="sn-nav-btn" on:click={goOverview}>← Overview</button>
+                <button class="sn-nav-btn" on:click={goPlayMenu}>← Play Menu</button>
             </div>
         </div>
 
@@ -351,15 +435,41 @@
                 </div>
                 <div class="meta-grid">
                     <div class="meta-col">
-                        <div class="meta-col-label meta-buff">▲ Buffed Teams (+3)</div>
-                        {#each currentMeta.buffed as team}
-                            <div class="meta-team meta-team-buff">{team}</div>
+                        <div class="meta-col-label meta-buff">▲ Buffed Teams</div>
+                        {#each currentMeta.buffed as entry}
+                            {@const myAffected = affectedSquad.buffed[entry.team] || []}
+                            <div class="meta-team-row meta-team-buff">
+                                <div class="mtr-head">
+                                    <span class="mtr-name">{entry.team}</span>
+                                    <span class="mtr-amount mtr-amount-buff">+{entry.amount}</span>
+                                </div>
+                                {#if myAffected.length > 0}
+                                    <div class="mtr-players">
+                                        {#each myAffected as c}
+                                            <span class="mtr-player mtr-player-buff">{c.role}: {c.name}</span>
+                                        {/each}
+                                    </div>
+                                {/if}
+                            </div>
                         {/each}
                     </div>
                     <div class="meta-col">
-                        <div class="meta-col-label meta-nerf">▼ Slumping Teams (-3)</div>
-                        {#each currentMeta.nerfed as team}
-                            <div class="meta-team meta-team-nerf">{team}</div>
+                        <div class="meta-col-label meta-nerf">▼ Slumping Teams</div>
+                        {#each currentMeta.nerfed as entry}
+                            {@const myAffected = affectedSquad.nerfed[entry.team] || []}
+                            <div class="meta-team-row meta-team-nerf">
+                                <div class="mtr-head">
+                                    <span class="mtr-name">{entry.team}</span>
+                                    <span class="mtr-amount mtr-amount-nerf">-{entry.amount}</span>
+                                </div>
+                                {#if myAffected.length > 0}
+                                    <div class="mtr-players">
+                                        {#each myAffected as c}
+                                            <span class="mtr-player mtr-player-nerf">{c.role}: {c.name}</span>
+                                        {/each}
+                                    </div>
+                                {/if}
+                            </div>
                         {/each}
                     </div>
                 </div>
@@ -381,6 +491,11 @@
                         <span class="sch-num">{i + 1}</span>
                         <div class="sch-info">
                             <span class="sch-name">{opp.name}</span>
+                            {#if opp.tag === 'BOSS'}
+                                <span class="sch-tag sch-tag-boss">BOSS</span>
+                            {:else if opp.tag === 'HARD'}
+                                <span class="sch-tag sch-tag-hard">HARD</span>
+                            {/if}
                             <span class="sch-pwr-badge">{opp.avgRating} PWR</span>
                         </div>
                         {#if played}
@@ -611,6 +726,18 @@
     .sch-win .sch-num { color: #34d399; } .sch-loss .sch-num { color: #f87171; } .sch-next .sch-num { color: #60a5fa; }
     .sch-info { flex: 1; }
     .sch-name { font-size: 13px; font-weight: 800; color: #e2e8f0; }
+    .sch-tag {
+        font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px;
+        padding: 2px 8px; border-radius: 4px; margin-left: 6px;
+    }
+    .sch-tag-hard {
+        background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.2); color: #fbbf24;
+    }
+    .sch-tag-boss {
+        background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.2); color: #f87171;
+        animation: boss-pulse 2s ease-in-out infinite;
+    }
+    @keyframes boss-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
     .sch-pwr-badge {
         font-size: 11px; font-weight: 900; color: #f87171;
         background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.12);
@@ -733,18 +860,31 @@
     .meta-note { font-size: 10px; color: #475569; }
     .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     @media (max-width: 600px) { .meta-grid { grid-template-columns: 1fr; } }
-    .meta-col { display: flex; flex-direction: column; gap: 4px; }
+    .meta-col { display: flex; flex-direction: column; gap: 6px; }
     .meta-col-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
     .meta-buff { color: #34d399; }
     .meta-nerf { color: #f87171; }
-    .meta-team {
-        padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700;
+    .meta-team-row { padding: 10px 12px; border-radius: 10px; }
+    .meta-team-row.meta-team-buff {
+        background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.12);
     }
-    .meta-team-buff {
-        background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.12); color: #6ee7b7;
+    .meta-team-row.meta-team-nerf {
+        background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.1);
     }
-    .meta-team-nerf {
-        background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.1); color: #fca5a5;
+    .mtr-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .mtr-name { font-size: 13px; font-weight: 900; color: #e2e8f0; }
+    .mtr-amount { font-size: 14px; font-weight: 900; }
+    .mtr-amount-buff { color: #34d399; }
+    .mtr-amount-nerf { color: #f87171; }
+    .mtr-players { display: flex; flex-wrap: wrap; gap: 4px; }
+    .mtr-player {
+        font-size: 10px; font-weight: 800; padding: 3px 10px; border-radius: 6px;
+    }
+    .mtr-player-buff {
+        color: #6ee7b7; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.15);
+    }
+    .mtr-player-nerf {
+        color: #fca5a5; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.12);
     }
     .meta-lock {
         text-align: center; font-size: 10px; font-weight: 700; color: #f59e0b;

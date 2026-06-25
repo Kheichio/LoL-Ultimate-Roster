@@ -11,6 +11,7 @@
     import Upgrade from '../tabs/Upgrade.svelte';
     import Season from '../tabs/Season.svelte';
     import Leaderboard from '../tabs/Leaderboard.svelte';
+    import Trade from '../tabs/Trade.svelte';
 
     export let tab;
 </script>
@@ -40,6 +41,8 @@
         <Season />
     {:else if tab === 'leaderboard'}
         <Leaderboard />
+    {:else if tab === 'trade'}
+        <Trade />
     {:else}
         <section class="max-w-3xl mx-auto pt-10">
             <p class="text-slate-500 text-center font-mono text-sm">{tab} — coming soon</p>

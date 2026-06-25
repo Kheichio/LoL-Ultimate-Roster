@@ -30,6 +30,11 @@
           perLevel: '+10% XP gain per level',
           textColor: 'text-amber-400', barFill: 'bg-amber-500',
           btnActive: 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border-amber-500/40' },
+        { id: 'trading', name: 'Trade Mastery', icon: '🔄', maxLevel: 5,
+          desc: 'More trade slots, lower card costs, cheaper refreshes.',
+          perLevel: 'Lv1-2: +1 slot each · Lv2+: -1 card cost · Lv2/4: refresh discount',
+          textColor: 'text-rose-400', barFill: 'bg-rose-500',
+          btnActive: 'bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border-rose-500/40' },
         { id: 'clubhouse', name: 'Club Capacity', icon: '🏟️', maxLevel: 20,
           desc: 'Increases maximum cards in your club.',
           perLevel: '+50 card capacity per level',
@@ -63,8 +68,10 @@
     const colorMap = {
         'text-blue-400': '#60a5fa', 'text-purple-400': '#a855f7', 'text-orange-400': '#fb923c',
         'text-emerald-400': '#34d399', 'text-amber-400': '#fbbf24', 'text-cyan-400': '#22d3ee',
+        'text-rose-400': '#fb7185',
         'bg-blue-500': '#3b82f6', 'bg-purple-500': '#a855f7', 'bg-orange-500': '#f97316',
-        'bg-emerald-500': '#10b981', 'bg-amber-500': '#f59e0b', 'bg-cyan-500': '#06b6d4'
+        'bg-emerald-500': '#10b981', 'bg-amber-500': '#f59e0b', 'bg-cyan-500': '#06b6d4',
+        'bg-rose-500': '#f43f5e'
     };
 
     const btnColorMap = {
@@ -73,7 +80,8 @@
         'text-orange-400': { bg: 'rgba(234,88,12,0.2)', bgHover: 'rgba(234,88,12,0.4)', text: '#fdba74', border: 'rgba(249,115,22,0.4)' },
         'text-emerald-400': { bg: 'rgba(5,150,105,0.2)', bgHover: 'rgba(5,150,105,0.4)', text: '#6ee7b7', border: 'rgba(16,185,129,0.4)' },
         'text-amber-400': { bg: 'rgba(217,119,6,0.2)', bgHover: 'rgba(217,119,6,0.4)', text: '#fcd34d', border: 'rgba(245,158,11,0.4)' },
-        'text-cyan-400': { bg: 'rgba(8,145,178,0.2)', bgHover: 'rgba(8,145,178,0.4)', text: '#67e8f9', border: 'rgba(6,182,212,0.4)' }
+        'text-cyan-400': { bg: 'rgba(8,145,178,0.2)', bgHover: 'rgba(8,145,178,0.4)', text: '#67e8f9', border: 'rgba(6,182,212,0.4)' },
+        'text-rose-400': { bg: 'rgba(244,63,94,0.2)', bgHover: 'rgba(244,63,94,0.4)', text: '#fda4af', border: 'rgba(244,63,94,0.4)' }
     };
 </script>
 
