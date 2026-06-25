@@ -57,15 +57,16 @@
         return (s.mec||0)+(s.tmf||0)+(s.frm||0)+(s.cmp||0)+(s.map||0)+(s.ldr||0);
     }
     function autofill() {
-        const s={...$squad}; const used=new Set(); ALL_SLOTS.forEach(r=>{if(s[r])used.add(s[r].uniqueId);});
-        ROLES.forEach(role=>{
-            if(s[role]) return;
-            const best=$club.filter(c=>c.role===role&&!used.has(c.uniqueId)).sort((a,b)=>totalStats(b)-totalStats(a))[0]
-                ||$club.filter(c=>LEGACY_TIERS.includes(c.quality)&&!used.has(c.uniqueId)).sort((a,b)=>totalStats(b)-totalStats(a))[0];
-            if(best){s[role]=best;used.add(best.uniqueId);}
+        const s = { COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
+        const used = new Set();
+        ROLES.forEach(role => {
+            const best = $club.filter(c => c.role === role && !used.has(c.uniqueId)).sort((a,b) => totalStats(b) - totalStats(a))[0]
+                || $club.filter(c => LEGACY_TIERS.includes(c.quality) && !used.has(c.uniqueId)).sort((a,b) => totalStats(b) - totalStats(a))[0];
+            if (best) { s[role] = best; used.add(best.uniqueId); }
         });
-        if(!s.COACH){const c=$club.filter(c=>c.role==='COACH'&&!used.has(c.uniqueId)).sort((a,b)=>totalStats(b)-totalStats(a))[0]; if(c)s.COACH=c;}
-        squad.set(s); saveGame(); showToast('Squad auto-filled by best total stats.','success');
+        const bestCoach = $club.filter(c => c.role === 'COACH' && !used.has(c.uniqueId)).sort((a,b) => totalStats(b) - totalStats(a))[0];
+        if (bestCoach) s.COACH = bestCoach;
+        squad.set(s); saveGame(); showToast('Squad filled with best total stats.', 'success');
     }
     function disband() { squad.set({COACH:null,TOP:null,JNG:null,MID:null,ADC:null,SUP:null}); saveGame(); }
 </script>

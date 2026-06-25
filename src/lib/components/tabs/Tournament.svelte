@@ -54,7 +54,7 @@
     $: ts = $trackStats;
     $: canRegional = (ts.splitsCompleted || 0) >= 1;
     $: canFirstStand = (ts.regionalSplitWon || 0) >= 1;
-    $: canMSI = ($unlocks.firstStand || (ts.regionalSplitWon || 0) >= 1);
+    $: canMSI = ($unlocks.firstStand || (ts.firstStandWon || 0) >= 1 || (ts.regionalSplitWon || 0) >= 1);
     $: canWorlds = ($unlocks.msi || (ts.regionalSplitWon || 0) >= 1);
     $: canGoldenRoad = canRegional;
 
@@ -298,7 +298,7 @@
                 <span class="mode-icon">🌊</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canMSI ? MODES.msi.color : '#334155'};">MSI</h3>
-                    <p class="mode-sub">{canMSI ? '7 rounds · Elite competition' : 'Win First Stand or Regional to unlock'}</p>
+                    <p class="mode-sub">{canMSI ? '7 rounds · Elite competition' : 'Win Regional 1st or First Stand to unlock'}</p>
                     {#if canMSI}<div class="mode-prizes"><span class="mp-w">Win: {MODES.msi.reward} BE</span><span class="mp-l">2nd: {MODES.msi.second} BE</span></div>{/if}
                 </div>
                 {#if canMSI && squadReady}

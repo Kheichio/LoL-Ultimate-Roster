@@ -46,6 +46,11 @@
           perLevel: '+1 max chemistry bonus per level',
           textColor: 'text-emerald-400', barFill: 'bg-emerald-500',
           btnActive: 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border-emerald-500/40' },
+        { id: 'stamina', name: 'Stamina', icon: '⏱️', maxLevel: 5,
+          desc: 'Reduces cooldown between season split matches.',
+          perLevel: '-10s cooldown per level (60s base → 10s min)',
+          textColor: 'text-yellow-400', barFill: 'bg-yellow-500',
+          btnActive: 'bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-300 border-yellow-500/40' },
         { id: 'mentorship', name: 'Mentorship', icon: '📚', maxLevel: 5,
           desc: 'Increases XP gained from all sources.',
           perLevel: '+10% XP gain per level',
@@ -89,10 +94,10 @@
     const colorMap = {
         'text-blue-400': '#60a5fa', 'text-purple-400': '#a855f7', 'text-orange-400': '#fb923c',
         'text-emerald-400': '#34d399', 'text-amber-400': '#fbbf24', 'text-cyan-400': '#22d3ee',
-        'text-rose-400': '#fb7185',
+        'text-rose-400': '#fb7185', 'text-yellow-400': '#facc15',
         'bg-blue-500': '#3b82f6', 'bg-purple-500': '#a855f7', 'bg-orange-500': '#f97316',
         'bg-emerald-500': '#10b981', 'bg-amber-500': '#f59e0b', 'bg-cyan-500': '#06b6d4',
-        'bg-rose-500': '#f43f5e'
+        'bg-rose-500': '#f43f5e', 'bg-yellow-500': '#eab308'
     };
 
     const btnColorMap = {
@@ -102,7 +107,8 @@
         'text-emerald-400': { bg: 'rgba(5,150,105,0.2)', bgHover: 'rgba(5,150,105,0.4)', text: '#6ee7b7', border: 'rgba(16,185,129,0.4)' },
         'text-amber-400': { bg: 'rgba(217,119,6,0.2)', bgHover: 'rgba(217,119,6,0.4)', text: '#fcd34d', border: 'rgba(245,158,11,0.4)' },
         'text-cyan-400': { bg: 'rgba(8,145,178,0.2)', bgHover: 'rgba(8,145,178,0.4)', text: '#67e8f9', border: 'rgba(6,182,212,0.4)' },
-        'text-rose-400': { bg: 'rgba(244,63,94,0.2)', bgHover: 'rgba(244,63,94,0.4)', text: '#fda4af', border: 'rgba(244,63,94,0.4)' }
+        'text-rose-400': { bg: 'rgba(244,63,94,0.2)', bgHover: 'rgba(244,63,94,0.4)', text: '#fda4af', border: 'rgba(244,63,94,0.4)' },
+        'text-yellow-400': { bg: 'rgba(234,179,8,0.2)', bgHover: 'rgba(234,179,8,0.4)', text: '#fde047', border: 'rgba(234,179,8,0.4)' }
     };
 </script>
 

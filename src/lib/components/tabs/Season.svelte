@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, seasonData, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, seasonData, skills, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -46,6 +46,29 @@
     let cpuScore = 0;
     let currentOpponent = null;
     let roundPlays = [];
+    let cooldownEnd = 0;
+    let cooldownLeft = 0;
+    let cooldownTimer = null;
+
+    import { onDestroy } from 'svelte';
+
+    const BASE_COOLDOWN = 60;
+    $: staminaLevel = $skills.stamina || 0;
+    $: cooldownSecs = Math.max(10, BASE_COOLDOWN - staminaLevel * 10);
+    $: onCooldown = cooldownLeft > 0;
+
+    function startCooldown() {
+        cooldownEnd = Date.now() + cooldownSecs * 1000;
+        updateCooldown();
+        if (cooldownTimer) clearInterval(cooldownTimer);
+        cooldownTimer = setInterval(updateCooldown, 1000);
+    }
+    function updateCooldown() {
+        const remaining = Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000));
+        cooldownLeft = remaining;
+        if (remaining <= 0 && cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
+    }
+    onDestroy(() => { if (cooldownTimer) clearInterval(cooldownTimer); });
 
     function rollRoundPlays() {
         const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
@@ -158,8 +181,14 @@
         const teamNames = ['Shadow Wolves', 'Storm Dragons', 'Iron Phoenix', 'Crystal Bears', 'Neon Tigers',
                           'Dark Knights', 'Solar Flare', 'Frost Giants', 'Thunder Hawks', 'Crimson Vipers'];
 
-        const hardCount = randRange(1, 6);
-        const impossibleCount = randRange(0, 2);
+        const splitNum = $seasonData.currentSplit || 1;
+        const yr = Math.floor((splitNum - 1) / 4);
+        const hardMin = Math.min(yr, 4);
+        const hardMax = Math.min(1 + yr * 2, 8);
+        const bossMin = Math.max(0, yr - 1);
+        const bossMax = Math.min(Math.floor(yr / 2), 3);
+        const hardCount = yr === 0 ? 0 : randRange(hardMin, hardMax);
+        const impossibleCount = yr <= 1 ? 0 : randRange(bossMin, bossMax);
         const hardSlots = new Set();
         const impossibleSlots = new Set();
 
@@ -186,8 +215,8 @@
                 pool = elitePool;
                 tag = 'HARD';
             } else {
-                difficulty = 60 + (i * 3);
-                pool = regularPool;
+                difficulty = Math.min(95, 60 + (i * 3) + (yr * 4));
+                pool = yr >= 3 ? elitePool : regularPool;
                 tag = null;
             }
 
@@ -312,6 +341,7 @@
         if (matchIndex >= GAMES_PER_SPLIT) {
             phase = 'splitEnd';
         } else {
+            startCooldown();
             phase = 'schedule';
         }
     }
@@ -501,7 +531,11 @@
                         {#if played}
                             <span class="sch-result" class:sch-result-w={result} class:sch-result-l={!result}>{result ? 'WIN' : 'LOSS'}</span>
                         {:else if isNext}
-                            <button class="sch-play-btn" on:click={() => startMatch(i)}>Play Match →</button>
+                            {#if onCooldown}
+                                <span class="sch-cooldown">{cooldownLeft}s</span>
+                            {:else}
+                                <button class="sch-play-btn" on:click={() => startMatch(i)}>Play Match →</button>
+                            {/if}
                         {:else}
                             <span class="sch-dash">—</span>
                         {/if}
@@ -760,6 +794,11 @@
         transition: all 0.15s;
     }
     .sch-play-btn:hover { box-shadow: 0 6px 20px rgba(59,130,246,0.45); transform: translateY(-1px); }
+    .sch-cooldown {
+        padding: 8px 18px; border-radius: 10px; font-size: 13px; font-weight: 900;
+        color: #f59e0b; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.15);
+        font-family: monospace;
+    }
 
     /* Season action buttons */
     .sn-action-btn {
