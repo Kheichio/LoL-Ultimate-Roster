@@ -37,13 +37,26 @@
     $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
     $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus;
     $: totalPower = squadReady ? avgRating + chemBonus + towerBuff : 0;
-    $: towerBuff = towerBuffs.reduce((s, b) => s + (b.powerBonus || 0), 0);
+    $: towerBuff = buffSummary.power;
+
+    $: buffSummary = (() => {
+        const r = { power: 0, flat: {}, pct: {} };
+        ['mec','tmf','map','frm','cmp'].forEach(s => { r.flat[s] = 0; r.pct[s] = 0; });
+        towerBuffs.forEach(b => {
+            r.power += b.powerBonus || 0;
+            if (b.statBonus) { if (b.stat === 'all') ['mec','tmf','map','frm','cmp'].forEach(s => r.flat[s] += b.statBonus); else if (b.stat) r.flat[b.stat] += b.statBonus; }
+            if (b.pctBonus) { if (b.stat === 'all') ['mec','tmf','map','frm','cmp'].forEach(s => r.pct[s] += b.pctBonus); else if (b.stat) r.pct[b.stat] += b.pctBonus; }
+        });
+        return r;
+    })();
 
     $: myStatAvgs = squadReady ? (() => {
         try {
             const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
-                const buffBonus = towerBuffs.filter(b => b.stat === s || b.stat === 'all').reduce((sum, b) => sum + (b.statBonus || 0), 0);
-                r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length) + buffBonus;
+                const base = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
+                const withFlat = base + (buffSummary.flat[s] || 0);
+                const withPct = Math.round(withFlat * (1 + (buffSummary.pct[s] || 0) / 100));
+                r[s] = withPct;
             }); return r;
         } catch(e) { return {}; }
     })() : {};
@@ -73,23 +86,29 @@
         return { name: names[fl % names.length], cards: team, avgRating: avg };
     }
 
+    const STAT_NAMES = { mec: 'MEC', tmf: 'TMF', map: 'MAP', frm: 'FRM', cmp: 'CMP' };
+    const STAT_ICONS = { mec: '⚡', tmf: '🔥', map: '🗺️', frm: '📈', cmp: '🧊' };
+
     function generateUpgrades(fl) {
         const isMilestone = fl > 0 && fl % 10 === 0;
         const stats = ['mec','tmf','map','frm','cmp'];
-        const choices = [];
+        const rs = () => stats[Math.floor(Math.random() * stats.length)];
         const pool = isMilestone ? [
-            { label: '+5 All Stats', stat: 'all', statBonus: 5, powerBonus: 0, tier: 'epic' },
-            { label: '+8 Power', stat: null, statBonus: 0, powerBonus: 8, tier: 'epic' },
-            { label: '+10 to Random Stat', stat: stats[Math.floor(Math.random()*stats.length)], statBonus: 10, powerBonus: 0, tier: 'epic' },
-            { label: '+3 All Stats +3 Power', stat: 'all', statBonus: 3, powerBonus: 3, tier: 'epic' },
+            { icon: '🌟', label: '+5 All Stats', desc: 'Flat +5 to every stat', stat: 'all', statBonus: 5, powerBonus: 0, pctBonus: 0, tier: 'epic' },
+            { icon: '💥', label: '+10% All Stats', desc: 'Multiply all stats by 10%', stat: 'all', statBonus: 0, powerBonus: 0, pctBonus: 10, tier: 'epic' },
+            { icon: '👑', label: '+8 Power', desc: 'Flat power boost', stat: null, statBonus: 0, powerBonus: 8, pctBonus: 0, tier: 'epic' },
+            { icon: '🎯', label: `+12 ${STAT_NAMES[rs()]}`, desc: 'Huge single stat boost', stat: rs(), statBonus: 12, powerBonus: 0, pctBonus: 0, tier: 'epic' },
+            { icon: '⭐', label: '+3 All +4 Power', desc: 'Balanced epic boost', stat: 'all', statBonus: 3, powerBonus: 4, pctBonus: 0, tier: 'epic' },
+            { icon: '🔮', label: '+15% Single Stat', desc: 'Huge % to one stat', stat: rs(), statBonus: 0, powerBonus: 0, pctBonus: 15, tier: 'epic' },
         ] : [
-            { label: '+2 All Stats', stat: 'all', statBonus: 2, powerBonus: 0, tier: 'common' },
-            { label: '+3 Power', stat: null, statBonus: 0, powerBonus: 3, tier: 'common' },
-            ...stats.map(s => ({ label: `+5 ${s.toUpperCase()}`, stat: s, statBonus: 5, powerBonus: 0, tier: 'common' })),
-            { label: '+1 All Stats +2 Power', stat: 'all', statBonus: 1, powerBonus: 2, tier: 'rare' },
+            { icon: '🛡️', label: '+2 All Stats', desc: 'Small boost to everything', stat: 'all', statBonus: 2, powerBonus: 0, pctBonus: 0, tier: 'common' },
+            { icon: '⚔️', label: '+3 Power', desc: 'Flat power boost', stat: null, statBonus: 0, powerBonus: 3, pctBonus: 0, tier: 'common' },
+            { icon: '📊', label: '+5% All Stats', desc: 'Multiply all stats by 5%', stat: 'all', statBonus: 0, powerBonus: 0, pctBonus: 5, tier: 'rare' },
+            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+5 ${STAT_NAMES[s]}`, desc: `Boost ${STAT_NAMES[s]} stat`, stat: s, statBonus: 5, powerBonus: 0, pctBonus: 0, tier: 'common' })),
+            { icon: '💎', label: '+1 All +2 Power', desc: 'Balanced small boost', stat: 'all', statBonus: 1, powerBonus: 2, pctBonus: 0, tier: 'rare' },
+            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+8% ${STAT_NAMES[s]}`, desc: `% boost to ${STAT_NAMES[s]}`, stat: s, statBonus: 0, powerBonus: 0, pctBonus: 8, tier: 'rare' })),
         ];
-        const shuffled = [...pool].sort(() => Math.random() - 0.5);
-        return shuffled.slice(0, 3);
+        return [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
     }
 
     function startTower() {
@@ -193,6 +212,28 @@
                         <div class="play-grid">{#each roundPlays as play}{@const edge=(myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>{edge>0?'+':''}{edge}</span></button>{/each}</div>
                     </div>
                 {/if}
+                <!-- Buff Summary -->
+                {#if towerBuffs.length > 0}
+                    <div class="buff-panel">
+                        <div class="buff-title">Active Buffs ({towerBuffs.length})</div>
+                        <div class="buff-stats">
+                            {#if buffSummary.power > 0}<div class="buff-stat"><span class="bs-label">Power</span><span class="bs-val bs-pos">+{buffSummary.power}</span></div>{/if}
+                            {#each ['mec','tmf','map','frm','cmp'] as s}
+                                {#if buffSummary.flat[s] > 0 || buffSummary.pct[s] > 0}
+                                    <div class="buff-stat">
+                                        <span class="bs-icon">{STAT_ICONS[s]}</span>
+                                        <span class="bs-label">{STAT_NAMES[s]}</span>
+                                        <span class="bs-val bs-pos">
+                                            {#if buffSummary.flat[s] > 0}+{buffSummary.flat[s]}{/if}
+                                            {#if buffSummary.flat[s] > 0 && buffSummary.pct[s] > 0} · {/if}
+                                            {#if buffSummary.pct[s] > 0}+{buffSummary.pct[s]}%{/if}
+                                        </span>
+                                    </div>
+                                {/if}
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
             </div>
             <div class="team-block">
                 <div class="arena-label arena-label-red">{currentEnemy.name} ({currentEnemy.avgRating})</div>
@@ -209,9 +250,12 @@
             <h3 class="upg-title">Choose an Upgrade</h3>
             <div class="upg-grid">
                 {#each upgradeChoices as u}
-                    <button class="upg-card" class:upg-epic={u.tier==='epic'} on:click={() => pickUpgrade(u)}>
+                    <button class="upg-card" class:upg-epic={u.tier==='epic'} class:upg-rare={u.tier==='rare'} on:click={() => pickUpgrade(u)}>
+                        <span class="upg-icon">{u.icon}</span>
                         <span class="upg-label">{u.label}</span>
-                        {#if u.tier === 'epic'}<span class="upg-tier">EPIC</span>{/if}
+                        <span class="upg-desc">{u.desc}</span>
+                        {#if u.tier === 'epic'}<span class="upg-tier upg-tier-epic">EPIC</span>
+                        {:else if u.tier === 'rare'}<span class="upg-tier upg-tier-rare">RARE</span>{/if}
                     </button>
                 {/each}
             </div>
@@ -287,19 +331,44 @@
 
     /* Upgrade panel */
     .upg-panel { text-align: center; padding: 40px 24px; }
-    .upg-title { font-size: 18px; font-weight: 900; color: #e2e8f0; margin-bottom: 20px; }
-    .upg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 600px; margin: 0 auto; }
+    .upg-title { font-size: 20px; font-weight: 900; color: #e2e8f0; margin-bottom: 24px; }
+    .upg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 700px; margin: 0 auto; }
     @media (max-width: 600px) { .upg-grid { grid-template-columns: 1fr; } }
     .upg-card {
-        padding: 28px 16px; border-radius: 16px; cursor: pointer;
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        transition: all 0.15s; display: flex; flex-direction: column; align-items: center; gap: 8px;
+        padding: 32px 20px; border-radius: 18px; cursor: pointer;
+        background: rgba(12,16,28,0.6); border: 2px solid rgba(51,65,85,0.25);
+        transition: all 0.15s; display: flex; flex-direction: column; align-items: center; gap: 10px;
     }
-    .upg-card:hover { border-color: rgba(59,130,246,0.3); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
-    .upg-epic { border-color: rgba(251,191,36,0.3) !important; background: rgba(251,191,36,0.04); }
-    .upg-epic:hover { border-color: rgba(251,191,36,0.5) !important; box-shadow: 0 8px 24px rgba(251,191,36,0.1); }
-    .upg-label { font-size: 14px; font-weight: 900; color: #e2e8f0; }
-    .upg-tier { font-size: 9px; font-weight: 900; color: #fbbf24; text-transform: uppercase; letter-spacing: 2px; }
+    .upg-card:hover { border-color: rgba(59,130,246,0.4); transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.4); }
+    .upg-rare { border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.04); }
+    .upg-rare:hover { border-color: rgba(99,102,241,0.5); box-shadow: 0 12px 32px rgba(99,102,241,0.1); }
+    .upg-epic { border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.05); animation: epic-glow 2s ease-in-out infinite; }
+    .upg-epic:hover { border-color: rgba(251,191,36,0.6); box-shadow: 0 12px 32px rgba(251,191,36,0.15); }
+    @keyframes epic-glow { 0%,100% { box-shadow: 0 0 12px rgba(251,191,36,0.1); } 50% { box-shadow: 0 0 24px rgba(251,191,36,0.25); } }
+    .upg-icon { font-size: 32px; }
+    .upg-label { font-size: 16px; font-weight: 900; color: #f1f5f9; }
+    .upg-desc { font-size: 11px; color: #64748b; line-height: 1.4; }
+    .upg-tier { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; padding: 2px 10px; border-radius: 100px; }
+    .upg-tier-epic { color: #fbbf24; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.2); }
+    .upg-tier-rare { color: #818cf8; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); }
+
+    /* Buff summary */
+    .buff-panel {
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(16,185,129,0.12);
+        border-radius: 12px; padding: 14px 16px;
+    }
+    .buff-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #34d399; margin-bottom: 8px; text-align: center; }
+    .buff-stats { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .buff-stat {
+        display: flex; align-items: center; gap: 4px;
+        padding: 4px 10px; border-radius: 8px;
+        background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.1);
+        font-size: 11px;
+    }
+    .bs-icon { font-size: 12px; }
+    .bs-label { font-weight: 800; color: #94a3b8; }
+    .bs-val { font-weight: 900; }
+    .bs-pos { color: #34d399; }
 
     /* Results */
     .result-card { text-align: center; padding: 40px 24px; border-radius: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
