@@ -18,10 +18,17 @@
     let tournamentResult = null;
 
     const PLAYS = [
-        { id: 'mec', label: 'Mechanical Outplay', stat: 'mec', icon: '⚡' },
+        { id: 'mec', label: 'Mechanical', stat: 'mec', icon: '⚡' },
         { id: 'tmf', label: 'Teamfight', stat: 'tmf', icon: '🔥' },
-        { id: 'map', label: 'Macro Play', stat: 'map', icon: '🗺️' },
+        { id: 'map', label: 'Macro', stat: 'map', icon: '🗺️' },
+        { id: 'frm', label: 'Form', stat: 'frm', icon: '📈' },
+        { id: 'cmp', label: 'Composure', stat: 'cmp', icon: '🧊' },
     ];
+    let roundPlays = [];
+    function rollRoundPlays() {
+        const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
+        roundPlays = shuffled.slice(0, 3);
+    }
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
@@ -35,13 +42,13 @@
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
 
     $: myStatAvgs = squadReady ? (() => {
-        const r = {}; ['mec','tmf','map'].forEach(s => {
+        const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
             r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
         }); return r;
     })() : {};
     $: cpuStatAvgs = currentEnemy ? (() => {
         const cards = Object.values(currentEnemy.cards);
-        const r = {}; ['mec','tmf','map'].forEach(s => {
+        const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
             r[s] = cards.length > 0 ? Math.round(cards.reduce((sum, c) => sum + (c.stats[s]||0), 0) / cards.length) : 0;
         }); return r;
     })() : {};
@@ -82,6 +89,7 @@
         playerScore = 0;
         cpuScore = 0;
         matchLog = [];
+        rollRoundPlays();
         phase = 'match';
     }
 
@@ -106,6 +114,7 @@
             cpuVal: cpuFinal,
             won
         }];
+        rollRoundPlays();
 
         if (playerScore >= 2 || cpuScore >= 2) {
             const matchWon = playerScore >= 2;
@@ -243,19 +252,21 @@
             </div>
         </div>
 
-        <div class="match-arena">
+        <div class="match-layout">
             <!-- Left: Your team -->
-            <div class="arena-side">
+            <div class="team-block">
                 <div class="arena-label arena-label-blue">Your Squad ({totalPower})</div>
-                <div class="arena-cards">
-                    {#each ['TOP','JNG','MID','ADC','SUP'] as role}
-                        {#if $squad[role]}
-                            <div class="arena-card">
-                                <span class="ac-role">{role}</span>
-                                <span class="ac-name">{$squad[role].name}</span>
-                                <span class="ac-rating">{$squad[role].rating}</span>
+                <div class="arena-grid-2x3">
+                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
+                        {#each pair as role}
+                            <div class="arena-cell">
+                                {#if $squad[role]}
+                                    <Card card={$squad[role]} mini={true} />
+                                {:else}
+                                    <div class="arena-empty">{role}</div>
+                                {/if}
                             </div>
-                        {/if}
+                        {/each}
                     {/each}
                 </div>
             </div>
@@ -264,8 +275,8 @@
             <div class="arena-center">
                 <!-- Stat comparison -->
                 <div class="stat-compare">
-                    <div class="sc-title">Stat Comparison</div>
-                    {#each PLAYS as play}
+                    <div class="sc-title">Available Plays</div>
+                    {#each roundPlays as play}
                         {@const myVal = myStatAvgs[play.stat] || 0}
                         {@const cpuVal = cpuStatAvgs[play.stat] || 0}
                         {@const diff = myVal - cpuVal}
@@ -297,9 +308,9 @@
 
                 {#if playerScore < 2 && cpuScore < 2}
                     <div class="play-picker">
-                        <div class="play-label">Choose Your Play</div>
+                        <div class="play-label">Choose Your Play (3 of {PLAYS.length})</div>
                         <div class="play-grid">
-                            {#each PLAYS as play}
+                            {#each roundPlays as play}
                                 {@const myVal = myStatAvgs[play.stat] || 0}
                                 {@const cpuVal = cpuStatAvgs[play.stat] || 0}
                                 {@const edge = myVal - cpuVal}
@@ -315,17 +326,21 @@
             </div>
 
             <!-- Right: CPU team -->
-            <div class="arena-side">
+            <div class="team-block">
                 <div class="arena-label arena-label-red">{currentEnemy.name} ({currentEnemy.avgRating})</div>
-                <div class="arena-cards">
-                    {#each ['TOP','JNG','MID','ADC','SUP'] as role}
-                        {#if currentEnemy.cards[role]}
-                            <div class="arena-card arena-card-red">
-                                <span class="ac-role">{role}</span>
-                                <span class="ac-name">{currentEnemy.cards[role].name}</span>
-                                <span class="ac-rating">{currentEnemy.cards[role].rating}</span>
+                <div class="arena-grid-2x3">
+                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
+                        {#each pair as role}
+                            <div class="arena-cell">
+                                {#if currentEnemy.cards[role]}
+                                    <Card card={currentEnemy.cards[role]} mini={true} />
+                                {:else if role !== 'COACH'}
+                                    <div class="arena-empty">{role}</div>
+                                {:else}
+                                    <div class="arena-empty-sm"></div>
+                                {/if}
                             </div>
-                        {/if}
+                        {/each}
                     {/each}
                 </div>
             </div>
@@ -357,7 +372,7 @@
 </section>
 
 <style>
-    .trn { max-width: 900px; margin: 0 auto; padding-bottom: 40px; }
+    .trn { max-width: 1600px; margin: 0 auto; padding-bottom: 40px; }
     .trn-head { margin-bottom: 20px; }
     .trn-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
     .trn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
@@ -497,39 +512,31 @@
     .result-reward { font-size: 22px; font-weight: 900; color: #60a5fa; margin-top: 12px; }
     .result-none { font-size: 11px; color: #475569; margin-top: 8px; }
 
-    /* Match Arena - 3 column layout */
-    .match-arena {
-        display: grid; grid-template-columns: 200px 1fr 200px; gap: 16px;
-    }
-    @media (max-width: 900px) {
-        .match-arena { grid-template-columns: 1fr; }
-        .arena-side { display: flex; flex-direction: row; gap: 6px; overflow-x: auto; }
-        .arena-cards { display: flex; flex-direction: row; gap: 6px; }
-        .arena-card { min-width: 100px; }
-    }
-
-    .arena-side { display: flex; flex-direction: column; gap: 4px; }
+    /* Match layout - 3 columns: cards | combat | cards */
+    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
+    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
+    .team-block { display: flex; flex-direction: column; gap: 6px; }
     .arena-label {
         font-size: 10px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; margin-bottom: 6px; padding: 6px 10px;
-        border-radius: 8px; text-align: center;
+        letter-spacing: 1.5px; padding: 8px 12px;
+        border-radius: 10px; text-align: center;
     }
     .arena-label-blue { color: #93c5fd; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.15); }
     .arena-label-red { color: #fca5a5; background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.15); }
 
-    .arena-cards { display: flex; flex-direction: column; gap: 4px; }
-    .arena-card {
-        display: flex; align-items: center; gap: 8px;
-        padding: 8px 10px; border-radius: 10px;
-        background: rgba(15,23,42,0.4); border: 1px solid rgba(59,130,246,0.1);
+
+    .arena-grid-2x3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .arena-cell { display: flex; justify-content: center; }
+    .arena-empty {
+        width: 180px; height: 80px; border-radius: 12px;
+        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10px; font-weight: 800; color: #1e293b; text-transform: uppercase;
     }
-    .arena-card-red { border-color: rgba(239,68,68,0.1); }
-    .ac-role { font-size: 9px; font-weight: 900; color: #475569; width: 28px; }
-    .ac-name { flex: 1; font-size: 11px; font-weight: 800; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .ac-rating { font-size: 13px; font-weight: 900; color: #94a3b8; }
+    .arena-empty-sm { width: 180px; height: 40px; }
 
     /* Arena center */
-    .arena-center { display: flex; flex-direction: column; gap: 14px; }
+    .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
     /* Stat comparison */
     .stat-compare {

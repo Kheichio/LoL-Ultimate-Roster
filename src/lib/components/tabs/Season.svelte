@@ -2,6 +2,7 @@
     import Card from '../card/Card.svelte';
     import { club, squad, blueEssence, trackStats, seasonData, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
+    import { switchTab } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
     import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
     import { get } from 'svelte/store';
@@ -44,6 +45,12 @@
     let playerScore = 0;
     let cpuScore = 0;
     let currentOpponent = null;
+    let roundPlays = [];
+
+    function rollRoundPlays() {
+        const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
+        roundPlays = shuffled.slice(0, 3);
+    }
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
@@ -168,6 +175,7 @@
         playerScore = 0;
         cpuScore = 0;
         matchLog = [];
+        rollRoundPlays();
         phase = 'match';
     }
 
@@ -185,6 +193,7 @@
         else cpuScore++;
 
         matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won }];
+        rollRoundPlays();
 
         if (playerScore >= 3 || cpuScore >= 3) {
             const matchWon = playerScore >= 3;
@@ -327,7 +336,10 @@
                 <h2 class="sn-title-sm">{splitName} Split — Schedule</h2>
                 <p class="sn-mono">{wins}W - {losses}L · Match {matchIndex + 1} of {GAMES_PER_SPLIT}</p>
             </div>
-            <button class="sn-back" on:click={() => { phase = 'overview'; }}>← Overview</button>
+            <div class="sn-topbar-btns">
+                <button class="sn-nav-btn" on:click={() => { phase = 'overview'; }}>← Overview</button>
+                <button class="sn-nav-btn" on:click={() => switchTab('tournament')}>← Play Menu</button>
+            </div>
         </div>
 
         <!-- Meta Panel -->
@@ -357,27 +369,31 @@
             </div>
         {/if}
 
-        <div class="schedule-list">
-            {#each opponents as opp, i}
-                {@const result = ($seasonData.matchResults || [])[i]}
-                {@const isNext = i === matchIndex}
-                {@const played = result !== null && result !== undefined}
-                <div class="sch-row" class:sch-win={played && result} class:sch-loss={played && !result} class:sch-next={isNext && !played} class:sch-future={!played && !isNext}>
-                    <span class="sch-num">{i + 1}</span>
-                    <div class="sch-info">
-                        <span class="sch-name">{opp.name}</span>
-                        <span class="sch-pwr">Power: {opp.avgRating}</span>
+        {#if opponents.length === 0}
+            <div class="sch-empty">No opponents generated. Start a new split from the overview.</div>
+        {:else}
+            <div class="schedule-list">
+                {#each opponents as opp, i}
+                    {@const result = ($seasonData.matchResults || [])[i]}
+                    {@const isNext = i === matchIndex}
+                    {@const played = result !== null && result !== undefined}
+                    <div class="sch-row" class:sch-win={played && result} class:sch-loss={played && !result} class:sch-next={isNext && !played} class:sch-future={!played && !isNext}>
+                        <span class="sch-num">{i + 1}</span>
+                        <div class="sch-info">
+                            <span class="sch-name">{opp.name}</span>
+                            <span class="sch-pwr-badge">{opp.avgRating} PWR</span>
+                        </div>
+                        {#if played}
+                            <span class="sch-result" class:sch-result-w={result} class:sch-result-l={!result}>{result ? 'WIN' : 'LOSS'}</span>
+                        {:else if isNext}
+                            <button class="sch-play-btn" on:click={() => startMatch(i)}>Play Match →</button>
+                        {:else}
+                            <span class="sch-dash">—</span>
+                        {/if}
                     </div>
-                    {#if played}
-                        <span class="sch-result" class:sch-result-w={result} class:sch-result-l={!result}>{result ? 'WIN' : 'LOSS'}</span>
-                    {:else if isNext}
-                        <button class="sch-play-btn" on:click={() => startMatch(i)}>Play →</button>
-                    {:else}
-                        <span class="sch-dash">—</span>
-                    {/if}
-                </div>
-            {/each}
-        </div>
+                {/each}
+            </div>
+        {/if}
 
     {:else if phase === 'match' && currentOpponent}
         <div class="match-header">
@@ -390,28 +406,30 @@
             <div class="match-bo5">Best of 5 — first to 3</div>
         </div>
 
-        <div class="match-arena">
+        <div class="match-layout">
             <!-- Left: Your team -->
-            <div class="arena-side">
+            <div class="team-block">
                 <div class="arena-label arena-label-blue">Your Squad ({totalPower})</div>
-                <div class="arena-cards">
-                    {#each ['TOP','JNG','MID','ADC','SUP'] as role}
-                        {#if $squad[role]}
-                            <div class="arena-card">
-                                <span class="ac-role">{role}</span>
-                                <span class="ac-name">{$squad[role].name}</span>
-                                <span class="ac-rating">{$squad[role].rating}</span>
+                <div class="arena-grid-2x3">
+                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
+                        {#each pair as role}
+                            <div class="arena-cell">
+                                {#if $squad[role]}
+                                    <Card card={$squad[role]} mini={true} />
+                                {:else}
+                                    <div class="arena-empty">{role}</div>
+                                {/if}
                             </div>
-                        {/if}
+                        {/each}
                     {/each}
                 </div>
             </div>
 
-            <!-- Center -->
+            <!-- Center: Combat -->
             <div class="arena-center">
                 <div class="stat-compare">
-                    <div class="sc-title">Stat Comparison</div>
-                    {#each PLAYS as play}
+                    <div class="sc-title">Available Plays</div>
+                    {#each roundPlays as play}
                         {@const myVal = myStatAvgs[play.stat] || 0}
                         {@const cpuVal = cpuStatAvgs[play.stat] || 0}
                         {@const diff = myVal - cpuVal}
@@ -443,9 +461,9 @@
 
                 {#if playerScore < 3 && cpuScore < 3}
                     <div class="play-picker">
-                        <div class="play-label">Choose Your Play</div>
-                        <div class="play-grid">
-                            {#each PLAYS as play}
+                        <div class="play-label">Choose Your Play (3 of {PLAYS.length})</div>
+                        <div class="play-grid play-grid-3">
+                            {#each roundPlays as play}
                                 {@const myVal = myStatAvgs[play.stat] || 0}
                                 {@const cpuVal = cpuStatAvgs[play.stat] || 0}
                                 {@const edge = myVal - cpuVal}
@@ -461,17 +479,21 @@
             </div>
 
             <!-- Right: CPU team -->
-            <div class="arena-side">
+            <div class="team-block">
                 <div class="arena-label arena-label-red">{currentOpponent.name} ({currentOpponent.avgRating})</div>
-                <div class="arena-cards">
-                    {#each ['TOP','JNG','MID','ADC','SUP'] as role}
-                        {#if currentOpponent.cards[role]}
-                            <div class="arena-card arena-card-red">
-                                <span class="ac-role">{role}</span>
-                                <span class="ac-name">{currentOpponent.cards[role].name}</span>
-                                <span class="ac-rating">{currentOpponent.cards[role].rating}</span>
+                <div class="arena-grid-2x3">
+                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
+                        {#each pair as role}
+                            <div class="arena-cell">
+                                {#if currentOpponent.cards[role]}
+                                    <Card card={currentOpponent.cards[role]} mini={true} />
+                                {:else if role !== 'COACH'}
+                                    <div class="arena-empty">{role}</div>
+                                {:else}
+                                    <div class="arena-empty-sm"></div>
+                                {/if}
                             </div>
-                        {/if}
+                        {/each}
                     {/each}
                 </div>
             </div>
@@ -508,7 +530,7 @@
 </section>
 
 <style>
-    .sn { max-width: 900px; margin: 0 auto; padding-bottom: 40px; }
+    .sn { max-width: 1600px; margin: 0 auto; padding-bottom: 40px; }
     .sn-head { margin-bottom: 20px; }
     .sn-title { font-size: 22px; font-weight: 900; color: #93c5fd; letter-spacing: 0.5px; }
     .sn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
@@ -563,11 +585,17 @@
     .tr-be { font-size: 12px; font-weight: 900; color: #34d399; flex-shrink: 0; }
 
     /* Schedule */
-    .sn-topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .sn-topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
     .sn-title-sm { font-size: 18px; font-weight: 900; color: #93c5fd; }
     .sn-mono { font-size: 11px; color: #64748b; font-family: monospace; margin-top: 2px; }
-    .sn-back { font-size: 11px; font-weight: 700; color: #64748b; background: none; border: none; cursor: pointer; }
-    .sn-back:hover { color: #e2e8f0; }
+    .sn-topbar-btns { display: flex; gap: 6px; }
+    .sn-nav-btn {
+        padding: 8px 16px; border-radius: 10px;
+        background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3);
+        color: #94a3b8; font-size: 11px; font-weight: 800;
+        cursor: pointer; transition: all 0.12s;
+    }
+    .sn-nav-btn:hover { background: rgba(51,65,85,0.5); color: #e2e8f0; }
 
     .schedule-list { display: flex; flex-direction: column; gap: 6px; }
     .sch-row {
@@ -583,7 +611,15 @@
     .sch-win .sch-num { color: #34d399; } .sch-loss .sch-num { color: #f87171; } .sch-next .sch-num { color: #60a5fa; }
     .sch-info { flex: 1; }
     .sch-name { font-size: 13px; font-weight: 800; color: #e2e8f0; }
-    .sch-pwr { font-size: 10px; color: #64748b; margin-left: 8px; }
+    .sch-pwr-badge {
+        font-size: 11px; font-weight: 900; color: #f87171;
+        background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.12);
+        padding: 2px 10px; border-radius: 6px; margin-left: 8px;
+    }
+    .sch-empty {
+        text-align: center; padding: 40px 20px; color: #475569;
+        font-size: 13px; font-style: italic;
+    }
     .sch-result { font-size: 12px; font-weight: 900; }
     .sch-result-w { color: #34d399; } .sch-result-l { color: #f87171; }
     .sch-dash { font-size: 11px; color: #1e293b; }
@@ -625,12 +661,6 @@
     /* Match */
     .match-header { text-align: center; margin-bottom: 20px; }
     .match-label { font-size: 11px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
-    .match-vs { display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 12px; }
-    .vs-side { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-    .vs-rating { font-size: 32px; font-weight: 900; }
-    .vs-blue { color: #60a5fa; } .vs-red { color: #f87171; }
-    .vs-name { font-size: 10px; color: #64748b; font-weight: 700; text-transform: uppercase; }
-    .vs-x { font-size: 16px; font-weight: 900; color: #334155; }
     .match-score { display: flex; justify-content: center; gap: 16px; margin-top: 12px; }
     .ms-blue { font-size: 22px; font-weight: 900; color: #60a5fa; }
     .ms-red { font-size: 22px; font-weight: 900; color: #f87171; }
@@ -655,6 +685,7 @@
     }
     .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
     .play-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .play-grid-3 { grid-template-columns: repeat(3, 1fr); }
     @media (max-width: 600px) { .play-grid { grid-template-columns: repeat(3, 1fr); } }
     .play-btn {
         display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -720,33 +751,28 @@
         margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(51,65,85,0.15);
     }
 
-    /* Match Arena */
-    .match-arena { display: grid; grid-template-columns: 200px 1fr 200px; gap: 16px; }
-    @media (max-width: 900px) {
-        .match-arena { grid-template-columns: 1fr; }
-        .arena-side { flex-direction: row; overflow-x: auto; }
-        .arena-cards { flex-direction: row; }
-        .arena-card { min-width: 100px; }
-    }
-    .arena-side { display: flex; flex-direction: column; gap: 4px; }
+    /* Match layout - 3 columns: cards | combat | cards */
+    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
+    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
+    .team-block { display: flex; flex-direction: column; gap: 6px; }
     .arena-label {
         font-size: 10px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; margin-bottom: 6px; padding: 6px 10px;
-        border-radius: 8px; text-align: center;
+        letter-spacing: 1.5px; padding: 8px 12px;
+        border-radius: 10px; text-align: center;
     }
     .arena-label-blue { color: #93c5fd; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.15); }
     .arena-label-red { color: #fca5a5; background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.15); }
-    .arena-cards { display: flex; flex-direction: column; gap: 4px; }
-    .arena-card {
-        display: flex; align-items: center; gap: 8px;
-        padding: 8px 10px; border-radius: 10px;
-        background: rgba(15,23,42,0.4); border: 1px solid rgba(59,130,246,0.1);
+
+    .arena-grid-2x3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .arena-cell { display: flex; justify-content: center; }
+    .arena-empty {
+        width: 180px; height: 80px; border-radius: 12px;
+        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10px; font-weight: 800; color: #1e293b; text-transform: uppercase;
     }
-    .arena-card-red { border-color: rgba(239,68,68,0.1); }
-    .ac-role { font-size: 9px; font-weight: 900; color: #475569; width: 28px; }
-    .ac-name { flex: 1; font-size: 11px; font-weight: 800; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .ac-rating { font-size: 13px; font-weight: 900; color: #94a3b8; }
-    .arena-center { display: flex; flex-direction: column; gap: 14px; }
+    .arena-empty-sm { width: 180px; height: 40px; }
+    .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
     .stat-compare {
         background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);

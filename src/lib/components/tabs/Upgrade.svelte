@@ -662,8 +662,8 @@
         position: fixed;
         inset: 0;
         z-index: 80;
-        background: rgba(0, 0, 0, 0.85);
-        backdrop-filter: blur(4px);
+        background: rgba(0, 0, 0, 0.9);
+        backdrop-filter: blur(16px);
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -672,12 +672,12 @@
     }
 
     .result-title {
-        font-size: 12px;
+        font-size: 16px;
         font-weight: 900;
         color: #eab308;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        margin-bottom: 16px;
+        letter-spacing: 3px;
+        margin-bottom: 24px;
     }
 
     .animate-card-reveal {
