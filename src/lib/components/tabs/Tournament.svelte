@@ -111,17 +111,18 @@
         if (!db) return null;
         const m = MODES[mode];
         const rating = m.minRating + Math.round((m.maxRating - m.minRating) * (roundIdx / Math.max(1, m.rounds - 1)));
+        const ratingCap = m.maxRating;
         let pool;
         if (m.pool === 'regular') pool = db.filter(p => p.role !== 'COACH' && ['Bronze','Silver','Gold'].includes(p.quality));
         else if (m.pool === 'elite') pool = db.filter(p => p.role !== 'COACH');
         else pool = db.filter(p => p.role !== 'COACH' && !['POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
+        pool = pool.filter(p => p.rating <= ratingCap + 3);
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const team = {};
         const used = new Set();
         roles.forEach(role => {
-            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= rating - 8 && p.rating <= rating + 5);
-            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id)).sort((a,b) => b.rating - a.rating).slice(0, 8);
-            rp.sort((a,b) => b.rating - a.rating);
+            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= rating - 5 && p.rating <= rating + 3);
+            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating <= ratingCap + 3).sort((a,b) => Math.abs(a.rating - rating) - Math.abs(b.rating - rating)).slice(0, 8);
             const cut = Math.max(1, Math.min(rp.length, 5));
             const pick = rp[Math.floor(Math.random() * cut)];
             if (pick) { team[role] = pick; used.add(pick.id); }
