@@ -1,5 +1,5 @@
 <script>
-    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { loadFromStorage } from '../../utils/storage.js';
@@ -14,9 +14,20 @@
     $: bpCanLevel = ($battlePass.xp || 0) >= 1000;
     $: spAvailable = $skillPoints > 0;
 
+    $: archiveUnclaimed = (() => {
+        const reg = $collectionRegistry;
+        const claimed = ($archiveRewards && $archiveRewards.claimedCards) || {};
+        let count = 0;
+        for (const id in reg) {
+            if (reg[id] && !claimed[id]) count++;
+        }
+        return count;
+    })();
+
     $: notifications = {
         rewards: (dailyAvailable ? 1 : 0) + (bpCanLevel ? 1 : 0),
         skills: spAvailable ? $skillPoints : 0,
+        collection: archiveUnclaimed > 0 ? archiveUnclaimed : 0,
     };
 
     const leftTabs = [

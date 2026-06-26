@@ -11,25 +11,27 @@
     const REFRESH_COST = 1000;
 
     $: tradeSkillLevel = $skills.trading || 0;
-    $: tradeCount = BASE_TRADE_COUNT + Math.min(2, tradeSkillLevel);
+    $: tradeCount = BASE_TRADE_COUNT + (tradeSkillLevel >= 4 ? 2 : tradeSkillLevel >= 2 ? 1 : 0);
     $: cardDiscount = Math.floor(tradeSkillLevel / 2);
     $: refreshDiscount = tradeSkillLevel >= 4 ? 500 : tradeSkillLevel >= 2 ? 250 : 0;
     $: actualRefreshCost = REFRESH_COST - refreshDiscount;
 
     const TRADE_PATHS = [
-        { from: 'Bronze', to: 'Silver', count: 5 },
-        { from: 'Bronze', to: 'Gold', count: 12 },
-        { from: 'Silver', to: 'Gold', count: 4 },
-        { from: 'Silver', to: 'Platinum', count: 8 },
-        { from: 'Gold', to: 'Platinum', count: 3 },
-        { from: 'Gold', to: 'Diamond', count: 7 },
-        { from: 'Platinum', to: 'Diamond', count: 3 },
-        { from: 'Platinum', to: 'Master', count: 6 },
-        { from: 'Diamond', to: 'Master', count: 3 },
-        { from: 'Diamond', to: 'Grandmaster', count: 5 },
-        { from: 'Master', to: 'Grandmaster', count: 3 },
-        { from: 'Master', to: 'Challenger', count: 5 },
-        { from: 'Grandmaster', to: 'Challenger', count: 2 },
+        { from: 'Bronze', to: 'Platinum', count: 8, minLevel: 0 },
+        { from: 'Silver', to: 'Platinum', count: 5, minLevel: 0 },
+        { from: 'Gold', to: 'Platinum', count: 3, minLevel: 0 },
+        { from: 'Silver', to: 'Diamond', count: 10, minLevel: 1 },
+        { from: 'Gold', to: 'Diamond', count: 6, minLevel: 1 },
+        { from: 'Platinum', to: 'Diamond', count: 3, minLevel: 1 },
+        { from: 'Gold', to: 'Master', count: 8, minLevel: 2 },
+        { from: 'Platinum', to: 'Master', count: 4, minLevel: 2 },
+        { from: 'Diamond', to: 'Master', count: 3, minLevel: 2 },
+        { from: 'Platinum', to: 'Grandmaster', count: 6, minLevel: 3 },
+        { from: 'Diamond', to: 'Grandmaster', count: 4, minLevel: 3 },
+        { from: 'Master', to: 'Grandmaster', count: 3, minLevel: 3 },
+        { from: 'Diamond', to: 'Challenger', count: 6, minLevel: 4 },
+        { from: 'Master', to: 'Challenger', count: 4, minLevel: 4 },
+        { from: 'Grandmaster', to: 'Challenger', count: 2, minLevel: 4 },
     ];
 
     let offers = [];
@@ -53,7 +55,9 @@
 
     function generateOffers(seed, count) {
         const rng = seededRandom(seed);
-        const shuffled = [...TRADE_PATHS].sort(() => rng() - 0.5);
+        const level = get(skills).trading || 0;
+        const available = TRADE_PATHS.filter(p => level >= p.minLevel);
+        const shuffled = [...available].sort(() => rng() - 0.5);
         const selected = shuffled.slice(0, count);
 
         const db = getDB();

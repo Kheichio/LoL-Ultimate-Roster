@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, grantXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -198,6 +198,7 @@
         const won = myFinal >= cpuFinal;
         if (won) playerScore++; else cpuScore++;
         matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won }];
+        grantXP(15);
         rollRoundPlays();
         if (playerScore >= 2 || cpuScore >= 2) {
             if (playerScore >= 2) {
@@ -209,11 +210,13 @@
                     blueEssence.update(v => v + reward);
                     showToast(`Floor ${floor} cleared! +${reward} BE`, 'success');
                 }
+                grantXP(50 + floor * 5);
                 if (floor > bestFloor) trackStats.update(s => ({ ...s, towerHighestFloor: floor }));
                 saveTowerRun();
                 saveGame();
                 phase = 'upgrade';
             } else {
+                grantXP(30 + floor * 3);
                 playSound('lose');
                 if (floor > bestFloor) trackStats.update(s => ({ ...s, towerHighestFloor: floor - 1 }));
                 clearTowerRun();

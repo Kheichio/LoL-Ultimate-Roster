@@ -1,12 +1,69 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { collectionRegistry } from '../../stores/game.js';
+    import { collectionRegistry, archiveRewards, blueEssence, battlePass, saveGame, grantXP } from '../../stores/game.js';
+    import { showToast } from '../../stores/toasts.js';
+    import { playSound } from '../../utils/sound.js';
     import { getDB, TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, ALL_SPECIAL } from '../../utils/cards.js';
 
     let activeCategory = 'regular';
     let activeRegion = 'LCK';
     let search = '';
     let sortBy = 'team';
+
+    $: unclaimedNewCards = (() => {
+        const reg = $collectionRegistry;
+        const claimed = ($archiveRewards && $archiveRewards.claimedCards) || {};
+        return Object.keys(reg).filter(id => reg[id] && !claimed[id]);
+    })();
+
+    $: unclaimedNewCount = unclaimedNewCards.length;
+
+    function claimNewCards() {
+        if (unclaimedNewCards.length === 0) return;
+        const count = unclaimedNewCards.length;
+        const reward = count * 25;
+        blueEssence.update(v => v + reward);
+        archiveRewards.update(ar => {
+            const newClaimed = { ...ar.claimedCards };
+            unclaimedNewCards.forEach(id => newClaimed[id] = true);
+            return { ...ar, claimedCards: newClaimed };
+        });
+        grantXP(count * 10);
+        playSound('rare');
+        saveGame();
+        showToast(`Claimed ${count} new card rewards! +${reward} BE`, 'success');
+    }
+
+    function getTeamReward(size) {
+        if (size >= 11) return 2000;
+        if (size >= 7) return 1000;
+        if (size >= 4) return 500;
+        return 200;
+    }
+
+    function makeTeamKey(group) {
+        return `${activeCategory}_${activeCategory === 'regular' ? activeRegion : 'all'}_${group.team}`;
+    }
+
+    function claimTeamReward(group) {
+        const key = makeTeamKey(group);
+        const reward = getTeamReward(group.cards.length);
+        blueEssence.update(v => v + reward);
+        battlePass.update(bp => ({ ...bp, xp: (bp.xp || 0) + 100 }));
+        archiveRewards.update(ar => ({
+            ...ar,
+            claimedTeams: { ...ar.claimedTeams, [key]: true }
+        }));
+        grantXP(50);
+        playSound('rare');
+        saveGame();
+        showToast(`${group.team} complete! +${reward} BE +100 BP XP`, 'success');
+    }
+
+    function isTeamClaimed(group) {
+        const key = makeTeamKey(group);
+        return !!($archiveRewards.claimedTeams || {})[key];
+    }
 
     const categories = [
         { id: 'regular', label: '⚔️ Regular Season', color: '#93c5fd', bg: 'rgba(37,99,235,0.2)', border: 'rgba(59,130,246,0.5)' },
@@ -94,6 +151,20 @@
         </div>
     </div>
 
+    <!-- New Card Rewards Banner -->
+    {#if unclaimedNewCount > 0}
+        <div class="reward-banner">
+            <div class="rb-info">
+                <span class="rb-icon">🎁</span>
+                <div>
+                    <div class="rb-title">{unclaimedNewCount} New Card{unclaimedNewCount > 1 ? 's' : ''} Discovered!</div>
+                    <div class="rb-desc">Claim {unclaimedNewCount * 25} BE for discovering new cards</div>
+                </div>
+            </div>
+            <button class="rb-btn" on:click={claimNewCards}>Claim All · +{unclaimedNewCount * 25} BE</button>
+        </div>
+    {/if}
+
     <!-- Category Tabs -->
     <div class="pill-bar">
         {#each categories as cat}
@@ -147,13 +218,23 @@
             {#each grouped as group}
                 {@const pct = group.cards.length > 0 ? Math.round((group.owned / group.cards.length) * 100) : 0}
                 {@const isComplete = group.owned === group.cards.length && group.cards.length > 0}
+                {@const teamClaimed = isTeamClaimed(group)}
                 <div class="team-panel" class:team-complete={isComplete}>
                     <!-- Team Header -->
                     <div class="team-header">
-                        <h3 class="team-name" class:team-name-complete={isComplete}>{group.team}</h3>
-                        <span class="team-stats" class:team-stats-complete={isComplete}>
-                            {isComplete ? '✓' : ''} {group.owned}/{group.cards.length} ({pct}%)
-                        </span>
+                        <div class="th-left">
+                            <h3 class="team-name" class:team-name-complete={isComplete}>{group.team}</h3>
+                            <span class="team-stats" class:team-stats-complete={isComplete}>
+                                {isComplete ? '✓' : ''} {group.owned}/{group.cards.length} ({pct}%)
+                            </span>
+                        </div>
+                        {#if isComplete && !teamClaimed}
+                            <button class="team-claim-btn" on:click={() => claimTeamReward(group)}>
+                                Claim +{getTeamReward(group.cards.length)} BE
+                            </button>
+                        {:else if isComplete && teamClaimed}
+                            <span class="team-claimed-tag">Claimed ✓</span>
+                        {/if}
                     </div>
                     <!-- Cards -->
                     <div class="card-grid">
@@ -191,6 +272,61 @@
         font-size: 12px;
         color: #64748b;
         font-family: monospace;
+    }
+
+    /* ── Reward banner ── */
+    .reward-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(234,179,8,0.08), rgba(245,158,11,0.12));
+        border: 1px solid rgba(245,158,11,0.25);
+        animation: rewardPulse 2s ease-in-out infinite;
+    }
+    @keyframes rewardPulse {
+        0%, 100% { border-color: rgba(245,158,11,0.25); }
+        50% { border-color: rgba(245,158,11,0.5); }
+    }
+    .rb-info { display: flex; align-items: center; gap: 10px; }
+    .rb-icon { font-size: 22px; }
+    .rb-title { font-size: 13px; font-weight: 900; color: #fbbf24; }
+    .rb-desc { font-size: 10px; color: #a3873a; margin-top: 1px; }
+    .rb-btn {
+        padding: 8px 18px; border-radius: 10px;
+        background: linear-gradient(135deg, #d97706, #f59e0b);
+        border: none; color: #1c1917;
+        font-size: 11px; font-weight: 900; text-transform: uppercase;
+        letter-spacing: 0.5px; cursor: pointer;
+        transition: all 0.15s; white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(245,158,11,0.2);
+    }
+    .rb-btn:hover { box-shadow: 0 6px 20px rgba(245,158,11,0.35); transform: translateY(-1px); }
+
+    /* ── Team claim button ── */
+    .team-claim-btn {
+        padding: 5px 14px; border-radius: 8px;
+        background: linear-gradient(135deg, #059669, #10b981);
+        border: none; color: white;
+        font-size: 10px; font-weight: 900; text-transform: uppercase;
+        letter-spacing: 0.5px; cursor: pointer;
+        transition: all 0.15s; white-space: nowrap;
+        box-shadow: 0 2px 8px rgba(16,185,129,0.2);
+        animation: teamClaimPulse 2s ease-in-out infinite;
+    }
+    @keyframes teamClaimPulse {
+        0%, 100% { box-shadow: 0 2px 8px rgba(16,185,129,0.2); }
+        50% { box-shadow: 0 4px 16px rgba(16,185,129,0.4); }
+    }
+    .team-claim-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(16,185,129,0.4); }
+    .team-claimed-tag {
+        font-size: 9px; font-weight: 900; color: #34d399;
+        text-transform: uppercase; letter-spacing: 1px;
+        padding: 3px 10px; border-radius: 6px;
+        background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.15);
     }
 
     /* ── Category pill bar ── */
@@ -337,6 +473,12 @@
         margin-bottom: 12px;
         padding-bottom: 8px;
         border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+    }
+
+    .th-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
     }
 
     .team-name {

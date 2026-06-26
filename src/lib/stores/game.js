@@ -37,6 +37,9 @@ export const questsRepeatableBaselines = writable({});
 export const questsRepeatableCounts = writable({});
 export const achievementsClaimed = writable({});
 
+// === Archive Rewards ===
+export const archiveRewards = writable({ claimedCards: {}, claimedTeams: {} });
+
 // === Derived ===
 export const clubCapacity = derived(skills, $s => 100 + ($s.clubhouse || 0) * 50);
 export const isClubFull = derived([club, clubCapacity], ([$c, $cap]) => $c.length >= $cap);
@@ -44,6 +47,30 @@ export const weightedTrophies = derived(trackStats, $ts =>
     (($ts.worldsWon || 0) * 6) + (($ts.msiWon || 0) * 4) + (($ts.firstStandWon || 0) * 2) +
     (($ts.regionalSplitWon || 0) * 1) + (($ts.goldenRoads || 0) * 10)
 );
+
+// === XP System ===
+export function grantXP(amount) {
+    const mentorLevel = get(skills).mentorship || 0;
+    const bonus = Math.round(amount * mentorLevel * 0.1);
+    const total = amount + bonus;
+    managerXP.update(xp => {
+        let newXP = xp + total;
+        let lvl = get(managerLevel);
+        let sp = get(skillPoints);
+        let leveled = false;
+        while (newXP >= lvl * 500) {
+            newXP -= lvl * 500;
+            lvl++;
+            sp++;
+            leveled = true;
+        }
+        if (leveled) {
+            managerLevel.set(lvl);
+            skillPoints.set(sp);
+        }
+        return newXP;
+    });
+}
 
 // === Save / Load ===
 let _saveDebounce = null;
@@ -67,6 +94,7 @@ export function saveGame() {
         saveToStorage('lur_quests_rbase', get(questsRepeatableBaselines));
         saveToStorage('lur_quests_rcounts', get(questsRepeatableCounts));
         saveToStorage('lur_achievements_claimed', get(achievementsClaimed));
+        saveToStorage('lur_archive_rewards', get(archiveRewards));
     }, 100);
 }
 
@@ -123,4 +151,7 @@ export function initGame() {
 
     const ac = loadFromStorage('lur_achievements_claimed');
     if (ac) achievementsClaimed.set(ac);
+
+    const ar = loadFromStorage('lur_archive_rewards');
+    if (ar) archiveRewards.set({ ...get(archiveRewards), ...ar });
 }

@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, unlocks, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, grantXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -182,6 +182,7 @@
         const won = myFinal >= cpuFinal;
         if (won) playerScore++; else cpuScore++;
         matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won }];
+        grantXP(25);
         rollRoundPlays();
 
         const winsNeeded = activeMode === 'goldenroad' ? 2 : 2;
@@ -208,6 +209,7 @@
         if (activeMode === 'goldenroad') {
             if (!won) {
                 trackStats.update(s => ({ ...s, losses: (s.losses || 0) + 1 }));
+                grantXP(100);
                 playSound('lose');
                 tournamentResult = { won: false, reward: 0, round: round + 1, isFinalist: false, goldenRoadFailed: true, stage: goldenRoadStage };
                 phase = 'result';
@@ -229,6 +231,7 @@
             // Won the whole Golden Road!
             const reward = 25000;
             blueEssence.update(v => v + reward);
+            grantXP(2000);
             trackStats.update(s => ({ ...s, tournamentsWon: (s.tournamentsWon||0)+1, goldenRoads: (s.goldenRoads||0)+1, worldsWon: (s.worldsWon||0)+1 }));
             playSound('win');
             tournamentResult = { won: true, reward, goldenRoad: true };
@@ -240,6 +243,9 @@
 
         const reward = won ? m.reward : isFinalist ? m.second : 0;
         blueEssence.update(v => v + reward);
+
+        const xpTable = { cafe: 100, regional: 200, firststand: 300, msi: 500, worlds: 800 };
+        grantXP(won ? (xpTable[mode] || 100) : Math.round((xpTable[mode] || 100) * 0.4));
 
         if (won) {
             trackStats.update(s => {
@@ -254,7 +260,6 @@
             playSound('win');
         } else {
             trackStats.update(s => ({ ...s, losses: (s.losses||0)+1 }));
-            // 2nd place in regional or first stand still unlocks next
             if (isFinalist && mode === 'regional') unlocks.update(u => ({ ...u, firstStand: true }));
             if (isFinalist && mode === 'firststand') unlocks.update(u => ({ ...u, msi: true }));
             playSound('lose');
