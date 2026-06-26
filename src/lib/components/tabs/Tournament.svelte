@@ -207,7 +207,7 @@
     function endTournament(won) {
         const mode = activeMode === 'goldenroad' ? GOLDEN_STAGES[goldenRoadStage] : activeMode;
         const m = MODES[mode];
-        const isFinalist = round >= Math.floor(enemies.length / 2) && !won;
+        const isFinalist = !won && round >= enemies.length - 2;
 
         if (activeMode === 'goldenroad') {
             if (!won) {

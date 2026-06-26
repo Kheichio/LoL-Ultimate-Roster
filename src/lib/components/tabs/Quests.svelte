@@ -93,16 +93,18 @@
         return Math.max(0, getProgress(q.stat) - base);
     }
     function getAchievementProgress(a) {
-        if (a.type === 'squadAvg') {
-            const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
-            return starters.length > 0 ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
-        }
-        if (a.type === 'clubSize') return $club.length;
-        if (a.type === 'trophies') return $weightedTrophies;
-        if (a.type === 'sigCards') return $club.filter(c => c.signature).length;
-        if (a.type === 'holoCards') return $club.filter(c => c.holographic).length;
-        if (a.type === 'managerLvl') return $managerLevel;
-        if (a.type === 'towerBest') return $trackStats.towerHighestFloor || 0;
+        try {
+            if (a.type === 'squadAvg') {
+                const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
+                return starters.length > 0 ? Math.round(starters.reduce((s, c) => s + (c.rating || 0), 0) / starters.length) : 0;
+            }
+            if (a.type === 'clubSize') return ($club || []).length;
+            if (a.type === 'trophies') return $weightedTrophies || 0;
+            if (a.type === 'sigCards') return ($club || []).filter(c => c && c.signature).length;
+            if (a.type === 'holoCards') return ($club || []).filter(c => c && c.holographic).length;
+            if (a.type === 'managerLvl') return $managerLevel || 1;
+            if (a.type === 'towerBest') return $trackStats.towerHighestFloor || 0;
+        } catch(e) { return 0; }
         return 0;
     }
 
@@ -176,9 +178,9 @@
     $: totalAchievements = achievements.length;
     $: doneAchievements = achievements.filter(a => achievementsClaimed[a.id]).length;
 
-    $: claimableMilestones = milestoneQuests.filter(q => !claimed[q.id] && getProgress(q.stat) >= q.target).length;
-    $: claimableContracts = repeatableQuests.filter(q => getRepeatableProgress(q) >= q.target).length;
-    $: claimableAchievements = achievements.filter(a => !achievementsClaimed[a.id] && getAchievementProgress(a) >= a.target).length;
+    $: claimableMilestones = (() => { try { return milestoneQuests.filter(q => !claimed[q.id] && ($trackStats[q.stat] || 0) >= q.target).length; } catch(e) { return 0; } })();
+    $: claimableContracts = (() => { try { return repeatableQuests.filter(q => { const base = ($questsRepeatableBaselines)[q.id] || 0; return Math.max(0, ($trackStats[q.stat] || 0) - base) >= q.target; }).length; } catch(e) { return 0; } })();
+    $: claimableAchievements = (() => { try { return achievements.filter(a => !achievementsClaimed[a.id] && getAchievementProgress(a) >= a.target).length; } catch(e) { return 0; } })();
 </script>
 
 <section class="quests-page">
