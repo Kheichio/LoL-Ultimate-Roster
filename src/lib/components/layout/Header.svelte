@@ -1,6 +1,7 @@
 <script>
     import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards } from '../../stores/game.js';
-    import { activeTab, switchTab, showAuthPanel } from '../../stores/ui.js';
+    import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
+    import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
     import { loadFromStorage } from '../../utils/storage.js';
 
@@ -55,6 +56,29 @@
 
     let mobileOpen = false;
     function navTo(tab) { switchTab(tab); mobileOpen = false; }
+
+    let splitTimerDisplay = '';
+    let splitTimerInterval = null;
+
+    function updateSplitTimer() {
+        const end = $splitCooldownEnd;
+        if (!end || end <= Date.now()) {
+            splitTimerDisplay = '';
+            return;
+        }
+        const remaining = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+        splitTimerDisplay = remaining > 0 ? `${remaining}s` : '';
+    }
+
+    $: if ($splitCooldownEnd > 0) {
+        updateSplitTimer();
+        if (!splitTimerInterval) splitTimerInterval = setInterval(updateSplitTimer, 1000);
+    } else {
+        splitTimerDisplay = '';
+        if (splitTimerInterval) { clearInterval(splitTimerInterval); splitTimerInterval = null; }
+    }
+
+    onDestroy(() => { if (splitTimerInterval) clearInterval(splitTimerInterval); });
 </script>
 
 <header class="hdr">
@@ -71,6 +95,12 @@
                     <span class="team-b">💎 {$blueEssence.toLocaleString()}</span>
                 </div>
             </div>
+            {#if splitTimerDisplay}
+                <button class="split-timer" on:click={() => navTo('season')}>
+                    <span class="st-icon">⏱</span>
+                    <span class="st-time">{splitTimerDisplay}</span>
+                </button>
+            {/if}
         </div>
 
         <!-- CENTER: Nav rows — always centered -->
@@ -161,6 +191,22 @@
     .team-text { display: flex; flex-direction: column; line-height: 1.2; }
     .team-n { font-size: 11px; font-weight: 800; color: #8b99ad; }
     .team-b { font-size: 13px; font-weight: 900; color: #60a5fa; }
+
+    /* Split cooldown timer */
+    .split-timer {
+        display: flex; align-items: center; gap: 4px;
+        padding: 4px 10px; border-radius: 8px;
+        background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25);
+        cursor: pointer; transition: all 0.12s;
+        animation: timerPulse 2s ease-in-out infinite;
+    }
+    .split-timer:hover { background: rgba(239,68,68,0.2); border-color: rgba(239,68,68,0.4); }
+    @keyframes timerPulse {
+        0%, 100% { border-color: rgba(239,68,68,0.25); }
+        50% { border-color: rgba(239,68,68,0.5); }
+    }
+    .st-icon { font-size: 11px; }
+    .st-time { font-size: 12px; font-weight: 900; color: #f87171; font-family: monospace; }
 
     /* CENTER — fills remaining space, content centered */
     .hdr-center {

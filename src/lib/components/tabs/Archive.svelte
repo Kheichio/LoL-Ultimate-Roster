@@ -10,22 +10,42 @@
     let search = '';
     let sortBy = 'team';
 
-    $: unclaimedNewCards = (() => {
+    $: claimedCards = ($archiveRewards && $archiveRewards.claimedCards) || {};
+    $: claimedTeams = ($archiveRewards && $archiveRewards.claimedTeams) || {};
+
+    $: viewCardIds = new Set(cards.map(c => c.id));
+    $: unclaimedInView = Object.keys($collectionRegistry).filter(id =>
+        $collectionRegistry[id] && !claimedCards[id] && viewCardIds.has(id)
+    );
+    $: unclaimedInViewCount = unclaimedInView.length;
+
+    let qualityToCat = {};
+
+    $: badgeCounts = (() => {
         const reg = $collectionRegistry;
-        const claimed = ($archiveRewards && $archiveRewards.claimedCards) || {};
-        return Object.keys(reg).filter(id => reg[id] && !claimed[id]);
+        const counts = {};
+        for (const card of db) {
+            if (!reg[card.id] || claimedCards[card.id]) continue;
+            if (!ALL_SPECIAL.includes(card.quality) && card.role !== 'COACH') {
+                counts['regular'] = (counts['regular'] || 0) + 1;
+                counts[`regular_${card.region}`] = (counts[`regular_${card.region}`] || 0) + 1;
+            } else {
+                const catId = qualityToCat[card.quality];
+                if (catId) counts[catId] = (counts[catId] || 0) + 1;
+            }
+        }
+        return counts;
     })();
 
-    $: unclaimedNewCount = unclaimedNewCards.length;
-
-    function claimNewCards() {
-        if (unclaimedNewCards.length === 0) return;
-        const count = unclaimedNewCards.length;
+    function claimViewCards() {
+        if (unclaimedInView.length === 0) return;
+        const count = unclaimedInView.length;
         const reward = count * 25;
         blueEssence.update(v => v + reward);
+        const toClaim = [...unclaimedInView];
         archiveRewards.update(ar => {
             const newClaimed = { ...ar.claimedCards };
-            unclaimedNewCards.forEach(id => newClaimed[id] = true);
+            toClaim.forEach(id => newClaimed[id] = true);
             return { ...ar, claimedCards: newClaimed };
         });
         grantXP(count * 10);
@@ -47,6 +67,7 @@
 
     function claimTeamReward(group) {
         const key = makeTeamKey(group);
+        if (claimedTeams[key]) return;
         const reward = getTeamReward(group.cards.length);
         blueEssence.update(v => v + reward);
         battlePass.update(bp => ({ ...bp, xp: (bp.xp || 0) + 100 }));
@@ -58,11 +79,6 @@
         playSound('rare');
         saveGame();
         showToast(`${group.team} complete! +${reward} BE +100 BP XP`, 'success');
-    }
-
-    function isTeamClaimed(group) {
-        const key = makeTeamKey(group);
-        return !!($archiveRewards.claimedTeams || {})[key];
     }
 
     const categories = [
@@ -87,6 +103,7 @@
         champion: 'Champion', mvp: 'MVP',
         poty: 'POTY', roty: 'ROTY', toty: 'TOTY', gpoty: 'GPOTY', x: 'X'
     };
+    qualityToCat = Object.fromEntries(Object.entries(catToQuality).map(([k, v]) => [v, k]));
 
     $: db = getDB() || [];
     $: cards = (() => {
@@ -151,20 +168,6 @@
         </div>
     </div>
 
-    <!-- New Card Rewards Banner -->
-    {#if unclaimedNewCount > 0}
-        <div class="reward-banner">
-            <div class="rb-info">
-                <span class="rb-icon">🎁</span>
-                <div>
-                    <div class="rb-title">{unclaimedNewCount} New Card{unclaimedNewCount > 1 ? 's' : ''} Discovered!</div>
-                    <div class="rb-desc">Claim {unclaimedNewCount * 25} BE for discovering new cards</div>
-                </div>
-            </div>
-            <button class="rb-btn" on:click={claimNewCards}>Claim All · +{unclaimedNewCount * 25} BE</button>
-        </div>
-    {/if}
-
     <!-- Category Tabs -->
     <div class="pill-bar">
         {#each categories as cat}
@@ -173,7 +176,10 @@
                 class:pill-inactive={activeCategory !== cat.id}
                 style={activeCategory === cat.id ? `color: ${cat.color}; background: ${cat.bg}; border-color: ${cat.border};` : ''}
                 on:click={() => { activeCategory = cat.id; }}
-            >{cat.label}</button>
+            >
+                {cat.label}
+                {#if badgeCounts[cat.id]}<span class="pill-badge">{badgeCounts[cat.id]}</span>{/if}
+            </button>
         {/each}
     </div>
 
@@ -185,8 +191,25 @@
                     class="region-tab"
                     class:region-active={activeRegion === r}
                     on:click={() => { activeRegion = r; }}
-                >{regionLabels[r]}</button>
+                >
+                    {regionLabels[r]}
+                    {#if badgeCounts[`regular_${r}`]}<span class="pill-badge">{badgeCounts[`regular_${r}`]}</span>{/if}
+                </button>
             {/each}
+        </div>
+    {/if}
+
+    <!-- New Card Rewards Banner (scoped to current view) -->
+    {#if unclaimedInViewCount > 0}
+        <div class="reward-banner">
+            <div class="rb-info">
+                <span class="rb-icon">🎁</span>
+                <div>
+                    <div class="rb-title">{unclaimedInViewCount} New Card{unclaimedInViewCount > 1 ? 's' : ''} Discovered!</div>
+                    <div class="rb-desc">Claim {unclaimedInViewCount * 25} BE for discovering new cards</div>
+                </div>
+            </div>
+            <button class="rb-btn" on:click={claimViewCards}>Claim All · +{unclaimedInViewCount * 25} BE</button>
         </div>
     {/if}
 
@@ -218,7 +241,6 @@
             {#each grouped as group}
                 {@const pct = group.cards.length > 0 ? Math.round((group.owned / group.cards.length) * 100) : 0}
                 {@const isComplete = group.owned === group.cards.length && group.cards.length > 0}
-                {@const teamClaimed = isTeamClaimed(group)}
                 <div class="team-panel" class:team-complete={isComplete}>
                     <!-- Team Header -->
                     <div class="team-header">
@@ -228,11 +250,11 @@
                                 {isComplete ? '✓' : ''} {group.owned}/{group.cards.length} ({pct}%)
                             </span>
                         </div>
-                        {#if isComplete && !teamClaimed}
+                        {#if isComplete && !claimedTeams[makeTeamKey(group)]}
                             <button class="team-claim-btn" on:click={() => claimTeamReward(group)}>
                                 Claim +{getTeamReward(group.cards.length)} BE
                             </button>
-                        {:else if isComplete && teamClaimed}
+                        {:else if isComplete && claimedTeams[makeTeamKey(group)]}
                             <span class="team-claimed-tag">Claimed ✓</span>
                         {/if}
                     </div>
@@ -348,6 +370,14 @@
         transition: all 0.15s ease;
         border: 1px solid transparent;
         background: none;
+    }
+
+    .pill-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 14px; height: 14px; padding: 0 3px;
+        border-radius: 100px; font-size: 8px; font-weight: 900;
+        background: #ef4444; color: white;
+        margin-left: 4px; line-height: 1;
     }
 
     .pill-inactive {

@@ -82,10 +82,20 @@
         };
     }
 
+    function serializeCard(c) {
+        if (!c) return null;
+        return { id: c.id, name: c.name, team: c.team, year: c.year, role: c.role, region: c.region, rating: c.rating, quality: c.quality, stats: c.stats, signature: c.signature || false, holographic: c.holographic || false };
+    }
+
     async function pushToLeaderboard() {
         const user = get(currentUser);
         if (!user || !window.fbDb) return;
         const entry = buildMyEntry();
+        const squadData = {};
+        for (const role of ['TOP','JNG','MID','ADC','SUP','COACH']) {
+            if (entry.squad[role]) squadData[role] = serializeCard(entry.squad[role]);
+        }
+        const showcaseData = (entry.showcaseCards || []).map(serializeCard).filter(Boolean);
         try {
             await window.fbDb.collection('leaderboard').doc(user.uid).set({
                 displayName: entry.displayName,
@@ -108,6 +118,8 @@
                 worldsWins: entry.worldsWins,
                 losses: entry.losses,
                 packsOpened: entry.packsOpened,
+                squadData: squadData,
+                showcaseData: showcaseData,
                 updatedAt: Date.now(),
             });
         } catch(e) {}
@@ -157,8 +169,8 @@
                         packsOpened: d.packsOpened || 0,
                         favouriteTeam: 'N/A',
                         mostPlayedMode: '',
-                        squad: {},
-                        showcaseCards: [],
+                        squad: d.squadData || {},
+                        showcaseCards: d.showcaseData || [],
                     });
                 });
             } catch(e) {}

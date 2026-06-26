@@ -2,7 +2,7 @@
     import Card from '../card/Card.svelte';
     import { club, squad, blueEssence, trackStats, seasonData, skills, grantXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { switchTab } from '../../stores/ui.js';
+    import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
     import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { get } from 'svelte/store';
@@ -59,6 +59,7 @@
 
     function startCooldown() {
         cooldownEnd = Date.now() + cooldownSecs * 1000;
+        splitCooldownEnd.set(cooldownEnd);
         updateCooldown();
         if (cooldownTimer) clearInterval(cooldownTimer);
         cooldownTimer = setInterval(updateCooldown, 1000);
@@ -66,7 +67,10 @@
     function updateCooldown() {
         const remaining = Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000));
         cooldownLeft = remaining;
-        if (remaining <= 0 && cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
+        if (remaining <= 0) {
+            splitCooldownEnd.set(0);
+            if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
+        }
     }
     onDestroy(() => { if (cooldownTimer) clearInterval(cooldownTimer); });
 

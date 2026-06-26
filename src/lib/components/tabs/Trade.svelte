@@ -56,6 +56,7 @@
     function generateOffers(seed, count) {
         const rng = seededRandom(seed);
         const level = get(skills).trading || 0;
+        const discount = Math.floor(level / 2);
         const available = TRADE_PATHS.filter(p => level >= p.minLevel);
         const shuffled = [...available].sort(() => rng() - 0.5);
         const selected = shuffled.slice(0, count);
@@ -64,7 +65,7 @@
         if (!db) return selected.map(t => ({ ...t, targetCard: null }));
 
         return selected.map(t => {
-            const discounted = Math.max(1, t.count - cardDiscount);
+            const discounted = Math.max(1, t.count - discount);
             const pool = db.filter(p =>
                 p.quality === t.to &&
                 !ALL_SPECIAL.includes(p.quality) &&
@@ -77,7 +78,9 @@
 
     function loadOffers() {
         const seed = getSeed();
-        offers = generateOffers(seed, tradeCount);
+        const level = get(skills).trading || 0;
+        const count = BASE_TRADE_COUNT + (level >= 4 ? 2 : level >= 2 ? 1 : 0);
+        offers = generateOffers(seed, count);
         nextRotation = (seed + 1) * ROTATE_MS;
         updateTimer();
     }
@@ -98,7 +101,9 @@
         }
         blueEssence.update(v => v - cost);
         const newSeed = Date.now();
-        offers = generateOffers(newSeed, tradeCount);
+        const level = get(skills).trading || 0;
+        const count = BASE_TRADE_COUNT + (level >= 4 ? 2 : level >= 2 ? 1 : 0);
+        offers = generateOffers(newSeed, count);
         nextRotation = Date.now() + ROTATE_MS;
         saveGame();
         showToast('Trade offers refreshed!', 'success');

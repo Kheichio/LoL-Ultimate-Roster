@@ -38,6 +38,8 @@ if (localStorage.getItem('lur_light_mode') === '1') {
     document.documentElement.classList.add('light-mode');
 }
 
+export const splitCooldownEnd = writable(0);
+
 export function switchTab(tab) {
     activeTab.set(tab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
