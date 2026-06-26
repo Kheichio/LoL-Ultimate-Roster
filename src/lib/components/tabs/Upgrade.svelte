@@ -54,6 +54,20 @@
         return counts;
     })();
 
+    $: pathReadyCounts = (() => {
+        const ready = {};
+        upgradePaths.forEach(p => {
+            let count = 0;
+            roles.forEach(r => {
+                if ((pathCounts[p.from]?.[r] || 0) >= p.count && $blueEssence >= p.cost) count++;
+            });
+            ready[p.from] = count;
+        });
+        return ready;
+    })();
+
+    $: totalUpgradesAvailable = Object.values(pathReadyCounts).reduce((s, v) => s + v, 0);
+
     function performUpgrade() {
         if (!canUpgrade) return;
 
@@ -102,6 +116,7 @@
             <h3 class="section-label">Select Upgrade</h3>
             {#each upgradePaths as path}
                 {@const isSelected = selectedPath.from === path.from}
+                {@const readyCount = pathReadyCounts[path.from] || 0}
                 <button
                     class="path-btn"
                     class:path-btn--active={isSelected}
@@ -110,6 +125,7 @@
                     <div class="path-btn__header">
                         <span class="path-btn__name" class:path-btn__name--active={isSelected}>
                             {path.from} → {path.to}
+                            {#if readyCount > 0}<span class="path-badge">{readyCount}</span>{/if}
                         </span>
                         <span class="path-btn__cost">{path.cost} BE</span>
                     </div>
@@ -129,11 +145,14 @@
                     {#each roles as role}
                         {@const count = pathCounts[selectedPath.from]?.[role] || 0}
                         {@const enough = count >= selectedPath.count}
+                        {@const canDo = enough && $blueEssence >= selectedPath.cost}
                         <button
                             class="role-btn"
                             class:role-btn--active={selectedRole === role}
+                            class:role-btn--ready={canDo}
                             on:click={() => { selectedRole = role; }}
                         >
+                            {#if canDo}<span class="role-ready-dot"></span>{/if}
                             <img
                                 src={roleIcons[role]}
                                 alt={role}
@@ -388,6 +407,14 @@
         color: #64748b;
     }
 
+    .path-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 16px; height: 16px; padding: 0 4px;
+        border-radius: 100px; font-size: 9px; font-weight: 900;
+        background: #22c55e; color: white;
+        margin-left: 6px; line-height: 1;
+    }
+
     /* ── Role Grid ── */
     .role-grid {
         display: grid;
@@ -453,6 +480,18 @@
 
     .role-btn__count--enough {
         color: #34d399;
+    }
+
+    .role-btn--ready {
+        border-color: rgba(34,197,94,0.4);
+        position: relative;
+    }
+
+    .role-ready-dot {
+        position: absolute; top: 6px; right: 6px;
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 6px rgba(34,197,94,0.5);
     }
 
     /* ── Preview Visual ── */

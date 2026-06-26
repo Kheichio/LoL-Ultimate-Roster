@@ -68,11 +68,32 @@
         return count;
     })();
 
+    $: upgradeAvailable = (() => {
+        const paths = [
+            { from: 'Bronze', count: 10, cost: 50 }, { from: 'Silver', count: 10, cost: 100 },
+            { from: 'Gold', count: 10, cost: 200 }, { from: 'Platinum', count: 8, cost: 400 },
+            { from: 'Diamond', count: 8, cost: 800 }, { from: 'Master', count: 5, cost: 1500 },
+            { from: 'Grandmaster', count: 5, cost: 3000 },
+        ];
+        const roles = ['TOP','JNG','MID','ADC','SUP','COACH'];
+        const sqIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
+        let total = 0;
+        for (const p of paths) {
+            if ($blueEssence < p.cost) continue;
+            for (const r of roles) {
+                const count = $club.filter(c => c.quality === p.from && c.role === r && !sqIds.has(c.uniqueId) && !c.locked).length;
+                if (count >= p.count) total++;
+            }
+        }
+        return total;
+    })();
+
     $: notifications = {
         rewards: (dailyAvailable ? 1 : 0) + (bpCanLevel ? 1 : 0),
         skills: spAvailable ? $skillPoints : 0,
         collection: archiveUnclaimed > 0 ? archiveUnclaimed : 0,
         quests: questBadge,
+        upgrade: upgradeAvailable,
     };
 
     const leftTabs = [
