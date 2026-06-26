@@ -53,6 +53,34 @@
     import { onDestroy } from 'svelte';
 
     const BASE_COOLDOWN = 60;
+    $: benchLevel = $skills.bench || 0;
+    $: maxSwaps = benchLevel;
+    $: swapsUsed = $seasonData.swapsUsed || 0;
+    $: swapsLeft = Math.max(0, maxSwaps - swapsUsed);
+    let showBenchPicker = false;
+    let benchSwapRole = null;
+
+    function openBenchPicker(role) {
+        benchSwapRole = role;
+        showBenchPicker = true;
+    }
+
+    function executeBenchSwap(card) {
+        if (!benchSwapRole || swapsLeft <= 0) return;
+        squad.update(s => ({ ...s, [benchSwapRole]: card }));
+        seasonData.update(s => ({ ...s, swapsUsed: (s.swapsUsed || 0) + 1 }));
+        showBenchPicker = false;
+        benchSwapRole = null;
+        saveGame();
+        showToast(`Swapped ${card.name} into ${benchSwapRole}. ${swapsLeft - 1} swaps remaining.`, 'success');
+    }
+
+    $: benchCandidates = (() => {
+        if (!benchSwapRole) return [];
+        const activeIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
+        return $club.filter(c => c.role === benchSwapRole && !activeIds.has(c.uniqueId)).sort((a, b) => b.rating - a.rating);
+    })();
+
     $: staminaLevel = $skills.stamina || 0;
     $: cooldownSecs = Math.max(10, BASE_COOLDOWN - staminaLevel * 10);
     $: onCooldown = cooldownLeft > 0;
@@ -163,8 +191,8 @@
 
         function buildPhase() {
             const shuffled = [...allTeams].sort(() => Math.random() - 0.5);
-            const buffed = shuffled.slice(0, 5).map(t => ({ team: t, amount: randRange(8, 25) }));
-            const nerfed = shuffled.slice(5, 10).map(t => ({ team: t, amount: randRange(8, 25) }));
+            const buffed = shuffled.slice(0, 5).map(t => ({ team: t, amount: randRange(8, 20) }));
+            const nerfed = shuffled.slice(5, 17).map(t => ({ team: t, amount: randRange(10, 30) }));
             return { buffed, nerfed };
         }
 
@@ -286,7 +314,7 @@
     function startSplit() {
         if (!squadReady) { showToast('Fill all 5 starting positions.', 'error'); return; }
         const meta = generateMeta();
-        seasonData.update(s => ({ ...s, meta, lockedSquad: JSON.parse(JSON.stringify(get(squad))) }));
+        seasonData.update(s => ({ ...s, meta, lockedSquad: JSON.parse(JSON.stringify(get(squad))), swapsUsed: 0 }));
         const ok = generateOpponents();
         if (ok === false) return;
         saveGame();
@@ -529,8 +557,54 @@
                     </div>
                 </div>
                 {#if splitActive}
-                    <div class="meta-lock">🔒 Squad is locked for this split. Only bench swaps allowed.</div>
+                    <div class="meta-lock">
+                        🔒 Squad locked for this split.
+                        {#if maxSwaps > 0}
+                            <span class="swap-count">{swapsLeft}/{maxSwaps} bench swaps remaining</span>
+                        {:else}
+                            <span class="swap-hint">Upgrade Bench Management to swap players mid-split.</span>
+                        {/if}
+                    </div>
+                    {#if maxSwaps > 0 && swapsLeft > 0}
+                        <div class="bench-swap-bar">
+                            <span class="bsb-label">Bench Swap</span>
+                            {#each ['TOP','JNG','MID','ADC','SUP'] as role}
+                                <button class="bsb-btn" on:click={() => openBenchPicker(role)}>
+                                    {role}
+                                    {#if $squad[role]}<span class="bsb-name">{$squad[role].name}</span>{/if}
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
                 {/if}
+            </div>
+        {/if}
+
+        <!-- Bench Picker Modal -->
+        {#if showBenchPicker}
+            <!-- svelte-ignore a11y-click-events-have-key-events -->
+            <!-- svelte-ignore a11y-no-static-element-interactions -->
+            <div class="bench-overlay" on:click={() => { showBenchPicker = false; }}>
+                <div class="bench-modal" on:click|stopPropagation>
+                    <div class="bench-head">
+                        <h3 class="bench-title">Swap {benchSwapRole}</h3>
+                        <button class="bench-close" on:click={() => { showBenchPicker = false; }}>✕</button>
+                    </div>
+                    {#if benchCandidates.length === 0}
+                        <div class="bench-empty">No eligible {benchSwapRole} cards in your club.</div>
+                    {:else}
+                        <div class="bench-list">
+                            {#each benchCandidates.slice(0, 20) as card}
+                                <button class="bench-card" on:click={() => executeBenchSwap(card)}>
+                                    <span class="bc-rating">{card.rating}</span>
+                                    <span class="bc-name">{card.name}</span>
+                                    <span class="bc-team">{card.team} [{card.year}]</span>
+                                    <span class="bc-quality" style="color: {card.quality === 'Challenger' ? '#f59e0b' : card.quality === 'Grandmaster' ? '#ef4444' : '#94a3b8'}">{card.quality}</span>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
             </div>
         {/if}
 
@@ -954,6 +1028,55 @@
         text-align: center; font-size: 10px; font-weight: 700; color: #f59e0b;
         margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(51,65,85,0.15);
     }
+    .swap-count { color: #34d399; margin-left: 6px; }
+    .swap-hint { color: #64748b; margin-left: 6px; font-weight: 400; }
+    .bench-swap-bar {
+        display: flex; align-items: center; gap: 6px; justify-content: center;
+        margin-top: 10px; flex-wrap: wrap;
+    }
+    .bsb-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; }
+    .bsb-btn {
+        padding: 6px 12px; border-radius: 8px; font-size: 10px; font-weight: 700;
+        background: rgba(20,184,166,0.1); border: 1px solid rgba(20,184,166,0.25);
+        color: #5eead4; cursor: pointer; transition: all 0.12s;
+        display: flex; align-items: center; gap: 4px;
+    }
+    .bsb-btn:hover { background: rgba(20,184,166,0.2); border-color: rgba(20,184,166,0.4); }
+    .bsb-name { font-size: 9px; color: #94a3b8; }
+
+    /* Bench picker modal */
+    .bench-overlay {
+        position: fixed; inset: 0; z-index: 100;
+        background: rgba(0,0,0,0.8); backdrop-filter: blur(8px);
+        display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .bench-modal {
+        width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;
+        background: #0f172a; border: 1px solid rgba(51,65,85,0.3);
+        border-radius: 16px; padding: 20px;
+    }
+    .bench-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .bench-title { font-size: 16px; font-weight: 900; color: #5eead4; }
+    .bench-close {
+        width: 28px; height: 28px; border-radius: 8px;
+        background: rgba(51,65,85,0.3); border: 1px solid rgba(71,85,105,0.2);
+        color: #64748b; font-size: 12px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .bench-close:hover { background: rgba(239,68,68,0.15); color: #f87171; }
+    .bench-empty { text-align: center; padding: 32px; color: #475569; font-size: 12px; }
+    .bench-list { display: flex; flex-direction: column; gap: 4px; }
+    .bench-card {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 12px; border-radius: 10px;
+        background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3);
+        cursor: pointer; transition: all 0.12s; text-align: left;
+    }
+    .bench-card:hover { background: rgba(20,184,166,0.08); border-color: rgba(20,184,166,0.3); }
+    .bc-rating { font-size: 16px; font-weight: 900; color: #f1f5f9; min-width: 28px; }
+    .bc-name { font-size: 12px; font-weight: 800; color: #e2e8f0; flex: 1; }
+    .bc-team { font-size: 9px; color: #64748b; }
+    .bc-quality { font-size: 9px; font-weight: 900; text-transform: uppercase; }
 
     /* Match layout - 3 columns: cards | combat | cards */
     .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }

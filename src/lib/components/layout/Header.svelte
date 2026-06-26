@@ -1,5 +1,5 @@
 <script>
-    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
@@ -25,10 +25,54 @@
         return count;
     })();
 
+    $: questBadge = (() => {
+        const ts = $trackStats;
+        const qc = $questsClaimed;
+        const ac = $achievementsClaimed;
+        const rb = $questsRepeatableBaselines;
+        let count = 0;
+        const mq = [
+            ['mq1','packs',5],['mq2','packs',25],['mq3','packs',100],['mq9','packs',250],
+            ['mq4','holographicPulled',1],['mq5','holographicPulled',5],['mq8','holographicPulled',10],
+            ['mq6','signaturesPulled',1],['mq7','signaturesPulled',5],
+            ['mq10','soldCount',10],['mq11','soldCount',50],['mq12','soldCount',200],['mq13','soldCount',500],
+            ['mq20','tournamentsWon',1],['mq21','tournamentsWon',5],['mq22','tournamentsWon',25],['mq50','tournamentsWon',100],
+            ['mq23','cafeWins',1],['mq24','cafeWins',10],['mq25','cafeWins',50],
+            ['mq26','regionalSplitWon',1],['mq27','regionalSplitWon',5],['mq51','regionalSplitWon',25],
+            ['mq28','firstStandWon',1],['mq29','firstStandWon',5],
+            ['mq35','msiWon',1],['mq36','msiWon',3],['mq37','worldsWon',1],['mq38','worldsWon',3],
+            ['mq30','splitsCompleted',1],['mq31','splitsCompleted',5],['mq32','splitsCompleted',25],['mq39','splitsCompleted',50],
+            ['mq33','goldenRoads',1],['mq34','goldenRoads',5],['mq40','goldenRoads',10],
+            ['mq41','towerHighestFloor',10],['mq42','towerHighestFloor',25],['mq43','towerHighestFloor',50],['mq44','towerHighestFloor',100],
+        ];
+        for (const [id, stat, target] of mq) {
+            if (!qc[id] && (ts[stat] || 0) >= target) count++;
+        }
+        const rq = [['rq1','packs',3],['rq6','packs',5],['rq2','tournamentsWon',3],['rq4','cafeWins',5],['rq3','soldCount',5],['rq7','soldCount',10],['rq5','splitsCompleted',2]];
+        for (const [id, stat, target] of rq) {
+            if (Math.max(0, (ts[stat] || 0) - (rb[id] || 0)) >= target) count++;
+        }
+        const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
+        const sqAvg = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
+        const achChecks = [
+            ['a1',sqAvg,80],['a2',sqAvg,90],['a3',sqAvg,95],
+            ['a4',$club.length,50],['a5',$club.length,200],['a6',$club.length,500],
+            ['a7',$weightedTrophies,50],['a8',$weightedTrophies,200],['a14',$weightedTrophies,500],['a15',$weightedTrophies,1000],
+            ['a9',$club.filter(c => c.signature).length,10],['a10',$club.filter(c => c.holographic).length,25],
+            ['a11',$managerLevel,10],['a12',$managerLevel,25],['a13',$managerLevel,50],
+            ['a16',ts.towerHighestFloor||0,50],['a17',ts.towerHighestFloor||0,100],
+        ];
+        for (const [id, val, target] of achChecks) {
+            if (!ac[id] && val >= target) count++;
+        }
+        return count;
+    })();
+
     $: notifications = {
         rewards: (dailyAvailable ? 1 : 0) + (bpCanLevel ? 1 : 0),
         skills: spAvailable ? $skillPoints : 0,
         collection: archiveUnclaimed > 0 ? archiveUnclaimed : 0,
+        quests: questBadge,
     };
 
     const leftTabs = [

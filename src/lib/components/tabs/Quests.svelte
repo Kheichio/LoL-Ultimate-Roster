@@ -1,5 +1,5 @@
 <script>
-    import { blueEssence, trackStats, club, squad, saveGame, weightedTrophies, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed as achievementsClaimedStore } from '../../stores/game.js';
+    import { blueEssence, trackStats, club, squad, saveGame, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed as achievementsClaimedStore } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
@@ -10,31 +10,56 @@
         { id: 'mq1', cat: 'collection', desc: 'Open 5 Card Packs', target: 5, stat: 'packs', reward: 500 },
         { id: 'mq2', cat: 'collection', desc: 'Open 25 Card Packs', target: 25, stat: 'packs', reward: 2000 },
         { id: 'mq3', cat: 'collection', desc: 'Open 100 Card Packs', target: 100, stat: 'packs', reward: 5000 },
+        { id: 'mq9', cat: 'collection', desc: 'Open 250 Card Packs', target: 250, stat: 'packs', reward: 10000 },
         { id: 'mq4', cat: 'collection', desc: 'Pull a Holographic Card', target: 1, stat: 'holographicPulled', reward: 2000 },
         { id: 'mq5', cat: 'collection', desc: 'Pull 5 Holographic Cards', target: 5, stat: 'holographicPulled', reward: 5000 },
+        { id: 'mq8', cat: 'collection', desc: 'Pull 10 Holographic Cards', target: 10, stat: 'holographicPulled', reward: 8000 },
+        { id: 'mq6', cat: 'collection', desc: 'Pull a Signature Card', target: 1, stat: 'signaturesPulled', reward: 3000 },
+        { id: 'mq7', cat: 'collection', desc: 'Pull 5 Signature Cards', target: 5, stat: 'signaturesPulled', reward: 8000 },
         // Economy
         { id: 'mq10', cat: 'economy', desc: 'Sell 10 Cards', target: 10, stat: 'soldCount', reward: 400 },
         { id: 'mq11', cat: 'economy', desc: 'Sell 50 Cards', target: 50, stat: 'soldCount', reward: 1500 },
         { id: 'mq12', cat: 'economy', desc: 'Sell 200 Cards', target: 200, stat: 'soldCount', reward: 4000 },
+        { id: 'mq13', cat: 'economy', desc: 'Sell 500 Cards', target: 500, stat: 'soldCount', reward: 8000 },
         // Competitive
         { id: 'mq20', cat: 'competitive', desc: 'Win a Tournament', target: 1, stat: 'tournamentsWon', reward: 800 },
         { id: 'mq21', cat: 'competitive', desc: 'Win 5 Tournaments', target: 5, stat: 'tournamentsWon', reward: 3000 },
         { id: 'mq22', cat: 'competitive', desc: 'Win 25 Tournaments', target: 25, stat: 'tournamentsWon', reward: 8000 },
+        { id: 'mq50', cat: 'competitive', desc: 'Win 100 Tournaments', target: 100, stat: 'tournamentsWon', reward: 20000 },
         { id: 'mq23', cat: 'competitive', desc: 'Win a Gaming Cafe', target: 1, stat: 'cafeWins', reward: 500 },
         { id: 'mq24', cat: 'competitive', desc: 'Win 10 Gaming Cafes', target: 10, stat: 'cafeWins', reward: 3000 },
         { id: 'mq25', cat: 'competitive', desc: 'Win 50 Gaming Cafes', target: 50, stat: 'cafeWins', reward: 6000 },
+        { id: 'mq26', cat: 'competitive', desc: 'Win a Regional Trophy', target: 1, stat: 'regionalSplitWon', reward: 1000 },
+        { id: 'mq27', cat: 'competitive', desc: 'Win 5 Regional Trophies', target: 5, stat: 'regionalSplitWon', reward: 4000 },
+        { id: 'mq51', cat: 'competitive', desc: 'Win 25 Regional Trophies', target: 25, stat: 'regionalSplitWon', reward: 10000 },
+        { id: 'mq28', cat: 'competitive', desc: 'Win a First Stand', target: 1, stat: 'firstStandWon', reward: 2000 },
+        { id: 'mq29', cat: 'competitive', desc: 'Win 5 First Stands', target: 5, stat: 'firstStandWon', reward: 6000 },
+        { id: 'mq35', cat: 'competitive', desc: 'Win an MSI', target: 1, stat: 'msiWon', reward: 3000 },
+        { id: 'mq36', cat: 'competitive', desc: 'Win 3 MSIs', target: 3, stat: 'msiWon', reward: 8000 },
+        { id: 'mq37', cat: 'competitive', desc: 'Win a World Championship', target: 1, stat: 'worldsWon', reward: 5000 },
+        { id: 'mq38', cat: 'competitive', desc: 'Win 3 World Championships', target: 3, stat: 'worldsWon', reward: 12000 },
         // Progression
         { id: 'mq30', cat: 'progression', desc: 'Complete a Season Split', target: 1, stat: 'splitsCompleted', reward: 2000 },
         { id: 'mq31', cat: 'progression', desc: 'Complete 5 Season Splits', target: 5, stat: 'splitsCompleted', reward: 5000 },
         { id: 'mq32', cat: 'progression', desc: 'Complete 25 Season Splits', target: 25, stat: 'splitsCompleted', reward: 12000 },
+        { id: 'mq39', cat: 'progression', desc: 'Complete 50 Season Splits', target: 50, stat: 'splitsCompleted', reward: 20000 },
         { id: 'mq33', cat: 'progression', desc: 'Complete a Golden Road', target: 1, stat: 'goldenRoads', reward: 5000 },
         { id: 'mq34', cat: 'progression', desc: 'Complete 5 Golden Roads', target: 5, stat: 'goldenRoads', reward: 15000 },
+        { id: 'mq40', cat: 'progression', desc: 'Complete 10 Golden Roads', target: 10, stat: 'goldenRoads', reward: 25000 },
+        { id: 'mq41', cat: 'progression', desc: 'Reach Tower Floor 10', target: 10, stat: 'towerHighestFloor', reward: 2000 },
+        { id: 'mq42', cat: 'progression', desc: 'Reach Tower Floor 25', target: 25, stat: 'towerHighestFloor', reward: 5000 },
+        { id: 'mq43', cat: 'progression', desc: 'Reach Tower Floor 50', target: 50, stat: 'towerHighestFloor', reward: 10000 },
+        { id: 'mq44', cat: 'progression', desc: 'Reach Tower Floor 100', target: 100, stat: 'towerHighestFloor', reward: 20000 },
     ];
 
     const repeatableQuests = [
         { id: 'rq1', desc: 'Open 3 Packs', target: 3, stat: 'packs', reward: 300 },
+        { id: 'rq6', desc: 'Open 5 Packs', target: 5, stat: 'packs', reward: 500 },
         { id: 'rq2', desc: 'Win 3 Tournaments', target: 3, stat: 'tournamentsWon', reward: 500 },
+        { id: 'rq4', desc: 'Win 5 Gaming Cafes', target: 5, stat: 'cafeWins', reward: 600 },
         { id: 'rq3', desc: 'Sell 5 Cards', target: 5, stat: 'soldCount', reward: 200 },
+        { id: 'rq7', desc: 'Sell 10 Cards', target: 10, stat: 'soldCount', reward: 300 },
+        { id: 'rq5', desc: 'Complete 2 Season Splits', target: 2, stat: 'splitsCompleted', reward: 800 },
     ];
 
     const achievements = [
@@ -46,6 +71,15 @@
         { id: 'a6', desc: 'Own 500 Cards', type: 'clubSize', target: 500, reward: 8000 },
         { id: 'a7', desc: 'Earn 50 Trophy Points', type: 'trophies', target: 50, reward: 5000 },
         { id: 'a8', desc: 'Earn 200 Trophy Points', type: 'trophies', target: 200, reward: 15000 },
+        { id: 'a14', desc: 'Earn 500 Trophy Points', type: 'trophies', target: 500, reward: 20000 },
+        { id: 'a15', desc: 'Earn 1000 Trophy Points', type: 'trophies', target: 1000, reward: 50000 },
+        { id: 'a9', desc: 'Own 10 Signature Cards', type: 'sigCards', target: 10, reward: 8000 },
+        { id: 'a10', desc: 'Own 25 Holographic Cards', type: 'holoCards', target: 25, reward: 6000 },
+        { id: 'a11', desc: 'Reach Manager Level 10', type: 'managerLvl', target: 10, reward: 3000 },
+        { id: 'a12', desc: 'Reach Manager Level 25', type: 'managerLvl', target: 25, reward: 8000 },
+        { id: 'a13', desc: 'Reach Manager Level 50', type: 'managerLvl', target: 50, reward: 15000 },
+        { id: 'a16', desc: 'Reach Tower Floor 50', type: 'towerBest', target: 50, reward: 10000 },
+        { id: 'a17', desc: 'Reach Tower Floor 100', type: 'towerBest', target: 100, reward: 25000 },
     ];
 
     $: claimed = $questsClaimed;
@@ -65,6 +99,10 @@
         }
         if (a.type === 'clubSize') return $club.length;
         if (a.type === 'trophies') return $weightedTrophies;
+        if (a.type === 'sigCards') return $club.filter(c => c.signature).length;
+        if (a.type === 'holoCards') return $club.filter(c => c.holographic).length;
+        if (a.type === 'managerLvl') return $managerLevel;
+        if (a.type === 'towerBest') return $trackStats.towerHighestFloor || 0;
         return 0;
     }
 
