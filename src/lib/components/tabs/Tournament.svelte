@@ -80,6 +80,7 @@
     $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus;
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
     $: tacticsLevel = $skills.tactics || 0;
+    $: powerDiff = currentEnemy ? totalPower - (currentEnemy.avgRating || 0) : 0;
 
     $: myStatAvgs = squadReady ? (() => {
         try { const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => { r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length) + tacticsLevel; }); return r; } catch(e) { return {}; }
@@ -430,7 +431,6 @@
         <div class="phase-center"><button class="mode-enter-btn" style="background: {currentModeColor};" on:click={startMatch}>Start Match</button></div>
 
     {:else if phase === 'match' && currentEnemy}
-        {@const powerDiff = totalPower - currentEnemy.avgRating}
         <div class="match-header">
             <div class="mh-label">{currentModeName} — Round {round + 1}</div>
             <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>

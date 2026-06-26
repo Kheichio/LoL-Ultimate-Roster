@@ -82,6 +82,7 @@
     })() : {};
 
     $: tacticsLevel = $skills.tactics || 0;
+    $: powerDiff = currentEnemy ? totalPower - (currentEnemy.avgRating || 0) : 0;
     $: myStatAvgs = squadReady ? (() => {
         try {
             const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
@@ -279,7 +280,6 @@
         </div>
 
     {:else if phase === 'match' && currentEnemy}
-        {@const powerDiff = totalPower - currentEnemy.avgRating}
         <div class="tw-floor-bar">
             <span class="tw-floor">Floor {floor}</span>
             <span class="tw-buffs">{towerBuffs.length} buffs · +{towerBuff} PWR</span>

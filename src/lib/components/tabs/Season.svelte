@@ -82,6 +82,7 @@
 
     $: benchCandidates = (Array.isArray($bench) ? $bench : []).map((card, idx) => ({ card, idx })).filter(e => e.card !== null);
 
+    $: powerDiff = currentOpponent ? totalPower - (currentOpponent.avgRating || 0) : 0;
     $: staminaLevel = $skills.stamina || 0;
     $: cooldownSecs = Math.max(10, BASE_COOLDOWN - staminaLevel * 10);
     $: onCooldown = cooldownLeft > 0;
@@ -650,7 +651,6 @@
         {/if}
 
     {:else if phase === 'match' && currentOpponent}
-        {@const powerDiff = totalPower - currentOpponent.avgRating}
         <div class="match-header">
             <div class="match-label">Match {currentOpponent.index + 1} — vs {currentOpponent.name}</div>
             <div class="match-score">
