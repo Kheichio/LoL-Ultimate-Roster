@@ -100,16 +100,22 @@
     function generateEnemy(fl) {
         const db = getDB(); if (!db) return null;
         const pool = db.filter(p => p.role !== 'COACH');
-        const baseRating = Math.min(99, 65 + fl * 1.5);
-        const cpuBonus = Math.floor(fl / 3);
+        const baseRating = Math.min(99, 65 + fl * 2);
+        const cpuBonus = Math.floor(fl * 0.8) + Math.floor(fl / 5) * 2;
+        const cpuStatBoost = Math.floor(fl / 2);
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const team = {}; const used = new Set();
         roles.forEach(role => {
-            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= baseRating - 10);
-            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id));
+            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= Math.min(95, baseRating - 8));
+            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id)).sort((a,b) => b.rating - a.rating).slice(0, 5);
             rp.sort((a,b) => b.rating - a.rating);
-            const pick = rp[Math.floor(Math.random() * Math.max(1, Math.min(rp.length, 8)))];
-            if (pick) { team[role] = pick; used.add(pick.id); }
+            const pick = rp[Math.floor(Math.random() * Math.max(1, Math.min(rp.length, 5)))];
+            if (pick) {
+                const boosted = { ...pick, stats: { ...pick.stats } };
+                for (const k in boosted.stats) boosted.stats[k] = (boosted.stats[k] || 0) + cpuStatBoost;
+                team[role] = boosted;
+                used.add(pick.id);
+            }
         });
         const cards = Object.values(team);
         const avg = (cards.length > 0 ? Math.round(cards.reduce((s,c) => s + c.rating, 0) / cards.length) : baseRating) + cpuBonus;
@@ -124,22 +130,42 @@
         const isMilestone = fl > 0 && fl % 10 === 0;
         const stats = ['mec','tmf','map','frm','cmp'];
         const rs = () => stats[Math.floor(Math.random() * stats.length)];
-        const pool = isMilestone ? [
-            { icon: '🌟', label: '+5 All Stats', desc: 'Flat +5 to every stat', stat: 'all', statBonus: 5, powerBonus: 0, pctBonus: 0, tier: 'epic' },
-            { icon: '💥', label: '+10% All Stats', desc: 'Multiply all stats by 10%', stat: 'all', statBonus: 0, powerBonus: 0, pctBonus: 10, tier: 'epic' },
-            { icon: '👑', label: '+8 Power', desc: 'Flat power boost', stat: null, statBonus: 0, powerBonus: 8, pctBonus: 0, tier: 'epic' },
-            { icon: '🎯', label: `+12 ${STAT_NAMES[rs()]}`, desc: 'Huge single stat boost', stat: rs(), statBonus: 12, powerBonus: 0, pctBonus: 0, tier: 'epic' },
-            { icon: '⭐', label: '+3 All +4 Power', desc: 'Balanced epic boost', stat: 'all', statBonus: 3, powerBonus: 4, pctBonus: 0, tier: 'epic' },
-            { icon: '🔮', label: '+15% Single Stat', desc: 'Huge % to one stat', stat: rs(), statBonus: 0, powerBonus: 0, pctBonus: 15, tier: 'epic' },
-        ] : [
-            { icon: '🛡️', label: '+2 All Stats', desc: 'Small boost to everything', stat: 'all', statBonus: 2, powerBonus: 0, pctBonus: 0, tier: 'common' },
+
+        const commonPool = [
+            { icon: '🛡️', label: '+1 All Stats', desc: 'Small boost to everything', stat: 'all', statBonus: 1, powerBonus: 0, pctBonus: 0, tier: 'common' },
+            { icon: '⚔️', label: '+2 Power', desc: 'Flat power boost', stat: null, statBonus: 0, powerBonus: 2, pctBonus: 0, tier: 'common' },
+            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+3 ${STAT_NAMES[s]}`, desc: `Boost ${STAT_NAMES[s]} stat`, stat: s, statBonus: 3, powerBonus: 0, pctBonus: 0, tier: 'common' })),
+            { icon: '🛡️', label: '+2 All Stats', desc: 'Boost everything', stat: 'all', statBonus: 2, powerBonus: 0, pctBonus: 0, tier: 'common' },
             { icon: '⚔️', label: '+3 Power', desc: 'Flat power boost', stat: null, statBonus: 0, powerBonus: 3, pctBonus: 0, tier: 'common' },
-            { icon: '📊', label: '+5% All Stats', desc: 'Multiply all stats by 5%', stat: 'all', statBonus: 0, powerBonus: 0, pctBonus: 5, tier: 'rare' },
-            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+5 ${STAT_NAMES[s]}`, desc: `Boost ${STAT_NAMES[s]} stat`, stat: s, statBonus: 5, powerBonus: 0, pctBonus: 0, tier: 'common' })),
-            { icon: '💎', label: '+1 All +2 Power', desc: 'Balanced small boost', stat: 'all', statBonus: 1, powerBonus: 2, pctBonus: 0, tier: 'rare' },
-            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+8% ${STAT_NAMES[s]}`, desc: `% boost to ${STAT_NAMES[s]}`, stat: s, statBonus: 0, powerBonus: 0, pctBonus: 8, tier: 'rare' })),
         ];
-        return [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+        const rarePool = [
+            { icon: '💎', label: '+1 All +2 Power', desc: 'Balanced boost', stat: 'all', statBonus: 1, powerBonus: 2, pctBonus: 0, tier: 'rare' },
+            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+3% ${STAT_NAMES[s]}`, desc: `Small % boost`, stat: s, statBonus: 0, powerBonus: 0, pctBonus: 3, tier: 'rare' })),
+            { icon: '📊', label: '+2% All Stats', desc: 'Small % to everything', stat: 'all', statBonus: 0, powerBonus: 0, pctBonus: 2, tier: 'rare' },
+            ...stats.map(s => ({ icon: STAT_ICONS[s], label: `+5 ${STAT_NAMES[s]}`, desc: `Strong single stat`, stat: s, statBonus: 5, powerBonus: 0, pctBonus: 0, tier: 'rare' })),
+        ];
+        const epicPool = [
+            { icon: '🌟', label: '+3 All Stats', desc: 'Flat +3 to every stat', stat: 'all', statBonus: 3, powerBonus: 0, pctBonus: 0, tier: 'epic' },
+            { icon: '👑', label: '+5 Power', desc: 'Big power boost', stat: null, statBonus: 0, powerBonus: 5, pctBonus: 0, tier: 'epic' },
+            { icon: '💥', label: '+3% All Stats', desc: 'Multiply all stats by 3%', stat: 'all', statBonus: 0, powerBonus: 0, pctBonus: 3, tier: 'epic' },
+            { icon: '⭐', label: '+2 All +3 Power', desc: 'Balanced epic boost', stat: 'all', statBonus: 2, powerBonus: 3, pctBonus: 0, tier: 'epic' },
+            { icon: '🔮', label: `+5% ${STAT_NAMES[rs()]}`, desc: 'Good % to one stat', stat: rs(), statBonus: 0, powerBonus: 0, pctBonus: 5, tier: 'epic' },
+            { icon: '🎯', label: `+8 ${STAT_NAMES[rs()]}`, desc: 'Big single stat', stat: rs(), statBonus: 8, powerBonus: 0, pctBonus: 0, tier: 'epic' },
+        ];
+
+        const choices = [];
+        for (let i = 0; i < 3; i++) {
+            const roll = Math.random() * 100;
+            let tierPool;
+            if (isMilestone) {
+                tierPool = roll < 40 ? epicPool : roll < 75 ? rarePool : commonPool;
+            } else {
+                tierPool = roll < 5 ? epicPool : roll < 25 ? rarePool : commonPool;
+            }
+            const pick = tierPool[Math.floor(Math.random() * tierPool.length)];
+            choices.push({ ...pick });
+        }
+        return choices;
     }
 
     function startTower() {
