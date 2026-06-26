@@ -5,6 +5,7 @@ import { loadFromStorage, saveToStorage } from '../utils/storage.js';
 export const blueEssence = writable(1000);
 export const club = writable([]);
 export const squad = writable({ COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null });
+export const bench = writable([null, null, null]);
 export const hasBoughtStarter = writable(false);
 export const teamIdentity = writable({ name: 'My Team', logo: '🛡️', color: '#3b82f6' });
 
@@ -74,7 +75,16 @@ export function grantXP(amount) {
 
 // === Battle Pass XP ===
 export function grantBPXP(amount) {
-    battlePass.update(bp => ({ ...bp, xp: (bp.xp || 0) + amount }));
+    battlePass.update(bp => {
+        let xp = (bp.xp || 0) + amount;
+        let tier = bp.tier || 0;
+        const XP_PER_TIER = 1000;
+        while (xp >= XP_PER_TIER) {
+            xp -= XP_PER_TIER;
+            tier++;
+        }
+        return { ...bp, xp, tier };
+    });
 }
 
 // === Save / Load ===
@@ -86,6 +96,7 @@ export function saveGame() {
         saveToStorage('lur_be', get(blueEssence));
         saveToStorage('lur_club', get(club));
         saveToStorage('lur_squad', get(squad));
+        saveToStorage('lur_bench', get(bench));
         saveToStorage('lur_starter', get(hasBoughtStarter));
         saveToStorage('lur_identity', get(teamIdentity));
         saveToStorage('lur_stats', get(trackStats));
@@ -112,6 +123,9 @@ export function initGame() {
 
     const s = loadFromStorage('lur_squad');
     if (s) squad.set(s);
+
+    const bn = loadFromStorage('lur_bench');
+    if (bn) bench.set(bn);
 
     const st = loadFromStorage('lur_starter');
     if (st !== null) hasBoughtStarter.set(st === true || st === 'true');

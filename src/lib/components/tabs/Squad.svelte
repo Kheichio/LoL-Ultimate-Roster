@@ -1,11 +1,12 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, saveGame } from '../../stores/game.js';
+    import { club, squad, bench, skills, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const ALL_SLOTS = [...ROLES, 'COACH'];
+    $: benchLevel = $skills.bench || 0;
     const roleIcons = { TOP:'/icons/Top_icon.png', JNG:'/icons/Jungle_icon.png', MID:'/icons/Middle_icon.png', ADC:'/icons/Bottom_icon.png', SUP:'/icons/Support_icon.png', COACH:'/icons/Specialist_icon.png' };
 
     let pickerOpen = false, pickerRole = null, pickerSearch = '';
@@ -69,6 +70,33 @@
         squad.set(s); saveGame(); showToast('Squad filled with best total stats.', 'success');
     }
     function disband() { squad.set({COACH:null,TOP:null,JNG:null,MID:null,ADC:null,SUP:null}); saveGame(); }
+
+    let benchPickerOpen = false;
+    let benchPickerIdx = null;
+
+    $: benchUsedIds = new Set([
+        ...Object.values($squad).filter(Boolean).map(c => c.uniqueId),
+        ...$bench.filter(Boolean).map(c => c.uniqueId)
+    ]);
+
+    $: benchPickerPool = (() => {
+        if (benchPickerIdx === null) return [];
+        let pool = $club.filter(c => c.role !== 'COACH' && !benchUsedIds.has(c.uniqueId));
+        pool.sort((a, b) => b.rating - a.rating);
+        return pool;
+    })();
+
+    function openBenchPicker(idx) { benchPickerIdx = idx; benchPickerOpen = true; }
+    function closeBenchPicker() { benchPickerOpen = false; benchPickerIdx = null; }
+    function assignBench(card) {
+        bench.update(b => { const n = [...b]; n[benchPickerIdx] = card; return n; });
+        closeBenchPicker();
+        saveGame();
+    }
+    function removeBench(idx) {
+        bench.update(b => { const n = [...b]; n[idx] = null; return n; });
+        saveGame();
+    }
 </script>
 
 <section class="sq">
@@ -90,9 +118,21 @@
                 {#if $squad.COACH}<Card card={$squad.COACH} mini={true} onclick={() => openPicker('COACH')} /><button class="rm" on:click|stopPropagation={() => removeCard('COACH')}>✕</button>
                 {:else}<div class="empty-sm"><img src={roleIcons.COACH} alt="" class="empty-icon"><span>Coach</span></div>{/if}
             </div>
-            <!-- Bench placeholders -->
-            {#each [1,2,3] as i}
-                <div class="slot-bench"><span class="bench-lbl">Bench {i}</span><span class="bench-lock">🔒</span></div>
+            <!-- Bench slots -->
+            {#each [0,1,2] as idx}
+                {#if idx < benchLevel}
+                    <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                    <div class="slot-bench slot-bench-active" on:click={() => openBenchPicker(idx)}>
+                        {#if $bench[idx]}
+                            <Card card={$bench[idx]} mini={true} onclick={() => openBenchPicker(idx)} />
+                            <button class="rm" on:click|stopPropagation={() => removeBench(idx)}>✕</button>
+                        {:else}
+                            <span class="bench-lbl">Bench {idx + 1}</span><span class="bench-add">+</span>
+                        {/if}
+                    </div>
+                {:else}
+                    <div class="slot-bench"><span class="bench-lbl">Bench {idx + 1}</span><span class="bench-lock">🔒</span></div>
+                {/if}
             {/each}
         </div>
 
@@ -201,6 +241,30 @@
 </div>
 {/if}
 
+<!-- Bench Picker -->
+{#if benchPickerOpen}
+<!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="pk-over">
+    <div class="pk-bg" on:click={closeBenchPicker}></div>
+    <div class="pk-panel">
+        <div class="pk-head">
+            <div class="pk-left"><span class="pk-title">Bench {(benchPickerIdx || 0) + 1}</span><span class="pk-ct">{benchPickerPool.length}</span></div>
+            <div class="pk-right"><button class="pk-x" on:click={closeBenchPicker}>✕</button></div>
+        </div>
+        <div class="pk-body">
+            {#if benchPickerPool.length===0}<div class="pk-empty">No eligible cards.</div>
+            {:else}<div class="pk-grid">
+                {#each benchPickerPool.slice(0, 30) as card (card.uniqueId)}
+                    <div class="pk-wrap">
+                        <Card {card} mini={true} onclick={() => assignBench(card)} />
+                    </div>
+                {/each}
+            </div>{/if}
+        </div>
+    </div>
+</div>
+{/if}
+
 <style>
     .sq { padding-bottom: 40px; max-width: 1400px; margin: 0 auto; }
     .sq-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
@@ -217,11 +281,17 @@
     .slot { position:relative; cursor:pointer; }
     .slot-sm { }
     .slot-bench {
-        height:50px; border-radius:10px; display:flex; align-items:center; justify-content:space-between;
+        min-height:50px; border-radius:10px; display:flex; align-items:center; justify-content:space-between;
         padding:0 14px; background:rgba(12,16,28,0.3); border:1px dashed rgba(51,65,85,0.15);
     }
+    .slot-bench-active {
+        border-color: rgba(20,184,166,0.3); background: rgba(20,184,166,0.04);
+        cursor: pointer; transition: all 0.12s; position: relative; padding: 6px;
+    }
+    .slot-bench-active:hover { border-color: rgba(20,184,166,0.5); background: rgba(20,184,166,0.08); }
     .bench-lbl { font-size:10px; color:#1e293b; font-weight:700; }
     .bench-lock { font-size:10px; opacity:.3; }
+    .bench-add { font-size:16px; color:#14b8a6; font-weight:900; }
 
     /* Formation */
     .sq-formation { display:flex; flex-direction:column; align-items:center; }

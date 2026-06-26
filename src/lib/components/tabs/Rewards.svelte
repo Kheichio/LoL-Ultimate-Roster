@@ -214,13 +214,10 @@
                 <span class="bp-tier-label">Tier {bpTier} / 100</span>
             </div>
             <div class="bp-xp-row">
-                <span class="bp-xp-text">{bpXP} / {XP_PER_TIER} XP</span>
+                <span class="bp-xp-text">{bpXP} / {XP_PER_TIER} XP to next tier</span>
                 <div class="bp-xp-bar"><div class="bp-xp-fill" style="width: {bpProgress}%"></div></div>
-                {#if canLevelUp}
-                    <button class="bp-lvl-btn" on:click={levelUpBP}>Level Up!</button>
-                {/if}
             </div>
-            <p class="bp-hint">Earn XP: Matches (+100), Pack Opens (+50), Daily Login bonuses, Quests</p>
+            <p class="bp-hint">Earn XP from Tournaments, Season Splits, Tower, Pack Opens — tiers unlock automatically!</p>
         </div>
 
         <!-- BP Page Nav -->

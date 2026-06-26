@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
+    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -54,9 +54,9 @@
 
     const BASE_COOLDOWN = 60;
     $: benchLevel = $skills.bench || 0;
-    $: maxSwaps = benchLevel;
     $: swapsUsed = $seasonData.swapsUsed || 0;
-    $: swapsLeft = Math.max(0, maxSwaps - swapsUsed);
+    $: benchPlayers = $bench.filter(Boolean);
+    $: canSwap = benchPlayers.length > 0;
     let showBenchPicker = false;
     let benchSwapRole = null;
 
@@ -65,21 +65,21 @@
         showBenchPicker = true;
     }
 
-    function executeBenchSwap(card) {
-        if (!benchSwapRole || swapsLeft <= 0) return;
-        squad.update(s => ({ ...s, [benchSwapRole]: card }));
+    function executeBenchSwap(benchIdx) {
+        if (!benchSwapRole) return;
+        const benchCard = $bench[benchIdx];
+        if (!benchCard) return;
+        const currentCard = get(squad)[benchSwapRole];
+        squad.update(s => ({ ...s, [benchSwapRole]: benchCard }));
+        bench.update(b => { const n = [...b]; n[benchIdx] = currentCard; return n; });
         seasonData.update(s => ({ ...s, swapsUsed: (s.swapsUsed || 0) + 1 }));
         showBenchPicker = false;
         benchSwapRole = null;
         saveGame();
-        showToast(`Swapped ${card.name} into ${benchSwapRole}. ${swapsLeft - 1} swaps remaining.`, 'success');
+        showToast(`Swapped ${benchCard.name} into ${benchSwapRole}. ${currentCard ? currentCard.name + ' moved to bench.' : ''}`, 'success');
     }
 
-    $: benchCandidates = (() => {
-        if (!benchSwapRole) return [];
-        const activeIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
-        return $club.filter(c => c.role === benchSwapRole && !activeIds.has(c.uniqueId)).sort((a, b) => b.rating - a.rating);
-    })();
+    $: benchCandidates = $bench.map((card, idx) => ({ card, idx })).filter(e => e.card !== null);
 
     $: staminaLevel = $skills.stamina || 0;
     $: cooldownSecs = Math.max(10, BASE_COOLDOWN - staminaLevel * 10);
@@ -562,15 +562,17 @@
                 {#if splitActive}
                     <div class="meta-lock">
                         🔒 Squad locked for this split.
-                        {#if maxSwaps > 0}
-                            <span class="swap-count">{swapsLeft}/{maxSwaps} bench swaps remaining</span>
+                        {#if canSwap}
+                            <span class="swap-count">{benchPlayers.length} bench player{benchPlayers.length > 1 ? 's' : ''} available</span>
+                        {:else if benchLevel > 0}
+                            <span class="swap-hint">Add players to your bench in Squad Builder to enable swaps.</span>
                         {:else}
-                            <span class="swap-hint">Upgrade Bench Management to swap players mid-split.</span>
+                            <span class="swap-hint">Upgrade Bench Management to unlock bench slots.</span>
                         {/if}
                     </div>
-                    {#if maxSwaps > 0 && swapsLeft > 0}
+                    {#if canSwap}
                         <div class="bench-swap-bar">
-                            <span class="bsb-label">Bench Swap</span>
+                            <span class="bsb-label">Swap with Bench</span>
                             {#each ['TOP','JNG','MID','ADC','SUP'] as role}
                                 <button class="bsb-btn" on:click={() => openBenchPicker(role)}>
                                     {role}
@@ -590,19 +592,19 @@
             <div class="bench-overlay" on:click={() => { showBenchPicker = false; }}>
                 <div class="bench-modal" on:click|stopPropagation>
                     <div class="bench-head">
-                        <h3 class="bench-title">Swap {benchSwapRole}</h3>
+                        <h3 class="bench-title">Swap {benchSwapRole} with Bench</h3>
                         <button class="bench-close" on:click={() => { showBenchPicker = false; }}>✕</button>
                     </div>
                     {#if benchCandidates.length === 0}
-                        <div class="bench-empty">No eligible {benchSwapRole} cards in your club.</div>
+                        <div class="bench-empty">No players on your bench. Add them in Squad Builder.</div>
                     {:else}
                         <div class="bench-list">
-                            {#each benchCandidates.slice(0, 20) as card}
-                                <button class="bench-card" on:click={() => executeBenchSwap(card)}>
-                                    <span class="bc-rating">{card.rating}</span>
-                                    <span class="bc-name">{card.name}</span>
-                                    <span class="bc-team">{card.team} [{card.year}]</span>
-                                    <span class="bc-quality" style="color: {card.quality === 'Challenger' ? '#f59e0b' : card.quality === 'Grandmaster' ? '#ef4444' : '#94a3b8'}">{card.quality}</span>
+                            {#each benchCandidates as entry}
+                                <button class="bench-card" on:click={() => executeBenchSwap(entry.idx)}>
+                                    <span class="bc-rating">{entry.card.rating}</span>
+                                    <span class="bc-name">{entry.card.name}</span>
+                                    <span class="bc-team">{entry.card.team} [{entry.card.year}] · {entry.card.role}</span>
+                                    <span class="bc-quality">{entry.card.quality}</span>
                                 </button>
                             {/each}
                         </div>
