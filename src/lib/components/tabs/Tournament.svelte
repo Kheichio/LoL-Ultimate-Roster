@@ -97,8 +97,8 @@
     $: canGoldenRoad = canRegional;
 
     const MODES = {
-        cafe: { name: 'Gaming Cafe', icon: '☕', rounds: 3, minRating: 60, maxRating: 80, pool: 'regular', cpuBonus: 0, reward: 300, second: 150, color: '#10b981' },
-        regional: { name: 'Regional Trophy', icon: '🏟️', rounds: 5, minRating: 75, maxRating: 95, pool: 'all', cpuBonus: 5, reward: 1500, second: 500, color: '#3b82f6', statKey: 'regionalSplitWon' },
+        cafe: { name: 'Gaming Cafe', icon: '☕', rounds: 3, minRating: 55, maxRating: 78, pool: 'regular', cpuBonus: 0, reward: 300, second: 150, color: '#10b981' },
+        regional: { name: 'Regional Trophy', icon: '🏟️', rounds: 5, minRating: 70, maxRating: 90, pool: 'all', cpuBonus: 3, reward: 1500, second: 500, color: '#3b82f6', statKey: 'regionalSplitWon' },
         firststand: { name: 'First Stand', icon: '🟠', rounds: 5, minRating: 85, maxRating: 98, pool: 'elite', cpuBonus: 10, reward: 3000, second: 1000, color: '#f97316', statKey: 'firstStandWon' },
         msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 90, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
         worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 93, maxRating: 99, pool: 'elite', cpuBonus: 20, reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
