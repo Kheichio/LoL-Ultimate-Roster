@@ -23,9 +23,10 @@
 
     $: badgeCounts = (() => {
         const reg = $collectionRegistry;
+        const cl = ($archiveRewards && $archiveRewards.claimedCards) || {};
         const counts = {};
         for (const card of db) {
-            if (!reg[card.id] || claimedCards[card.id]) continue;
+            if (!reg[card.id] || cl[card.id]) continue;
             if (!ALL_SPECIAL.includes(card.quality) && card.role !== 'COACH') {
                 counts['regular'] = (counts['regular'] || 0) + 1;
                 counts[`regular_${card.region}`] = (counts[`regular_${card.region}`] || 0) + 1;
@@ -39,7 +40,7 @@
 
     function getUnclaimedForFilter(catId, regionId) {
         const reg = $collectionRegistry;
-        const cl = claimedCards;
+        const cl = ($archiveRewards && $archiveRewards.claimedCards) || {};
         const ids = [];
         for (const card of db) {
             if (!reg[card.id] || cl[card.id]) continue;
@@ -235,16 +236,29 @@
     {/if}
 
     <!-- Claim banner for current view -->
-    {#if unclaimedInViewCount > 0}
+    {#if activeCategory === 'regular' && badgeCounts[`regular_${activeRegion}`]}
+        {@const cnt = badgeCounts[`regular_${activeRegion}`]}
         <div class="reward-banner">
             <div class="rb-info">
                 <span class="rb-icon">🎁</span>
                 <div>
-                    <div class="rb-title">{unclaimedInViewCount} New Card{unclaimedInViewCount > 1 ? 's' : ''} Discovered!</div>
-                    <div class="rb-desc">Claim {unclaimedInViewCount * 25} BE for discovering new cards</div>
+                    <div class="rb-title">{cnt} New Card{cnt > 1 ? 's' : ''} Discovered!</div>
+                    <div class="rb-desc">Claim {cnt * 25} BE for discovering new cards in {regionLabels[activeRegion]}</div>
                 </div>
             </div>
-            <button class="rb-btn" on:click={claimViewCards}>Claim All · +{unclaimedInViewCount * 25} BE</button>
+            <button class="rb-btn" on:click={() => claimForCategory('regular', activeRegion)}>Claim All · +{cnt * 25} BE</button>
+        </div>
+    {:else if activeCategory !== 'regular' && badgeCounts[activeCategory]}
+        {@const cnt = badgeCounts[activeCategory]}
+        <div class="reward-banner">
+            <div class="rb-info">
+                <span class="rb-icon">🎁</span>
+                <div>
+                    <div class="rb-title">{cnt} New Card{cnt > 1 ? 's' : ''} Discovered!</div>
+                    <div class="rb-desc">Claim {cnt * 25} BE for discovering new {categories.find(c => c.id === activeCategory)?.label || ''} cards</div>
+                </div>
+            </div>
+            <button class="rb-btn" on:click={() => claimForCategory(activeCategory, null)}>Claim All · +{cnt * 25} BE</button>
         </div>
     {/if}
 
