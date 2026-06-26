@@ -27,7 +27,7 @@
         const counts = {};
         for (const card of db) {
             if (!reg[card.id] || cl[card.id]) continue;
-            if (!ALL_SPECIAL.includes(card.quality) && card.role !== 'COACH') {
+            if (!ALL_SPECIAL.includes(card.quality)) {
                 counts['regular'] = (counts['regular'] || 0) + 1;
                 counts[`regular_${card.region}`] = (counts[`regular_${card.region}`] || 0) + 1;
             } else {
@@ -45,7 +45,7 @@
         for (const card of db) {
             if (!reg[card.id] || cl[card.id]) continue;
             if (catId === 'regular') {
-                if (!ALL_SPECIAL.includes(card.quality) && card.role !== 'COACH' && card.region === regionId) {
+                if (!ALL_SPECIAL.includes(card.quality) && card.region === regionId) {
                     ids.push(card.id);
                 }
             } else {
@@ -145,7 +145,7 @@
     $: cards = (() => {
         let pool;
         if (activeCategory === 'regular') {
-            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion && c.role !== 'COACH');
+            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
         } else {
             const qual = catToQuality[activeCategory];
             pool = qual ? db.filter(c => c.quality === qual) : [];
