@@ -72,6 +72,11 @@ export function grantXP(amount) {
     });
 }
 
+// === Battle Pass XP ===
+export function grantBPXP(amount) {
+    battlePass.update(bp => ({ ...bp, xp: (bp.xp || 0) + amount }));
+}
+
 // === Save / Load ===
 let _saveDebounce = null;
 

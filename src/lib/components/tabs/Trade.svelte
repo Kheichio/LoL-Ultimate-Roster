@@ -121,7 +121,8 @@
         ).sort((a, b) => a.rating - b.rating);
     }
 
-    function executeTrade(offer) {
+    function executeTrade(offer, idx) {
+        if (offer.completed) return;
         const eligible = getEligible(offer);
         if (eligible.length < offer.count) {
             showToast(`Need ${offer.count} ${offer.from} cards. You have ${eligible.length}.`, 'error');
@@ -131,6 +132,8 @@
             showToast('No target card available.', 'error');
             return;
         }
+
+        offers = offers.map((o, i) => i === idx ? { ...o, completed: true } : o);
 
         const toConsume = eligible.slice(0, offer.count);
         const consumeIds = new Set(toConsume.map(c => c.uniqueId));
@@ -178,18 +181,20 @@
     <div class="trade-grid">
         {#each offers as offer, i}
             {@const eligible = getEligible(offer)}
-            {@const canTrade = eligible.length >= offer.count && offer.targetCard}
+            {@const canTrade = !offer.completed && eligible.length >= offer.count && offer.targetCard}
             {@const fromColor = TIER_COLORS[offer.from] || '#64748b'}
             {@const toColor = TIER_COLORS[offer.to] || '#64748b'}
-            <div class="trade-card">
+            <div class="trade-card" style={offer.completed ? 'opacity: 0.4;' : ''}>
                 <!-- Left: Trade info -->
                 <div class="tc-info">
                     <div class="tc-give">
                         <div class="tc-section-label">Trade In</div>
                         <div class="tc-tier" style="color: {fromColor};">{offer.count}× {offer.from}</div>
-                        <div class="tc-have" class:tc-enough={eligible.length >= offer.count} class:tc-short={eligible.length < offer.count}>
-                            You have: {eligible.length}
-                        </div>
+                        {#if !offer.completed}
+                            <div class="tc-have" class:tc-enough={eligible.length >= offer.count} class:tc-short={eligible.length < offer.count}>
+                                You have: {eligible.length}
+                            </div>
+                        {/if}
                     </div>
 
                     <div class="tc-arrow">→</div>
@@ -205,21 +210,25 @@
                         {/if}
                     </div>
 
-                    <button
-                        class="tc-btn"
-                        class:tc-btn-ready={canTrade}
-                        class:tc-btn-disabled={!canTrade}
-                        disabled={!canTrade}
-                        on:click={() => executeTrade(offer)}
-                    >
-                        {#if !offer.targetCard}
-                            Unavailable
-                        {:else if eligible.length < offer.count}
-                            Need {offer.count - eligible.length} more
-                        {:else}
-                            Trade →
-                        {/if}
-                    </button>
+                    {#if offer.completed}
+                        <span class="tc-done">Completed ✓</span>
+                    {:else}
+                        <button
+                            class="tc-btn"
+                            class:tc-btn-ready={canTrade}
+                            class:tc-btn-disabled={!canTrade}
+                            disabled={!canTrade}
+                            on:click={() => executeTrade(offer, i)}
+                        >
+                            {#if !offer.targetCard}
+                                Unavailable
+                            {:else if eligible.length < offer.count}
+                                Need {offer.count - eligible.length} more
+                            {:else}
+                                Trade →
+                            {/if}
+                        </button>
+                    {/if}
                 </div>
 
                 <!-- Right: Card preview -->
@@ -331,6 +340,12 @@
     .tc-btn-disabled {
         background: rgba(30,41,59,0.5); color: #475569; cursor: not-allowed;
         border: 1px solid rgba(51,65,85,0.2);
+    }
+
+    .tc-done {
+        font-size: 10px; font-weight: 900; color: #34d399;
+        text-transform: uppercase; letter-spacing: 1px;
+        padding: 8px 16px; white-space: nowrap;
     }
 
     .trade-note {

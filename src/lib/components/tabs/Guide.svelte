@@ -45,12 +45,12 @@
             { q: 'How Season Splits work', a: '10 matches per split against CPU teams of increasing difficulty. You must play them in order. Win 6+ to earn a Regional Trophy.' },
             { q: 'Split Rewards', a: 'Perfect Split (10W): 5,000 BE. Dominant (9W): 3,500 BE. Elite (8W): 2,500 BE. Playoff (7W): 1,800 BE. Down to Participation (0-3W): 200 BE.' },
             { q: 'Death Splits', a: 'Each split generates 1-6 HARD teams (rating 88-100) and 0-2 BOSS teams (rating 110-120). BOSS teams are near-impossible to beat.' },
-            { q: 'Team Meta & Slumps', a: 'Each split has 2 meta phases (games 1-5 and 6-10). 5 teams are buffed (+8 to +25 all stats) and 5 are nerfed (-8 to -25). Only your affected squad members are shown.' },
-            { q: 'Squad Lock', a: 'Your squad is locked when a split starts. You can only swap with benched players until the split ends.' },
+            { q: 'Team Meta & Slumps', a: 'Each split has 2 meta phases (games 1-5 and 6-10). 5 teams are buffed (+8 to +20 all stats) and 12 teams are nerfed/slumping (-10 to -30). Only your affected squad members are shown. Plan your roster around the meta!' },
+            { q: 'Squad Lock & Bench Swaps', a: 'Your squad is locked when a split starts. Upgrade the Bench Management skill to unlock mid-split player swaps (1 swap per skill level, max 5). Use swaps to react to meta shifts and slumps.' },
         ]},
         { id: 'progression', title: '⭐ Progression', content: [
             { q: 'Manager Level & XP', a: 'Earn XP from packs (+50), wins (+200), and trades (+25). Each level grants 1 Skill Point. XP needed per level = Level × 500.' },
-            { q: 'Skill Tree', a: 'Scouting (pack odds), Tactics (combat boost), Transfer (sell value), Conditioning (chemistry), Mentorship (XP gain), Trade Mastery (trade slots/discounts), Club Capacity (+50 cards/level).' },
+            { q: 'Skill Tree', a: 'Scouting (pack odds), Tactics (combat boost +1/level), Transfer (sell value), Conditioning (chemistry), Stamina (split cooldown -10s/level), Mentorship (XP gain +10%/level), Trade Mastery (trade slots/discounts), Bench Management (mid-split swaps), Club Capacity (+50 cards/level).' },
             { q: 'Manager Titles', a: 'Scout (0 TP) → Manager (10) → Director (30) → GM (75) → Executive (150) → President (250) → Hall of Fame (400) → Legend (600) → Immortal (1,000). Earn Trophy Points from tournament wins.' },
             { q: 'Trophy Points', a: 'Worlds win: ×6. MSI win: ×4. First Stand win: ×2. Regional win: ×1. Golden Road: ×10.' },
         ]},
@@ -66,6 +66,10 @@
             { q: 'Leaderboard', a: 'Global rankings synced via Firebase. Compare trophies, power, splits, cards, and more. Click any player to view their full profile.' },
             { q: 'Cloud Save', a: 'Sign in to save/load progress across devices. Compatible with the old v1 website — all cards, squad, and stats transfer.' },
             { q: 'Settings', a: 'Theme (dark/light), sound toggle, and account wipe available in the account panel (top-right user icon).' },
+        ]},
+        { id: 'changelog', title: '📋 Update Log', content: [
+            { q: 'Beta 1.0.9.1 — Latest', a: '• Trades now lock instantly after completing — no more repeat claims\n• Quest sub-tabs show notification badges for claimable rewards\n• Repeatable contracts now stack — excess progress carries over after claiming\n• Archive claim buttons moved inside sub-tabs for better navigation\n• Battle Pass XP now earned from all gameplay: Tournaments, Season Splits, Tower, Pack Opens\n• Tactical Mastery bonus now visibly applied in combat (+1 per level to all stat checks)\n• Season split cooldown timer persists across tabs and page reloads\n• Header shows cooldown timer chip — click to jump to Season tab\n• Expanded meta system: 5 buffed teams, 12 slumping teams per phase with higher impact\n• New Bench Management skill: unlock mid-split player swaps (1 per level, max 5)\n• CPU team generation enforces rating caps — consistent, fair opponents\n• Gaming Cafe: opponents capped at 78 power. Regional Trophy: capped at 93 power\n• 39 milestone quests (was 17), 7 repeatable contracts (was 3), 17 achievements (was 8)\n• New quests for Regional/First Stand/MSI/Worlds wins, Tower floors, Signatures\n• Leaderboard now shows other players\' squads and showcase cards\n• Archive rewards: per-card discovery bonus + team completion rewards\n• Notification badges on Archive, Quests, Skills, and Rewards tabs' },
+            { q: 'Beta 1.0.7', a: '• Era synergy replaces year synergy (6 eras grouping years into 3-year blocks)\n• Signature cards +2 all stats/rating, Holographic +1, stackable, can exceed 99\n• Pack preview shows exact drop rates with scouting bonus\n• 3-column combat layout with 2×3 card grids\n• Infinity Tower: endless floors, roguelike upgrades, persistent runs\n• Golden Road: 4-stage tournament gauntlet with 30-min cooldown\n• Trade Market with 15-min rotation and skill-based scaling\n• Daily Login (28-day cycle) and 100-tier Battle Pass\n• Manager XP system with central grantXP function across all modes' },
         ]},
     ];
 </script>

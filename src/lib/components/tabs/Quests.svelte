@@ -117,7 +117,8 @@
 
     function claimRepeatable(q) {
         if (getRepeatableProgress(q) < q.target) return;
-        questsRepeatableBaselines.update(b => ({ ...b, [q.id]: getProgress(q.stat) }));
+        const base = repeatableBaselines[q.id] || 0;
+        questsRepeatableBaselines.update(b => ({ ...b, [q.id]: base + q.target }));
         questsRepeatableCounts.update(c => ({ ...c, [q.id]: (c[q.id] || 0) + 1 }));
         blueEssence.update(v => v + q.reward);
         playSound('claim');
@@ -174,6 +175,10 @@
     $: doneMilestones = milestoneQuests.filter(q => claimed[q.id]).length;
     $: totalAchievements = achievements.length;
     $: doneAchievements = achievements.filter(a => achievementsClaimed[a.id]).length;
+
+    $: claimableMilestones = milestoneQuests.filter(q => !claimed[q.id] && getProgress(q.stat) >= q.target).length;
+    $: claimableContracts = repeatableQuests.filter(q => getRepeatableProgress(q) >= q.target).length;
+    $: claimableAchievements = achievements.filter(a => !achievementsClaimed[a.id] && getAchievementProgress(a) >= a.target).length;
 </script>
 
 <section class="quests-page">
@@ -184,15 +189,16 @@
     <!-- Sub tabs -->
     <div class="tab-bar">
         {#each [
-            { id: 'milestones', label: '🏆 Milestones', count: `${doneMilestones}/${totalMilestones}` },
-            { id: 'contracts', label: '🔄 Contracts', count: '' },
-            { id: 'achievements', label: '🎖️ Achievements', count: `${doneAchievements}/${totalAchievements}` },
+            { id: 'milestones', label: '🏆 Milestones', count: `${doneMilestones}/${totalMilestones}`, badge: claimableMilestones },
+            { id: 'contracts', label: '🔄 Contracts', count: '', badge: claimableContracts },
+            { id: 'achievements', label: '🎖️ Achievements', count: `${doneAchievements}/${totalAchievements}`, badge: claimableAchievements },
         ] as tab}
             <button
                 class="tab-btn {activeSubTab === tab.id ? 'tab-active' : ''}"
                 on:click={() => { activeSubTab = tab.id; }}
             >
                 {tab.label}
+                {#if tab.badge > 0}<span class="tab-badge">{tab.badge}</span>{/if}
                 {#if tab.count}
                     <span class="tab-count">{tab.count}</span>
                 {/if}
@@ -414,6 +420,14 @@
         font-size: 9px;
         font-family: monospace;
         opacity: 0.6;
+    }
+
+    .tab-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 16px; height: 16px; padding: 0 4px;
+        border-radius: 100px; font-size: 9px; font-weight: 900;
+        background: #ef4444; color: white;
+        margin-left: 4px; line-height: 1;
     }
 
     /* Section list spacing */

@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, seasonData, skills, grantXP, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -363,6 +363,7 @@
         if (playerScore >= 3 || cpuScore >= 3) {
             const matchWon = playerScore >= 3;
             grantXP(matchWon ? 150 : 60);
+            grantBPXP(matchWon ? 75 : 25);
             if (matchWon) playSound('win');
             else playSound('lose');
 

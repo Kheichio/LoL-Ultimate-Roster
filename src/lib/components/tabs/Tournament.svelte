@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -248,7 +248,9 @@
         blueEssence.update(v => v + reward);
 
         const xpTable = { cafe: 100, regional: 200, firststand: 300, msi: 500, worlds: 800 };
+        const bpTable = { cafe: 50, regional: 100, firststand: 150, msi: 200, worlds: 300 };
         grantXP(won ? (xpTable[mode] || 100) : Math.round((xpTable[mode] || 100) * 0.4));
+        grantBPXP(won ? (bpTable[mode] || 50) : Math.round((bpTable[mode] || 50) * 0.3));
 
         if (won) {
             trackStats.update(s => {

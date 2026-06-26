@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
     import { getDB, rollPackTier, makeUniqueId, getSellValue } from '../../utils/cards.js';
@@ -98,6 +98,7 @@
         }
         trackStats.update(s => ({ ...s, packs: (s.packs || 0) + 1 }));
         grantXP(50);
+        grantBPXP(30);
         playSound(sigsPulled > 0 ? 'rare' : holosPulled > 0 ? 'rare' : 'pack');
         pulledCards = pulled;
         pullTitle = `${pack.name} Pack Opened!`;
