@@ -7,6 +7,7 @@
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const ALL_SLOTS = [...ROLES, 'COACH'];
     $: benchLevel = $skills.bench || 0;
+    $: safeBench = Array.isArray($bench) ? $bench : [null, null, null];
     const roleIcons = { TOP:'/icons/Top_icon.png', JNG:'/icons/Jungle_icon.png', MID:'/icons/Middle_icon.png', ADC:'/icons/Bottom_icon.png', SUP:'/icons/Support_icon.png', COACH:'/icons/Specialist_icon.png' };
 
     let pickerOpen = false, pickerRole = null, pickerSearch = '';
@@ -76,7 +77,7 @@
 
     $: benchUsedIds = new Set([
         ...Object.values($squad).filter(Boolean).map(c => c.uniqueId),
-        ...$bench.filter(Boolean).map(c => c.uniqueId)
+        ...(Array.isArray($bench) ? $bench : []).filter(Boolean).map(c => c.uniqueId)
     ]);
 
     $: benchPickerPool = (() => {
@@ -123,8 +124,8 @@
                 {#if idx < benchLevel}
                     <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                     <div class="slot-bench slot-bench-active" on:click={() => openBenchPicker(idx)}>
-                        {#if $bench[idx]}
-                            <Card card={$bench[idx]} mini={true} onclick={() => openBenchPicker(idx)} />
+                        {#if safeBench[idx]}
+                            <Card card={safeBench[idx]} mini={true} onclick={() => openBenchPicker(idx)} />
                             <button class="rm" on:click|stopPropagation={() => removeBench(idx)}>✕</button>
                         {:else}
                             <span class="bench-lbl">Bench {idx + 1}</span><span class="bench-add">+</span>

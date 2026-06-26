@@ -55,7 +55,7 @@
     const BASE_COOLDOWN = 60;
     $: benchLevel = $skills.bench || 0;
     $: swapsUsed = $seasonData.swapsUsed || 0;
-    $: benchPlayers = $bench.filter(Boolean);
+    $: benchPlayers = (Array.isArray($bench) ? $bench : []).filter(Boolean);
     $: canSwap = benchPlayers.length > 0;
     let showBenchPicker = false;
     let benchSwapRole = null;
@@ -67,7 +67,8 @@
 
     function executeBenchSwap(benchIdx) {
         if (!benchSwapRole) return;
-        const benchCard = $bench[benchIdx];
+        const b = Array.isArray($bench) ? $bench : [];
+        const benchCard = b[benchIdx];
         if (!benchCard) return;
         const currentCard = get(squad)[benchSwapRole];
         squad.update(s => ({ ...s, [benchSwapRole]: benchCard }));
@@ -79,7 +80,7 @@
         showToast(`Swapped ${benchCard.name} into ${benchSwapRole}. ${currentCard ? currentCard.name + ' moved to bench.' : ''}`, 'success');
     }
 
-    $: benchCandidates = $bench.map((card, idx) => ({ card, idx })).filter(e => e.card !== null);
+    $: benchCandidates = (Array.isArray($bench) ? $bench : []).map((card, idx) => ({ card, idx })).filter(e => e.card !== null);
 
     $: staminaLevel = $skills.stamina || 0;
     $: cooldownSecs = Math.max(10, BASE_COOLDOWN - staminaLevel * 10);
