@@ -3,8 +3,10 @@
     import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad, resetPassword } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
-    import { club } from '../../stores/game.js';
+    import { club, collectionRegistry, blueEssence, saveGame } from '../../stores/game.js';
     import { clearStorage } from '../../utils/storage.js';
+    import { getDB, makeUniqueId } from '../../utils/cards.js';
+    import { playSound } from '../../utils/sound.js';
 
     let view = 'signin'; // signin | register | settings
     let email = '';
@@ -12,6 +14,42 @@
     let regName = '';
     let regEmail = '';
     let regPass = '';
+    let redeemCode = '';
+    let redeemedCodes = JSON.parse(localStorage.getItem('lur_redeemed_codes') || '{}');
+
+    const CODES = {
+        'MSISIG2024': { type: 'card', quality: 'MSI', signature: true, label: 'MSI Signature Card' },
+        'WELCOMEBACK': { type: 'be', amount: 5000, label: '5,000 Blue Essence' },
+    };
+
+    function redeemCodeFn() {
+        const code = redeemCode.trim().toUpperCase();
+        if (!code) { showToast('Enter a code.', 'error'); return; }
+        if (redeemedCodes[code]) { showToast('Code already redeemed.', 'error'); return; }
+        const reward = CODES[code];
+        if (!reward) { showToast('Invalid code.', 'error'); return; }
+
+        if (reward.type === 'card') {
+            const db = getDB();
+            if (!db) { showToast('Database not loaded.', 'error'); return; }
+            const pool = db.filter(c => c.quality === reward.quality && c.role !== 'COACH');
+            if (pool.length === 0) { showToast('No cards available.', 'error'); return; }
+            const base = pool[Math.floor(Math.random() * pool.length)];
+            const card = { ...base, uniqueId: makeUniqueId('code_'), signature: reward.signature || false, holographic: reward.holographic || false };
+            club.update(c => [...c, card]);
+            collectionRegistry.update(r => ({ ...r, [card.id]: true }));
+            playSound('rare');
+            showToast(`Redeemed! Got ${card.name} (${reward.label})`, 'success');
+        } else if (reward.type === 'be') {
+            blueEssence.update(v => v + reward.amount);
+            showToast(`Redeemed! +${reward.amount} BE`, 'success');
+        }
+
+        redeemedCodes[code] = true;
+        localStorage.setItem('lur_redeemed_codes', JSON.stringify(redeemedCodes));
+        redeemCode = '';
+        saveGame();
+    }
 
     function handleMute() {
         const muted = toggleMute();
@@ -78,6 +116,13 @@
                         <div class="setting">
                             <div><div class="s-title">{$soundMuted ? '🔇' : '🔊'} Sound</div><div class="s-desc">{$soundMuted ? 'Muted' : 'Enabled'}</div></div>
                             <button class="toggle {$soundMuted ? 't-red' : 't-green'}" on:click={handleMute}>{$soundMuted ? 'Off' : 'On'}</button>
+                        </div>
+                    </div>
+                    <div class="redeem-section">
+                        <div class="s-title">🎟️ Redeem Code</div>
+                        <div class="redeem-row">
+                            <input type="text" bind:value={redeemCode} placeholder="Enter code..." class="redeem-input" on:keydown={(e) => e.key === 'Enter' && redeemCodeFn()}>
+                            <button class="redeem-btn" on:click={redeemCodeFn}>Redeem</button>
                         </div>
                     </div>
                     <div class="wipe-section">
@@ -154,6 +199,13 @@
                         <div class="setting">
                             <div><div class="s-title">{$soundMuted ? '🔇' : '🔊'} Sound</div><div class="s-desc">{$soundMuted ? 'Muted' : 'Enabled'}</div></div>
                             <button class="toggle {$soundMuted ? 't-red' : 't-green'}" on:click={handleMute}>{$soundMuted ? 'Off' : 'On'}</button>
+                        </div>
+                    </div>
+                    <div class="redeem-section">
+                        <div class="s-title">🎟️ Redeem Code</div>
+                        <div class="redeem-row">
+                            <input type="text" bind:value={redeemCode} placeholder="Enter code..." class="redeem-input" on:keydown={(e) => e.key === 'Enter' && redeemCodeFn()}>
+                            <button class="redeem-btn" on:click={redeemCodeFn}>Redeem</button>
                         </div>
                     </div>
                     <div class="wipe-section">
@@ -335,6 +387,24 @@
     .t-yellow { background: rgba(234,179,8,0.1); color: #fbbf24; border-color: rgba(234,179,8,0.2); }
     .t-green { background: rgba(16,185,129,0.1); color: #34d399; border-color: rgba(16,185,129,0.15); }
     .t-red { background: rgba(239,68,68,0.08); color: #f87171; border-color: rgba(239,68,68,0.15); }
+
+    /* Redeem Code */
+    .redeem-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(51,65,85,0.15); }
+    .redeem-row { display: flex; gap: 8px; margin-top: 8px; }
+    .redeem-input {
+        flex: 1; padding: 8px 12px; border-radius: 8px;
+        background: rgba(15,23,42,0.5); border: 1px solid rgba(51,65,85,0.3);
+        color: #e2e8f0; font-size: 12px; font-weight: 700;
+        font-family: monospace; text-transform: uppercase; letter-spacing: 1px;
+    }
+    .redeem-input::placeholder { text-transform: none; letter-spacing: 0; color: #334155; }
+    .redeem-btn {
+        padding: 8px 16px; border-radius: 8px;
+        background: linear-gradient(135deg, #6366f1, #818cf8); border: none;
+        color: white; font-size: 11px; font-weight: 900;
+        text-transform: uppercase; cursor: pointer; transition: all 0.12s;
+    }
+    .redeem-btn:hover { box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
 
     /* Wipe / Danger Zone */
     .wipe-section {
