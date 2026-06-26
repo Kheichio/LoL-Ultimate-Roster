@@ -685,11 +685,11 @@
                 <div class="power-compare">
                     <span class="pc-side pc-blue">{totalPower}</span>
                     <div class="pc-center">
-                        <div class="pc-label">Base Power</div>
+                        <div class="pc-label">Power</div>
                         <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>
                             {powerDiff > 0 ? '+' : ''}{powerDiff}
                         </div>
-                        <div class="pc-note">± 5 luck per side</div>
+                        <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
                     </div>
                     <span class="pc-side pc-red">{currentOpponent.avgRating}</span>
                 </div>
@@ -745,7 +745,8 @@
                                 <button class="play-btn" on:click={() => pickPlay(play)}>
                                     <span class="pb-icon">{play.icon}</span>
                                     <span class="pb-name">{play.label}</span>
-                                    <span class="pb-edge" class:pb-edge-pos={net > 0} class:pb-edge-neg={net < 0}>Net {net > 0 ? '+' : ''}{net}</span>
+                                    <span class="pb-stat" class:pb-edge-pos={edge > 0} class:pb-edge-neg={edge < 0}>Stat {edge > 0 ? '+' : ''}{edge}</span>
+                                    <span class="pb-net" class:pb-edge-pos={net > 0} class:pb-edge-neg={net < 0}>Net {net > 0 ? '+' : ''}{net}</span>
                                 </button>
                             {/each}
                         </div>
@@ -1161,6 +1162,8 @@
     .sc-diff-pos { color: #34d399; }
     .sc-diff-neg { color: #f87171; }
     .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
+    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
+    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
     .pb-edge-pos { color: #34d399; }
     .pb-edge-neg { color: #f87171; }
 </style>

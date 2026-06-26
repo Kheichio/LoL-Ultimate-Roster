@@ -450,7 +450,7 @@
                         <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>
                             {powerDiff > 0 ? '+' : ''}{powerDiff}
                         </div>
-                        <div class="pc-note">± 5 luck per side</div>
+                        <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
                     </div>
                     <span class="pc-side pc-red">{currentEnemy.avgRating}</span>
                 </div>
@@ -480,7 +480,7 @@
                 {/if}
                 {#if playerScore < 2 && cpuScore < 2}
                     <div class="play-picker"><div class="play-label">Choose Your Play (3 of 5)</div>
-                        <div class="play-grid">{#each roundPlays as play}{@const edge = (myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net = powerDiff + edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
+                        <div class="play-grid">{#each roundPlays as play}{@const edge = (myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net = powerDiff + edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-stat" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>Stat {edge>0?'+':''}{edge}</span><span class="pb-net" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
                     </div>
                 {/if}
             </div>
@@ -648,7 +648,10 @@
     .play-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 12px; border-radius: 14px; cursor: pointer; background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s; }
     .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
     .pb-icon { font-size: 26px; } .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
-    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; } .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
+    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
+    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
+    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
+    .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
 
     .result-card { text-align: center; padding: 40px 24px; border-radius: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
     .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }

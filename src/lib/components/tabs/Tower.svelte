@@ -299,7 +299,7 @@
                     <div class="pc-center">
                         <div class="pc-label">Base Power</div>
                         <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>{powerDiff > 0 ? '+' : ''}{powerDiff}</div>
-                        <div class="pc-note">± 5 luck per side</div>
+                        <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
                     </div>
                     <span class="pc-side pc-red">{currentEnemy.avgRating}</span>
                 </div>
@@ -311,7 +311,7 @@
                 {#if matchLog.length > 0}<div class="log-list">{#each matchLog as log}<div class="log-row" class:log-w={log.won} class:log-l={!log.won}><span class="log-result">{log.won?'✓':'✗'}</span><div class="log-breakdown"><div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div><div class="log-detail-row"><span class="log-calc">{log.myBase}{log.statEdge>=0?'+':''}{log.statEdge}{log.myRoll>=0?'+':''}{log.myRoll}</span><span class="log-vs">vs</span><span class="log-calc">{log.cpuBase}{log.cpuRoll>=0?'+':''}{log.cpuRoll}</span></div></div></div>{/each}</div>{/if}
                 {#if playerScore < 2 && cpuScore < 2}
                     <div class="play-picker"><div class="play-label">Choose Play</div>
-                        <div class="play-grid">{#each roundPlays as play}{@const edge=(myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net=powerDiff+edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
+                        <div class="play-grid">{#each roundPlays as play}{@const edge=(myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net=powerDiff+edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-stat" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>Stat {edge>0?'+':''}{edge}</span><span class="pb-net" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
                     </div>
                 {/if}
                 <!-- Stat Chart with Buffs -->
@@ -474,7 +474,10 @@
     .play-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 12px; border-radius: 14px; cursor: pointer; background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s; }
     .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
     .pb-icon { font-size: 24px; } .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
-    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; } .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
+    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
+    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
+    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
+    .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
 
     /* Upgrade panel */
     .upg-panel { text-align: center; padding: 40px 24px; }
