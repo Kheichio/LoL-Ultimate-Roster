@@ -66,8 +66,12 @@
                 holographicCards: cl.filter(c => c.holographic).length,
                 splitsCompleted: ts.splitsCompleted || 0, goldenRoads: ts.goldenRoads || 0,
                 cafeWins: ts.cafeWins || 0, regionalWins: ts.regionalSplitWon || 0,
+                firstStandWins: ts.firstStandWon || 0,
                 msiWins: ts.msiWon || 0, worldsWins: ts.worldsWon || 0,
                 losses: ts.losses || 0, packsOpened: ts.packs || 0,
+                towerBest: ts.towerHighestFloor || 0,
+                favouriteTeam: ti.favouriteTeam || '', favouritePlayer: ti.favouritePlayer || '',
+                mostPlayedMode: (ts.cafeWins || 0) > (ts.splitsCompleted || 0) ? 'Gaming Cafe' : 'Season Splits',
                 squadData, showcaseData, updatedAt: Date.now(),
             });
         } catch(e) {}

@@ -7,7 +7,7 @@ export const club = writable([]);
 export const squad = writable({ COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null });
 export const bench = writable([null, null, null]);
 export const hasBoughtStarter = writable(false);
-export const teamIdentity = writable({ name: 'My Team', logo: '🛡️', color: '#3b82f6' });
+export const teamIdentity = writable({ name: 'My Team', logo: '🛡️', color: '#3b82f6', favouriteTeam: '', favouritePlayer: '' });
 
 // === Progression ===
 export const managerXP = writable(0);

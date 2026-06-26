@@ -69,13 +69,13 @@
             towerBest: ts.towerHighestFloor || 0,
             cafeWins: ts.cafeWins || 0,
             regionalWins: ts.regionalSplitWon || 0,
+            firstStandWins: ts.firstStandWon || 0,
             msiWins: ts.msiWon || 0,
             worldsWins: ts.worldsWon || 0,
-            draftWins: ts.draftModesWon || 0,
-            salaryWins: ts.salaryCapWon || 0,
             losses: ts.losses || 0,
             packsOpened: ts.packs || 0,
-            favouriteTeam: 'N/A',
+            favouriteTeam: get(teamIdentity).favouriteTeam || '',
+            favouritePlayer: get(teamIdentity).favouritePlayer || '',
             mostPlayedMode: ts.cafeWins > (ts.splitsCompleted || 0) ? 'Gaming Cafe' : 'Season Splits',
             squad: get(squad),
             showcaseCards: [...get(club)].sort((a, b) => ((b.signature?1000:0)+(b.holographic?500:0)+b.rating) - ((a.signature?1000:0)+(a.holographic?500:0)+a.rating)).slice(0,3),
@@ -114,10 +114,15 @@
                 goldenRoads: entry.goldenRoads,
                 cafeWins: entry.cafeWins,
                 regionalWins: entry.regionalWins,
+                firstStandWins: entry.firstStandWins,
                 msiWins: entry.msiWins,
                 worldsWins: entry.worldsWins,
                 losses: entry.losses,
                 packsOpened: entry.packsOpened,
+                towerBest: entry.towerBest,
+                favouriteTeam: entry.favouriteTeam,
+                favouritePlayer: entry.favouritePlayer,
+                mostPlayedMode: entry.mostPlayedMode,
                 squadData: squadData,
                 showcaseData: showcaseData,
                 updatedAt: Date.now(),
@@ -158,17 +163,17 @@
                         holographicCards: d.holographicCards || 0,
                         splitsCompleted: d.splitsCompleted || 0,
                         goldenRoads: d.goldenRoads || 0,
-                        towerBest: 0,
+                        towerBest: d.towerBest || 0,
                         cafeWins: d.cafeWins || 0,
                         regionalWins: d.regionalWins || 0,
+                        firstStandWins: d.firstStandWins || 0,
                         msiWins: d.msiWins || 0,
                         worldsWins: d.worldsWins || 0,
-                        draftWins: 0,
-                        salaryWins: 0,
                         losses: d.losses || 0,
                         packsOpened: d.packsOpened || 0,
-                        favouriteTeam: 'N/A',
-                        mostPlayedMode: '',
+                        favouriteTeam: d.favouriteTeam || '',
+                        favouritePlayer: d.favouritePlayer || '',
+                        mostPlayedMode: d.mostPlayedMode || '',
                         squad: d.squadData || {},
                         showcaseCards: d.showcaseData || [],
                     });
@@ -225,6 +230,18 @@
         <button class="lb-refresh" on:click={loadLeaderboard} disabled={loading}>
             {loading ? 'Syncing...' : 'Refresh & Sync'}
         </button>
+    </div>
+
+    <!-- Favourites -->
+    <div class="lb-favs">
+        <div class="fav-field">
+            <label class="fav-label">★ Favourite Team</label>
+            <input type="text" class="fav-input" value={$teamIdentity.favouriteTeam || ''} placeholder="e.g. T1" on:change={(e) => { teamIdentity.update(t => ({ ...t, favouriteTeam: e.target.value })); saveGame(); }}>
+        </div>
+        <div class="fav-field">
+            <label class="fav-label">⭐ Favourite Player</label>
+            <input type="text" class="fav-input" value={$teamIdentity.favouritePlayer || ''} placeholder="e.g. Faker" on:change={(e) => { teamIdentity.update(t => ({ ...t, favouritePlayer: e.target.value })); saveGame(); }}>
+        </div>
     </div>
 
     <!-- Sort -->
@@ -338,6 +355,19 @@
     .lb-val { font-size: 12px; font-weight: 800; color: #94a3b8; }
     .lb-title-cell { font-size: 10px; color: #64748b; width: 70px; }
     .lb-empty { text-align: center; padding: 40px 20px; font-size: 12px; color: #475569; font-style: italic; }
+
+    /* Favourites */
+    .lb-favs {
+        display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .fav-field { flex: 1; min-width: 150px; }
+    .fav-label { display: block; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; margin-bottom: 4px; }
+    .fav-input {
+        width: 100%; padding: 8px 12px; border-radius: 8px;
+        background: rgba(15,23,42,0.5); border: 1px solid rgba(51,65,85,0.3);
+        color: #e2e8f0; font-size: 12px; font-weight: 700;
+    }
+    .fav-input::placeholder { color: #334155; }
 
     @media (max-width: 800px) {
         .lb-col { width: 44px; font-size: 9px; }

@@ -64,12 +64,12 @@
                     {#each [
                         { label: 'Cafe Wins', value: player.cafeWins || 0 },
                         { label: 'Regional Wins', value: player.regionalWins || 0 },
+                        { label: 'First Stand', value: player.firstStandWins || 0 },
                         { label: 'MSI Wins', value: player.msiWins || 0 },
                         { label: 'Worlds Wins', value: player.worldsWins || 0 },
-                        { label: 'Draft Wins', value: player.draftWins || 0 },
-                        { label: 'Salary Cap', value: player.salaryWins || 0 },
                         { label: 'Total Losses', value: player.losses || 0 },
                         { label: 'Packs Opened', value: player.packsOpened || 0 },
+                        { label: 'Tower Best', value: player.towerBest || 0 },
                     ] as stat}
                         <div class="pm-record-row">
                             <span class="prr-label">{stat.label}</span>
@@ -80,12 +80,18 @@
             </div>
 
             <!-- Favourite / Most Played -->
-            {#if player.favouriteTeam || player.mostPlayedMode}
+            {#if player.favouriteTeam || player.favouritePlayer || player.mostPlayedMode}
                 <div class="pm-extras">
                     {#if player.favouriteTeam}
                         <div class="pm-extra">
                             <span class="pe-label">★ Favourite Team</span>
                             <span class="pe-value">{player.favouriteTeam}</span>
+                        </div>
+                    {/if}
+                    {#if player.favouritePlayer}
+                        <div class="pm-extra">
+                            <span class="pe-label">⭐ Favourite Player</span>
+                            <span class="pe-value">{player.favouritePlayer}</span>
                         </div>
                     {/if}
                     {#if player.mostPlayedMode}
