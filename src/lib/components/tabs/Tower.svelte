@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, grantXP, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, skills, grantXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -81,13 +81,14 @@
         } catch(e) { return {}; }
     })() : {};
 
+    $: tacticsLevel = $skills.tactics || 0;
     $: myStatAvgs = squadReady ? (() => {
         try {
             const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => {
                 const base = baseStatAvgs[s] || 0;
                 const withFlat = base + (buffSummary.flat[s] || 0);
                 const withPct = Math.round(withFlat * (1 + (buffSummary.pct[s] || 0) / 100));
-                r[s] = withPct;
+                r[s] = withPct + tacticsLevel;
             }); return r;
         } catch(e) { return {}; }
     })() : {};
@@ -190,6 +191,7 @@
 
     function pickPlay(play) {
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
+        const tLvl = get(skills).tactics || 0;
         const myVal = myStatAvgs[play.stat] || 0;
         const cpuCards = Object.values(currentEnemy.cards);
         const cpuVal = cpuCards.length > 0 ? Math.round(cpuCards.reduce((s,c) => s + (c.stats[cpuPlay.stat]||0), 0) / cpuCards.length) : 0;
@@ -197,7 +199,7 @@
         const cpuFinal = currentEnemy.avgRating + Math.floor(Math.random() * 11) - 5;
         const won = myFinal >= cpuFinal;
         if (won) playerScore++; else cpuScore++;
-        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won }];
+        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won, tacticsBonus: tLvl }];
         grantXP(15);
         rollRoundPlays();
         if (playerScore >= 2 || cpuScore >= 2) {
@@ -286,12 +288,12 @@
                 <div class="arena-grid-2x3">{#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if $squad[role]}<Card card={$squad[role]} mini={true} />{:else}<div class="arena-empty">{role}</div>{/if}</div>{/each}{/each}</div>
             </div>
             <div class="arena-center">
-                <div class="stat-compare"><div class="sc-title">Available Plays</div>
+                <div class="stat-compare"><div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 +{tacticsLevel}</span>{/if}</div>
                     {#each roundPlays as play}{@const myVal=myStatAvgs[play.stat]||0}{@const cpuVal=cpuStatAvgs[play.stat]||0}{@const diff=myVal-cpuVal}
                         <div class="sc-row"><span class="sc-val sc-val-blue">{myVal}</span><div class="sc-bar-wrap"><div class="sc-label">{play.icon} {play.label}</div><div class="sc-bar"><div class="sc-fill-blue" style="width:{Math.min(100,(myVal/Math.max(myVal,cpuVal,1))*50)}%"></div><div class="sc-fill-red" style="width:{Math.min(100,(cpuVal/Math.max(myVal,cpuVal,1))*50)}%;margin-left:auto;"></div></div><div class="sc-diff" class:sc-diff-pos={diff>0} class:sc-diff-neg={diff<0}>{diff>0?'+':''}{diff}</div></div><span class="sc-val sc-val-red">{cpuVal}</span></div>
                     {/each}
                 </div>
-                {#if matchLog.length > 0}<div class="log-list">{#each matchLog as log}<div class="log-row" class:log-w={log.won} class:log-l={!log.won}><span class="log-result">{log.won?'✓':'✗'}</span><span class="log-detail">{log.myPlay.icon} {log.myVal} vs {log.cpuPlay.icon} {log.cpuVal}</span></div>{/each}</div>{/if}
+                {#if matchLog.length > 0}<div class="log-list">{#each matchLog as log}<div class="log-row" class:log-w={log.won} class:log-l={!log.won}><span class="log-result">{log.won?'✓':'✗'}</span><span class="log-detail">{log.myPlay.icon} {log.myVal}{#if log.tacticsBonus > 0}<span class="log-tactics">+{log.tacticsBonus}🧠</span>{/if} vs {log.cpuPlay.icon} {log.cpuVal}</span></div>{/each}</div>{/if}
                 {#if playerScore < 2 && cpuScore < 2}
                     <div class="play-picker"><div class="play-label">Choose Play</div>
                         <div class="play-grid">{#each roundPlays as play}{@const edge=(myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>{edge>0?'+':''}{edge}</span></button>{/each}</div>
@@ -423,7 +425,9 @@
     .arena-empty-sm { width: 180px; height: 40px; }
     .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
     .stat-compare { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 14px; padding: 16px; }
-    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; }
+    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .tactics-tag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 6px; background: rgba(147,51,234,0.15); border: 1px solid rgba(168,85,247,0.3); color: #c084fc; font-size: 9px; font-weight: 900; letter-spacing: 0; text-transform: none; }
+    .log-tactics { color: #c084fc; font-size: 9px; font-weight: 700; margin-left: 2px; }
     .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
     .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; } .sc-val-blue { color: #60a5fa; } .sc-val-red { color: #f87171; }
     .sc-bar-wrap { flex: 1; text-align: center; } .sc-label { font-size: 10px; font-weight: 800; color: #94a3b8; margin-bottom: 4px; }

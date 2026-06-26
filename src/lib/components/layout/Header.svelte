@@ -78,6 +78,16 @@
         if (splitTimerInterval) { clearInterval(splitTimerInterval); splitTimerInterval = null; }
     }
 
+    function restoreHeaderCooldown() {
+        const saved = localStorage.getItem('lur_split_cooldown');
+        if (saved) {
+            const end = Number(saved);
+            if (end > Date.now()) {
+                splitCooldownEnd.set(end);
+            }
+        }
+    }
+    restoreHeaderCooldown();
     onDestroy(() => { if (splitTimerInterval) clearInterval(splitTimerInterval); });
 </script>
 

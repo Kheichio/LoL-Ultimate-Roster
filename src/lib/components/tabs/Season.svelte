@@ -59,6 +59,7 @@
 
     function startCooldown() {
         cooldownEnd = Date.now() + cooldownSecs * 1000;
+        localStorage.setItem('lur_split_cooldown', String(cooldownEnd));
         splitCooldownEnd.set(cooldownEnd);
         updateCooldown();
         if (cooldownTimer) clearInterval(cooldownTimer);
@@ -72,6 +73,22 @@
             if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
         }
     }
+    function restoreCooldown() {
+        const saved = localStorage.getItem('lur_split_cooldown');
+        if (saved) {
+            const end = Number(saved);
+            if (end > Date.now()) {
+                cooldownEnd = end;
+                splitCooldownEnd.set(end);
+                updateCooldown();
+                if (cooldownTimer) clearInterval(cooldownTimer);
+                cooldownTimer = setInterval(updateCooldown, 1000);
+            } else {
+                localStorage.removeItem('lur_split_cooldown');
+            }
+        }
+    }
+    restoreCooldown();
     onDestroy(() => { if (cooldownTimer) clearInterval(cooldownTimer); });
 
     function rollRoundPlays() {
@@ -89,11 +106,12 @@
     $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
     $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus;
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
+    $: tacticsLevel = $skills.tactics || 0;
     const STAT_KEYS = ['mec','tmf','map','frm','cmp'];
     $: myStatAvgs = squadReady ? (() => {
         try {
             const r = {}; STAT_KEYS.forEach(s => {
-                r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length);
+                r[s] = Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s]||0), 0) / starters.length) + tacticsLevel;
             }); return r;
         } catch(e) { return {}; }
     })() : {};
@@ -298,7 +316,8 @@
 
     function pickPlay(play) {
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
-        const myStatAvg = Math.round(starters.reduce((s, c) => s + (getEffectiveStats(c)[play.stat] || 0) + getMetaModifier(c), 0) / starters.length);
+        const tLvl = get(skills).tactics || 0;
+        const myStatAvg = Math.round(starters.reduce((s, c) => s + (getEffectiveStats(c)[play.stat] || 0) + getMetaModifier(c), 0) / starters.length) + tLvl;
         const cpuCards = Object.values(currentOpponent.cards);
         const cpuStatAvg = Math.round(cpuCards.reduce((s, c) => s + (c.stats[cpuPlay.stat] || 0), 0) / cpuCards.length);
         const statEdge = myStatAvg - cpuStatAvg;
@@ -309,7 +328,7 @@
         if (won) playerScore++;
         else cpuScore++;
 
-        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won }];
+        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won, tacticsBonus: tLvl }];
         grantXP(20);
         rollRoundPlays();
 
@@ -583,7 +602,7 @@
             <!-- Center: Combat -->
             <div class="arena-center">
                 <div class="stat-compare">
-                    <div class="sc-title">Available Plays</div>
+                    <div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 Tactics +{tacticsLevel}</span>{/if}</div>
                     {#each roundPlays as play}
                         {@const myVal = myStatAvgs[play.stat] || 0}
                         {@const cpuVal = cpuStatAvgs[play.stat] || 0}
@@ -608,7 +627,7 @@
                         {#each matchLog as log, i}
                             <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
                                 <span class="log-result">R{i + 1} {log.won ? 'Won' : 'Lost'}</span>
-                                <span class="log-detail">{log.myPlay.icon} {log.myVal} vs {log.cpuPlay.icon} {log.cpuVal}</span>
+                                <span class="log-detail">{log.myPlay.icon} {log.myVal}{#if log.tacticsBonus > 0}<span class="log-tactics">+{log.tacticsBonus}🧠</span>{/if} vs {log.cpuPlay.icon} {log.cpuVal}</span>
                             </div>
                         {/each}
                     </div>
@@ -963,7 +982,9 @@
         background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
         border-radius: 14px; padding: 16px;
     }
-    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; }
+    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .tactics-tag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 6px; background: rgba(147,51,234,0.15); border: 1px solid rgba(168,85,247,0.3); color: #c084fc; font-size: 9px; font-weight: 900; letter-spacing: 0; text-transform: none; }
+    .log-tactics { color: #c084fc; font-size: 9px; font-weight: 700; margin-left: 2px; }
     .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
     .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; }
     .sc-val-blue { color: #60a5fa; }

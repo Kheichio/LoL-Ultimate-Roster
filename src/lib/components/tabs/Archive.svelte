@@ -37,6 +37,24 @@
         return counts;
     })();
 
+    function getUnclaimedForFilter(catId, regionId) {
+        const reg = $collectionRegistry;
+        const cl = claimedCards;
+        const ids = [];
+        for (const card of db) {
+            if (!reg[card.id] || cl[card.id]) continue;
+            if (catId === 'regular') {
+                if (!ALL_SPECIAL.includes(card.quality) && card.role !== 'COACH' && card.region === regionId) {
+                    ids.push(card.id);
+                }
+            } else {
+                const qual = catToQuality[catId];
+                if (qual && card.quality === qual) ids.push(card.id);
+            }
+        }
+        return ids;
+    }
+
     function claimViewCards() {
         if (unclaimedInView.length === 0) return;
         const count = unclaimedInView.length;
@@ -52,6 +70,23 @@
         playSound('rare');
         saveGame();
         showToast(`Claimed ${count} new card rewards! +${reward} BE`, 'success');
+    }
+
+    function claimForCategory(catId, regionId) {
+        const ids = getUnclaimedForFilter(catId, regionId);
+        if (ids.length === 0) return;
+        const reward = ids.length * 25;
+        blueEssence.update(v => v + reward);
+        archiveRewards.update(ar => {
+            const newClaimed = { ...ar.claimedCards };
+            ids.forEach(id => newClaimed[id] = true);
+            return { ...ar, claimedCards: newClaimed };
+        });
+        grantXP(ids.length * 10);
+        playSound('rare');
+        saveGame();
+        const label = catId === 'regular' ? regionId : categories.find(c => c.id === catId)?.label || catId;
+        showToast(`Claimed ${ids.length} cards from ${label}! +${reward} BE`, 'success');
     }
 
     function getTeamReward(size) {
@@ -171,15 +206,20 @@
     <!-- Category Tabs -->
     <div class="pill-bar">
         {#each categories as cat}
-            <button
-                class="pill"
-                class:pill-inactive={activeCategory !== cat.id}
-                style={activeCategory === cat.id ? `color: ${cat.color}; background: ${cat.bg}; border-color: ${cat.border};` : ''}
-                on:click={() => { activeCategory = cat.id; }}
-            >
-                {cat.label}
-                {#if badgeCounts[cat.id]}<span class="pill-badge">{badgeCounts[cat.id]}</span>{/if}
-            </button>
+            <div class="pill-wrap">
+                <button
+                    class="pill"
+                    class:pill-inactive={activeCategory !== cat.id}
+                    style={activeCategory === cat.id ? `color: ${cat.color}; background: ${cat.bg}; border-color: ${cat.border};` : ''}
+                    on:click={() => { activeCategory = cat.id; }}
+                >
+                    {cat.label}
+                    {#if badgeCounts[cat.id]}<span class="pill-badge">{badgeCounts[cat.id]}</span>{/if}
+                </button>
+                {#if badgeCounts[cat.id] && cat.id !== 'regular'}
+                    <button class="tab-claim" on:click|stopPropagation={() => claimForCategory(cat.id, null)}>Claim +{badgeCounts[cat.id] * 25}</button>
+                {/if}
+            </div>
         {/each}
     </div>
 
@@ -187,29 +227,20 @@
     {#if activeCategory === 'regular'}
         <div class="region-bar">
             {#each regions as r}
-                <button
-                    class="region-tab"
-                    class:region-active={activeRegion === r}
-                    on:click={() => { activeRegion = r; }}
-                >
-                    {regionLabels[r]}
-                    {#if badgeCounts[`regular_${r}`]}<span class="pill-badge">{badgeCounts[`regular_${r}`]}</span>{/if}
-                </button>
-            {/each}
-        </div>
-    {/if}
-
-    <!-- New Card Rewards Banner (scoped to current view) -->
-    {#if unclaimedInViewCount > 0}
-        <div class="reward-banner">
-            <div class="rb-info">
-                <span class="rb-icon">🎁</span>
-                <div>
-                    <div class="rb-title">{unclaimedInViewCount} New Card{unclaimedInViewCount > 1 ? 's' : ''} Discovered!</div>
-                    <div class="rb-desc">Claim {unclaimedInViewCount * 25} BE for discovering new cards</div>
+                <div class="region-wrap">
+                    <button
+                        class="region-tab"
+                        class:region-active={activeRegion === r}
+                        on:click={() => { activeRegion = r; }}
+                    >
+                        {regionLabels[r]}
+                        {#if badgeCounts[`regular_${r}`]}<span class="pill-badge">{badgeCounts[`regular_${r}`]}</span>{/if}
+                    </button>
+                    {#if badgeCounts[`regular_${r}`]}
+                        <button class="tab-claim" on:click|stopPropagation={() => claimForCategory('regular', r)}>Claim +{badgeCounts[`regular_${r}`] * 25}</button>
+                    {/if}
                 </div>
-            </div>
-            <button class="rb-btn" on:click={claimViewCards}>Claim All · +{unclaimedInViewCount * 25} BE</button>
+            {/each}
         </div>
     {/if}
 
@@ -296,38 +327,6 @@
         font-family: monospace;
     }
 
-    /* ── Reward banner ── */
-    .reward-banner {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 16px;
-        margin-bottom: 16px;
-        border-radius: 12px;
-        background: linear-gradient(135deg, rgba(234,179,8,0.08), rgba(245,158,11,0.12));
-        border: 1px solid rgba(245,158,11,0.25);
-        animation: rewardPulse 2s ease-in-out infinite;
-    }
-    @keyframes rewardPulse {
-        0%, 100% { border-color: rgba(245,158,11,0.25); }
-        50% { border-color: rgba(245,158,11,0.5); }
-    }
-    .rb-info { display: flex; align-items: center; gap: 10px; }
-    .rb-icon { font-size: 22px; }
-    .rb-title { font-size: 13px; font-weight: 900; color: #fbbf24; }
-    .rb-desc { font-size: 10px; color: #a3873a; margin-top: 1px; }
-    .rb-btn {
-        padding: 8px 18px; border-radius: 10px;
-        background: linear-gradient(135deg, #d97706, #f59e0b);
-        border: none; color: #1c1917;
-        font-size: 11px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 0.5px; cursor: pointer;
-        transition: all 0.15s; white-space: nowrap;
-        box-shadow: 0 4px 12px rgba(245,158,11,0.2);
-    }
-    .rb-btn:hover { box-shadow: 0 6px 20px rgba(245,158,11,0.35); transform: translateY(-1px); }
-
     /* ── Team claim button ── */
     .team-claim-btn {
         padding: 5px 14px; border-radius: 8px;
@@ -351,12 +350,33 @@
         background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.15);
     }
 
+    /* ── Tab claim button ── */
+    .pill-wrap, .region-wrap {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
+    .tab-claim {
+        padding: 2px 8px; border-radius: 6px;
+        background: linear-gradient(135deg, #d97706, #f59e0b);
+        border: none; color: #1c1917;
+        font-size: 8px; font-weight: 900; text-transform: uppercase;
+        letter-spacing: 0.3px; cursor: pointer;
+        transition: all 0.12s; white-space: nowrap;
+    }
+    .tab-claim:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(245,158,11,0.3); }
+    .region-wrap { flex: 1; }
+    .region-wrap .region-tab { width: 100%; }
+
     /* ── Category pill bar ── */
     .pill-bar {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
         margin-bottom: 16px;
+        align-items: start;
     }
 
     .pill {
@@ -396,10 +416,10 @@
         display: flex;
         gap: 8px;
         margin-bottom: 16px;
+        align-items: start;
     }
 
     .region-tab {
-        flex: 1;
         padding: 8px 12px;
         border-radius: 8px;
         font-size: 12px;
