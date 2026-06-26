@@ -349,14 +349,16 @@
         const cpuCards = Object.values(currentOpponent.cards);
         const cpuStatAvg = Math.round(cpuCards.reduce((s, c) => s + (c.stats[cpuPlay.stat] || 0), 0) / cpuCards.length);
         const statEdge = myStatAvg - cpuStatAvg;
-        const myFinal = totalPower + statEdge + Math.floor(Math.random() * 11) - 5;
-        const cpuFinal = currentOpponent.avgRating + Math.floor(Math.random() * 11) - 5;
+        const myRoll = Math.floor(Math.random() * 11) - 5;
+        const cpuRoll = Math.floor(Math.random() * 11) - 5;
+        const myFinal = totalPower + statEdge + myRoll;
+        const cpuFinal = currentOpponent.avgRating + cpuRoll;
         const won = myFinal >= cpuFinal;
 
         if (won) playerScore++;
         else cpuScore++;
 
-        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won, tacticsBonus: tLvl }];
+        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won, tacticsBonus: tLvl, myBase: totalPower, cpuBase: currentOpponent.avgRating, statEdge, myRoll, cpuRoll }];
         grantXP(20);
         rollRoundPlays();
 
@@ -645,6 +647,7 @@
         {/if}
 
     {:else if phase === 'match' && currentOpponent}
+        {@const powerDiff = totalPower - currentOpponent.avgRating}
         <div class="match-header">
             <div class="match-label">Match {currentOpponent.index + 1} — vs {currentOpponent.name}</div>
             <div class="match-score">
@@ -676,6 +679,18 @@
 
             <!-- Center: Combat -->
             <div class="arena-center">
+                <div class="power-compare">
+                    <span class="pc-side pc-blue">{totalPower}</span>
+                    <div class="pc-center">
+                        <div class="pc-label">Base Power</div>
+                        <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>
+                            {powerDiff > 0 ? '+' : ''}{powerDiff}
+                        </div>
+                        <div class="pc-note">± 5 luck per side</div>
+                    </div>
+                    <span class="pc-side pc-red">{currentOpponent.avgRating}</span>
+                </div>
+
                 <div class="stat-compare">
                     <div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 Tactics +{tacticsLevel}</span>{/if}</div>
                     {#each roundPlays as play}
@@ -690,7 +705,7 @@
                                     <div class="sc-fill-blue" style="width: {Math.min(100, (myVal / Math.max(myVal, cpuVal, 1)) * 50)}%"></div>
                                     <div class="sc-fill-red" style="width: {Math.min(100, (cpuVal / Math.max(myVal, cpuVal, 1)) * 50)}%; margin-left: auto;"></div>
                                 </div>
-                                <div class="sc-diff" class:sc-diff-pos={diff > 0} class:sc-diff-neg={diff < 0}>{diff > 0 ? '+' : ''}{diff}</div>
+                                <div class="sc-diff" class:sc-diff-pos={diff > 0} class:sc-diff-neg={diff < 0}>{diff > 0 ? '+' : ''}{diff} stat</div>
                             </div>
                             <span class="sc-val sc-val-red">{cpuVal}</span>
                         </div>
@@ -701,8 +716,15 @@
                     <div class="log-list">
                         {#each matchLog as log, i}
                             <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
-                                <span class="log-result">R{i + 1} {log.won ? 'Won' : 'Lost'}</span>
-                                <span class="log-detail">{log.myPlay.icon} {log.myVal}{#if log.tacticsBonus > 0}<span class="log-tactics">+{log.tacticsBonus}🧠</span>{/if} vs {log.cpuPlay.icon} {log.cpuVal}</span>
+                                <span class="log-result">R{i + 1} {log.won ? '✓' : '✗'}</span>
+                                <div class="log-breakdown">
+                                    <div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div>
+                                    <div class="log-detail-row">
+                                        <span class="log-calc">{log.myBase}{log.statEdge >= 0 ? '+' : ''}{log.statEdge}{log.myRoll >= 0 ? '+' : ''}{log.myRoll}</span>
+                                        <span class="log-vs">vs</span>
+                                        <span class="log-calc">{log.cpuBase}{log.cpuRoll >= 0 ? '+' : ''}{log.cpuRoll}</span>
+                                    </div>
+                                </div>
                             </div>
                         {/each}
                     </div>
@@ -716,10 +738,11 @@
                                 {@const myVal = myStatAvgs[play.stat] || 0}
                                 {@const cpuVal = cpuStatAvgs[play.stat] || 0}
                                 {@const edge = myVal - cpuVal}
+                                {@const net = powerDiff + edge}
                                 <button class="play-btn" on:click={() => pickPlay(play)}>
                                     <span class="pb-icon">{play.icon}</span>
                                     <span class="pb-name">{play.label}</span>
-                                    <span class="pb-edge" class:pb-edge-pos={edge > 0} class:pb-edge-neg={edge < 0}>{edge > 0 ? '+' : ''}{edge}</span>
+                                    <span class="pb-edge" class:pb-edge-pos={net > 0} class:pb-edge-neg={net < 0}>Net {net > 0 ? '+' : ''}{net}</span>
                                 </button>
                             {/each}
                         </div>
@@ -933,16 +956,29 @@
     .ms-sep { font-size: 22px; font-weight: 900; color: #334155; }
     .match-bo5 { font-size: 9px; color: #475569; margin-top: 4px; }
 
+    /* Power compare */
+    .power-compare { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.15); }
+    .pc-side { font-size: 22px; font-weight: 900; min-width: 40px; text-align: center; }
+    .pc-blue { color: #60a5fa; } .pc-red { color: #f87171; }
+    .pc-center { text-align: center; }
+    .pc-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
+    .pc-diff { font-size: 18px; font-weight: 900; }
+    .pc-pos { color: #34d399; } .pc-neg { color: #f87171; } .pc-even { color: #64748b; }
+    .pc-note { font-size: 8px; color: #334155; margin-top: 2px; }
+
     .log-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 20px; }
     .log-row {
-        display: flex; align-items: center; justify-content: space-between;
+        display: flex; align-items: center; gap: 10px;
         padding: 10px 14px; border-radius: 10px; font-size: 12px;
         background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15);
     }
     .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; }
+    .log-result { font-weight: 900; font-size: 14px; flex-shrink: 0; }
     .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-detail { color: #64748b; }
+    .log-breakdown { flex: 1; }
+    .log-main { font-size: 12px; font-weight: 700; color: #e2e8f0; }
+    .log-detail-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #475569; font-family: monospace; margin-top: 2px; }
+    .log-calc { color: #64748b; } .log-vs { color: #334155; }
 
     /* Play picker */
     .play-picker {

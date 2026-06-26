@@ -180,11 +180,13 @@
         const cpuCards = Object.values(currentEnemy.cards);
         const cpuStatAvg = Math.round(cpuCards.reduce((s, c) => s + (c.stats[cpuPlay.stat] || 0), 0) / cpuCards.length);
         const statEdge = myStatAvg - cpuStatAvg;
-        const myFinal = totalPower + statEdge + Math.floor(Math.random() * 11) - 5;
-        const cpuFinal = currentEnemy.avgRating + Math.floor(Math.random() * 11) - 5;
+        const myRoll = Math.floor(Math.random() * 11) - 5;
+        const cpuRoll = Math.floor(Math.random() * 11) - 5;
+        const myFinal = totalPower + statEdge + myRoll;
+        const cpuFinal = currentEnemy.avgRating + cpuRoll;
         const won = myFinal >= cpuFinal;
         if (won) playerScore++; else cpuScore++;
-        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won, tacticsBonus: tLvl }];
+        matchLog = [...matchLog, { myPlay: play, cpuPlay, myVal: myFinal, cpuVal: cpuFinal, won, tacticsBonus: tLvl, myBase: totalPower, cpuBase: currentEnemy.avgRating, statEdge, myRoll, cpuRoll }];
         grantXP(25);
         rollRoundPlays();
 
@@ -428,6 +430,7 @@
         <div class="phase-center"><button class="mode-enter-btn" style="background: {currentModeColor};" on:click={startMatch}>Start Match</button></div>
 
     {:else if phase === 'match' && currentEnemy}
+        {@const powerDiff = totalPower - currentEnemy.avgRating}
         <div class="match-header">
             <div class="mh-label">{currentModeName} — Round {round + 1}</div>
             <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>
@@ -440,16 +443,44 @@
                 </div>
             </div>
             <div class="arena-center">
+                <div class="power-compare">
+                    <span class="pc-side pc-blue">{totalPower}</span>
+                    <div class="pc-center">
+                        <div class="pc-label">Base Power</div>
+                        <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>
+                            {powerDiff > 0 ? '+' : ''}{powerDiff}
+                        </div>
+                        <div class="pc-note">± 5 luck per side</div>
+                    </div>
+                    <span class="pc-side pc-red">{currentEnemy.avgRating}</span>
+                </div>
+
                 <div class="stat-compare">
                     <div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 Tactics +{tacticsLevel}</span>{/if}</div>
-                    {#each roundPlays as play}{@const myVal = myStatAvgs[play.stat]||0}{@const cpuVal = cpuStatAvgs[play.stat]||0}{@const diff = myVal - cpuVal}
-                        <div class="sc-row"><span class="sc-val sc-val-blue">{myVal}</span><div class="sc-bar-wrap"><div class="sc-label">{play.icon} {play.label}</div><div class="sc-bar"><div class="sc-fill-blue" style="width:{Math.min(100,(myVal/Math.max(myVal,cpuVal,1))*50)}%"></div><div class="sc-fill-red" style="width:{Math.min(100,(cpuVal/Math.max(myVal,cpuVal,1))*50)}%;margin-left:auto;"></div></div><div class="sc-diff" class:sc-diff-pos={diff>0} class:sc-diff-neg={diff<0}>{diff>0?'+':''}{diff}</div></div><span class="sc-val sc-val-red">{cpuVal}</span></div>
+                    {#each roundPlays as play}{@const myVal = myStatAvgs[play.stat]||0}{@const cpuVal = cpuStatAvgs[play.stat]||0}{@const diff = myVal - cpuVal}{@const net = powerDiff + diff}
+                        <div class="sc-row"><span class="sc-val sc-val-blue">{myVal}</span><div class="sc-bar-wrap"><div class="sc-label">{play.icon} {play.label}</div><div class="sc-bar"><div class="sc-fill-blue" style="width:{Math.min(100,(myVal/Math.max(myVal,cpuVal,1))*50)}%"></div><div class="sc-fill-red" style="width:{Math.min(100,(cpuVal/Math.max(myVal,cpuVal,1))*50)}%;margin-left:auto;"></div></div><div class="sc-diff" class:sc-diff-pos={diff>0} class:sc-diff-neg={diff<0}>{diff>0?'+':''}{diff} stat</div></div><span class="sc-val sc-val-red">{cpuVal}</span></div>
                     {/each}
                 </div>
-                {#if matchLog.length > 0}<div class="log-list">{#each matchLog as log}<div class="log-row" class:log-w={log.won} class:log-l={!log.won}><span class="log-result">{log.won?'✓':'✗'}</span><span class="log-detail">{log.myPlay.icon} {log.myVal}{#if log.tacticsBonus > 0}<span class="log-tactics">+{log.tacticsBonus}🧠</span>{/if} vs {log.cpuPlay.icon} {log.cpuVal}</span></div>{/each}</div>{/if}
+                {#if matchLog.length > 0}
+                    <div class="log-list">
+                        {#each matchLog as log}
+                            <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
+                                <span class="log-result">{log.won?'✓':'✗'}</span>
+                                <div class="log-breakdown">
+                                    <div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div>
+                                    <div class="log-detail-row">
+                                        <span class="log-calc">{log.myBase}{log.statEdge >= 0 ? '+' : ''}{log.statEdge}{log.myRoll >= 0 ? '+' : ''}{log.myRoll}</span>
+                                        <span class="log-vs">vs</span>
+                                        <span class="log-calc">{log.cpuBase}{log.cpuRoll >= 0 ? '+' : ''}{log.cpuRoll}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
                 {#if playerScore < 2 && cpuScore < 2}
                     <div class="play-picker"><div class="play-label">Choose Your Play (3 of 5)</div>
-                        <div class="play-grid">{#each roundPlays as play}{@const edge = (myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>{edge>0?'+':''}{edge}</span></button>{/each}</div>
+                        <div class="play-grid">{#each roundPlays as play}{@const edge = (myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net = powerDiff + edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-edge" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
                     </div>
                 {/if}
             </div>
@@ -591,11 +622,25 @@
     .sc-fill-red { background: linear-gradient(90deg, #ef4444, #991b1b); border-radius: 0 4px 4px 0; }
     .sc-diff { font-size: 11px; font-weight: 900; color: #64748b; margin-top: 2px; } .sc-diff-pos { color: #34d399; } .sc-diff-neg { color: #f87171; }
 
+    /* Power compare */
+    .power-compare { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.15); }
+    .pc-side { font-size: 22px; font-weight: 900; min-width: 40px; text-align: center; }
+    .pc-blue { color: #60a5fa; } .pc-red { color: #f87171; }
+    .pc-center { text-align: center; }
+    .pc-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
+    .pc-diff { font-size: 18px; font-weight: 900; }
+    .pc-pos { color: #34d399; } .pc-neg { color: #f87171; } .pc-even { color: #64748b; }
+    .pc-note { font-size: 8px; color: #334155; margin-top: 2px; }
+
     .log-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-    .log-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: 10px; font-size: 12px; background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15); }
+    .log-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; font-size: 12px; background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15); }
     .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; } .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-detail { color: #64748b; font-size: 11px; }
+    .log-result { font-weight: 900; font-size: 14px; flex-shrink: 0; } .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
+    .log-breakdown { flex: 1; }
+    .log-main { font-size: 12px; font-weight: 700; color: #e2e8f0; }
+    .log-detail-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #475569; font-family: monospace; margin-top: 2px; }
+    .log-calc { color: #64748b; }
+    .log-vs { color: #334155; }
 
     .play-picker { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 16px; padding: 24px; }
     .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
