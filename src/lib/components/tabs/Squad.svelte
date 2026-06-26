@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, bench, skills, saveGame } from '../../stores/game.js';
+    import { club, squad, bench, skills, seasonData, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
 
@@ -8,6 +8,7 @@
     const ALL_SLOTS = [...ROLES, 'COACH'];
     $: benchLevel = $skills.bench || 0;
     $: safeBench = Array.isArray($bench) ? $bench : [null, null, null];
+    $: splitActive = (($seasonData.opponents || []).length > 0 && ($seasonData.matchResults || []).filter(r => r === true || r === false).length < 10);
     const roleIcons = { TOP:'/icons/Top_icon.png', JNG:'/icons/Jungle_icon.png', MID:'/icons/Middle_icon.png', ADC:'/icons/Bottom_icon.png', SUP:'/icons/Support_icon.png', COACH:'/icons/Specialist_icon.png' };
 
     let pickerOpen = false, pickerRole = null, pickerSearch = '';
@@ -50,15 +51,22 @@
         }));
     }
 
-    function openPicker(role) { pickerRole=role; pickerSearch=''; pickerOpen=true; }
+    function openPicker(role) {
+        if (splitActive) { showToast('Squad is locked during an active split. Use bench swaps only.', 'error'); return; }
+        pickerRole=role; pickerSearch=''; pickerOpen=true;
+    }
     function closePicker() { pickerOpen=false; pickerRole=null; }
     function assignCard(card) { squad.update(s=>({...s,[pickerRole]:card})); closePicker(); saveGame(); }
-    function removeCard(role) { squad.update(s=>({...s,[role]:null})); saveGame(); }
+    function removeCard(role) {
+        if (splitActive) { showToast('Squad is locked during an active split.', 'error'); return; }
+        squad.update(s=>({...s,[role]:null})); saveGame();
+    }
     function totalStats(c) {
         const s = getEffectiveStats(c);
         return (s.mec||0)+(s.tmf||0)+(s.frm||0)+(s.cmp||0)+(s.map||0)+(s.ldr||0);
     }
     function autofill() {
+        if (splitActive) { showToast('Squad is locked during an active split.', 'error'); return; }
         const s = { COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
         const used = new Set();
         ROLES.forEach(role => {
@@ -70,7 +78,10 @@
         if (bestCoach) s.COACH = bestCoach;
         squad.set(s); saveGame(); showToast('Squad filled with best total stats.', 'success');
     }
-    function disband() { squad.set({COACH:null,TOP:null,JNG:null,MID:null,ADC:null,SUP:null}); saveGame(); }
+    function disband() {
+        if (splitActive) { showToast('Squad is locked during an active split.', 'error'); return; }
+        squad.set({COACH:null,TOP:null,JNG:null,MID:null,ADC:null,SUP:null}); saveGame();
+    }
 
     let benchPickerOpen = false;
     let benchPickerIdx = null;
@@ -87,7 +98,10 @@
         return pool;
     })();
 
-    function openBenchPicker(idx) { benchPickerIdx = idx; benchPickerOpen = true; }
+    function openBenchPicker(idx) {
+        if (splitActive) { showToast('Bench is locked during an active split. Use the swap buttons below.', 'error'); return; }
+        benchPickerIdx = idx; benchPickerOpen = true;
+    }
     function closeBenchPicker() { benchPickerOpen = false; benchPickerIdx = null; }
     function assignBench(card) {
         bench.update(b => { const n = [...b]; n[benchPickerIdx] = card; return n; });
@@ -95,19 +109,56 @@
         saveGame();
     }
     function removeBench(idx) {
+        if (splitActive) { showToast('Bench is locked during an active split.', 'error'); return; }
         bench.update(b => { const n = [...b]; n[idx] = null; return n; });
         saveGame();
     }
+
+    let swapMode = false;
+    let swapBenchIdx = null;
+
+    function startSwap(benchIdx) {
+        swapBenchIdx = benchIdx;
+        swapMode = true;
+    }
+    function executeSwap(role) {
+        if (swapBenchIdx === null) return;
+        const currentStarter = $squad[role];
+        const benchCard = safeBench[swapBenchIdx];
+        if (!benchCard) return;
+        squad.update(s => ({ ...s, [role]: benchCard }));
+        bench.update(b => { const n = [...b]; n[swapBenchIdx] = currentStarter; return n; });
+        swapMode = false;
+        swapBenchIdx = null;
+        saveGame();
+        showToast(`Swapped ${benchCard.name} into ${role}. ${currentStarter ? currentStarter.name + ' moved to bench.' : ''}`, 'success');
+    }
+    function cancelSwap() { swapMode = false; swapBenchIdx = null; }
+    function slotClick(role) { swapMode ? executeSwap(role) : openPicker(role); }
 </script>
 
 <section class="sq">
     <div class="sq-top">
         <div><h2 class="sq-h">Squad Builder</h2><p class="sq-sub">{squadReady?`Total Power: ${totalPower}`:'Fill all 5 positions'}</p></div>
         <div class="sq-btns">
-            <button class="btn-primary" on:click={autofill}>Auto Fill</button>
-            <button class="btn-secondary" on:click={disband}>Disband</button>
+            {#if !splitActive}
+                <button class="btn-primary" on:click={autofill}>Auto Fill</button>
+                <button class="btn-secondary" on:click={disband}>Disband</button>
+            {/if}
         </div>
     </div>
+    {#if splitActive}
+        <div class="squad-lock-banner">
+            <span class="slb-icon">🔒</span>
+            <span class="slb-text">Squad locked — Season Split in progress. {safeBench.filter(Boolean).length > 0 ? 'Click a bench player to swap with a starter.' : 'Add bench players before starting a split to enable swaps.'}</span>
+        </div>
+    {/if}
+    {#if swapMode}
+        <div class="swap-banner">
+            <span class="swb-text">Select a starter to swap with <strong>{safeBench[swapBenchIdx]?.name || 'bench player'}</strong></span>
+            <button class="swb-cancel" on:click={cancelSwap}>Cancel</button>
+        </div>
+    {/if}
 
     <div class="sq-grid">
         <!-- Left: Coach + Bench -->
@@ -123,12 +174,14 @@
             {#each [0,1,2] as idx}
                 {#if idx < benchLevel}
                     <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                    <div class="slot-bench slot-bench-active" on:click={() => openBenchPicker(idx)}>
+                    <div class="slot-bench slot-bench-active" class:slot-bench-swap={swapMode && swapBenchIdx === idx} on:click={() => splitActive && safeBench[idx] ? startSwap(idx) : openBenchPicker(idx)}>
                         {#if safeBench[idx]}
-                            <Card card={safeBench[idx]} mini={true} onclick={() => openBenchPicker(idx)} />
-                            <button class="rm" on:click|stopPropagation={() => removeBench(idx)}>✕</button>
+                            <Card card={safeBench[idx]} mini={true} onclick={() => splitActive ? startSwap(idx) : openBenchPicker(idx)} />
+                            {#if !splitActive}<button class="rm" on:click|stopPropagation={() => removeBench(idx)}>✕</button>{/if}
+                            {#if splitActive}<div class="bench-swap-tag">Tap to swap</div>{/if}
                         {:else}
-                            <span class="bench-lbl">Bench {idx + 1}</span><span class="bench-add">+</span>
+                            <span class="bench-lbl">Bench {idx + 1}</span>
+                            {#if splitActive}<span class="bench-lock">—</span>{:else}<span class="bench-add">+</span>{/if}
                         {/if}
                     </div>
                 {:else}
@@ -145,8 +198,8 @@
                 <div class="form-row">
                     {#each ['TOP'] as role}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div class="slot" on:click={() => openPicker(role)}>
-                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => openPicker(role)} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
+                        <div class="slot" class:slot-swap-target={swapMode} on:click={() => slotClick(role)}>
+                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => slotClick(role)} />{#if !splitActive}<button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>{/if}
                             {:else}<div class="empty"><img src={roleIcons[role]} alt="" class="empty-icon"><span class="empty-role">{role}</span></div>{/if}
                         </div>
                     {/each}
@@ -155,8 +208,8 @@
                 <div class="form-row">
                     {#each ['JNG','MID'] as role}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div class="slot" on:click={() => openPicker(role)}>
-                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => openPicker(role)} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
+                        <div class="slot" class:slot-swap-target={swapMode} on:click={() => slotClick(role)}>
+                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => slotClick(role)} />{#if !splitActive}<button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>{/if}
                             {:else}<div class="empty"><img src={roleIcons[role]} alt="" class="empty-icon"><span class="empty-role">{role}</span></div>{/if}
                         </div>
                     {/each}
@@ -165,8 +218,8 @@
                 <div class="form-row">
                     {#each ['ADC','SUP'] as role}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div class="slot" on:click={() => openPicker(role)}>
-                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => openPicker(role)} /><button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>
+                        <div class="slot" class:slot-swap-target={swapMode} on:click={() => slotClick(role)}>
+                            {#if $squad[role]}<Card card={$squad[role]} mini={true} onclick={() => slotClick(role)} />{#if !splitActive}<button class="rm" on:click|stopPropagation={() => removeCard(role)}>✕</button>{/if}
                             {:else}<div class="empty"><img src={roleIcons[role]} alt="" class="empty-icon"><span class="empty-role">{role}</span></div>{/if}
                         </div>
                     {/each}
@@ -269,6 +322,24 @@
 <style>
     .sq { padding-bottom: 40px; max-width: 1400px; margin: 0 auto; }
     .sq-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+    .squad-lock-banner {
+        display: flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 16px;
+        border-radius: 10px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2);
+    }
+    .slb-icon { font-size: 16px; }
+    .slb-text { font-size: 11px; color: #f59e0b; font-weight: 700; }
+    .swap-banner {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 10px 16px; margin-bottom: 16px; border-radius: 10px;
+        background: rgba(20,184,166,0.1); border: 1px solid rgba(20,184,166,0.3);
+        animation: swapPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes swapPulse { 0%,100% { border-color: rgba(20,184,166,0.3); } 50% { border-color: rgba(20,184,166,0.6); } }
+    .swb-text { font-size: 12px; color: #5eead4; font-weight: 700; }
+    .swb-cancel { padding: 4px 12px; border-radius: 6px; background: rgba(51,65,85,0.4); border: 1px solid rgba(71,85,105,0.2); color: #94a3b8; font-size: 10px; font-weight: 700; cursor: pointer; }
+    .slot-swap-target { border-color: rgba(20,184,166,0.4) !important; cursor: pointer !important; animation: swapPulse 1.5s ease-in-out infinite; }
+    .slot-bench-swap { border-color: rgba(20,184,166,0.6) !important; background: rgba(20,184,166,0.12) !important; }
+    .bench-swap-tag { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 8px; font-weight: 900; color: #14b8a6; text-transform: uppercase; letter-spacing: 0.5px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; }
     .sq-h { font-size:22px; font-weight:900; color:#e2e8f0; }
     .sq-sub { font-size:12px; color:#64748b; margin-top:2px; }
     .sq-btns { display:flex; gap:8px; }
