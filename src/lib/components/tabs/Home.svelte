@@ -344,6 +344,26 @@
             </div>
         </div>
     </div>
+
+    <!-- Update Log -->
+    <div class="update-panel">
+        <div class="update-header">
+            <span class="update-badge">Beta 1.0.9.2</span>
+            <span class="update-title">What's New</span>
+        </div>
+        <div class="update-list">
+            <div class="update-item">🪑 <strong>Bench System</strong> — Unlock up to 3 bench slots in Squad Builder. During season splits, swap starters with bench players only.</div>
+            <div class="update-item">🔒 <strong>Squad Lock</strong> — Squad is fully locked during active splits. No roster changes except bench swaps.</div>
+            <div class="update-item">⚔️ <strong>Combat Overhaul</strong> — Power comparison bar, Stat vs Net split on play buttons, full match log breakdown with luck rolls.</div>
+            <div class="update-item">📦 <strong>Bulk Contracts</strong> — Repeatable quests claim all completions in one press (e.g. ×5 at once).</div>
+            <div class="update-item">⭐ <strong>Card Showcase</strong> — Moved to Club Vault with drag-and-drop reordering. Add cards via ⭐ button.</div>
+            <div class="update-item">🔔 <strong>Upgrade Badges</strong> — Notification badges show available upgrades by tier and role.</div>
+            <div class="update-item">🏆 <strong>Battle Pass Auto-Level</strong> — Tiers advance automatically from XP. Just claim rewards.</div>
+            <div class="update-item">🎟️ <strong>Redeem Codes</strong> — Enter codes in Settings for free rewards. Try <strong>MSISIG2024</strong>.</div>
+            <div class="update-item">📊 <strong>Player Ratings</strong> — 31 players updated based on real 2026 LCK/LPL/LEC/LCS performance data.</div>
+            <div class="update-item">🐛 <strong>Bug Fixes</strong> — Season split infinite loop, carried-over account data, CFO team name, runner-up rewards.</div>
+        </div>
+    </div>
 </section>
 
 <style>
@@ -550,4 +570,24 @@
     .career-row { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; }
     .career-label { color: #475569; }
     .career-val { font-weight: 800; color: #94a3b8; }
+
+    /* Update Log */
+    .update-panel {
+        margin-top: 24px; padding: 20px; border-radius: 16px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+    }
+    .update-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .update-badge {
+        padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 900;
+        background: linear-gradient(135deg, #d97706, #f59e0b); color: #1c1917;
+        letter-spacing: 0.5px;
+    }
+    .update-title { font-size: 14px; font-weight: 900; color: #e2e8f0; }
+    .update-list { display: flex; flex-direction: column; gap: 6px; }
+    .update-item {
+        font-size: 11px; color: #94a3b8; line-height: 1.5;
+        padding: 6px 10px; border-radius: 8px;
+        background: rgba(15,23,42,0.3);
+    }
+    .update-item strong { color: #e2e8f0; }
 </style>
