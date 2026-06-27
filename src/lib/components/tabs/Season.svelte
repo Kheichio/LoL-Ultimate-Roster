@@ -263,17 +263,20 @@
         const hardMax = Math.min(1 + yr * 2, 8);
         const bossMin = Math.max(0, yr - 1);
         const bossMax = Math.min(Math.floor(yr / 2), 3);
-        const hardCount = yr === 0 ? 0 : randRange(hardMin, hardMax);
         const impossibleCount = yr <= 1 ? 0 : randRange(bossMin, bossMax);
-        const hardSlots = new Set();
         const impossibleSlots = new Set();
-
         while (impossibleSlots.size < impossibleCount) {
             impossibleSlots.add(randRange(Math.max(5, GAMES_PER_SPLIT - 4), GAMES_PER_SPLIT - 1));
         }
-        while (hardSlots.size < hardCount) {
+
+        const availableHardSlots = GAMES_PER_SPLIT - 3 - impossibleSlots.size;
+        const hardCount = yr === 0 ? 0 : Math.min(randRange(hardMin, hardMax), availableHardSlots);
+        const hardSlots = new Set();
+        let hardAttempts = 0;
+        while (hardSlots.size < hardCount && hardAttempts < 100) {
             const s = randRange(3, GAMES_PER_SPLIT - 1);
             if (!impossibleSlots.has(s)) hardSlots.add(s);
+            hardAttempts++;
         }
 
         const opps = [];
