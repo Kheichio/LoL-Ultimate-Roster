@@ -169,6 +169,22 @@
                 {/if}
             </div>
 
+            <!-- Your Ranking -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label amber">Your Ranking</div>
+                <div class="lb-preview">
+                    <div class="lb-title-display">{prestigeTitle}</div>
+                    <div class="lb-tp">{$weightedTrophies} Trophy Points</div>
+                    {#if nextTitleThreshold}
+                        <div class="lb-next">Next: {nextTitleThreshold - $weightedTrophies} TP to {getTitle(nextTitleThreshold)}</div>
+                        <div class="lb-bar"><div class="lb-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%"></div></div>
+                    {:else}
+                        <div class="lb-max">Max title reached!</div>
+                    {/if}
+                </div>
+                <button class="panel-link" on:click={() => switchTab('leaderboard')}>View Leaderboard →</button>
+            </div>
+
             <!-- Best Card -->
             {#if bestCard}
             <div class="panel" style="padding: 16px;">
@@ -178,6 +194,34 @@
                 </div>
             </div>
             {/if}
+
+            <!-- Coming Soon -->
+            <div class="panel coming-soon" style="padding: 16px;">
+                <div class="panel-label purple">Coming Soon</div>
+                <div class="cs-list">
+                    <div class="cs-item">
+                        <span class="cs-icon">🎯</span>
+                        <div>
+                            <div class="cs-name">Draft Mode</div>
+                            <div class="cs-desc">Draft players from a shared pool against CPU. Build a team from scratch each run.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">💰</span>
+                        <div>
+                            <div class="cs-name">Salary Cap Mode</div>
+                            <div class="cs-desc">Build a squad under a budget. Higher-rated players cost more.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">🏟️</span>
+                        <div>
+                            <div class="cs-name">Franchise Mode</div>
+                            <div class="cs-desc">Manage a team across multiple seasons. Sign, trade, and develop players.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Updates -->
             <div class="panel" style="padding: 16px;">
@@ -304,6 +348,25 @@
                 {/if}
             </div>
 
+            <!-- Legacy Collection -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label gold">Legacy & Award Cards</div>
+                {#if legacyBreakdown.length === 0}
+                    <div class="empty-state">No legacy cards yet. Win tournaments to earn them!</div>
+                {:else}
+                    <div class="tier-bars">
+                        {#each legacyBreakdown as { tier, count }}
+                            <div class="tier-row">
+                                <span class="tier-name">{tier}</span>
+                                <div class="tier-track"><div class="tier-fill" style="width: {Math.min(100, (count / Math.max(...legacyBreakdown.map(t => t.count), 1)) * 100)}%; background: {tierGradients[tier] || 'linear-gradient(90deg, #64748b, #475569)'}"></div></div>
+                                <span class="tier-count">{count}</span>
+                            </div>
+                        {/each}
+                    </div>
+                    <div class="collection-footer">{legacyCount} total legacy cards</div>
+                {/if}
+            </div>
+
             <!-- Season + Next Game -->
             <div class="panel" style="padding: 16px;">
                 <div class="panel-label blue">Season Split {$seasonData.currentSplit}</div>
@@ -325,30 +388,14 @@
                 <button class="panel-link" on:click={() => switchTab('season')}>{seasonSplitActive ? 'Continue Split →' : 'Go to Season →'}</button>
             </div>
 
-            <!-- Leaderboard Preview -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label amber">Your Ranking</div>
-                <div class="lb-preview">
-                    <div class="lb-title-display">{prestigeTitle}</div>
-                    <div class="lb-tp">{$weightedTrophies} Trophy Points</div>
-                    {#if nextTitleThreshold}
-                        <div class="lb-next">Next: {nextTitleThreshold - $weightedTrophies} TP to {getTitle(nextTitleThreshold)}</div>
-                        <div class="lb-bar"><div class="lb-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%"></div></div>
-                    {:else}
-                        <div class="lb-max">Max title reached!</div>
-                    {/if}
-                </div>
-                <button class="panel-link" on:click={() => switchTab('leaderboard')}>View Leaderboard →</button>
-            </div>
-
             <!-- Battle Pass -->
             <div class="panel bp-panel" style="padding: 16px;">
                 <div class="panel-label amber">Battle Pass</div>
                 <div class="bp-row">
                     <span class="bp-season">S{$battlePass.season}</span>
-                    <span class="bp-tier">Tier {$battlePass.tier}/30</span>
+                    <span class="bp-tier">Tier {$battlePass.tier}/100</span>
                 </div>
-                <div class="bp-bar"><div class="bp-fill" style="width: {($battlePass.tier/30)*100}%"></div></div>
+                <div class="bp-bar"><div class="bp-fill" style="width: {Math.min(100, ($battlePass.tier/100)*100)}%"></div></div>
                 <button class="panel-link" on:click={() => switchTab('rewards')}>View Rewards →</button>
             </div>
 
@@ -373,53 +420,6 @@
                             <span class="career-val {cls}">{value}</span>
                         </div>
                     {/each}
-                </div>
-            </div>
-
-            <!-- Legacy Collection -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label gold">Legacy & Award Cards</div>
-                {#if legacyBreakdown.length === 0}
-                    <div class="empty-state">No legacy cards yet. Win tournaments to earn them!</div>
-                {:else}
-                    <div class="tier-bars">
-                        {#each legacyBreakdown as { tier, count }}
-                            <div class="tier-row">
-                                <span class="tier-name">{tier}</span>
-                                <div class="tier-track"><div class="tier-fill" style="width: {Math.min(100, (count / Math.max(...legacyBreakdown.map(t => t.count), 1)) * 100)}%; background: {tierGradients[tier] || 'linear-gradient(90deg, #64748b, #475569)'}"></div></div>
-                                <span class="tier-count">{count}</span>
-                            </div>
-                        {/each}
-                    </div>
-                    <div class="collection-footer">{legacyCount} total legacy cards</div>
-                {/if}
-            </div>
-
-            <!-- Coming Soon -->
-            <div class="panel coming-soon" style="padding: 16px;">
-                <div class="panel-label purple">Coming Soon</div>
-                <div class="cs-list">
-                    <div class="cs-item">
-                        <span class="cs-icon">🎯</span>
-                        <div>
-                            <div class="cs-name">Draft Mode</div>
-                            <div class="cs-desc">Draft players from a shared pool against CPU. Build a team from scratch each run.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
-                        <span class="cs-icon">💰</span>
-                        <div>
-                            <div class="cs-name">Salary Cap Mode</div>
-                            <div class="cs-desc">Build a squad under a budget. Higher-rated players cost more.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
-                        <span class="cs-icon">🏟️</span>
-                        <div>
-                            <div class="cs-name">Franchise Mode</div>
-                            <div class="cs-desc">Manage a team across multiple seasons. Sign, trade, and develop players.</div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>

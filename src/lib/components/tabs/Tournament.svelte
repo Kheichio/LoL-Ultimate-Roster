@@ -403,6 +403,24 @@
                 </div>
                 <button class="mode-enter-btn" style="background: linear-gradient(135deg, #dc2626, #ef4444);" on:click|stopPropagation={() => switchTab('tower')}>Enter</button>
             </div>
+
+            <!-- Coming Soon -->
+            <div class="mode-row mode-coming-soon" style="border-color: rgba(168,85,247,0.15); opacity: 0.6;">
+                <span class="mode-icon">🎯</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: #c084fc;">Draft Mode</h3>
+                    <p class="mode-sub">Draft players from a shared pool against CPU opponents. Build a unique team each run.</p>
+                </div>
+                <span class="mode-soon-tag">Coming Soon</span>
+            </div>
+            <div class="mode-row mode-coming-soon" style="border-color: rgba(168,85,247,0.15); opacity: 0.6;">
+                <span class="mode-icon">💰</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: #c084fc;">Salary Cap Mode</h3>
+                    <p class="mode-sub">Build a squad under a budget. Higher-rated players cost more. Strategy meets economics.</p>
+                </div>
+                <span class="mode-soon-tag">Coming Soon</span>
+            </div>
         </div>
 
     {:else if phase === 'bracket'}
@@ -558,6 +576,13 @@
         transition: all 0.15s; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     }
     .mode-enter-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
+    .mode-coming-soon { cursor: default; pointer-events: none; }
+    .mode-soon-tag {
+        padding: 6px 14px; border-radius: 8px; font-size: 9px; font-weight: 900;
+        text-transform: uppercase; letter-spacing: 1px; white-space: nowrap;
+        background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.2);
+        color: #c084fc;
+    }
     .mode-lock-badge { font-size: 18px; flex-shrink: 0; opacity: 0.5; }
     .mode-need { font-size: 10px; color: #f87171; font-weight: 700; flex-shrink: 0; }
     .mode-cooldown {
