@@ -6,7 +6,7 @@
     import CardInspectModal from './lib/components/modals/CardInspectModal.svelte';
     import AuthPanel from './lib/components/modals/AuthPanel.svelte';
     import { activeTab } from './lib/stores/ui.js';
-    import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies } from './lib/stores/game.js';
+    import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks } from './lib/stores/game.js';
     import { currentUser, cloudSave } from './lib/stores/auth.js';
     import { getEffectiveRating, LEGACY_TIERS, getEra } from './lib/utils/cards.js';
     import { get } from 'svelte/store';
@@ -55,7 +55,11 @@
             for (const role of ['TOP','JNG','MID','ADC','SUP','COACH']) {
                 if (sq[role]) squadData[role] = serializeCard(sq[role]);
             }
-            const showcaseData = [...cl].sort((a, b) => ((b.signature?1000:0)+(b.holographic?500:0)+b.rating) - ((a.signature?1000:0)+(a.holographic?500:0)+a.rating)).slice(0,3).map(serializeCard).filter(Boolean);
+            const picks = get(showcasePicks);
+            const showcaseData = (picks && picks.length > 0
+                ? picks.map(uid => cl.find(c => c.uniqueId === uid)).filter(Boolean)
+                : [...cl].sort((a, b) => ((b.signature?1000:0)+(b.holographic?500:0)+b.rating) - ((a.signature?1000:0)+(a.holographic?500:0)+a.rating)).slice(0,3)
+            ).map(serializeCard).filter(Boolean);
             await window.fbDb.collection('leaderboard').doc(user.uid).set({
                 displayName: user.displayName || 'Unknown',
                 teamName: ti.name, teamLogo: ti.logo, teamColor: ti.color || '#3b82f6',

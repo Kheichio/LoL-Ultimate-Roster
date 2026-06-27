@@ -117,14 +117,21 @@
         saveGame();
     }
 
+    function getRepeatableClaimCount(q) {
+        const progress = getRepeatableProgress(q);
+        return Math.floor(progress / q.target);
+    }
+
     function claimRepeatable(q) {
-        if (getRepeatableProgress(q) < q.target) return;
+        const times = getRepeatableClaimCount(q);
+        if (times <= 0) return;
         const base = repeatableBaselines[q.id] || 0;
-        questsRepeatableBaselines.update(b => ({ ...b, [q.id]: base + q.target }));
-        questsRepeatableCounts.update(c => ({ ...c, [q.id]: (c[q.id] || 0) + 1 }));
-        blueEssence.update(v => v + q.reward);
+        const totalReward = q.reward * times;
+        questsRepeatableBaselines.update(b => ({ ...b, [q.id]: base + q.target * times }));
+        questsRepeatableCounts.update(c => ({ ...c, [q.id]: (c[q.id] || 0) + times }));
+        blueEssence.update(v => v + totalReward);
         playSound('claim');
-        showToast(`Contract claimed! +${q.reward} BE`, 'success');
+        showToast(`Contract claimed ×${times}! +${totalReward} BE`, 'success');
         saveGame();
     }
 
@@ -179,7 +186,7 @@
     $: doneAchievements = achievements.filter(a => achievementsClaimed[a.id]).length;
 
     $: claimableMilestones = (() => { try { return milestoneQuests.filter(q => !claimed[q.id] && ($trackStats[q.stat] || 0) >= q.target).length; } catch(e) { return 0; } })();
-    $: claimableContracts = (() => { try { return repeatableQuests.filter(q => { const base = ($questsRepeatableBaselines)[q.id] || 0; return Math.max(0, ($trackStats[q.stat] || 0) - base) >= q.target; }).length; } catch(e) { return 0; } })();
+    $: claimableContracts = (() => { try { let c = 0; repeatableQuests.forEach(q => { const base = ($questsRepeatableBaselines)[q.id] || 0; const prog = Math.max(0, ($trackStats[q.stat] || 0) - base); c += Math.floor(prog / q.target); }); return c; } catch(e) { return 0; } })();
     $: claimableAchievements = (() => { try { return achievements.filter(a => !achievementsClaimed[a.id] && getAchievementProgress(a) >= a.target).length; } catch(e) { return 0; } })();
 </script>
 
@@ -281,36 +288,37 @@
             <p class="section-hint">Repeatable quests — progress resets after each claim. Infinite completions.</p>
             {#each repeatableQuests as q}
                 {@const progress = getRepeatableProgress(q)}
-                {@const isDone = progress >= q.target}
-                {@const times = repeatableCounts[q.id] || 0}
+                {@const claimable = getRepeatableClaimCount(q)}
+                {@const claimed = repeatableCounts[q.id] || 0}
+                {@const progressInCycle = progress - (claimable * q.target)}
                 <div
                     class="quest-row"
                     style="
-                        {isDone ? 'border-color: rgba(14,116,144,0.4); background: rgba(8,51,68,0.2);' :
+                        {claimable > 0 ? 'border-color: rgba(14,116,144,0.4); background: rgba(8,51,68,0.2);' :
                          'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
                     "
                 >
                     <div class="quest-info">
                         <div class="quest-desc" style="color: #e2e8f0;">
                             {q.desc}
-                            {#if times > 0}
-                                <span style="color: #06b6d4; margin-left: 4px;">×{times}</span>
+                            {#if claimed > 0}
+                                <span style="color: #06b6d4; margin-left: 4px;">×{claimed}</span>
                             {/if}
                         </div>
                         <div class="progress-track">
-                            <div class="progress-fill" style="width: {Math.min(100, (progress / q.target) * 100)}%; background: #06b6d4;"></div>
+                            <div class="progress-fill" style="width: {claimable > 0 ? 100 : Math.min(100, (progressInCycle / q.target) * 100)}%; background: #06b6d4;"></div>
                         </div>
                     </div>
-                    {#if isDone}
+                    {#if claimable > 0}
                         <button
                             class="claim-btn"
                             style="background: #06b6d4; color: #0f172a;"
                             on:mouseenter={(e) => e.currentTarget.style.background = '#22d3ee'}
                             on:mouseleave={(e) => e.currentTarget.style.background = '#06b6d4'}
                             on:click={() => claimRepeatable(q)}
-                        >Claim {q.reward} BE</button>
+                        >Claim ×{claimable} · {q.reward * claimable} BE</button>
                     {:else}
-                        <span class="progress-label">{progress}/{q.target}</span>
+                        <span class="progress-label">{progressInCycle}/{q.target}</span>
                     {/if}
                 </div>
             {/each}

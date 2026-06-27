@@ -8,6 +8,7 @@ export const squad = writable({ COACH: null, TOP: null, JNG: null, MID: null, AD
 export const bench = writable([null, null, null]);
 export const hasBoughtStarter = writable(false);
 export const teamIdentity = writable({ name: 'My Team', logo: '🛡️', color: '#3b82f6', favouriteTeam: '', favouritePlayer: '' });
+export const showcasePicks = writable([]);
 
 // === Progression ===
 export const managerXP = writable(0);
@@ -98,6 +99,7 @@ export function saveGame() {
         saveToStorage('lur_squad', get(squad));
         saveToStorage('lur_bench', get(bench));
         saveToStorage('lur_starter', get(hasBoughtStarter));
+        saveToStorage('lur_showcase', get(showcasePicks));
         saveToStorage('lur_identity', get(teamIdentity));
         saveToStorage('lur_stats', get(trackStats));
         saveToStorage('lur_progression', { xp: get(managerXP), level: get(managerLevel), sp: get(skillPoints), skills: get(skills) });
@@ -126,6 +128,9 @@ export function initGame() {
 
     const bn = loadFromStorage('lur_bench');
     if (bn) bench.set(bn);
+
+    const sc = loadFromStorage('lur_showcase');
+    if (sc) showcasePicks.set(sc);
 
     const st = loadFromStorage('lur_starter');
     if (st !== null) hasBoughtStarter.set(st === true || st === 'true');

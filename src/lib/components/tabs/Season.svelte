@@ -121,6 +121,30 @@
     restoreCooldown();
     onDestroy(() => { if (cooldownTimer) clearInterval(cooldownTimer); });
 
+    function validateSeasonData() {
+        const sd = get(seasonData);
+        let needsReset = false;
+        if (sd.opponents && sd.opponents.length > 0) {
+            const valid = sd.opponents.every(o => o && typeof o === 'object' && o.cards && o.avgRating !== undefined);
+            if (!valid) needsReset = true;
+            if (sd.matchResults && !Array.isArray(sd.matchResults)) needsReset = true;
+        }
+        if (sd.meta && !Array.isArray(sd.meta)) needsReset = true;
+        if (needsReset) {
+            seasonData.update(s => ({
+                ...s,
+                opponents: [],
+                matchResults: [],
+                meta: [],
+                lockedSquad: null,
+                splitWins: 0,
+                splitLosses: 0,
+            }));
+            saveGame();
+        }
+    }
+    validateSeasonData();
+
     function rollRoundPlays() {
         const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
         roundPlays = shuffled.slice(0, 3);
