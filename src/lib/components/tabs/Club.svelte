@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, showcasePicks, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
     import { getSellValue, TIER_ORDER, LEGACY_TIERS } from '../../utils/cards.js';
@@ -69,6 +69,38 @@
         club.update(c => [...c]);
         saveGame();
     }
+
+    $: showcaseCards = ($showcasePicks || []).map(uid => $club.find(c => c.uniqueId === uid)).filter(Boolean);
+    let dragIdx = null;
+    let dragOverIdx = null;
+
+    function onShowcaseDragStart(e, idx) { dragIdx = idx; e.dataTransfer.effectAllowed = 'move'; }
+    function onShowcaseDragOver(e, idx) { e.preventDefault(); dragOverIdx = idx; }
+    function onShowcaseDrop(e, idx) {
+        e.preventDefault();
+        if (dragIdx === null || dragIdx === idx) { dragIdx = null; dragOverIdx = null; return; }
+        const picks = [...$showcasePicks];
+        const [moved] = picks.splice(dragIdx, 1);
+        picks.splice(idx, 0, moved);
+        showcasePicks.set(picks);
+        saveGame();
+        dragIdx = null;
+        dragOverIdx = null;
+    }
+    function onShowcaseDragEnd() { dragIdx = null; dragOverIdx = null; }
+
+    function removeFromShowcase(uid) {
+        showcasePicks.update(p => p.filter(id => id !== uid));
+        saveGame();
+    }
+    function addToShowcase(card) {
+        if ($showcasePicks.length >= 3) { showToast('Max 3 showcase cards.', 'error'); return; }
+        if ($showcasePicks.includes(card.uniqueId)) { showToast('Already in showcase.', 'error'); return; }
+        showcasePicks.update(p => [...p, card.uniqueId]);
+        saveGame();
+        showToast(`${card.name} added to showcase.`, 'success');
+    }
+    function isInShowcase(card) { return ($showcasePicks || []).includes(card.uniqueId); }
 </script>
 
 <section class="club">
@@ -77,6 +109,44 @@
         <div>
             <h2 class="club-title">Club Vault</h2>
             <p class="club-sub">{$club.length} cards · {holoCount} holo · {sigCount} sig · {favCount} fav</p>
+        </div>
+    </div>
+
+    <!-- Card Showcase -->
+    <div class="showcase-panel">
+        <div class="showcase-head">
+            <span class="showcase-label">Card Showcase ({showcaseCards.length}/3)</span>
+            <span class="showcase-hint">Drag to reorder · Shown on your leaderboard profile</span>
+        </div>
+        <div class="showcase-slots">
+            {#each [0, 1, 2] as idx}
+                {#if showcaseCards[idx]}
+                    <!-- svelte-ignore a11y-no-static-element-interactions -->
+                    <div
+                        class="showcase-slot showcase-slot-filled"
+                        class:showcase-dragging={dragIdx === idx}
+                        class:showcase-dragover={dragOverIdx === idx && dragIdx !== idx}
+                        draggable="true"
+                        on:dragstart={(e) => onShowcaseDragStart(e, idx)}
+                        on:dragover={(e) => onShowcaseDragOver(e, idx)}
+                        on:drop={(e) => onShowcaseDrop(e, idx)}
+                        on:dragend={onShowcaseDragEnd}
+                    >
+                        <Card card={showcaseCards[idx]} mini={true} />
+                        <button class="showcase-remove" on:click={() => removeFromShowcase(showcaseCards[idx].uniqueId)}>✕</button>
+                    </div>
+                {:else}
+                    <!-- svelte-ignore a11y-no-static-element-interactions -->
+                    <div
+                        class="showcase-slot showcase-slot-empty"
+                        on:dragover={(e) => onShowcaseDragOver(e, idx)}
+                        on:drop={(e) => onShowcaseDrop(e, idx)}
+                    >
+                        <span class="showcase-plus">+</span>
+                        <span class="showcase-add-label">Add card</span>
+                    </div>
+                {/if}
+            {/each}
         </div>
     </div>
 
@@ -120,13 +190,17 @@
                             class="ca-btn" class:ca-lock-on={card.locked}
                             on:click={() => toggleLock(card)}
                         >{card.locked ? '🔒' : '🔓'}</button>
+                        <button
+                            class="ca-btn" class:ca-showcase-on={isInShowcase(card)}
+                            on:click={() => isInShowcase(card) ? removeFromShowcase(card.uniqueId) : addToShowcase(card)}
+                        >{isInShowcase(card) ? '⭐' : '☆'}</button>
                         {#if !card.locked && !Object.values($squad).some(s => s && s.uniqueId === card.uniqueId)}
                             <button class="ca-btn ca-sell" on:click={() => sellCard(card)}>
-                                Sell +{getSellValue(card.quality, card)}
+                                +{getSellValue(card.quality, card)}
                             </button>
                         {:else}
                             <span class="ca-status">
-                                {Object.values($squad).some(s => s && s.uniqueId === card.uniqueId) ? 'In Squad' : 'Locked'}
+                                {Object.values($squad).some(s => s && s.uniqueId === card.uniqueId) ? 'Squad' : 'Locked'}
                             </span>
                         {/if}
                     </div>
@@ -138,6 +212,47 @@
 
 <style>
     .club { padding-bottom: 40px; }
+
+    /* Showcase */
+    .showcase-panel {
+        margin-bottom: 20px; padding: 16px; border-radius: 14px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
+    }
+    .showcase-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .showcase-label { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #fbbf24; }
+    .showcase-hint { font-size: 9px; color: #475569; }
+    .showcase-slots { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .showcase-slot { position: relative; border-radius: 14px; transition: all 0.15s; }
+    .showcase-slot-filled { cursor: grab; border: 2px solid transparent; }
+    .showcase-slot-filled:hover { border-color: rgba(251,191,36,0.3); }
+    .showcase-slot-filled:active { cursor: grabbing; }
+    .showcase-dragging { opacity: 0.4; transform: scale(0.95); }
+    .showcase-dragover { border-color: rgba(59,130,246,0.6) !important; background: rgba(59,130,246,0.05); }
+    .showcase-slot-empty {
+        width: 180px; height: 260px; border-radius: 14px;
+        border: 2px dashed rgba(51,65,85,0.25);
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+        color: #1e293b; transition: border-color 0.12s;
+    }
+    .showcase-slot-empty:hover { border-color: rgba(251,191,36,0.3); }
+    .showcase-plus { font-size: 24px; font-weight: 900; }
+    .showcase-add-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .showcase-remove {
+        position: absolute; top: 4px; right: 4px; z-index: 5;
+        width: 22px; height: 22px; border-radius: 50%;
+        background: rgba(0,0,0,0.7); border: 1px solid rgba(239,68,68,0.3);
+        color: #f87171; font-size: 10px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity 0.12s;
+    }
+    .showcase-slot-filled:hover .showcase-remove { opacity: 1; }
+    .showcase-remove:hover { background: rgba(127,29,29,0.8); color: white; }
+
+    .ca-showcase-on {
+        background: rgba(234,179,8,0.12) !important;
+        border-color: rgba(234,179,8,0.25) !important;
+        color: #fbbf24 !important;
+    }
 
     /* Header */
     .club-head { margin-bottom: 16px; }

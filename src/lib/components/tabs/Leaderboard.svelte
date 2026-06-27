@@ -1,7 +1,6 @@
 <script>
     import ProfileModal from '../modals/ProfileModal.svelte';
     import { blueEssence, club, squad, trackStats, teamIdentity, managerLevel, weightedTrophies, skills, showcasePicks, saveGame } from '../../stores/game.js';
-    import Card from '../card/Card.svelte';
     import { currentUser, cloudSave } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { getEffectiveRating, LEGACY_TIERS, getEra } from '../../utils/cards.js';
@@ -221,23 +220,6 @@
 
     function openProfile(player) { selectedPlayer = player; }
 
-    let showShowcasePicker = false;
-    $: showcaseDisplay = (() => {
-        const picks = $showcasePicks;
-        if (picks && picks.length > 0) return picks.map(uid => $club.find(c => c.uniqueId === uid)).filter(Boolean);
-        return [...$club].sort((a, b) => ((b.signature?1000:0)+(b.holographic?500:0)+b.rating) - ((a.signature?1000:0)+(a.holographic?500:0)+a.rating)).slice(0,3);
-    })();
-    $: showcasePool = [...$club].sort((a, b) => b.rating - a.rating);
-    function toggleShowcase(card) {
-        const picks = [...$showcasePicks];
-        const idx = picks.indexOf(card.uniqueId);
-        if (idx >= 0) { picks.splice(idx, 1); }
-        else if (picks.length < 3) { picks.push(card.uniqueId); }
-        else { showToast('Max 3 showcase cards.', 'error'); return; }
-        showcasePicks.set(picks);
-        saveGame();
-    }
-    function clearShowcase() { showcasePicks.set([]); saveGame(); }
     function closeProfile() { selectedPlayer = null; }
 
     loadLeaderboard();
@@ -267,39 +249,6 @@
             <label class="fav-label">⭐ Favourite Player</label>
             <input type="text" class="fav-input" value={$teamIdentity.favouritePlayer || ''} placeholder="e.g. Faker" on:change={(e) => { teamIdentity.update(t => ({ ...t, favouritePlayer: e.target.value })); saveGame(); }}>
         </div>
-    </div>
-
-    <!-- Showcase -->
-    <div class="showcase-section">
-        <div class="showcase-head">
-            <span class="showcase-label">Card Showcase ({showcaseDisplay.length}/3)</span>
-            <div class="showcase-btns">
-                {#if $showcasePicks.length > 0}<button class="showcase-clear" on:click={clearShowcase}>Reset</button>{/if}
-                <button class="showcase-edit" on:click={() => showShowcasePicker = !showShowcasePicker}>{showShowcasePicker ? 'Done' : 'Edit'}</button>
-            </div>
-        </div>
-        <div class="showcase-cards">
-            {#each showcaseDisplay as card (card.uniqueId)}
-                <Card {card} mini={true} />
-            {:else}
-                <div class="showcase-empty">Open packs to get cards for your showcase.</div>
-            {/each}
-        </div>
-        {#if showShowcasePicker}
-            <div class="showcase-picker">
-                <div class="sp-hint">Select up to 3 cards. Click to add/remove.</div>
-                <div class="sp-grid">
-                    {#each showcasePool.slice(0, 30) as card (card.uniqueId)}
-                        {@const selected = $showcasePicks.includes(card.uniqueId)}
-                        <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div class="sp-card" class:sp-selected={selected} on:click={() => toggleShowcase(card)}>
-                            <Card {card} mini={true} />
-                            {#if selected}<div class="sp-check">✓</div>{/if}
-                        </div>
-                    {/each}
-                </div>
-            </div>
-        {/if}
     </div>
 
     <!-- Sort -->
@@ -427,33 +376,6 @@
     }
     .fav-input::placeholder { color: #334155; }
 
-    /* Showcase */
-    .showcase-section { margin-bottom: 16px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 14px; padding: 14px; }
-    .showcase-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .showcase-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #64748b; }
-    .showcase-btns { display: flex; gap: 6px; }
-    .showcase-edit, .showcase-clear {
-        padding: 4px 12px; border-radius: 6px; font-size: 10px; font-weight: 900;
-        cursor: pointer; border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s;
-    }
-    .showcase-edit { background: rgba(59,130,246,0.1); color: #60a5fa; border-color: rgba(59,130,246,0.2); }
-    .showcase-edit:hover { background: rgba(59,130,246,0.2); }
-    .showcase-clear { background: rgba(51,65,85,0.3); color: #94a3b8; }
-    .showcase-cards { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-    .showcase-empty { color: #334155; font-size: 11px; text-align: center; padding: 20px; }
-    .showcase-picker { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(51,65,85,0.15); }
-    .sp-hint { font-size: 10px; color: #475569; margin-bottom: 8px; }
-    .sp-grid { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-height: 300px; overflow-y: auto; }
-    .sp-card { position: relative; cursor: pointer; border-radius: 12px; border: 2px solid transparent; transition: border-color 0.12s; }
-    .sp-card:hover { border-color: rgba(59,130,246,0.3); }
-    .sp-selected { border-color: rgba(34,197,94,0.6) !important; }
-    .sp-check {
-        position: absolute; top: 4px; right: 4px; z-index: 5;
-        width: 20px; height: 20px; border-radius: 50%;
-        background: #22c55e; color: white;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 11px; font-weight: 900;
-    }
 
     @media (max-width: 800px) {
         .lb-col { width: 44px; font-size: 9px; }
