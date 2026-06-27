@@ -4,7 +4,7 @@
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
-    import { TIER_ORDER, getEffectiveRating } from '../../utils/cards.js';
+    import { TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, getEffectiveRating } from '../../utils/cards.js';
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
@@ -45,7 +45,7 @@
     }
     $: teamRgb = hexToRgb($teamIdentity.color || '#3b82f6');
 
-    const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)' };
+    const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)', Champion:'linear-gradient(90deg, #d97706, #f59e0b)', MVP:'linear-gradient(90deg, #ec4899, #f43f5e)', Finalist:'linear-gradient(90deg, #94a3b8, #cbd5e1)', MSI:'linear-gradient(90deg, #14b8a6, #2dd4bf)', FirstStand:'linear-gradient(90deg, #f97316, #fb923c)', POTY:'linear-gradient(90deg, #e94560, #f87171)', ROTY:'linear-gradient(90deg, #06b6d4, #22d3ee)', TOTY:'linear-gradient(90deg, #f59e0b, #fbbf24)', GPOTY:'linear-gradient(90deg, #a855f7, #d8b4fe)', X:'linear-gradient(90deg, #f43f5e, #fb7185)' };
     const iconOptions = ['🛡️','⚔️','🐲','🦅','🐺','🦁','🔥','❄️','⭐','💎','🌟','🏆','👑','🎯','🌙','☀️','🐉','🦊','🐻','🎮'];
     const colorOptions = ['#3b82f6','#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#eab308','#10b981','#06b6d4','#64748b','#f97316','#14b8a6'];
 
@@ -77,18 +77,48 @@
         { label: 'Claim Starter', tab: 'store', icon: '🎁', bg: 'qa-green', show: !$hasBoughtStarter },
     ].filter(a => a.show);
 
-    $: milestones = [
-        { label: 'Collect 50 cards', current: $club.length, target: 50 },
-        { label: 'Fill your starting 5', current: starters.length, target: 5 },
-        { label: 'Win a tournament', current: $trackStats.tournamentsWon || 0, target: 1 },
-        { label: 'Complete a season split', current: $trackStats.splitsCompleted || 0, target: 1 },
-        { label: 'Earn 100 Trophy Points', current: $weightedTrophies, target: 100 },
-    ];
+    $: milestones = (() => {
+        const all = [
+            { label: 'Fill your starting 5', current: starters.length, target: 5 },
+            { label: 'Collect 25 cards', current: $club.length, target: 25 },
+            { label: 'Collect 50 cards', current: $club.length, target: 50 },
+            { label: 'Win a tournament', current: $trackStats.tournamentsWon || 0, target: 1 },
+            { label: 'Complete a season split', current: $trackStats.splitsCompleted || 0, target: 1 },
+            { label: 'Collect 100 cards', current: $club.length, target: 100 },
+            { label: 'Win a Regional Trophy', current: $trackStats.regionalSplitWon || 0, target: 1 },
+            { label: 'Earn 50 Trophy Points', current: $weightedTrophies, target: 50 },
+            { label: 'Win 10 tournaments', current: $trackStats.tournamentsWon || 0, target: 10 },
+            { label: 'Complete 5 season splits', current: $trackStats.splitsCompleted || 0, target: 5 },
+            { label: 'Win a First Stand', current: $trackStats.firstStandWon || 0, target: 1 },
+            { label: 'Collect 200 cards', current: $club.length, target: 200 },
+            { label: 'Earn 100 Trophy Points', current: $weightedTrophies, target: 100 },
+            { label: 'Win an MSI', current: $trackStats.msiWon || 0, target: 1 },
+            { label: 'Reach Tower Floor 25', current: $trackStats.towerHighestFloor || 0, target: 25 },
+            { label: 'Win a World Championship', current: $trackStats.worldsWon || 0, target: 1 },
+            { label: 'Complete a Golden Road', current: $trackStats.goldenRoads || 0, target: 1 },
+            { label: 'Earn 250 Trophy Points', current: $weightedTrophies, target: 250 },
+            { label: 'Win 50 tournaments', current: $trackStats.tournamentsWon || 0, target: 50 },
+            { label: 'Reach Tower Floor 50', current: $trackStats.towerHighestFloor || 0, target: 50 },
+            { label: 'Collect 500 cards', current: $club.length, target: 500 },
+            { label: 'Earn 500 Trophy Points', current: $weightedTrophies, target: 500 },
+            { label: 'Earn 1000 Trophy Points', current: $weightedTrophies, target: 1000 },
+        ];
+        const incomplete = all.filter(m => m.current < m.target);
+        const complete = all.filter(m => m.current >= m.target);
+        return [...incomplete.slice(0, 4), ...complete.slice(-1)].slice(0, 5);
+    })();
+
+    $: legacyCount = $club.filter(c => [...LEGACY_TIERS, ...AWARD_TIERS].includes(c.quality)).length;
+    $: legacyBreakdown = (() => {
+        const counts = {};
+        $club.forEach(c => { if ([...LEGACY_TIERS, ...AWARD_TIERS].includes(c.quality)) counts[c.quality] = (counts[c.quality] || 0) + 1; });
+        return [...LEGACY_TIERS, ...AWARD_TIERS].map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0);
+    })();
 
     const updates = [
-        { ver: '1.0', text: 'New Svelte engine, Bronze tier, POTY/ROTY cards' },
-        { ver: '0.7', text: 'Performance overhaul — cached DB, virtual scroll' },
-        { ver: '0.6.9', text: 'Holographic cards, sound effects, card inspection' },
+        { ver: '1.0.9.2', text: 'Bench system, squad lock, combat overhaul, bulk contracts, drag-and-drop showcase' },
+        { ver: '1.0.9.1', text: 'Quest badges, battle pass XP, meta expansion, trade locks, cooldown persistence' },
+        { ver: '1.0.7', text: 'Era synergy, Infinity Tower, Golden Road, Trade Market, Battle Pass, Daily Login' },
     ];
 </script>
 
@@ -327,13 +357,16 @@
                 <div class="panel-label">Career Stats</div>
                 <div class="career-list">
                     {#each [
-                        ['Tournaments', $trackStats.tournamentsWon || 0, ''],
+                        ['Cafe Wins', $trackStats.cafeWins || 0, ''],
+                        ['Regional Wins', $trackStats.regionalSplitWon || 0, 'color-blue'],
+                        ['First Stand', $trackStats.firstStandWon || 0, 'color-orange'],
+                        ['MSI Wins', $trackStats.msiWon || 0, 'color-cyan'],
+                        ['Worlds Wins', $trackStats.worldsWon || 0, 'color-amber'],
                         ['Golden Roads', $trackStats.goldenRoads || 0, 'color-yellow'],
-                        ['Splits', $trackStats.splitsCompleted || 0, 'color-blue'],
-                        ['Packs', $trackStats.packs || 0, ''],
-                        ['Cards Sold', $trackStats.soldCount || 0, ''],
-                        ['Worlds', $trackStats.worldsWon || 0, 'color-amber'],
+                        ['Splits Done', $trackStats.splitsCompleted || 0, 'color-blue'],
                         ['Tower Best', $trackStats.towerHighestFloor || 0, 'color-red'],
+                        ['Packs Opened', $trackStats.packs || 0, ''],
+                        ['Cards Sold', $trackStats.soldCount || 0, ''],
                     ] as [label, value, cls]}
                         <div class="career-row">
                             <span class="career-label">{label}</span>
@@ -342,28 +375,57 @@
                     {/each}
                 </div>
             </div>
+
+            <!-- Legacy Collection -->
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label gold">Legacy & Award Cards</div>
+                {#if legacyBreakdown.length === 0}
+                    <div class="empty-state">No legacy cards yet. Win tournaments to earn them!</div>
+                {:else}
+                    <div class="tier-bars">
+                        {#each legacyBreakdown as { tier, count }}
+                            <div class="tier-row">
+                                <span class="tier-name">{tier}</span>
+                                <div class="tier-track"><div class="tier-fill" style="width: {Math.min(100, (count / Math.max(...legacyBreakdown.map(t => t.count), 1)) * 100)}%; background: {tierGradients[tier] || 'linear-gradient(90deg, #64748b, #475569)'}"></div></div>
+                                <span class="tier-count">{count}</span>
+                            </div>
+                        {/each}
+                    </div>
+                    <div class="collection-footer">{legacyCount} total legacy cards</div>
+                {/if}
+            </div>
+
+            <!-- Coming Soon -->
+            <div class="panel coming-soon" style="padding: 16px;">
+                <div class="panel-label purple">Coming Soon</div>
+                <div class="cs-list">
+                    <div class="cs-item">
+                        <span class="cs-icon">🎯</span>
+                        <div>
+                            <div class="cs-name">Draft Mode</div>
+                            <div class="cs-desc">Draft players from a shared pool against CPU. Build a team from scratch each run.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">💰</span>
+                        <div>
+                            <div class="cs-name">Salary Cap Mode</div>
+                            <div class="cs-desc">Build a squad under a budget. Higher-rated players cost more.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">🏟️</span>
+                        <div>
+                            <div class="cs-name">Franchise Mode</div>
+                            <div class="cs-desc">Manage a team across multiple seasons. Sign, trade, and develop players.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Update Log -->
-    <div class="update-panel">
-        <div class="update-header">
-            <span class="update-badge">Beta 1.0.9.2</span>
-            <span class="update-title">What's New</span>
-        </div>
-        <div class="update-list">
-            <div class="update-item">🪑 <strong>Bench System</strong> — Unlock up to 3 bench slots in Squad Builder. During season splits, swap starters with bench players only.</div>
-            <div class="update-item">🔒 <strong>Squad Lock</strong> — Squad is fully locked during active splits. No roster changes except bench swaps.</div>
-            <div class="update-item">⚔️ <strong>Combat Overhaul</strong> — Power comparison bar, Stat vs Net split on play buttons, full match log breakdown with luck rolls.</div>
-            <div class="update-item">📦 <strong>Bulk Contracts</strong> — Repeatable quests claim all completions in one press (e.g. ×5 at once).</div>
-            <div class="update-item">⭐ <strong>Card Showcase</strong> — Moved to Club Vault with drag-and-drop reordering. Add cards via ⭐ button.</div>
-            <div class="update-item">🔔 <strong>Upgrade Badges</strong> — Notification badges show available upgrades by tier and role.</div>
-            <div class="update-item">🏆 <strong>Battle Pass Auto-Level</strong> — Tiers advance automatically from XP. Just claim rewards.</div>
-            <div class="update-item">🎟️ <strong>Redeem Codes</strong> — Enter codes in Settings for free rewards. Try <strong>MSISIG2024</strong>.</div>
-            <div class="update-item">📊 <strong>Player Ratings</strong> — 31 players updated based on real 2026 LCK/LPL/LEC/LCS performance data.</div>
-            <div class="update-item">🐛 <strong>Bug Fixes</strong> — Season split infinite loop, carried-over account data, CFO team name, runner-up rewards.</div>
-        </div>
-    </div>
+
 </section>
 
 <style>
@@ -571,23 +633,17 @@
     .career-label { color: #475569; }
     .career-val { font-weight: 800; color: #94a3b8; }
 
-    /* Update Log */
-    .update-panel {
-        margin-top: 24px; padding: 20px; border-radius: 16px;
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-    }
-    .update-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-    .update-badge {
-        padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 900;
-        background: linear-gradient(135deg, #d97706, #f59e0b); color: #1c1917;
-        letter-spacing: 0.5px;
-    }
-    .update-title { font-size: 14px; font-weight: 900; color: #e2e8f0; }
-    .update-list { display: flex; flex-direction: column; gap: 6px; }
-    .update-item {
-        font-size: 11px; color: #94a3b8; line-height: 1.5;
-        padding: 6px 10px; border-radius: 8px;
-        background: rgba(15,23,42,0.3);
-    }
-    .update-item strong { color: #e2e8f0; }
+    /* Extra colors */
+    .color-orange { color: #fb923c; }
+    .color-cyan { color: #22d3ee; }
+    .panel-label.gold { color: #fbbf24; }
+    .panel-label.purple { color: #c084fc; }
+
+    /* Coming Soon */
+    .coming-soon { border-color: rgba(168,85,247,0.15) !important; }
+    .cs-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+    .cs-item { display: flex; gap: 10px; align-items: start; padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.3); }
+    .cs-icon { font-size: 18px; flex-shrink: 0; margin-top: 2px; }
+    .cs-name { font-size: 11px; font-weight: 900; color: #c084fc; }
+    .cs-desc { font-size: 9px; color: #475569; margin-top: 2px; line-height: 1.4; }
 </style>
