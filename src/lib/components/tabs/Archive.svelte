@@ -193,6 +193,32 @@
     $: ownedCards = cards.filter(c => $collectionRegistry[c.id]).length;
     $: completionPct = totalCards > 0 ? Math.round((ownedCards / totalCards) * 100) : 0;
 
+    $: fullTeamSizes = (() => {
+        const sizes = {};
+        let pool;
+        if (activeCategory === 'regular') {
+            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
+        } else {
+            const qual = catToQuality[activeCategory];
+            pool = qual ? db.filter(c => c.quality === qual) : [];
+        }
+        pool.forEach(c => { sizes[c.team] = (sizes[c.team] || 0) + 1; });
+        return sizes;
+    })();
+
+    $: fullTeamOwned = (() => {
+        const owned = {};
+        let pool;
+        if (activeCategory === 'regular') {
+            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
+        } else {
+            const qual = catToQuality[activeCategory];
+            pool = qual ? db.filter(c => c.quality === qual) : [];
+        }
+        pool.forEach(c => { if ($collectionRegistry[c.id]) owned[c.team] = (owned[c.team] || 0) + 1; });
+        return owned;
+    })();
+
     const roleOrder = { TOP: 1, JNG: 2, MID: 3, ADC: 4, SUP: 5, COACH: 6 };
 </script>
 
@@ -288,15 +314,17 @@
     {:else}
         <div class="team-list">
             {#each grouped as group}
-                {@const pct = group.cards.length > 0 ? Math.round((group.owned / group.cards.length) * 100) : 0}
-                {@const isComplete = group.owned === group.cards.length && group.cards.length > 0}
+                {@const fullSize = fullTeamSizes[group.team] || group.cards.length}
+                {@const fullOwned = fullTeamOwned[group.team] || 0}
+                {@const pct = fullSize > 0 ? Math.round((fullOwned / fullSize) * 100) : 0}
+                {@const isComplete = fullOwned === fullSize && fullSize > 0}
                 <div class="team-panel" class:team-complete={isComplete}>
                     <!-- Team Header -->
                     <div class="team-header">
                         <div class="th-left">
                             <h3 class="team-name" class:team-name-complete={isComplete}>{group.team}</h3>
                             <span class="team-stats" class:team-stats-complete={isComplete}>
-                                {isComplete ? '✓' : ''} {group.owned}/{group.cards.length} ({pct}%)
+                                {isComplete ? '✓' : ''} {fullOwned}/{fullSize} ({pct}%)
                             </span>
                         </div>
                         {#if isComplete && !claimedTeams[makeTeamKey(group)]}
