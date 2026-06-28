@@ -3,7 +3,7 @@
     import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad, resetPassword } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
-    import { club, collectionRegistry, blueEssence, saveGame } from '../../stores/game.js';
+    import { club, collectionRegistry, blueEssence, seasonData, saveGame } from '../../stores/game.js';
     import { clearStorage } from '../../utils/storage.js';
     import { getDB, makeUniqueId } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
@@ -69,6 +69,24 @@
         });
     }
 
+    function resetSplit() {
+        openConfirmModal('This will reset your current season split progress (opponents, match results, meta). Your split count, trophies, and wins are kept. Use this if your split is bugged.', () => {
+            seasonData.update(s => ({
+                ...s,
+                opponents: [],
+                matchResults: [],
+                meta: [],
+                lockedSquad: null,
+                splitWins: 0,
+                splitLosses: 0,
+                swapsUsed: 0,
+            }));
+            localStorage.removeItem('lur_split_cooldown');
+            saveGame();
+            showToast('Season split reset. You can start a fresh split now.', 'success');
+        });
+    }
+
     async function handleSignIn() {
         if (!email || !password) { showToast('Enter email and password.', 'error'); return; }
         const ok = await signIn(email, password);
@@ -124,6 +142,11 @@
                             <input type="text" bind:value={redeemCode} placeholder="Enter code..." class="redeem-input" on:keydown={(e) => e.key === 'Enter' && redeemCodeFn()}>
                             <button class="redeem-btn" on:click={redeemCodeFn}>Redeem</button>
                         </div>
+                    </div>
+                    <div class="reset-section">
+                        <div class="s-title">🔄 Troubleshooting</div>
+                        <button class="reset-btn" on:click={resetSplit}>Reset Season Split</button>
+                        <div class="reset-hint">Fixes bugged splits from carried-over accounts. Keeps your trophies and win history.</div>
                     </div>
                     <div class="wipe-section">
                         <div class="wipe-label">Danger Zone</div>
@@ -207,6 +230,11 @@
                             <input type="text" bind:value={redeemCode} placeholder="Enter code..." class="redeem-input" on:keydown={(e) => e.key === 'Enter' && redeemCodeFn()}>
                             <button class="redeem-btn" on:click={redeemCodeFn}>Redeem</button>
                         </div>
+                    </div>
+                    <div class="reset-section">
+                        <div class="s-title">🔄 Troubleshooting</div>
+                        <button class="reset-btn" on:click={resetSplit}>Reset Season Split</button>
+                        <div class="reset-hint">Fixes bugged splits from carried-over accounts. Keeps your trophies and win history.</div>
                     </div>
                     <div class="wipe-section">
                         <div class="wipe-label">Danger Zone</div>
@@ -405,6 +433,17 @@
         text-transform: uppercase; cursor: pointer; transition: all 0.12s;
     }
     .redeem-btn:hover { box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+
+    /* Reset Split */
+    .reset-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(51,65,85,0.15); }
+    .reset-btn {
+        width: 100%; margin-top: 8px; padding: 10px; border-radius: 10px;
+        background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2);
+        color: #fbbf24; font-size: 11px; font-weight: 900;
+        cursor: pointer; transition: all 0.12s;
+    }
+    .reset-btn:hover { background: rgba(245,158,11,0.2); border-color: rgba(245,158,11,0.35); }
+    .reset-hint { font-size: 9px; color: #475569; margin-top: 4px; }
 
     /* Wipe / Danger Zone */
     .wipe-section {
