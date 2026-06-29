@@ -87,13 +87,19 @@
         ];
     }
 
+    function getPackCost(pack) {
+        if (pack.id === 'msi' && Date.now() < MSI_EVENT_END) return 3500;
+        return pack.cost;
+    }
+
     function buyPack(pack) {
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
+        const cost = getPackCost(pack);
         const be = get(blueEssence);
-        if (be < pack.cost) { showToast('Not enough BE.', 'error'); return; }
+        if (be < cost) { showToast('Not enough BE.', 'error'); return; }
 
-        blueEssence.update(v => v - pack.cost);
+        blueEssence.update(v => v - cost);
         const pulled = [];
         const holoChance = 0.01;
         const sigChance = 0.001;
@@ -294,6 +300,8 @@
     <div class="packs-header">Card Packs</div>
     <div class="packs-row">
         {#each allPacks as pack}
+            {@const effectiveCost = getPackCost(pack)}
+            {@const isDiscounted = effectiveCost < pack.cost}
             <div class="pack" style="background: {pack.bg}; border-color: {pack.borderColor};">
                 <div class="pack-foil"></div>
                 <div class="pack-content">
@@ -303,7 +311,14 @@
                     <div class="pack-best" style="color: {pack.color};">Best: {pack.drops[0].tier} ({pack.drops[0].pct}%)</div>
                 </div>
                 <div class="pack-buttons">
-                    <button class="pack-btn pack-buy" style="border-color: {pack.borderColor};" on:click={() => buyPack(pack)}>💎 {pack.cost.toLocaleString()} BE</button>
+                    <button class="pack-btn pack-buy" style="border-color: {pack.borderColor};" on:click={() => buyPack(pack)}>
+                        {#if isDiscounted}
+                            <span class="pack-old-price">💎 {pack.cost.toLocaleString()}</span>
+                            <span class="pack-new-price">💎 {effectiveCost.toLocaleString()} BE</span>
+                        {:else}
+                            💎 {pack.cost.toLocaleString()} BE
+                        {/if}
+                    </button>
                     <button class="pack-btn pack-preview-btn" style="border-color: {pack.borderColor}; color: {pack.color};" on:click={() => previewPack = pack}>Preview</button>
                 </div>
             </div>
@@ -517,6 +532,8 @@
     .pack-btn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.14); }
     .pack-buttons { display: flex; gap: 6px; margin: 0 14px 14px; }
     .pack-buy { flex: 1; }
+    .pack-old-price { text-decoration: line-through; color: #475569; font-size: 9px; margin-right: 4px; }
+    .pack-new-price { color: #34d399; font-weight: 900; }
     .pack-preview-btn { flex: 0 0 auto; background: transparent !important; font-size: 11px !important; }
     .pack-best { font-size: 10px; margin-top: 12px; font-weight: 700; }
 
