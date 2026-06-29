@@ -1148,6 +1148,29 @@ const baseDatabase = [
     { id: 9222, name: "Ming",   role: "SUP",   team: "RNG", year: 2022, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 89, tmf: 97, frm: 97, cmp: 97, map: 99, ldr: 98 } },
     { id: 9223, name: "KenZhu", role: "COACH", team: "RNG", year: 2022, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 92, map: 93, ldr: 95 } },
 
+    // G2 Esports 2019 — MSI Champions (first EU team to win MSI, swept TL 3-0)
+    { id: 9230, name: "Wunder",  role: "TOP",   team: "G2", year: 2019, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 93, frm: 95, cmp: 93, map: 90, ldr: 91 } },
+    { id: 9231, name: "Jankos",  role: "JNG",   team: "G2", year: 2019, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 93, tmf: 96, frm: 93, cmp: 95, map: 96, ldr: 94 } },
+    { id: 9232, name: "Caps",    role: "MID",   team: "G2", year: 2019, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 97, frm: 96, cmp: 97, map: 95, ldr: 93 } },
+    { id: 9233, name: "Perkz",   role: "ADC",   team: "G2", year: 2019, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 97, tmf: 95, frm: 97, cmp: 96, map: 93, ldr: 92 } },
+    { id: 9234, name: "Mikyx",   role: "SUP",   team: "G2", year: 2019, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 88, tmf: 96, frm: 95, cmp: 95, map: 97, ldr: 95 } },
+    { id: 9235, name: "GrabbZ",  role: "COACH", team: "G2", year: 2019, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 93, map: 94, ldr: 95 } },
+
+    // RNG 2021 — MSI Champions (beat DK 3-2, GALA Finals MVP)
+    { id: 9240, name: "Xiaohu",  role: "TOP",   team: "RNG", year: 2021, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 96, tmf: 95, frm: 96, cmp: 94, map: 92, ldr: 93 } },
+    { id: 9241, name: "Wei",     role: "JNG",   team: "RNG", year: 2021, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 91, tmf: 93, frm: 93, cmp: 95, map: 95, ldr: 92 } },
+    { id: 9242, name: "Cryin",   role: "MID",   team: "RNG", year: 2021, rating: 89, quality: "MSI", region: "Legacy", stats: { mec: 91, tmf: 88, frm: 89, cmp: 88, map: 86, ldr: 85 } },
+    { id: 9243, name: "GALA",    role: "ADC",   team: "RNG", year: 2021, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 97, tmf: 94, frm: 96, cmp: 95, map: 90, ldr: 89 } },
+    { id: 9244, name: "Ming",    role: "SUP",   team: "RNG", year: 2021, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 88, tmf: 96, frm: 96, cmp: 96, map: 98, ldr: 97 } },
+
+    // RNG 2018 — MSI Champions (beat KZ 3-1, Uzi Finals MVP, first non-KR Bo5 win since 2015)
+    { id: 9250, name: "Letme",   role: "TOP",   team: "RNG", year: 2018, rating: 91, quality: "MSI", region: "Legacy", stats: { mec: 89, tmf: 92, frm: 91, cmp: 92, map: 88, ldr: 90 } },
+    { id: 9251, name: "Karsa",   role: "JNG",   team: "RNG", year: 2018, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 91, tmf: 94, frm: 91, cmp: 94, map: 95, ldr: 93 } },
+    { id: 9252, name: "Xiaohu",  role: "MID",   team: "RNG", year: 2018, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 94, frm: 94, cmp: 93, map: 91, ldr: 92 } },
+    { id: 9253, name: "Uzi",     role: "ADC",   team: "RNG", year: 2018, rating: 98, quality: "MSI", region: "Legacy", stats: { mec: 99, tmf: 97, frm: 99, cmp: 98, map: 93, ldr: 92 } },
+    { id: 9254, name: "Ming",    role: "SUP",   team: "RNG", year: 2018, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 95, frm: 95, cmp: 96, map: 97, ldr: 96 } },
+    { id: 9255, name: "Heart",   role: "COACH", team: "RNG", year: 2018, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 93, map: 94, ldr: 95 } },
+
     // JDG 2023 — MSI Champions (80% WR, 15G)
     { id: 9212, name: "369",     role: "TOP",   team: "JDG", year: 2023, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 91, frm: 94, cmp: 96, map: 90, ldr: 91 } },
     { id: 9213, name: "Kanavi",  role: "JNG",   team: "JDG", year: 2023, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 96, frm: 95, cmp: 97, map: 97, ldr: 93 } },
