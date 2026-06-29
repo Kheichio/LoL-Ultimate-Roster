@@ -16,11 +16,16 @@
         { id: 'mq8', cat: 'collection', desc: 'Pull 10 Holographic Cards', target: 10, stat: 'holographicPulled', reward: 8000 },
         { id: 'mq6', cat: 'collection', desc: 'Pull a Signature Card', target: 1, stat: 'signaturesPulled', reward: 3000 },
         { id: 'mq7', cat: 'collection', desc: 'Pull 5 Signature Cards', target: 5, stat: 'signaturesPulled', reward: 8000 },
+        { id: 'mq60', cat: 'collection', desc: 'Open 500 Card Packs', target: 500, stat: 'packs', reward: 20000 },
+        { id: 'mq61', cat: 'collection', desc: 'Pull 25 Holographic Cards', target: 25, stat: 'holographicPulled', reward: 15000 },
+        { id: 'mq62', cat: 'collection', desc: 'Pull 10 Signature Cards', target: 10, stat: 'signaturesPulled', reward: 15000 },
         // Economy
         { id: 'mq10', cat: 'economy', desc: 'Sell 10 Cards', target: 10, stat: 'soldCount', reward: 400 },
         { id: 'mq11', cat: 'economy', desc: 'Sell 50 Cards', target: 50, stat: 'soldCount', reward: 1500 },
         { id: 'mq12', cat: 'economy', desc: 'Sell 200 Cards', target: 200, stat: 'soldCount', reward: 4000 },
         { id: 'mq13', cat: 'economy', desc: 'Sell 500 Cards', target: 500, stat: 'soldCount', reward: 8000 },
+        { id: 'mq63', cat: 'economy', desc: 'Perform 10 Upgrades', target: 10, stat: 'upgradesPerformed', reward: 3000 },
+        { id: 'mq64', cat: 'economy', desc: 'Perform 50 Upgrades', target: 50, stat: 'upgradesPerformed', reward: 10000 },
         // Competitive
         { id: 'mq20', cat: 'competitive', desc: 'Win a Tournament', target: 1, stat: 'tournamentsWon', reward: 800 },
         { id: 'mq21', cat: 'competitive', desc: 'Win 5 Tournaments', target: 5, stat: 'tournamentsWon', reward: 3000 },
@@ -38,6 +43,15 @@
         { id: 'mq36', cat: 'competitive', desc: 'Win 3 MSIs', target: 3, stat: 'msiWon', reward: 8000 },
         { id: 'mq37', cat: 'competitive', desc: 'Win a World Championship', target: 1, stat: 'worldsWon', reward: 5000 },
         { id: 'mq38', cat: 'competitive', desc: 'Win 3 World Championships', target: 3, stat: 'worldsWon', reward: 12000 },
+        { id: 'mq65', cat: 'competitive', desc: 'Win a Draft Mode', target: 1, stat: 'draftModesWon', reward: 1500 },
+        { id: 'mq66', cat: 'competitive', desc: 'Win 5 Draft Modes', target: 5, stat: 'draftModesWon', reward: 5000 },
+        { id: 'mq67', cat: 'competitive', desc: 'Win 25 Draft Modes', target: 25, stat: 'draftModesWon', reward: 12000 },
+        { id: 'mq68', cat: 'competitive', desc: 'Play 10 Draft Modes', target: 10, stat: 'draftModesPlayed', reward: 3000 },
+        { id: 'mq69', cat: 'competitive', desc: 'Play 50 Draft Modes', target: 50, stat: 'draftModesPlayed', reward: 10000 },
+        { id: 'mq70', cat: 'competitive', desc: 'Win 10 First Stands', target: 10, stat: 'firstStandWon', reward: 12000 },
+        { id: 'mq71', cat: 'competitive', desc: 'Win 5 MSIs', target: 5, stat: 'msiWon', reward: 15000 },
+        { id: 'mq72', cat: 'competitive', desc: 'Win 5 World Championships', target: 5, stat: 'worldsWon', reward: 25000 },
+        { id: 'mq73', cat: 'competitive', desc: 'Win 100 Gaming Cafes', target: 100, stat: 'cafeWins', reward: 12000 },
         // Progression
         { id: 'mq30', cat: 'progression', desc: 'Complete a Season Split', target: 1, stat: 'splitsCompleted', reward: 2000 },
         { id: 'mq31', cat: 'progression', desc: 'Complete 5 Season Splits', target: 5, stat: 'splitsCompleted', reward: 5000 },
@@ -50,6 +64,9 @@
         { id: 'mq42', cat: 'progression', desc: 'Reach Tower Floor 25', target: 25, stat: 'towerHighestFloor', reward: 5000 },
         { id: 'mq43', cat: 'progression', desc: 'Reach Tower Floor 50', target: 50, stat: 'towerHighestFloor', reward: 10000 },
         { id: 'mq44', cat: 'progression', desc: 'Reach Tower Floor 100', target: 100, stat: 'towerHighestFloor', reward: 20000 },
+        { id: 'mq74', cat: 'progression', desc: 'Reach Tower Floor 200', target: 200, stat: 'towerHighestFloor', reward: 40000 },
+        { id: 'mq75', cat: 'progression', desc: 'Complete 100 Season Splits', target: 100, stat: 'splitsCompleted', reward: 35000 },
+        { id: 'mq76', cat: 'progression', desc: 'Complete 25 Golden Roads', target: 25, stat: 'goldenRoads', reward: 40000 },
     ];
 
     const repeatableQuests = [
@@ -60,6 +77,9 @@
         { id: 'rq3', desc: 'Sell 5 Cards', target: 5, stat: 'soldCount', reward: 200 },
         { id: 'rq7', desc: 'Sell 10 Cards', target: 10, stat: 'soldCount', reward: 300 },
         { id: 'rq5', desc: 'Complete 2 Season Splits', target: 2, stat: 'splitsCompleted', reward: 800 },
+        { id: 'rq8', desc: 'Win 2 Draft Modes', target: 2, stat: 'draftModesWon', reward: 700 },
+        { id: 'rq9', desc: 'Win 10 Tournaments', target: 10, stat: 'tournamentsWon', reward: 1200 },
+        { id: 'rq10', desc: 'Perform 5 Upgrades', target: 5, stat: 'upgradesPerformed', reward: 500 },
     ];
 
     const achievements = [
@@ -80,6 +100,14 @@
         { id: 'a13', desc: 'Reach Manager Level 50', type: 'managerLvl', target: 50, reward: 15000 },
         { id: 'a16', desc: 'Reach Tower Floor 50', type: 'towerBest', target: 50, reward: 10000 },
         { id: 'a17', desc: 'Reach Tower Floor 100', type: 'towerBest', target: 100, reward: 25000 },
+        { id: 'a18', desc: 'Own 1000 Cards', type: 'clubSize', target: 1000, reward: 15000 },
+        { id: 'a19', desc: 'Field a Squad Averaging 98+ Rating', type: 'squadAvg', target: 98, reward: 12000 },
+        { id: 'a20', desc: 'Reach Manager Level 100', type: 'managerLvl', target: 100, reward: 30000 },
+        { id: 'a21', desc: 'Reach Tower Floor 200', type: 'towerBest', target: 200, reward: 50000 },
+        { id: 'a22', desc: 'Own 5 Signature Cards', type: 'sigCards', target: 5, reward: 5000 },
+        { id: 'a23', desc: 'Own 50 Holographic Cards', type: 'holoCards', target: 50, reward: 12000 },
+        { id: 'a24', desc: 'Win 10 Draft Modes', type: 'draftWins', target: 10, reward: 8000 },
+        { id: 'a25', desc: 'Win 50 Draft Modes', type: 'draftWins', target: 50, reward: 20000 },
     ];
 
     $: claimed = $questsClaimed;
@@ -104,6 +132,7 @@
             if (a.type === 'holoCards') return ($club || []).filter(c => c && c.holographic).length;
             if (a.type === 'managerLvl') return $managerLevel || 1;
             if (a.type === 'towerBest') return $trackStats.towerHighestFloor || 0;
+            if (a.type === 'draftWins') return $trackStats.draftModesWon || 0;
         } catch(e) { return 0; }
         return 0;
     }

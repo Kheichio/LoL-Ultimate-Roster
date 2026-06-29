@@ -97,7 +97,13 @@
     $: myAvailable = myPool.filter(c => !cpuBans.has(c.uniqueId));
     $: cpuAvailable = cpuPool.filter(c => !myBans.has(c.id));
     $: myAssigned = new Set(Object.values(mySquad).filter(Boolean).map(c => c.uniqueId));
-    $: myUnassigned = myAvailable.filter(c => !myAssigned.has(c.uniqueId));
+    $: myUnassigned = myAvailable.filter(c => !myAssigned.has(c.uniqueId)).sort((a, b) => {
+        if (!assigningRole) return b.rating - a.rating;
+        const aNat = a.role === assigningRole || LEGACY_TIERS.includes(a.quality) ? 0 : 1;
+        const bNat = b.role === assigningRole || LEGACY_TIERS.includes(b.quality) ? 0 : 1;
+        if (aNat !== bNat) return aNat - bNat;
+        return b.rating - a.rating;
+    });
 
     function assignToRole(card) {
         if (!assigningRole) return;

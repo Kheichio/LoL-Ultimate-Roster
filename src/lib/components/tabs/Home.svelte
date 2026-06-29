@@ -116,9 +116,9 @@
     })();
 
     const updates = [
+        { ver: '1.1.1.2', text: '55 quests, 25 achievements, Draft Mode fixes, pity counter fix, ON card buff' },
         { ver: '1.1.0', text: 'Draft Mode, MSI 2026 Event, Wealth skill, Conditioning fix, dynamic milestones' },
         { ver: '1.0.9.2', text: 'Bench system, squad lock, combat overhaul, drag-and-drop showcase' },
-        { ver: '1.0.9.1', text: 'Quest badges, battle pass XP, meta expansion, trade locks' },
     ];
 </script>
 
