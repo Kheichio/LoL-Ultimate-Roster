@@ -306,6 +306,27 @@
                 <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>
             </div>
 
+            <div class="match-layout">
+                <div class="team-block">
+                    <div class="arena-label arena-label-blue">Your Squad ({myPower})</div>
+                    <div class="arena-grid-2x3">
+                        {#each [['TOP','JNG'],['MID','ADC'],['SUP']] as row}
+                            {#each row as role}
+                                <div class="arena-cell">
+                                    {#if mySquad[role]}
+                                        <Card card={mySquad[role]} mini={true} onclick={() => {}} />
+                                        {#if mySquad[role].role !== role && !LEGACY_TIERS.includes(mySquad[role].quality)}
+                                            <div class="flex-tag-sm">FLEX</div>
+                                        {/if}
+                                    {/if}
+                                </div>
+                            {/each}
+                        {/each}
+                    </div>
+                </div>
+
+                <div class="arena-center">
+
             <div class="power-compare">
                 <span class="pc-side pc-blue">{myPower}</span>
                 <div class="pc-center">
@@ -354,6 +375,24 @@
                     </div>
                 </div>
             {/if}
+
+                </div><!-- end arena-center -->
+
+                <div class="team-block">
+                    <div class="arena-label arena-label-red">CPU Squad ({cpuPower})</div>
+                    <div class="arena-grid-2x3">
+                        {#each [['TOP','JNG'],['MID','ADC'],['SUP']] as row}
+                            {#each row as role}
+                                <div class="arena-cell">
+                                    {#if cpuSquad[role]}
+                                        <Card card={cpuSquad[role]} mini={true} onclick={() => {}} />
+                                    {/if}
+                                </div>
+                            {/each}
+                        {/each}
+                    </div>
+                </div>
+            </div><!-- end match-layout -->
         </div>
 
     {:else if phase === 'result'}
@@ -416,7 +455,18 @@
     .pick-flex { border-color: rgba(239,68,68,0.15); }
     .pick-penalty { position: absolute; top: 4px; right: 4px; z-index: 5; font-size: 8px; font-weight: 900; color: #f87171; background: rgba(127,29,29,0.8); padding: 2px 6px; border-radius: 4px; }
 
-    /* Match */
+    /* Match Layout */
+    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
+    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
+    .team-block { display: flex; flex-direction: column; gap: 6px; }
+    .arena-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; text-align: center; padding: 6px 10px; border-radius: 8px; }
+    .arena-label-blue { color: #60a5fa; background: rgba(59,130,246,0.08); }
+    .arena-label-red { color: #f87171; background: rgba(239,68,68,0.08); }
+    .arena-grid-2x3 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .arena-cell { display: flex; justify-content: center; position: relative; }
+    .flex-tag-sm { position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%); font-size: 7px; font-weight: 900; color: #f87171; background: rgba(127,29,29,0.8); padding: 1px 6px; border-radius: 3px; }
+    .arena-center { min-width: 0; }
+
     .match-header { text-align: center; margin-bottom: 16px; }
     .mh-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; }
     .mh-score { font-size: 28px; font-weight: 900; }

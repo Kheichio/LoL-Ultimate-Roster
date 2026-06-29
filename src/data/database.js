@@ -1173,7 +1173,7 @@ const baseDatabase = [
     { id: 9307, name: "Xun",    role: "JNG", team: "BLG", year: 2026, rating: 93, quality: "FirstStand", region: "Legacy", stats: { mec: 92, tmf: 93, frm: 93, cmp: 93, map: 95, ldr: 91 } },
     { id: 9308, name: "Knight", role: "MID", team: "BLG", year: 2026, rating: 99, quality: "FirstStand", region: "Legacy", stats: { mec: 99, tmf: 99, frm: 98, cmp: 97, map: 96, ldr: 94 } },
     { id: 9309, name: "Viper",  role: "ADC", team: "BLG", year: 2026, rating: 98, quality: "FirstStand", region: "Legacy", stats: { mec: 99, tmf: 98, frm: 98, cmp: 97, map: 92, ldr: 91 } },
-    { id: 9310, name: "ON",     role: "SUP", team: "BLG", year: 2026, rating: 92, quality: "FirstStand", region: "Legacy", stats: { mec: 87, tmf: 93, frm: 92, cmp: 92, map: 94, ldr: 91 } },
+    { id: 9310, name: "ON",     role: "SUP", team: "BLG", year: 2026, rating: 97, quality: "FirstStand", region: "Legacy", stats: { mec: 92, tmf: 96, frm: 97, cmp: 97, map: 98, ldr: 96 } },
 
     // HLE 2025 — First Stand Champions (82.4% WR, 17G)
     { id: 9301, name: "Zeus",    role: "TOP", team: "HLE", year: 2025, rating: 95, quality: "FirstStand", region: "Legacy", stats: { mec: 98, tmf: 94, frm: 96, cmp: 92, map: 91, ldr: 89 } },
