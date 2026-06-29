@@ -158,7 +158,8 @@
     $: eraChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>getEra(c.year))).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
     $: teamChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); return !nl.length||new Set(nl.map(c=>c.team)).size===1?2:0; })();
     $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
-    $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus;
+    $: conditioningBonus = $skills.conditioning || 0;
+    $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus + conditioningBonus;
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
     $: tacticsLevel = $skills.tactics || 0;
     const STAT_KEYS = ['mec','tmf','map','frm','cmp'];

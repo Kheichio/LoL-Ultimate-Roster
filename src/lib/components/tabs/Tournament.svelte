@@ -77,7 +77,8 @@
     $: eraChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); if(!nl.length) return 5; const s=new Set(nl.map(c=>getEra(c.year))).size; return s<=1?5:s<=2?3:s<=3?2:1; })();
     $: teamChem = !squadReady?0:(()=>{ const nl=starters.filter(c=>!LEGACY_TIERS.includes(c.quality)); return !nl.length||new Set(nl.map(c=>c.team)).size===1?2:0; })();
     $: legacyBonus = (()=>{ const c=starters.filter(c=>LEGACY_TIERS.includes(c.quality)).length; return c>=4?2:c>=2?1:0; })();
-    $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus;
+    $: conditioningBonus = $skills.conditioning || 0;
+    $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus + conditioningBonus;
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
     $: tacticsLevel = $skills.tactics || 0;
     $: powerDiff = currentEnemy ? totalPower - (currentEnemy.avgRating || 0) : 0;
@@ -404,15 +405,18 @@
                 <button class="mode-enter-btn" style="background: linear-gradient(135deg, #dc2626, #ef4444);" on:click|stopPropagation={() => switchTab('tower')}>Enter</button>
             </div>
 
-            <!-- Coming Soon -->
-            <div class="mode-row mode-coming-soon" style="border-color: rgba(168,85,247,0.15); opacity: 0.6;">
+            <!-- Draft Mode -->
+            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+            <div class="mode-row" style="border-color: rgba(168,85,247,0.2);" on:click={() => switchTab('draft')}>
                 <span class="mode-icon">🎯</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: #c084fc;">Draft Mode</h3>
-                    <p class="mode-sub">Draft players from a shared pool against CPU opponents. Build a unique team each run.</p>
+                    <p class="mode-sub">15 random cards, 5 bans each, build a squad and battle. Off-role cards get -10 penalty.</p>
+                    <div class="mode-prizes"><span class="mp-w">Win: 2,000 BE</span><span class="mp-l">Loss: 500 BE</span></div>
                 </div>
-                <span class="mode-soon-tag">Coming Soon</span>
+                <button class="mode-enter-btn" style="background: linear-gradient(135deg, #7c3aed, #a855f7);" on:click|stopPropagation={() => switchTab('draft')}>Enter</button>
             </div>
+            <!-- Coming Soon -->
             <div class="mode-row mode-coming-soon" style="border-color: rgba(168,85,247,0.15); opacity: 0.6;">
                 <span class="mode-icon">💰</span>
                 <div class="mode-info">

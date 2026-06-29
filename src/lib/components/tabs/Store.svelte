@@ -7,6 +7,8 @@
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
 
+    import { onDestroy } from 'svelte';
+
     let pulledCards = [];
     let pullTitle = '';
     let showPulls = false;
@@ -16,6 +18,28 @@
 
     $: scoutLevel = $skills.scouting || 0;
     $: scoutBonus = scoutLevel * 0.25;
+
+    const MSI_EVENT_END = new Date('2026-06-30T23:59:59Z').getTime();
+    const MSI_PITY_TARGET = 70;
+    let eventTimeLeft = '';
+    let eventTimer = null;
+
+    $: msiEventActive = Date.now() < MSI_EVENT_END;
+    $: msiPityCount = (() => {
+        try { return parseInt(localStorage.getItem('lur_msi_pity') || '0'); } catch(e) { return 0; }
+    })();
+
+    function updateEventTimer() {
+        const remaining = Math.max(0, MSI_EVENT_END - Date.now());
+        if (remaining <= 0) { eventTimeLeft = 'Event Ended'; if (eventTimer) { clearInterval(eventTimer); eventTimer = null; } return; }
+        const h = Math.floor(remaining / 3600000);
+        const m = Math.floor((remaining % 3600000) / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        eventTimeLeft = `${h}h ${m}m ${s}s`;
+    }
+    updateEventTimer();
+    eventTimer = setInterval(updateEventTimer, 1000);
+    onDestroy(() => { if (eventTimer) clearInterval(eventTimer); });
 
     const allPacks = [
         { id: 'standard', name: 'Standard', sub: 'Card Pack', cost: 100, count: 5,
@@ -53,6 +77,18 @@
         return drops[drops.length - 1].tier;
     }
 
+    function getMsiEventDrops() {
+        return [
+            { tier: 'MSI', pct: 2 },
+            { tier: 'Challenger', pct: 3 },
+            { tier: 'Grandmaster', pct: 5 },
+            { tier: 'Master', pct: 8 },
+            { tier: 'Diamond', pct: 15 },
+            { tier: 'Platinum', pct: 27 },
+            { tier: 'Gold', pct: 40 },
+        ];
+    }
+
     function buyPack(pack) {
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
@@ -63,9 +99,22 @@
         const pulled = [];
         const holoChance = 0.01;
         const sigChance = 0.001;
+        const isMsiEvent = pack.id === 'msi' && Date.now() < MSI_EVENT_END;
+        const drops = isMsiEvent ? getMsiEventDrops() : pack.drops;
+        let pity = isMsiEvent ? parseInt(localStorage.getItem('lur_msi_pity') || '0') : 0;
+        let gotMsi = false;
 
         for (let i = 0; i < pack.count; i++) {
-            const tier = rollFromDrops(pack.drops);
+            let tier;
+            if (isMsiEvent && !gotMsi && pity >= MSI_PITY_TARGET - 1) {
+                tier = 'MSI';
+                gotMsi = true;
+            } else {
+                tier = rollFromDrops(drops);
+            }
+            if (isMsiEvent) {
+                if (tier === 'MSI') { pity = 0; gotMsi = true; } else { pity++; }
+            }
             let pool;
             if (SPECIAL_QUALS.has(tier)) {
                 pool = db.filter(p => p.quality === tier);
@@ -79,6 +128,7 @@
             if (Math.random() < holoChance) { inst.holographic = true; inst.locked = true; }
             pulled.push(inst);
         }
+        if (isMsiEvent) { localStorage.setItem('lur_msi_pity', String(pity)); }
 
         club.update(c => [...c, ...pulled]);
         collectionRegistry.update(reg => {
@@ -195,10 +245,36 @@
 
 <section class="store">
     <!-- Event Banner -->
-    <div class="event-bar">
-        <span class="event-dot"></span>
-        <span class="event-label">No active event — limited-time events will appear here</span>
-    </div>
+    {#if msiEventActive}
+        <div class="event-banner event-active">
+            <div class="eb-left">
+                <span class="eb-live">LIVE</span>
+                <div class="eb-info">
+                    <div class="eb-title">MSI 2026 Event</div>
+                    <div class="eb-desc">MSI Pack drop rates boosted! Guaranteed MSI card after {MSI_PITY_TARGET} pulls without one.</div>
+                </div>
+            </div>
+            <div class="eb-right">
+                <div class="eb-pity">
+                    <span class="eb-pity-label">Pity Counter</span>
+                    <span class="eb-pity-val">{msiPityCount}/{MSI_PITY_TARGET}</span>
+                </div>
+                <div class="eb-timer">
+                    <span class="eb-timer-label">Ends in</span>
+                    <span class="eb-timer-val">{eventTimeLeft}</span>
+                </div>
+            </div>
+        </div>
+    {:else}
+        <div class="event-banner event-ended">
+            <span class="eb-ended-icon">🌊</span>
+            <div class="eb-info">
+                <div class="eb-title" style="color: #475569;">MSI 2026 Event</div>
+                <div class="eb-desc" style="color: #334155;">This event has ended. Stay tuned for the next one!</div>
+            </div>
+            <span class="eb-ended-tag">Ended</span>
+        </div>
+    {/if}
 
     <!-- Starter Pack -->
     {#if !$hasBoughtStarter}
@@ -327,14 +403,46 @@
     .store { padding-bottom: 40px; }
 
     /* Event */
-    .event-bar {
-        display: flex; align-items: center; gap: 10px;
-        padding: 10px 20px; border-radius: 10px;
-        background: rgba(12,16,28,0.4); border: 1px solid rgba(51,65,85,0.15);
-        margin-bottom: 20px;
+    .event-banner {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 14px 20px; border-radius: 14px; margin-bottom: 20px; flex-wrap: wrap;
     }
-    .event-dot { width: 6px; height: 6px; border-radius: 50%; background: #475569; flex-shrink: 0; }
-    .event-label { font-size: 11px; color: #64748b; font-weight: 600; }
+    .event-active {
+        background: linear-gradient(135deg, rgba(13,148,136,0.12), rgba(45,212,191,0.08));
+        border: 1px solid rgba(45,212,191,0.3);
+        animation: eventPulse 3s ease-in-out infinite;
+    }
+    @keyframes eventPulse {
+        0%, 100% { border-color: rgba(45,212,191,0.3); }
+        50% { border-color: rgba(45,212,191,0.6); }
+    }
+    .event-ended {
+        background: rgba(12,16,28,0.4); border: 1px solid rgba(51,65,85,0.15);
+    }
+    .eb-left { display: flex; align-items: center; gap: 10px; }
+    .eb-live {
+        padding: 3px 10px; border-radius: 6px; font-size: 9px; font-weight: 900;
+        letter-spacing: 1.5px; background: #ef4444; color: white;
+        animation: liveBlink 1.5s ease-in-out infinite;
+    }
+    @keyframes liveBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .eb-info {}
+    .eb-title { font-size: 14px; font-weight: 900; color: #2dd4bf; }
+    .eb-desc { font-size: 10px; color: #5eead4; margin-top: 2px; }
+    .eb-right { display: flex; gap: 16px; align-items: center; }
+    .eb-pity, .eb-timer {
+        text-align: center; padding: 6px 14px; border-radius: 8px;
+        background: rgba(0,0,0,0.2);
+    }
+    .eb-pity-label, .eb-timer-label { display: block; font-size: 7px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; }
+    .eb-pity-val { display: block; font-size: 16px; font-weight: 900; color: #2dd4bf; font-family: monospace; }
+    .eb-timer-val { display: block; font-size: 14px; font-weight: 900; color: #fbbf24; font-family: monospace; }
+    .eb-ended-icon { font-size: 20px; opacity: 0.4; }
+    .eb-ended-tag {
+        padding: 4px 12px; border-radius: 6px; font-size: 9px; font-weight: 900;
+        text-transform: uppercase; letter-spacing: 1px;
+        background: rgba(51,65,85,0.3); color: #475569;
+    }
 
     /* Starter */
     .starter { display: block; width: 100%; cursor: pointer; background: none; border: none; text-align: left; margin-bottom: 28px; }

@@ -66,6 +66,11 @@
           perLevel: '+1 bench slot per level (max 3)',
           textColor: 'text-teal-400', barFill: 'bg-teal-500',
           btnActive: 'bg-teal-600/20 hover:bg-teal-600/40 text-teal-300 border-teal-500/40' },
+        { id: 'wealth', name: 'Wealth Management', icon: '💎', maxLevel: 5,
+          desc: 'Earn more BE from tournament wins, season splits, and quest rewards.',
+          perLevel: '+10% bonus BE from all rewards per level',
+          textColor: 'text-sky-400', barFill: 'bg-sky-500',
+          btnActive: 'bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border-sky-500/40' },
         { id: 'clubhouse', name: 'Club Capacity', icon: '🏟️', maxLevel: 20,
           desc: 'Increases maximum cards in your club.',
           perLevel: '+50 card capacity per level',
@@ -99,10 +104,10 @@
     const colorMap = {
         'text-blue-400': '#60a5fa', 'text-purple-400': '#a855f7', 'text-orange-400': '#fb923c',
         'text-emerald-400': '#34d399', 'text-amber-400': '#fbbf24', 'text-cyan-400': '#22d3ee',
-        'text-rose-400': '#fb7185', 'text-yellow-400': '#facc15', 'text-teal-400': '#2dd4bf',
+        'text-rose-400': '#fb7185', 'text-yellow-400': '#facc15', 'text-teal-400': '#2dd4bf', 'text-sky-400': '#38bdf8',
         'bg-blue-500': '#3b82f6', 'bg-purple-500': '#a855f7', 'bg-orange-500': '#f97316',
         'bg-emerald-500': '#10b981', 'bg-amber-500': '#f59e0b', 'bg-cyan-500': '#06b6d4',
-        'bg-rose-500': '#f43f5e', 'bg-yellow-500': '#eab308', 'bg-teal-500': '#14b8a6'
+        'bg-rose-500': '#f43f5e', 'bg-yellow-500': '#eab308', 'bg-teal-500': '#14b8a6', 'bg-sky-500': '#0ea5e9'
     };
 
     const btnColorMap = {
@@ -114,7 +119,8 @@
         'text-cyan-400': { bg: 'rgba(8,145,178,0.2)', bgHover: 'rgba(8,145,178,0.4)', text: '#67e8f9', border: 'rgba(6,182,212,0.4)' },
         'text-rose-400': { bg: 'rgba(244,63,94,0.2)', bgHover: 'rgba(244,63,94,0.4)', text: '#fda4af', border: 'rgba(244,63,94,0.4)' },
         'text-yellow-400': { bg: 'rgba(234,179,8,0.2)', bgHover: 'rgba(234,179,8,0.4)', text: '#fde047', border: 'rgba(234,179,8,0.4)' },
-        'text-teal-400': { bg: 'rgba(20,184,166,0.2)', bgHover: 'rgba(20,184,166,0.4)', text: '#5eead4', border: 'rgba(20,184,166,0.4)' }
+        'text-teal-400': { bg: 'rgba(20,184,166,0.2)', bgHover: 'rgba(20,184,166,0.4)', text: '#5eead4', border: 'rgba(20,184,166,0.4)' },
+        'text-sky-400': { bg: 'rgba(14,165,233,0.2)', bgHover: 'rgba(14,165,233,0.4)', text: '#7dd3fc', border: 'rgba(14,165,233,0.4)' }
     };
 </script>
 

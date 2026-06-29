@@ -116,9 +116,9 @@
     })();
 
     const updates = [
-        { ver: '1.0.9.2', text: 'Bench system, squad lock, combat overhaul, bulk contracts, drag-and-drop showcase' },
-        { ver: '1.0.9.1', text: 'Quest badges, battle pass XP, meta expansion, trade locks, cooldown persistence' },
-        { ver: '1.0.7', text: 'Era synergy, Infinity Tower, Golden Road, Trade Market, Battle Pass, Daily Login' },
+        { ver: '1.1.0', text: 'Draft Mode, MSI 2026 Event, Wealth skill, Conditioning fix, dynamic milestones' },
+        { ver: '1.0.9.2', text: 'Bench system, squad lock, combat overhaul, drag-and-drop showcase' },
+        { ver: '1.0.9.1', text: 'Quest badges, battle pass XP, meta expansion, trade locks' },
     ];
 </script>
 

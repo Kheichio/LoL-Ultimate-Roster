@@ -74,6 +74,15 @@ export function grantXP(amount) {
     });
 }
 
+// === Wealth Bonus BE ===
+export function grantBE(amount) {
+    const wealthLevel = get(skills).wealth || 0;
+    const bonus = Math.round(amount * wealthLevel * 0.1);
+    const total = amount + bonus;
+    blueEssence.update(v => v + total);
+    return total;
+}
+
 // === Battle Pass XP ===
 export function grantBPXP(amount) {
     battlePass.update(bp => {
