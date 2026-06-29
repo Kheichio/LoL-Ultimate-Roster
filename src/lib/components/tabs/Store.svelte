@@ -25,9 +25,7 @@
     let eventTimer = null;
 
     $: msiEventActive = Date.now() < MSI_EVENT_END;
-    $: msiPityCount = (() => {
-        try { return parseInt(localStorage.getItem('lur_msi_pity') || '0'); } catch(e) { return 0; }
-    })();
+    let msiPityCount = parseInt(localStorage.getItem('lur_msi_pity') || '0');
 
     function updateEventTimer() {
         const remaining = Math.max(0, MSI_EVENT_END - Date.now());
@@ -128,7 +126,7 @@
             if (Math.random() < holoChance) { inst.holographic = true; inst.locked = true; }
             pulled.push(inst);
         }
-        if (isMsiEvent) { localStorage.setItem('lur_msi_pity', String(pity)); }
+        if (isMsiEvent) { localStorage.setItem('lur_msi_pity', String(pity)); msiPityCount = pity; }
 
         club.update(c => [...c, ...pulled]);
         collectionRegistry.update(reg => {

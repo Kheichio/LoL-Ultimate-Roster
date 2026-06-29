@@ -236,7 +236,7 @@
                     {@const banned = myBans.has(card.id)}
                     <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                     <div class="ban-card" class:ban-card-banned={banned} on:click={() => !banned && banCpuCard(card)}>
-                        <Card {card} mini={true} />
+                        <Card {card} mini={true} onclick={() => !banned && banCpuCard(card)} />
                         {#if banned}<div class="ban-overlay">BANNED</div>{/if}
                     </div>
                 {/each}
@@ -262,7 +262,7 @@
                     <div class="build-slot">
                         <div class="build-role">{role}</div>
                         {#if mySquad[role]}
-                            <Card card={mySquad[role]} mini={true} />
+                            <Card card={mySquad[role]} mini={true} onclick={() => {}} />
                             {#if mySquad[role].role !== role && !LEGACY_TIERS.includes(mySquad[role].quality)}
                                 <div class="flex-tag">FLEX -{FLEX_PENALTY}</div>
                             {/if}
@@ -286,7 +286,7 @@
                             {@const isNatural = card.role === assigningRole || LEGACY_TIERS.includes(card.quality)}
                             <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                             <div class="pick-card" class:pick-natural={isNatural} class:pick-flex={!isNatural} on:click={() => assignToRole(card)}>
-                                <Card {card} mini={true} />
+                                <Card {card} mini={true} onclick={() => assignToRole(card)} />
                                 {#if !isNatural}<div class="pick-penalty">-{FLEX_PENALTY}</div>{/if}
                             </div>
                         {/each}
