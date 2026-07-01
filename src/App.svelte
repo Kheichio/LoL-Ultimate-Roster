@@ -6,13 +6,14 @@
     import CardInspectModal from './lib/components/modals/CardInspectModal.svelte';
     import AuthPanel from './lib/components/modals/AuthPanel.svelte';
     import { activeTab } from './lib/stores/ui.js';
-    import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks } from './lib/stores/game.js';
+    import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks, checkMilestoneCards } from './lib/stores/game.js';
     import { currentUser, cloudSave } from './lib/stores/auth.js';
     import { getEffectiveRating, LEGACY_TIERS, getEra } from './lib/utils/cards.js';
     import { get } from 'svelte/store';
     import { onDestroy } from 'svelte';
 
     initGame();
+    setTimeout(() => { checkMilestoneCards(); }, 500);
 
     function getTitle(tp) {
         if (tp >= 1000) return 'Immortal';
@@ -97,7 +98,7 @@
 <CardInspectModal />
 <AuthPanel />
 
-<div class="version-badge">Beta 1.1.1.2 public build</div>
+<div class="version-badge">Beta 1.1.2 public build</div>
 
 <style>
     .version-badge {

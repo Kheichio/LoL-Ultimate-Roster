@@ -1171,6 +1171,30 @@ const baseDatabase = [
     { id: 9254, name: "Ming",    role: "SUP",   team: "RNG", year: 2018, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 95, frm: 95, cmp: 96, map: 97, ldr: 96 } },
     { id: 9255, name: "Heart",   role: "COACH", team: "RNG", year: 2018, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 93, map: 94, ldr: 95 } },
 
+    // === LEAGUE AWARDS 2025 ===
+    // POTY — Chovy (Gen.G): dominant 2025 season, MSI winner, LCK title
+    { id: 9260, name: "Chovy",    role: "MID",   team: "Gen.G", year: 2025, rating: 99, quality: "POTY", region: "LCK", stats: { mec: 98, tmf: 97, frm: 99, cmp: 98, map: 97, ldr: 95 } },
+    // TOTY — T1 (won Team of the Year 2025)
+    { id: 9261, name: "Kiin",     role: "TOP",   team: "T1",    year: 2025, rating: 97, quality: "TOTY", region: "LCK", stats: { mec: 96, tmf: 95, frm: 97, cmp: 95, map: 94, ldr: 92 } },
+    { id: 9262, name: "Oner",     role: "JNG",   team: "T1",    year: 2025, rating: 97, quality: "TOTY", region: "LCK", stats: { mec: 96, tmf: 97, frm: 96, cmp: 95, map: 97, ldr: 93 } },
+    { id: 9263, name: "Faker",    role: "MID",   team: "T1",    year: 2025, rating: 97, quality: "TOTY", region: "LCK", stats: { mec: 94, tmf: 97, frm: 96, cmp: 99, map: 97, ldr: 99 } },
+    { id: 9264, name: "Gumayusi",role: "ADC",   team: "T1",    year: 2025, rating: 97, quality: "TOTY", region: "LCK", stats: { mec: 97, tmf: 95, frm: 97, cmp: 95, map: 93, ldr: 92 } },
+    { id: 9265, name: "Keria",    role: "SUP",   team: "T1",    year: 2025, rating: 97, quality: "TOTY", region: "LCK", stats: { mec: 95, tmf: 96, frm: 96, cmp: 97, map: 95, ldr: 96 } },
+    // ROTY — HongQ (CFO, LCP): breakthrough rookie of 2025
+    { id: 9266, name: "HongQ",    role: "MID",   team: "CFO",   year: 2025, rating: 90, quality: "ROTY", region: "LCP", stats: { mec: 89, tmf: 88, frm: 90, cmp: 87, map: 87, ldr: 85 } },
+
+    // === LEAGUE AWARDS 2024 ===
+    // POTY — Faker (T1): fourth World Championship, undisputed GOAT
+    { id: 9270, name: "Faker",    role: "MID",   team: "T1",    year: 2024, rating: 99, quality: "POTY", region: "LCK", stats: { mec: 99, tmf: 97, frm: 98, cmp: 99, map: 98, ldr: 98 } },
+    // TOTY — T1 (won Team of the Year 2024)
+    { id: 9271, name: "Zeus",     role: "TOP",   team: "T1",    year: 2024, rating: 96, quality: "TOTY", region: "LCK", stats: { mec: 95, tmf: 95, frm: 95, cmp: 93, map: 93, ldr: 91 } },
+    { id: 9272, name: "Oner",     role: "JNG",   team: "T1",    year: 2024, rating: 96, quality: "TOTY", region: "LCK", stats: { mec: 95, tmf: 96, frm: 95, cmp: 94, map: 95, ldr: 92 } },
+    { id: 9273, name: "Faker",    role: "MID",   team: "T1",    year: 2024, rating: 98, quality: "TOTY", region: "LCK", stats: { mec: 97, tmf: 96, frm: 97, cmp: 98, map: 97, ldr: 97 } },
+    { id: 9274, name: "Gumayusi",role: "ADC",   team: "T1",    year: 2024, rating: 96, quality: "TOTY", region: "LCK", stats: { mec: 97, tmf: 94, frm: 95, cmp: 93, map: 92, ldr: 91 } },
+    { id: 9275, name: "Keria",    role: "SUP",   team: "T1",    year: 2024, rating: 96, quality: "TOTY", region: "LCK", stats: { mec: 94, tmf: 95, frm: 95, cmp: 96, map: 94, ldr: 95 } },
+    // ROTY — Massu (FlyQuest, LCS): LCS standout rookie support
+    { id: 9276, name: "Massu",    role: "SUP",   team: "FQ",    year: 2024, rating: 88, quality: "ROTY", region: "LCS", stats: { mec: 83, tmf: 87, frm: 87, cmp: 88, map: 85, ldr: 87 } },
+
     // JDG 2023 — MSI Champions (80% WR, 15G)
     { id: 9212, name: "369",     role: "TOP",   team: "JDG", year: 2023, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 91, frm: 94, cmp: 96, map: 90, ldr: 91 } },
     { id: 9213, name: "Kanavi",  role: "JNG",   team: "JDG", year: 2023, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 96, frm: 95, cmp: 97, map: 97, ldr: 93 } },

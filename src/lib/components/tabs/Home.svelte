@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, prestige, milestoneCards, saveGame } from '../../stores/game.js';
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
@@ -116,9 +116,9 @@
     })();
 
     const updates = [
+        { ver: '1.1.2', text: 'League Awards cards (POTY/TOTY/ROTY 2024+2025), Salary Cap Mode, Rival Challenge, Prestige System, Milestone Cards' },
         { ver: '1.1.1.2', text: '55 quests, 25 achievements, Draft Mode fixes, pity counter fix, ON card buff' },
         { ver: '1.1.0', text: 'Draft Mode, MSI 2026 Event, Wealth skill, Conditioning fix, dynamic milestones' },
-        { ver: '1.0.9.2', text: 'Bench system, squad lock, combat overhaul, drag-and-drop showcase' },
     ];
 </script>
 
@@ -195,29 +195,47 @@
             </div>
             {/if}
 
+            <!-- Milestone Cards -->
+            {#if $milestoneCards.length > 0}
+            <div class="panel" style="padding: 16px;">
+                <div class="panel-label" style="color:#fbbf24;">Career Milestones</div>
+                <div class="cs-list">
+                    {#each $milestoneCards as mc}
+                    <div class="cs-item">
+                        <span class="cs-icon">🏅</span>
+                        <div>
+                            <div class="cs-name" style="color:#fbbf24;">{mc.name}</div>
+                            <div class="cs-desc">Earned milestone card · Rating {mc.rating}</div>
+                        </div>
+                    </div>
+                    {/each}
+                </div>
+            </div>
+            {/if}
+
             <!-- Coming Soon -->
             <div class="panel coming-soon" style="padding: 16px;">
                 <div class="panel-label purple">Coming Soon</div>
                 <div class="cs-list">
                     <div class="cs-item">
-                        <span class="cs-icon">🎯</span>
-                        <div>
-                            <div class="cs-name">Draft Mode</div>
-                            <div class="cs-desc">Draft players from a shared pool against CPU. Build a team from scratch each run.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
-                        <span class="cs-icon">💰</span>
-                        <div>
-                            <div class="cs-name">Salary Cap Mode</div>
-                            <div class="cs-desc">Build a squad under a budget. Higher-rated players cost more.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
                         <span class="cs-icon">🏟️</span>
                         <div>
                             <div class="cs-name">Franchise Mode</div>
                             <div class="cs-desc">Manage a team across multiple seasons. Sign, trade, and develop players.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">🤝</span>
+                        <div>
+                            <div class="cs-name">Friend List</div>
+                            <div class="cs-desc">Add friends, view their squads, and challenge them directly.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">📊</span>
+                        <div>
+                            <div class="cs-name">Player Form System</div>
+                            <div class="cs-desc">Cards go on hot/cold streaks based on recent match results.</div>
                         </div>
                     </div>
                 </div>

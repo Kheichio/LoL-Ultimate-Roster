@@ -61,9 +61,12 @@
         { id: 'mvp', name: 'MVP', sub: 'Legacy Pack', cost: 8000, count: 5, special: true,
           color: '#ec4899', borderColor: 'rgba(236,72,153,0.2)', bg: 'linear-gradient(170deg, #1a0520 0%, #15031a 60%, #200828 100%)',
           drops: [{ tier: 'MVP', pct: 0.5 }, { tier: 'Challenger', pct: 1 }, { tier: 'Grandmaster', pct: 2 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 76.5 }] },
+        { id: 'awards', name: 'Awards Vault', sub: 'Limited Pack', cost: 12000, count: 5, special: true,
+          color: '#fbbf24', borderColor: 'rgba(251,191,36,0.3)', bg: 'linear-gradient(170deg, #1c1500 0%, #1a1200 60%, #231800 100%)',
+          drops: [{ tier: 'POTY', pct: 0.25 }, { tier: 'TOTY', pct: 1 }, { tier: 'ROTY', pct: 3 }, { tier: 'MVP', pct: 0.5 }, { tier: 'Challenger', pct: 1.5 }, { tier: 'Grandmaster', pct: 3 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 71.75 }] },
     ];
 
-    const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand']);
+    const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','POTY','ROTY','TOTY','GPOTY','X']);
 
     function rollFromDrops(drops) {
         const rng = Math.random() * 100;

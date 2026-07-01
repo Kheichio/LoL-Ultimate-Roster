@@ -35,7 +35,7 @@ export function getCardById(id) {
 }
 
 export function getSellValue(quality, card = null) {
-    const vals = { Bronze: 2, Silver: 5, Gold: 15, Platinum: 30, Diamond: 50, Master: 90, Grandmaster: 150, MVP: 175, Challenger: 300, Champion: 250, Finalist: 200, MSI: 220, FirstStand: 180, Coach: 20 };
+    const vals = { Bronze: 2, Silver: 5, Gold: 15, Platinum: 30, Diamond: 50, Master: 90, Grandmaster: 150, MVP: 175, Challenger: 300, Champion: 250, Finalist: 200, MSI: 220, FirstStand: 180, Coach: 20, POTY: 500, TOTY: 350, ROTY: 200, GPOTY: 400, X: 300 };
     let base = vals[quality] || 2;
     if (card && card.holographic) base = Math.floor(base * 1.5);
     return base;

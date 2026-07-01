@@ -1,5 +1,5 @@
 <script>
-    import { skills, skillPoints, managerXP, managerLevel, weightedTrophies, saveGame } from '../../stores/game.js';
+    import { skills, skillPoints, managerXP, managerLevel, weightedTrophies, prestige, prestigeManager, checkMilestoneCards, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
@@ -246,6 +246,41 @@
             </div>
         {/each}
     </div>
+
+    <!-- Prestige Panel -->
+    {#if $managerLevel >= 100 || $prestige > 0}
+    <div class="prestige-panel">
+        <div class="prestige-header">
+            <div>
+                <div class="prestige-badge">{'⭐'.repeat(Math.min($prestige, 5))} {$prestige > 0 ? `Prestige ${$prestige}` : ''}</div>
+                <div class="prestige-title">Manager Prestige</div>
+                <div class="prestige-desc">Reach Level 100, then reset your XP and skills for a Prestige badge. Keep all cards, BE, and trophies.</div>
+            </div>
+            {#if $managerLevel >= 100}
+                <button class="prestige-btn" on:click={() => {
+                    if (confirm(`Prestige ${$prestige + 1}? This resets Level, XP, and all Skills to 0. You keep cards, BE, and trophies.`)) {
+                        if (prestigeManager()) {
+                            checkMilestoneCards();
+                            saveGame();
+                            showToast(`Prestige ${$prestige}! Skills reset. You keep everything else.`, 'success');
+                        }
+                    }
+                }}>
+                    ⭐ Prestige {$prestige + 1}
+                </button>
+            {:else}
+                <div class="prestige-locked">Reach Level 100 to unlock</div>
+            {/if}
+        </div>
+        {#if $prestige > 0}
+        <div class="prestige-perks">
+            {#each Array($prestige) as _, i}
+            <div class="prestige-perk">⭐ Prestige {i+1} — Hall of Champions badge earned</div>
+            {/each}
+        </div>
+        {/if}
+    </div>
+    {/if}
 
     <!-- Skills Summary -->
     <div class="summary-panel">
@@ -554,4 +589,16 @@
         color: #475569;
         padding: 8px 0;
     }
+
+    /* Prestige */
+    .prestige-panel { background: linear-gradient(135deg, rgba(251,191,36,0.06), rgba(12,16,28,0.5)); border: 1px solid rgba(251,191,36,0.2); border-radius: 16px; padding: 20px 24px; margin-bottom: 20px; }
+    .prestige-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .prestige-badge { font-size: 16px; font-weight: 900; color: #fbbf24; margin-bottom: 4px; }
+    .prestige-title { font-size: 14px; font-weight: 900; color: #fde047; }
+    .prestige-desc { font-size: 11px; color: #64748b; margin-top: 4px; max-width: 420px; }
+    .prestige-btn { padding: 12px 24px; border-radius: 12px; background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917; font-weight: 900; font-size: 13px; border: none; cursor: pointer; flex-shrink: 0; transition: all 0.15s; }
+    .prestige-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(251,191,36,0.3); }
+    .prestige-locked { font-size: 11px; color: #475569; font-style: italic; flex-shrink: 0; }
+    .prestige-perks { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+    .prestige-perk { font-size: 11px; color: #fbbf24; background: rgba(251,191,36,0.05); border-radius: 8px; padding: 6px 10px; }
 </style>

@@ -13,6 +13,101 @@
     let enemies = [];
     let currentEnemy = null;
     let matchLog = [];
+
+    // Salary Cap Mode state
+    const SALARY_BUDGET = 50000;
+    let salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
+    let salaryPickingRole = null;
+    let salarySearch = '';
+    let _originalSquad = null;
+
+    function salaryValue(rating) { return Math.max(0, (rating - 60) * 500); }
+    $: salaryUsed = Object.values(salarySquad).filter(Boolean).reduce((s, c) => s + salaryValue(c.rating), 0);
+    $: salaryRemaining = SALARY_BUDGET - salaryUsed;
+    $: salaryComplete = ['TOP','JNG','MID','ADC','SUP'].every(r => salarySquad[r]);
+    $: salaryCardPool = (() => {
+        const q = salarySearch.toLowerCase();
+        return $club.filter(c => c.role !== 'COACH' && (!q || c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q)));
+    })();
+
+    function startSalaryCap() {
+        salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
+        salaryPickingRole = null; salarySearch = '';
+        phase = 'salary_lobby';
+    }
+
+    function selectSalaryCard(card) {
+        if (!salaryPickingRole) return;
+        const prev = salarySquad[salaryPickingRole] ? salaryValue(salarySquad[salaryPickingRole].rating) : 0;
+        const next = salaryValue(card.rating);
+        if (salaryUsed - prev + next > SALARY_BUDGET) { showToast('Over budget! Choose a lower-rated player.', 'error'); return; }
+        salarySquad = { ...salarySquad, [salaryPickingRole]: { ...card, uniqueId: card.uniqueId || makeUniqueId('sc_') } };
+        salaryPickingRole = null;
+    }
+
+    function removeSalaryCard(role) { salarySquad = { ...salarySquad, [role]: null }; }
+
+    function startSalaryTournament() {
+        if (!salaryComplete) { showToast('Fill all 5 positions first.', 'error'); return; }
+        _originalSquad = get(squad);
+        squad.set({ ...salarySquad, COACH: _originalSquad.COACH });
+        activeMode = 'salarycap';
+        enemies = [];
+        for (let i = 0; i < 5; i++) enemies.push(generateCpuTeam('worlds', i));
+        round = 0; roundResults = []; tournamentResult = null; matchLog = [];
+        phase = 'bracket';
+    }
+
+    // Rival Challenge state
+    let rivals = [];
+    let rivalsLoading = false;
+
+    async function loadRivals() {
+        rivalsLoading = true;
+        rivals = [];
+        if (window.fbDb) {
+            try {
+                const snap = await window.fbDb.collection('leaderboard').orderBy('trophies', 'desc').limit(20).get();
+                const myUid = window.fbAuth?.currentUser?.uid;
+                snap.forEach(doc => {
+                    if (doc.id === myUid) return;
+                    const d = doc.data();
+                    rivals.push({ id: doc.id, displayName: d.displayName || 'Unknown', teamName: d.teamName || 'Team', teamLogo: d.teamLogo || '🛡️', totalPower: d.totalPower || 0, trophies: d.trophies || 0, squadData: d.squadData || null });
+                });
+            } catch(e) {}
+        }
+        rivalsLoading = false;
+        rivals = rivals;
+    }
+
+    function startRivalChallenge(rival) {
+        const db = getDB();
+        if (!db || !squadReady) { showToast('Fill your squad first.', 'error'); return; }
+        const rivalCards = rival.squadData;
+        let cpuTeam = {};
+        if (rivalCards && Object.keys(rivalCards).length >= 4) {
+            const roles = ['TOP','JNG','MID','ADC','SUP'];
+            roles.forEach(role => {
+                const rc = rivalCards[role];
+                if (rc) {
+                    const dbCard = db.find(c => c.id === rc.id) || rc;
+                    cpuTeam[role] = { ...dbCard, ...(rc.signature ? { signature: true } : {}), ...(rc.holographic ? { holographic: true } : {}) };
+                }
+            });
+        }
+        if (Object.keys(cpuTeam).length < 4) {
+            const fallback = generateCpuTeam('worlds', 2);
+            cpuTeam = fallback.cards;
+        }
+        const cards = Object.values(cpuTeam).filter(Boolean);
+        const avgRating = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + (c.rating || 90), 0) / cards.length) : rival.totalPower || 90;
+        const rivalEnemy = { name: `${rival.teamLogo} ${rival.teamName}`, cards: cpuTeam, avgRating };
+        activeMode = 'rival';
+        enemies = [rivalEnemy, generateCpuTeam('worlds', 1), generateCpuTeam('worlds', 2)];
+        round = 0; roundResults = []; tournamentResult = null; matchLog = [];
+        phase = 'bracket';
+        showToast(`Rival Challenge vs ${rival.displayName}'s squad!`, 'info');
+    }
     let playerScore = 0;
     let cpuScore = 0;
     let grCooldownEnd = 0;
@@ -104,6 +199,8 @@
         firststand: { name: 'First Stand', icon: '🟠', rounds: 5, minRating: 85, maxRating: 98, pool: 'elite', cpuBonus: 10, reward: 3000, second: 1000, color: '#f97316', statKey: 'firstStandWon' },
         msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 90, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
         worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 93, maxRating: 99, pool: 'elite', cpuBonus: 20, reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
+        salarycap: { name: 'Salary Cap', icon: '💰', rounds: 5, minRating: 85, maxRating: 99, pool: 'elite', cpuBonus: 18, reward: 8000, second: 3000, color: '#34d399' },
+        rival: { name: 'Rival Challenge', icon: '⚔️', rounds: 3, minRating: 88, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 3000, second: 1000, color: '#f59e0b' },
     };
 
     const GOLDEN_STAGES = ['regional', 'firststand', 'msi', 'worlds'];
@@ -209,6 +306,7 @@
     function nextRound() { round++; phase = 'bracket'; matchLog = []; }
 
     function endTournament(won) {
+        if (activeMode === 'salarycap' && _originalSquad) { squad.set(_originalSquad); _originalSquad = null; }
         const mode = activeMode === 'goldenroad' ? GOLDEN_STAGES[goldenRoadStage] : activeMode;
         const m = MODES[mode];
         const isFinalist = !won && round >= enemies.length - 2;
@@ -261,6 +359,8 @@
                 const u = { ...s, tournamentsWon: (s.tournamentsWon||0)+1 };
                 if (m.statKey) u[m.statKey] = (s[m.statKey]||0) + 1;
                 if (mode === 'cafe') u.cafeWins = (s.cafeWins||0) + 1;
+                if (mode === 'salarycap') u.salaryCapWins = (s.salaryCapWins||0) + 1;
+                if (mode === 'rival') u.rivalWins = (s.rivalWins||0) + 1;
                 return u;
             });
             if (mode === 'firststand') unlocks.update(u => ({ ...u, firstStand: true }));
@@ -280,6 +380,7 @@
     }
 
     function backToLobby() {
+        if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; }
         phase = 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
     }
 
@@ -416,16 +517,137 @@
                 </div>
                 <button class="mode-enter-btn" style="background: linear-gradient(135deg, #7c3aed, #a855f7);" on:click|stopPropagation={() => switchTab('draft')}>Enter</button>
             </div>
-            <!-- Coming Soon -->
-            <div class="mode-row mode-coming-soon" style="border-color: rgba(168,85,247,0.15); opacity: 0.6;">
+            <!-- Salary Cap Mode -->
+            <div class="mode-row" style="border-color: rgba(52,211,153,0.2);">
                 <span class="mode-icon">💰</span>
                 <div class="mode-info">
-                    <h3 class="mode-name" style="color: #c084fc;">Salary Cap Mode</h3>
-                    <p class="mode-sub">Build a squad under a budget. Higher-rated players cost more. Strategy meets economics.</p>
+                    <h3 class="mode-name" style="color: #34d399;">Salary Cap Mode</h3>
+                    <p class="mode-sub">Build a squad within a 50,000 CAP budget. Higher-rated cards cost more. 5 rounds, elite opponents.</p>
+                    <div class="mode-prizes"><span class="mp-w">Win: 8,000 BE</span><span class="mp-l">2nd: 3,000 BE</span></div>
                 </div>
-                <span class="mode-soon-tag">Coming Soon</span>
+                {#if $club.filter(c => c.role !== 'COACH').length >= 5}
+                    <button class="mode-enter-btn" style="background: #34d399; color: #052e16;" on:click={startSalaryCap}>Enter</button>
+                {:else}<span class="mode-need">Need 5+ cards</span>{/if}
+            </div>
+
+            <!-- Rival Challenge -->
+            <div class="mode-row" style="border-color: rgba(245,158,11,0.2);">
+                <span class="mode-icon">⚔️</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: #f59e0b;">Rival Challenge</h3>
+                    <p class="mode-sub">Fight another player's saved squad from the leaderboard. 3-match challenge.</p>
+                    <div class="mode-prizes"><span class="mp-w">Win: 3,000 BE</span><span class="mp-l">2nd: 1,000 BE</span></div>
+                </div>
+                {#if squadReady}
+                    <button class="mode-enter-btn" style="background: #d97706;" on:click={() => { phase = 'rival_lobby'; loadRivals(); }}>Browse</button>
+                {:else}<span class="mode-need">Need squad</span>{/if}
             </div>
         </div>
+
+    {:else if phase === 'salary_lobby'}
+        <div class="trn-head">
+            <h2 class="trn-title" style="color:#34d399;">💰 Salary Cap Mode</h2>
+            <p class="trn-desc">Build a squad within the 50,000 CAP budget. Card value = (Rating − 60) × 500.</p>
+        </div>
+        <div class="salary-header">
+            <div class="salary-budget-bar">
+                <div class="sb-label">Budget</div>
+                <div class="sb-bar-track">
+                    <div class="sb-bar-fill" style="width:{Math.min(100, (salaryUsed/SALARY_BUDGET)*100)}%; background:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};"></div>
+                </div>
+                <div class="sb-numbers">
+                    <span style="color:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};">{salaryUsed.toLocaleString()} used</span>
+                    <span style="color:#64748b;"> / </span>
+                    <span>{SALARY_BUDGET.toLocaleString()} CAP</span>
+                    <span style="color:{salaryRemaining < 0 ? '#ef4444' : '#94a3b8'}; margin-left:8px;">({salaryRemaining >= 0 ? '+' : ''}{salaryRemaining.toLocaleString()} left)</span>
+                </div>
+            </div>
+        </div>
+        <div class="salary-layout">
+            <div class="salary-slots">
+                {#each ['TOP','JNG','MID','ADC','SUP'] as role}
+                    <div class="salary-slot" class:salary-slot-active={salaryPickingRole === role} on:click={() => salaryPickingRole = salaryPickingRole === role ? null : role}>
+                        <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                        <div class="ss-role">{role}</div>
+                        {#if salarySquad[role]}
+                            <div class="ss-card-info">
+                                <span class="ss-name">{salarySquad[role].name}</span>
+                                <span class="ss-team">{salarySquad[role].team}</span>
+                                <span class="ss-val" style="color:#34d399;">{salaryValue(salarySquad[role].rating).toLocaleString()} CAP</span>
+                            </div>
+                            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                            <span class="ss-remove" on:click|stopPropagation={() => removeSalaryCard(role)}>✕</span>
+                        {:else}
+                            <span class="ss-empty">Click to pick</span>
+                        {/if}
+                    </div>
+                {/each}
+                <div class="salary-actions">
+                    {#if salaryComplete}
+                        <button class="mode-enter-btn" style="background:#34d399; color:#052e16; width:100%; margin-top:8px;" on:click={startSalaryTournament}>Start Tournament →</button>
+                    {/if}
+                    <button class="sn-back-btn" style="margin-top:8px; width:100%;" on:click={() => phase = 'lobby'}>← Back</button>
+                </div>
+            </div>
+            {#if salaryPickingRole}
+                <div class="salary-picker">
+                    <div class="sp-title">Pick {salaryPickingRole} — {salaryPickingRole && salarySquad[salaryPickingRole] ? `Replacing ${salarySquad[salaryPickingRole].name}` : 'Empty slot'}</div>
+                    <input class="sp-search" type="text" placeholder="Search..." bind:value={salarySearch} />
+                    <div class="sp-list">
+                        {#each salaryCardPool.filter(c => c.role === salaryPickingRole).sort((a,b) => b.rating - a.rating) as card}
+                            {@const val = salaryValue(card.rating)}
+                            {@const wouldFit = (salaryUsed - (salarySquad[salaryPickingRole] ? salaryValue(salarySquad[salaryPickingRole].rating) : 0) + val) <= SALARY_BUDGET}
+                            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                            <div class="sp-card" class:sp-over={!wouldFit} on:click={() => wouldFit && selectSalaryCard(card)}>
+                                <span class="sp-name">{card.name}</span>
+                                <span class="sp-team">{card.team} {card.year}</span>
+                                <span class="sp-rat" style="color:#94a3b8;">{card.rating}</span>
+                                <span class="sp-val" style="color:{wouldFit ? '#34d399' : '#ef4444'};">{val.toLocaleString()}</span>
+                            </div>
+                        {/each}
+                        {#if salaryCardPool.filter(c => c.role === salaryPickingRole).length === 0}
+                            <p style="color:#475569; padding:12px; font-size:12px;">No {salaryPickingRole} cards in your club.</p>
+                        {/if}
+                    </div>
+                </div>
+            {:else}
+                <div class="salary-hint">
+                    <p style="color:#475569; font-size:13px; margin-top:40px;">← Click a slot to pick that role's player.<br/><br/>Cards cost <strong style="color:#34d399;">(Rating − 60) × 500 CAP</strong>. Budget is 50,000. Strategy beats raw power.</p>
+                </div>
+            {/if}
+        </div>
+
+    {:else if phase === 'rival_lobby'}
+        <div class="trn-head">
+            <h2 class="trn-title" style="color:#f59e0b;">⚔️ Rival Challenge</h2>
+            <p class="trn-desc">Challenge another manager's saved squad. Beat them in a 3-match series.</p>
+        </div>
+        {#if rivalsLoading}
+            <div class="phase-center"><p style="color:#64748b;">Loading rivals...</p></div>
+        {:else if rivals.length === 0}
+            <div class="phase-center">
+                <p style="color:#64748b; margin-bottom:16px;">{window.fbDb ? 'No rivals found on the leaderboard yet.' : 'Sign in to access Rival Challenge (requires cloud save).'}</p>
+                <button class="sn-back-btn" on:click={() => phase = 'lobby'}>← Back</button>
+            </div>
+        {:else}
+            <div class="rivals-list">
+                {#each rivals as rival}
+                    <div class="rival-row">
+                        <span class="rival-logo">{rival.teamLogo}</span>
+                        <div class="rival-info">
+                            <span class="rival-name">{rival.displayName}</span>
+                            <span class="rival-team">{rival.teamName}</span>
+                        </div>
+                        <div class="rival-stats">
+                            <span class="rival-power">⚡{rival.totalPower}</span>
+                            <span class="rival-trophies">🏆{rival.trophies}</span>
+                        </div>
+                        <button class="mode-enter-btn" style="background:#d97706;" on:click={() => startRivalChallenge(rival)}>Challenge</button>
+                    </div>
+                {/each}
+            </div>
+            <button class="sn-back-btn" style="margin-top:16px;" on:click={() => phase = 'lobby'}>← Back</button>
+        {/if}
 
     {:else if phase === 'bracket'}
         <div class="phase-center">
@@ -691,4 +913,47 @@
     .result-reward { font-size: 22px; font-weight: 900; color: #60a5fa; margin-top: 12px; }
     .sn-back-btn { padding: 12px 32px; border-radius: 12px; background: rgba(51,65,85,0.5); color: #94a3b8; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border: 1px solid rgba(71,85,105,0.4); cursor: pointer; transition: all 0.12s; }
     .sn-back-btn:hover { background: rgba(71,85,105,0.6); color: #e2e8f0; }
+
+    /* Salary Cap Mode */
+    .salary-header { margin-bottom: 20px; }
+    .salary-budget-bar { background: rgba(12,16,28,0.6); border: 1px solid rgba(51,65,85,0.3); border-radius: 14px; padding: 16px 20px; }
+    .sb-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; margin-bottom: 8px; }
+    .sb-bar-track { height: 8px; background: rgba(30,41,59,0.6); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
+    .sb-bar-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+    .sb-numbers { font-size: 12px; display: flex; align-items: center; }
+    .salary-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; }
+    .salary-slots { display: flex; flex-direction: column; gap: 8px; }
+    .salary-slot { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); cursor: pointer; position: relative; transition: border-color 0.15s; }
+    .salary-slot:hover, .salary-slot-active { border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.04); }
+    .ss-role { font-size: 9px; font-weight: 900; text-transform: uppercase; color: #475569; min-width: 32px; }
+    .ss-card-info { flex: 1; min-width: 0; }
+    .ss-name { font-size: 13px; font-weight: 700; color: #e2e8f0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ss-team { font-size: 10px; color: #64748b; }
+    .ss-val { font-size: 10px; font-weight: 700; margin-left: 6px; }
+    .ss-empty { font-size: 11px; color: #334155; flex: 1; }
+    .ss-remove { font-size: 12px; color: #ef4444; cursor: pointer; padding: 4px; flex-shrink: 0; }
+    .salary-actions { margin-top: 4px; }
+    .salary-picker { background: rgba(12,16,28,0.5); border: 1px solid rgba(52,211,153,0.15); border-radius: 14px; padding: 16px; overflow: hidden; }
+    .sp-title { font-size: 11px; font-weight: 900; color: #34d399; margin-bottom: 10px; }
+    .sp-search { width: 100%; padding: 8px 12px; border-radius: 8px; background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3); color: #e2e8f0; font-size: 12px; margin-bottom: 10px; box-sizing: border-box; }
+    .sp-list { max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .sp-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(30,41,59,0.3); cursor: pointer; transition: background 0.1s; font-size: 12px; }
+    .sp-card:hover:not(.sp-over) { background: rgba(52,211,153,0.08); }
+    .sp-over { opacity: 0.4; cursor: not-allowed; }
+    .sp-name { font-weight: 700; color: #e2e8f0; flex: 1; }
+    .sp-team { color: #64748b; font-size: 10px; }
+    .sp-rat { font-size: 11px; font-weight: 700; }
+    .sp-val { font-size: 10px; font-weight: 700; min-width: 56px; text-align: right; }
+    .salary-hint { padding: 16px; }
+
+    /* Rival Challenge */
+    .rivals-list { display: flex; flex-direction: column; gap: 8px; }
+    .rival-row { display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 14px; background: rgba(12,16,28,0.5); border: 1px solid rgba(245,158,11,0.1); }
+    .rival-logo { font-size: 28px; flex-shrink: 0; }
+    .rival-info { flex: 1; }
+    .rival-name { font-size: 14px; font-weight: 900; color: #e2e8f0; display: block; }
+    .rival-team { font-size: 11px; color: #64748b; }
+    .rival-stats { display: flex; gap: 12px; }
+    .rival-power { font-size: 12px; font-weight: 700; color: #60a5fa; }
+    .rival-trophies { font-size: 12px; font-weight: 700; color: #fbbf24; }
 </style>

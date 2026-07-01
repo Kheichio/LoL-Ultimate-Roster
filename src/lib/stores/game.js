@@ -42,6 +42,12 @@ export const achievementsClaimed = writable({});
 // === Archive Rewards ===
 export const archiveRewards = writable({ claimedCards: {}, claimedTeams: {} });
 
+// === Prestige ===
+export const prestige = writable(0);
+
+// === Milestone Cards ===
+export const milestoneCards = writable([]);
+
 // === Derived ===
 export const clubCapacity = derived(skills, $s => 100 + ($s.clubhouse || 0) * 50);
 export const isClubFull = derived([club, clubCapacity], ([$c, $cap]) => $c.length >= $cap);
@@ -97,6 +103,48 @@ export function grantBPXP(amount) {
     });
 }
 
+// === Prestige ===
+export function prestigeManager() {
+    const lvl = get(managerLevel);
+    if (lvl < 100) return false;
+    const p = get(prestige) + 1;
+    prestige.set(p);
+    managerLevel.set(1);
+    managerXP.set(0);
+    skillPoints.set(0);
+    skills.set({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, mentorship: 0, bootcamp: 0, wealth: 0, bench: 0, clubhouse: 0, stamina: 0 });
+    return true;
+}
+
+// === Milestone Cards ===
+const MILESTONE_DEFS = [
+    { id: 'first_worlds', check: ts => (ts.worldsWon || 0) >= 1, name: 'World Champion', role: 'TOP', rating: 99, quality: 'MILESTONE' },
+    { id: 'first_msi', check: ts => (ts.msiWon || 0) >= 1, name: 'MSI Champion', role: 'MID', rating: 97, quality: 'MILESTONE' },
+    { id: 'tower_100', check: ts => (ts.towerHighestFloor || 0) >= 100, name: 'Tower Climber', role: 'JNG', rating: 95, quality: 'MILESTONE' },
+    { id: 'packs_100', check: ts => (ts.packs || 0) >= 100, name: 'Pack Addict', role: 'ADC', rating: 90, quality: 'MILESTONE' },
+    { id: 'golden_road', check: ts => (ts.goldenRoads || 0) >= 1, name: 'Golden Road', role: 'SUP', rating: 99, quality: 'MILESTONE' },
+    { id: 'prestige_1', check: (ts, p) => p >= 1, name: 'Prestige I', role: 'COACH', rating: 99, quality: 'MILESTONE' },
+    { id: 'splits_10', check: ts => (ts.splitsCompleted || 0) >= 10, name: 'Season Veteran', role: 'MID', rating: 94, quality: 'MILESTONE' },
+];
+
+export function checkMilestoneCards() {
+    const ts = get(trackStats);
+    const p = get(prestige);
+    const existing = get(milestoneCards);
+    const existingIds = new Set(existing.map(c => c.milestoneId));
+    const newCards = [];
+    for (const def of MILESTONE_DEFS) {
+        if (!existingIds.has(def.id) && def.check(ts, p)) {
+            newCards.push({ ...def, id: def.id + '_card', milestoneId: def.id, uniqueId: 'milestone_' + def.id, team: 'Milestone', year: new Date().getFullYear(), region: 'Legacy', locked: true, stats: { mec: def.rating - 2, tmf: def.rating - 1, frm: def.rating, cmp: def.rating, map: def.rating - 1, ldr: def.rating + 1 } });
+        }
+    }
+    if (newCards.length > 0) {
+        milestoneCards.update(m => [...m, ...newCards]);
+        return newCards;
+    }
+    return [];
+}
+
 // === Save / Load ===
 let _saveDebounce = null;
 
@@ -122,6 +170,8 @@ export function saveGame() {
         saveToStorage('lur_quests_rcounts', get(questsRepeatableCounts));
         saveToStorage('lur_achievements_claimed', get(achievementsClaimed));
         saveToStorage('lur_archive_rewards', get(archiveRewards));
+        saveToStorage('lur_prestige', get(prestige));
+        saveToStorage('lur_milestone_cards', get(milestoneCards));
     }, 100);
 }
 
@@ -187,4 +237,10 @@ export function initGame() {
 
     const ar = loadFromStorage('lur_archive_rewards');
     if (ar) archiveRewards.set({ ...get(archiveRewards), ...ar });
+
+    const pt = loadFromStorage('lur_prestige');
+    if (pt !== null) prestige.set(Number(pt) || 0);
+
+    const mc = loadFromStorage('lur_milestone_cards');
+    if (mc) milestoneCards.set(mc);
 }

@@ -1,5 +1,5 @@
 <script>
-    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
@@ -214,6 +214,9 @@
 
         <!-- RIGHT: Account — pinned far right -->
         <div class="hdr-right">
+            {#if $prestige > 0}
+                <div class="prestige-chip" title="Prestige {$prestige}">{'⭐'.repeat(Math.min($prestige, 5))} P{$prestige}</div>
+            {/if}
             <button class="acct" on:click={() => showAuthPanel.set(true)}>
                 <span class="acct-icon">👤</span>
                 <span class="acct-label desktop-only">{$currentUser ? $currentUser.displayName || 'Account' : 'Sign In'}</span>
@@ -358,7 +361,8 @@
     .st-on { color: #7dd3fc !important; }
 
     /* RIGHT — fixed to far right */
-    .hdr-right { flex: 0 0 auto; margin-left: auto; }
+    .hdr-right { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .prestige-chip { font-size: 10px; font-weight: 900; color: #fbbf24; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.2); border-radius: 8px; padding: 4px 8px; white-space: nowrap; }
     .acct {
         display: flex; align-items: center; gap: 6px;
         padding: 8px 16px; border-radius: 10px;
