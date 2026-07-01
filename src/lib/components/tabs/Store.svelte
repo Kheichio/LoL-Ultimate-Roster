@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, saveGame, isClubFull } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
     import { getDB, rollPackTier, makeUniqueId, getSellValue } from '../../utils/cards.js';
@@ -63,7 +63,7 @@
           drops: [{ tier: 'MVP', pct: 0.5 }, { tier: 'Challenger', pct: 1 }, { tier: 'Grandmaster', pct: 2 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 76.5 }] },
         { id: 'awards', name: 'Awards Vault', sub: 'Limited Pack', cost: 12000, count: 5, special: true,
           color: '#fbbf24', borderColor: 'rgba(251,191,36,0.3)', bg: 'linear-gradient(170deg, #1c1500 0%, #1a1200 60%, #231800 100%)',
-          drops: [{ tier: 'POTY', pct: 0.25 }, { tier: 'TOTY', pct: 1 }, { tier: 'ROTY', pct: 3 }, { tier: 'MVP', pct: 0.5 }, { tier: 'Challenger', pct: 1.5 }, { tier: 'Grandmaster', pct: 3 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 71.75 }] },
+          drops: [{ tier: 'POTY', pct: 0.1 }, { tier: 'TOTY', pct: 0.9 }, { tier: 'ROTY', pct: 2 }, { tier: 'Challenger', pct: 2 }, { tier: 'Grandmaster', pct: 5 }, { tier: 'Master', pct: 8 }, { tier: 'Diamond', pct: 20 }, { tier: 'Platinum', pct: 62 }] },
     ];
 
     const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','POTY','ROTY','TOTY','GPOTY','X']);
@@ -96,6 +96,7 @@
     }
 
     function buyPack(pack) {
+        if (get(isClubFull)) { showToast('Club is full! Sell cards or upgrade Clubhouse in Skills to make room.', 'error'); return; }
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
         const cost = getPackCost(pack);

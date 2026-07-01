@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, showcasePicks, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, showcasePicks, saveGame, clubCapacity } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
     import { getSellValue, TIER_ORDER, LEGACY_TIERS } from '../../utils/cards.js';
@@ -108,7 +108,8 @@
     <div class="club-head">
         <div>
             <h2 class="club-title">Club Vault</h2>
-            <p class="club-sub">{$club.length} cards · {holoCount} holo · {sigCount} sig · {favCount} fav</p>
+            <p class="club-sub">{$club.length}/{$clubCapacity} cards · {holoCount} holo · {sigCount} sig · {favCount} fav</p>
+            <div class="club-cap-bar"><div class="club-cap-fill" style="width:{Math.min(100,($club.length/$clubCapacity)*100)}%; background:{$club.length >= $clubCapacity ? '#ef4444' : $club.length / $clubCapacity > 0.9 ? '#f59e0b' : '#34d399'};"></div></div>
         </div>
     </div>
 
@@ -258,6 +259,8 @@
     .club-head { margin-bottom: 16px; }
     .club-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
     .club-sub { font-size: 11px; color: #64748b; margin-top: 3px; }
+    .club-cap-bar { height: 3px; background: rgba(30,41,59,0.8); border-radius: 99px; overflow: hidden; margin-top: 5px; max-width: 200px; }
+    .club-cap-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
 
     /* Filters */
     .filter-bar {

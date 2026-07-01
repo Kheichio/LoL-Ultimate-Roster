@@ -17,7 +17,8 @@
     // Salary Cap Mode state
     const SALARY_BUDGET = 50000;
     let salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
-    let salaryPickingRole = null;
+    let salaryPool = [];
+    let salarySelectedCard = null;
     let salarySearch = '';
     let _originalSquad = null;
 
@@ -27,25 +28,74 @@
     $: salaryComplete = ['TOP','JNG','MID','ADC','SUP'].every(r => salarySquad[r]);
     $: salaryCardPool = (() => {
         const q = salarySearch.toLowerCase();
-        return $club.filter(c => c.role !== 'COACH' && (!q || c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q)));
+        return salaryPool.filter(c => !q || c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
     })();
 
     function startSalaryCap() {
         salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
-        salaryPickingRole = null; salarySearch = '';
+        salarySelectedCard = null;
+        salarySearch = '';
+        const nonCoach = get(club).filter(c => c.role !== 'COACH');
+        const shuffled = [...nonCoach].sort(() => Math.random() - 0.5);
+        salaryPool = shuffled.slice(0, 15);
         phase = 'salary_lobby';
     }
 
-    function selectSalaryCard(card) {
-        if (!salaryPickingRole) return;
-        const prev = salarySquad[salaryPickingRole] ? salaryValue(salarySquad[salaryPickingRole].rating) : 0;
-        const next = salaryValue(card.rating);
-        if (salaryUsed - prev + next > SALARY_BUDGET) { showToast('Over budget! Choose a lower-rated player.', 'error'); return; }
-        salarySquad = { ...salarySquad, [salaryPickingRole]: { ...card, uniqueId: card.uniqueId || makeUniqueId('sc_') } };
-        salaryPickingRole = null;
+    function assignCard(card, role) {
+        if (salarySquad[role] && salarySquad[role].uniqueId === card.uniqueId) { salarySelectedCard = null; return; }
+        const val = salaryValue(card.rating);
+        const currentInRoleVal = salarySquad[role] ? salaryValue(salarySquad[role].rating) : 0;
+        const isAlreadyAssigned = Object.values(salarySquad).some(c => c && c.uniqueId === card.uniqueId);
+        const freedVal = isAlreadyAssigned ? val : 0;
+        if (salaryUsed - currentInRoleVal - freedVal + val > SALARY_BUDGET) { showToast('Over budget! Choose a lower-rated player.', 'error'); return; }
+        const newSquad = { ...salarySquad };
+        for (const r of ['TOP','JNG','MID','ADC','SUP']) {
+            if (newSquad[r] && newSquad[r].uniqueId === card.uniqueId) newSquad[r] = null;
+        }
+        newSquad[role] = card;
+        salarySquad = newSquad;
+        salarySelectedCard = null;
     }
 
-    function removeSalaryCard(role) { salarySquad = { ...salarySquad, [role]: null }; }
+    function togglePoolCard(card) {
+        const isAssigned = Object.values(salarySquad).some(c => c && c.uniqueId === card.uniqueId);
+        if (isAssigned) {
+            const newSquad = { ...salarySquad };
+            for (const r of ['TOP','JNG','MID','ADC','SUP']) {
+                if (newSquad[r] && newSquad[r].uniqueId === card.uniqueId) { newSquad[r] = null; break; }
+            }
+            salarySquad = newSquad;
+            salarySelectedCard = null;
+        } else {
+            salarySelectedCard = (salarySelectedCard && salarySelectedCard.uniqueId === card.uniqueId) ? null : card;
+        }
+    }
+
+    function generateSalaryCpuTeam() {
+        const db = getDB();
+        if (!db) return generateCpuTeam('worlds', 2);
+        const roles = ['TOP','JNG','MID','ADC','SUP'];
+        let remaining = SALARY_BUDGET;
+        const team = {};
+        roles.forEach((role, i) => {
+            const slotsLeft = roles.length - i;
+            const maxForSlot = Math.floor(remaining / slotsLeft);
+            const pool = db.filter(p => p.role === role && p.rating >= 65 && salaryValue(p.rating) <= maxForSlot)
+                .sort((a, b) => b.rating - a.rating);
+            if (pool.length > 0) {
+                const pick = pool[Math.floor(Math.random() * Math.min(6, pool.length))];
+                team[role] = pick;
+                remaining -= salaryValue(pick.rating);
+            } else {
+                const fallback = db.filter(p => p.role === role && salaryValue(p.rating) <= remaining)
+                    .sort((a, b) => b.rating - a.rating)[0];
+                if (fallback) { team[role] = fallback; remaining -= salaryValue(fallback.rating); }
+            }
+        });
+        const cards = Object.values(team).filter(Boolean);
+        const rawAvg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : 75;
+        return { name: 'Cap Challenger', cards: team, avgRating: rawAvg };
+    }
 
     function startSalaryTournament() {
         if (!salaryComplete) { showToast('Fill all 5 positions first.', 'error'); return; }
@@ -53,7 +103,7 @@
         squad.set({ ...salarySquad, COACH: _originalSquad.COACH });
         activeMode = 'salarycap';
         enemies = [];
-        for (let i = 0; i < 5; i++) enemies.push(generateCpuTeam('worlds', i));
+        for (let i = 0; i < 5; i++) enemies.push(generateSalaryCpuTeam());
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
         phase = 'bracket';
     }
@@ -99,14 +149,16 @@
             const fallback = generateCpuTeam('worlds', 2);
             cpuTeam = fallback.cards;
         }
-        const cards = Object.values(cpuTeam).filter(Boolean);
-        const avgRating = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + (c.rating || 90), 0) / cards.length) : rival.totalPower || 90;
-        const rivalEnemy = { name: `${rival.teamLogo} ${rival.teamName}`, cards: cpuTeam, avgRating };
+        const enemyPower = rival.totalPower || (() => {
+            const cards = Object.values(cpuTeam).filter(Boolean);
+            return cards.length > 0 ? Math.round(cards.reduce((s, c) => s + (c.rating || 90), 0) / cards.length) : 90;
+        })();
+        const rivalEnemy = { name: `${rival.teamLogo} ${rival.teamName}`, cards: cpuTeam, avgRating: enemyPower };
         activeMode = 'rival';
-        enemies = [rivalEnemy, generateCpuTeam('worlds', 1), generateCpuTeam('worlds', 2)];
+        enemies = [rivalEnemy, rivalEnemy, rivalEnemy, rivalEnemy, rivalEnemy];
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
         phase = 'bracket';
-        showToast(`Rival Challenge vs ${rival.displayName}'s squad!`, 'info');
+        showToast(`Rival Challenge vs ${rival.displayName}! BO5 — First to 3 wins`, 'info');
     }
     let playerScore = 0;
     let cpuScore = 0;
@@ -200,7 +252,7 @@
         msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 90, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
         worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 93, maxRating: 99, pool: 'elite', cpuBonus: 20, reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
         salarycap: { name: 'Salary Cap', icon: '💰', rounds: 5, minRating: 85, maxRating: 99, pool: 'elite', cpuBonus: 18, reward: 8000, second: 3000, color: '#34d399' },
-        rival: { name: 'Rival Challenge', icon: '⚔️', rounds: 3, minRating: 88, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 3000, second: 1000, color: '#f59e0b' },
+        rival: { name: 'Rival Challenge', icon: '⚔️', rounds: 5, minRating: 88, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 3000, second: 1000, color: '#f59e0b' },
     };
 
     const GOLDEN_STAGES = ['regional', 'firststand', 'msi', 'worlds'];
@@ -289,11 +341,17 @@
         grantXP(25);
         rollRoundPlays();
 
-        const winsNeeded = activeMode === 'goldenroad' ? 2 : 2;
+        const winsNeeded = activeMode === 'rival' ? 3 : 2;
         if (playerScore >= winsNeeded || cpuScore >= winsNeeded) {
             const matchWon = playerScore >= winsNeeded;
             roundResults = [...roundResults, matchWon];
-            if (!matchWon) {
+            if (activeMode === 'rival') {
+                const mw = roundResults.filter(Boolean).length;
+                const ml = roundResults.filter(r => !r).length;
+                if (mw >= 3) { endTournament(true); }
+                else if (ml >= 3) { endTournament(false); }
+                else { phase = 'roundEnd'; }
+            } else if (!matchWon) {
                 endTournament(false);
             } else if (round >= enemies.length - 1) {
                 endTournament(true);
@@ -547,13 +605,13 @@
     {:else if phase === 'salary_lobby'}
         <div class="trn-head">
             <h2 class="trn-title" style="color:#34d399;">💰 Salary Cap Mode</h2>
-            <p class="trn-desc">Build a squad within the 50,000 CAP budget. Card value = (Rating − 60) × 500.</p>
+            <p class="trn-desc">Build a squad from your 15-card pool within 50,000 CAP. Click a card to select it, then click a role slot to assign. Cost = (Rating − 60) × 500.</p>
         </div>
         <div class="salary-header">
             <div class="salary-budget-bar">
                 <div class="sb-label">Budget</div>
                 <div class="sb-bar-track">
-                    <div class="sb-bar-fill" style="width:{Math.min(100, (salaryUsed/SALARY_BUDGET)*100)}%; background:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};"></div>
+                    <div class="sb-bar-fill" style="width:{Math.min(100,(salaryUsed/SALARY_BUDGET)*100)}%; background:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};"></div>
                 </div>
                 <div class="sb-numbers">
                     <span style="color:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};">{salaryUsed.toLocaleString()} used</span>
@@ -563,58 +621,70 @@
                 </div>
             </div>
         </div>
-        <div class="salary-layout">
-            <div class="salary-slots">
+        <div class="salary-layout2">
+            <div class="salary-slots2">
+                <div class="ss2-header">Your Squad</div>
                 {#each ['TOP','JNG','MID','ADC','SUP'] as role}
-                    <div class="salary-slot" class:salary-slot-active={salaryPickingRole === role} on:click={() => salaryPickingRole = salaryPickingRole === role ? null : role}>
-                        <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div class="ss-role">{role}</div>
+                    <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                    <div class="salary-slot2" class:ss2-clickable={salarySelectedCard} on:click={() => { if (salarySelectedCard) assignCard(salarySelectedCard, role); }}>
+                        <div class="ss2-role-tag">{role}</div>
                         {#if salarySquad[role]}
-                            <div class="ss-card-info">
-                                <span class="ss-name">{salarySquad[role].name}</span>
-                                <span class="ss-team">{salarySquad[role].team}</span>
-                                <span class="ss-val" style="color:#34d399;">{salaryValue(salarySquad[role].rating).toLocaleString()} CAP</span>
+                            <div class="ss2-card-area">
+                                <Card card={salarySquad[role]} mini={true} />
                             </div>
-                            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                            <span class="ss-remove" on:click|stopPropagation={() => removeSalaryCard(role)}>✕</span>
+                            <div class="ss2-card-meta">
+                                <span class="ss2-cap-cost">{salaryValue(salarySquad[role].rating).toLocaleString()} CAP</span>
+                                <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                                <button class="ss2-remove" on:click|stopPropagation={() => { salarySquad = {...salarySquad, [role]: null}; }}>✕</button>
+                            </div>
                         {:else}
-                            <span class="ss-empty">Click to pick</span>
+                            <div class="ss2-empty-slot">
+                                {#if salarySelectedCard}
+                                    <span class="ss2-assign-hint">← Assign {salarySelectedCard.name}</span>
+                                {:else}
+                                    <span class="ss2-placeholder">Pick from pool</span>
+                                {/if}
+                            </div>
                         {/if}
                     </div>
                 {/each}
-                <div class="salary-actions">
+                <div class="ss2-actions">
                     {#if salaryComplete}
                         <button class="mode-enter-btn" style="background:#34d399; color:#052e16; width:100%; margin-top:8px;" on:click={startSalaryTournament}>Start Tournament →</button>
                     {/if}
                     <button class="sn-back-btn" style="margin-top:8px; width:100%;" on:click={() => phase = 'lobby'}>← Back</button>
                 </div>
             </div>
-            {#if salaryPickingRole}
-                <div class="salary-picker">
-                    <div class="sp-title">Pick {salaryPickingRole} — {salaryPickingRole && salarySquad[salaryPickingRole] ? `Replacing ${salarySquad[salaryPickingRole].name}` : 'Empty slot'}</div>
-                    <input class="sp-search" type="text" placeholder="Search..." bind:value={salarySearch} />
-                    <div class="sp-list">
-                        {#each salaryCardPool.filter(c => c.role === salaryPickingRole).sort((a,b) => b.rating - a.rating) as card}
-                            {@const val = salaryValue(card.rating)}
-                            {@const wouldFit = (salaryUsed - (salarySquad[salaryPickingRole] ? salaryValue(salarySquad[salaryPickingRole].rating) : 0) + val) <= SALARY_BUDGET}
-                            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                            <div class="sp-card" class:sp-over={!wouldFit} on:click={() => wouldFit && selectSalaryCard(card)}>
-                                <span class="sp-name">{card.name}</span>
-                                <span class="sp-team">{card.team} {card.year}</span>
-                                <span class="sp-rat" style="color:#94a3b8;">{card.rating}</span>
-                                <span class="sp-val" style="color:{wouldFit ? '#34d399' : '#ef4444'};">{val.toLocaleString()}</span>
+            <div class="salary-pool-section">
+                <div class="spool-header">
+                    <span class="spool-title">Player Pool ({salaryPool.length} cards)</span>
+                    <input class="spool-search" type="text" placeholder="Search..." bind:value={salarySearch} />
+                </div>
+                <div class="salary-pool-grid">
+                    {#each salaryCardPool.slice().sort((a,b) => b.rating - a.rating) as card}
+                        {@const assigned = Object.values(salarySquad).some(c => c && c.uniqueId === card.uniqueId)}
+                        {@const selected = salarySelectedCard && salarySelectedCard.uniqueId === card.uniqueId}
+                        {@const val = salaryValue(card.rating)}
+                        {@const overBudget = !assigned && val > salaryRemaining}
+                        <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+                        <div class="pool-card-wrap" class:pool-assigned={assigned} class:pool-selected={selected} class:pool-over={overBudget} on:click={() => togglePoolCard(card)}>
+                            <Card card={card} mini={true} />
+                            <div class="pool-card-footer">
+                                <span class="pool-role-tag">{card.role}</span>
+                                <span class="pool-cost-tag" style="color:{assigned ? '#94a3b8' : overBudget ? '#ef4444' : '#34d399'};">{val.toLocaleString()}</span>
                             </div>
-                        {/each}
-                        {#if salaryCardPool.filter(c => c.role === salaryPickingRole).length === 0}
-                            <p style="color:#475569; padding:12px; font-size:12px;">No {salaryPickingRole} cards in your club.</p>
-                        {/if}
-                    </div>
+                            {#if assigned}
+                                <div class="pool-badge pool-badge-in">IN SQUAD</div>
+                            {:else if selected}
+                                <div class="pool-badge pool-badge-sel">SELECTED</div>
+                            {/if}
+                        </div>
+                    {/each}
+                    {#if salaryCardPool.length === 0}
+                        <p style="color:#475569; font-size:12px; padding:12px;">No cards match your search.</p>
+                    {/if}
                 </div>
-            {:else}
-                <div class="salary-hint">
-                    <p style="color:#475569; font-size:13px; margin-top:40px;">← Click a slot to pick that role's player.<br/><br/>Cards cost <strong style="color:#34d399;">(Rating − 60) × 500 CAP</strong>. Budget is 50,000. Strategy beats raw power.</p>
-                </div>
-            {/if}
+            </div>
         </div>
 
     {:else if phase === 'rival_lobby'}
@@ -737,12 +807,24 @@
         </div>
 
     {:else if phase === 'roundEnd'}
-        <div class="result-card result-win">
-            <div class="result-icon">✓</div>
-            <h2 class="result-title rt-win">Round {round + 1} Won!</h2>
-            <p class="result-sub">Score: {playerScore}-{cpuScore}. Next opponent is tougher.</p>
-            <button class="mode-enter-btn" style="background: {currentModeColor}; margin-top:20px;" on:click={nextRound}>Next Round →</button>
-        </div>
+        {#if activeMode === 'rival'}
+            {@const seriesW = roundResults.filter(Boolean).length}
+            {@const seriesL = roundResults.filter(r => !r).length}
+            {@const lastWon = roundResults[roundResults.length - 1]}
+            <div class="result-card" class:result-win={lastWon} class:result-lose={!lastWon}>
+                <div class="result-icon" style="font-size:48px;">{lastWon ? '⚔️' : '💢'}</div>
+                <h2 class="result-title" class:rt-win={lastWon} class:rt-lose={!lastWon}>Match {round + 1} {lastWon ? 'Won!' : 'Lost'}</h2>
+                <p class="result-sub">Series: <strong style="color:#34d399;">{seriesW}</strong> — <strong style="color:#f87171;">{seriesL}</strong> · First to 3 wins</p>
+                <button class="mode-enter-btn" style="background:#f59e0b; margin-top:20px;" on:click={nextRound}>Next Match →</button>
+            </div>
+        {:else}
+            <div class="result-card result-win">
+                <div class="result-icon">✓</div>
+                <h2 class="result-title rt-win">Round {round + 1} Won!</h2>
+                <p class="result-sub">Score: {playerScore}-{cpuScore}. Next opponent is tougher.</p>
+                <button class="mode-enter-btn" style="background: {currentModeColor}; margin-top:20px;" on:click={nextRound}>Next Round →</button>
+            </div>
+        {/if}
 
     {:else if phase === 'result'}
         <div class="result-card" class:result-win={tournamentResult?.won} class:result-lose={!tournamentResult?.won}>
@@ -945,6 +1027,42 @@
     .sp-rat { font-size: 11px; font-weight: 700; }
     .sp-val { font-size: 10px; font-weight: 700; min-width: 56px; text-align: right; }
     .salary-hint { padding: 16px; }
+
+    /* Salary Cap v2 — card pool layout */
+    .salary-layout2 { display: grid; grid-template-columns: 230px 1fr; gap: 20px; align-items: start; }
+    @media (max-width: 900px) { .salary-layout2 { grid-template-columns: 1fr; } }
+    .salary-slots2 { display: flex; flex-direction: column; gap: 8px; }
+    .ss2-header { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; margin-bottom: 4px; }
+    .salary-slot2 { border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); padding: 10px 12px; transition: border-color 0.15s; }
+    .ss2-clickable { cursor: pointer; }
+    .ss2-clickable:hover { border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.04); }
+    .ss2-role-tag { font-size: 8px; font-weight: 900; text-transform: uppercase; color: #475569; letter-spacing: 1px; margin-bottom: 6px; }
+    .ss2-card-area { display: flex; justify-content: center; margin-bottom: 6px; }
+    .ss2-card-meta { display: flex; align-items: center; justify-content: space-between; }
+    .ss2-cap-cost { font-size: 10px; font-weight: 700; color: #34d399; }
+    .ss2-remove { font-size: 11px; color: #ef4444; background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+    .ss2-remove:hover { background: rgba(239,68,68,0.1); }
+    .ss2-empty-slot { min-height: 50px; display: flex; align-items: center; justify-content: center; }
+    .ss2-assign-hint { font-size: 10px; font-weight: 700; color: #34d399; text-align: center; }
+    .ss2-placeholder { font-size: 10px; color: #334155; }
+    .ss2-actions { margin-top: 4px; }
+
+    .salary-pool-section { min-width: 0; }
+    .spool-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
+    .spool-title { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; white-space: nowrap; }
+    .spool-search { padding: 7px 12px; border-radius: 8px; background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3); color: #e2e8f0; font-size: 12px; width: 160px; }
+    .salary-pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+    .pool-card-wrap { position: relative; border-radius: 14px; overflow: hidden; border: 2px solid transparent; cursor: pointer; transition: all 0.15s; background: rgba(15,23,42,0.3); padding: 4px 4px 2px; }
+    .pool-card-wrap:hover:not(.pool-assigned) { border-color: rgba(52,211,153,0.3); }
+    .pool-selected { border-color: #34d399 !important; box-shadow: 0 0 12px rgba(52,211,153,0.3); }
+    .pool-assigned { opacity: 0.55; cursor: default; }
+    .pool-over { opacity: 0.45; }
+    .pool-card-footer { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 2px; }
+    .pool-role-tag { font-size: 8px; font-weight: 900; text-transform: uppercase; color: #475569; }
+    .pool-cost-tag { font-size: 9px; font-weight: 700; }
+    .pool-badge { position: absolute; top: 6px; right: 6px; font-size: 7px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 4px; pointer-events: none; }
+    .pool-badge-in { background: rgba(52,211,153,0.25); color: #34d399; border: 1px solid rgba(52,211,153,0.4); }
+    .pool-badge-sel { background: rgba(59,130,246,0.25); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); }
 
     /* Rival Challenge */
     .rivals-list { display: flex; flex-direction: column; gap: 8px; }
