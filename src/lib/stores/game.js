@@ -147,6 +147,24 @@ export function checkMilestoneCards() {
     return [];
 }
 
+// === Team Name Generator ===
+const _ADJ  = ['Apex','Azure','Blazing','Crimson','Crystal','Dark','Frozen','Ghost','Golden','Iron','Jade','Neon','Nova','Obsidian','Phantom','Prime','Scarlet','Shadow','Silver','Solar','Storm','Thunder','Toxic','Void'];
+const _NOUN = ['Bears','Cobras','Dragons','Eagles','Falcons','Foxes','Hawks','Hydras','Jaguars','Knights','Lions','Panthers','Phoenix','Ravens','Serpents','Sharks','Tigers','Titans','Vipers','Wolves'];
+const _LOGO = ['🐉','🦁','🐺','🦅','🐯','🦊','🦈','🐍','🦉','🦇','⚡','🔥','💎','🌊','🌪️','🗡️','🎯','👑','🔮','🏹'];
+const _COLOR = ['#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#f97316','#14b8a6','#a855f7'];
+
+function _pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function generateTeamIdentity() {
+    return {
+        name: `${_pick(_ADJ)} ${_pick(_NOUN)}`,
+        logo: _pick(_LOGO),
+        color: _pick(_COLOR),
+        favouriteTeam: '',
+        favouritePlayer: '',
+    };
+}
+
 // === Save / Load ===
 let _saveDebounce = null;
 
@@ -236,7 +254,16 @@ export function initGame() {
     if (st !== null) hasBoughtStarter.set(st === true || st === 'true');
 
     const id = loadFromStorage('lur_identity');
-    if (id) teamIdentity.set(id);
+    if (!id) {
+        // Brand-new save — give them a unique generated identity
+        teamIdentity.set(generateTeamIdentity());
+    } else if (id.name === 'My Team' && id.logo === '🛡️') {
+        // Never customised — generate a unique name but keep any colour they may have changed
+        const gen = generateTeamIdentity();
+        teamIdentity.set({ ...gen, color: id.color !== '#3b82f6' ? id.color : gen.color, favouriteTeam: id.favouriteTeam || '', favouritePlayer: id.favouritePlayer || '' });
+    } else {
+        teamIdentity.set(id);
+    }
 
     const ts = loadFromStorage('lur_stats');
     if (ts) trackStats.set({ ...get(trackStats), ...ts });
