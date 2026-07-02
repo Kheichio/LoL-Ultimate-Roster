@@ -1,5 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { loadFromStorage, saveToStorage } from '../utils/storage.js';
+import { getDB, getCardById } from '../utils/cards.js';
+import { validateCard, clampNum, signSave, verifySave, BOUNDS } from '../utils/anticheat.js';
 
 // === Core Game State ===
 export const blueEssence = writable(1000);
@@ -172,24 +174,63 @@ export function saveGame() {
         saveToStorage('lur_archive_rewards', get(archiveRewards));
         saveToStorage('lur_prestige', get(prestige));
         saveToStorage('lur_milestone_cards', get(milestoneCards));
+        // Integrity signature — written last so it covers all values above
+        saveToStorage('lur_s', signSave(get(blueEssence), get(managerLevel), get(prestige), get(club).length));
     }, 100);
 }
 
 export function initGame() {
-    const be = loadFromStorage('lur_be');
-    if (be !== null) blueEssence.set(Number(be));
+    const dbLoaded = !!getDB();
 
-    const c = loadFromStorage('lur_club');
-    if (c) club.set(c);
+    // Helpers
+    const sanitiseCards = (arr) => {
+        if (!Array.isArray(arr)) return [];
+        return arr.map(c => validateCard(c, getCardById, dbLoaded)).filter(Boolean);
+    };
+    const sanitiseSquad = (obj) => {
+        const blank = { COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
+        if (!obj || typeof obj !== 'object') return blank;
+        const result = { ...blank };
+        for (const role of Object.keys(blank)) {
+            if (obj[role]) result[role] = validateCard(obj[role], getCardById, dbLoaded) || null;
+        }
+        return result;
+    };
 
-    const s = loadFromStorage('lur_squad');
-    if (s) squad.set(s);
+    // Read raw values that the integrity hash covers
+    const rawBE   = loadFromStorage('lur_be');
+    const rawProg = loadFromStorage('lur_progression');
+    const rawPt   = loadFromStorage('lur_prestige');
+    const rawClub = loadFromStorage('lur_club');
 
-    const bn = loadFromStorage('lur_bench');
-    if (bn) bench.set(bn);
+    // Integrity check — only runs if a signature was previously saved
+    const savedSig = loadFromStorage('lur_s');
+    if (savedSig) {
+        const checkBE      = Math.floor(Number(rawBE) || 0);
+        const checkLevel   = rawProg ? Math.floor(Number(rawProg.level) || 1) : 1;
+        const checkPrestige= Math.floor(Number(rawPt) || 0);
+        const checkLen     = Array.isArray(rawClub) ? rawClub.length : 0;
+        if (!verifySave(savedSig, checkBE, checkLevel, checkPrestige, checkLen)) {
+            console.warn('[LUR] Save integrity mismatch — values will be clamped.');
+        }
+    }
+
+    // Blue Essence — hard cap prevents economic exploits
+    if (rawBE !== null) blueEssence.set(clampNum(rawBE, BOUNDS.be.min, BOUNDS.be.max, 1000));
+
+    // Club / squad / bench — strip any card not in the database
+    if (rawClub) club.set(sanitiseCards(rawClub));
+
+    const rawSquad = loadFromStorage('lur_squad');
+    if (rawSquad) squad.set(sanitiseSquad(rawSquad));
+
+    const rawBench = loadFromStorage('lur_bench');
+    if (rawBench && Array.isArray(rawBench)) {
+        bench.set(rawBench.map(c => c ? (validateCard(c, getCardById, dbLoaded) || null) : null));
+    }
 
     const sc = loadFromStorage('lur_showcase');
-    if (sc) showcasePicks.set(sc);
+    if (sc) showcasePicks.set(sanitiseCards(sc));
 
     const st = loadFromStorage('lur_starter');
     if (st !== null) hasBoughtStarter.set(st === true || st === 'true');
@@ -200,12 +241,18 @@ export function initGame() {
     const ts = loadFromStorage('lur_stats');
     if (ts) trackStats.set({ ...get(trackStats), ...ts });
 
-    const prog = loadFromStorage('lur_progression');
-    if (prog) {
-        managerXP.set(prog.xp || 0);
-        managerLevel.set(prog.level || 1);
-        skillPoints.set(prog.sp || 0);
-        skills.set({ ...get(skills), ...prog.skills });
+    // Progression — clamp numeric fields so level/XP can't be inflated
+    if (rawProg) {
+        managerXP.set(clampNum(rawProg.xp, BOUNDS.xp.min, BOUNDS.xp.max, 0));
+        managerLevel.set(clampNum(rawProg.level, BOUNDS.level.min, BOUNDS.level.max, 1));
+        skillPoints.set(clampNum(rawProg.sp, BOUNDS.sp.min, BOUNDS.sp.max, 0));
+        if (rawProg.skills) {
+            const clamped = {};
+            for (const [k, v] of Object.entries({ ...get(skills), ...rawProg.skills })) {
+                clamped[k] = clampNum(v, BOUNDS.skill.min, BOUNDS.skill.max, 0);
+            }
+            skills.set(clamped);
+        }
     }
 
     const col = loadFromStorage('lur_collection');
@@ -238,9 +285,18 @@ export function initGame() {
     const ar = loadFromStorage('lur_archive_rewards');
     if (ar) archiveRewards.set({ ...get(archiveRewards), ...ar });
 
-    const pt = loadFromStorage('lur_prestige');
-    if (pt !== null) prestige.set(Number(pt) || 0);
+    if (rawPt !== null) prestige.set(clampNum(rawPt, BOUNDS.prestige.min, BOUNDS.prestige.max, 0));
 
-    const mc = loadFromStorage('lur_milestone_cards');
-    if (mc) milestoneCards.set(mc);
+    // Milestone cards — reconstruct from definitions so stats can't be boosted
+    const rawMC = loadFromStorage('lur_milestone_cards');
+    if (rawMC && Array.isArray(rawMC)) {
+        const valid = rawMC.filter(card => card && card.milestoneId && MILESTONE_DEFS.some(d => d.id === card.milestoneId))
+            .map(card => {
+                const def = MILESTONE_DEFS.find(d => d.id === card.milestoneId);
+                return { ...def, id: def.id + '_card', milestoneId: def.id, uniqueId: 'milestone_' + def.id,
+                    team: 'Milestone', year: new Date().getFullYear(), region: 'Legacy', locked: true,
+                    stats: { mec: def.rating - 2, tmf: def.rating - 1, frm: def.rating, cmp: def.rating, map: def.rating - 1, ldr: def.rating + 1 } };
+            });
+        milestoneCards.set(valid);
+    }
 }

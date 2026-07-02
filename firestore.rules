@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Leaderboard ──────────────────────────────────────────────
+    // Anyone authenticated can read; users can only write their own entry.
+    // Server-side caps prevent inflated stats from reaching the board.
+    match /leaderboard/{userId} {
+      allow read: if request.auth != null;
+
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && validLeaderboardEntry(request.resource.data);
+    }
+
+    // ── Cloud Saves ───────────────────────────────────────────────
+    // Strictly personal: only the owner can read or write their save.
+    match /saves/{userId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == userId;
+    }
+
+    // Everything else is denied by default.
+  }
+
+  // ── Leaderboard validation helper ────────────────────────────
+  function validLeaderboardEntry(d) {
+    return d.keys().hasAll(['displayName', 'totalPower', 'trophies', 'updatedAt'])
+      // Numeric range guards — mirrors anticheat.js BOUNDS
+      && d.totalPower  is int && d.totalPower  >= 0  && d.totalPower  <= 145
+      && d.trophies    is int && d.trophies    >= 0  && d.trophies    <= 100000
+      && d.managerLevel is int && d.managerLevel >= 1 && d.managerLevel <= 1000
+      && d.rawPower    is int && d.rawPower    >= 0  && d.rawPower    <= 99
+      // Timestamps must be recent (within 10 min of server time) to prevent replay
+      && d.updatedAt is int
+      && d.updatedAt > (request.time.toMillis() - 600000)
+      && d.updatedAt <= request.time.toMillis()
+      // String fields must be strings
+      && d.displayName is string && d.displayName.size() <= 64
+      && d.teamName    is string && d.teamName.size()    <= 64;
+  }
+}
