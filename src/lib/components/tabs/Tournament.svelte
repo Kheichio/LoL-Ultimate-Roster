@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -392,20 +392,19 @@
                 return;
             }
             // Won the whole Golden Road!
-            const reward = 25000;
-            blueEssence.update(v => v + reward);
+            const { total: grTotal, bonus: grBonus } = grantBE(25000);
             grantXP(2000);
             trackStats.update(s => ({ ...s, tournamentsWon: (s.tournamentsWon||0)+1, goldenRoads: (s.goldenRoads||0)+1, worldsWon: (s.worldsWon||0)+1 }));
             playSound('win');
-            tournamentResult = { won: true, reward, goldenRoad: true };
+            tournamentResult = { won: true, reward: grTotal, bonus: grBonus, goldenRoad: true };
             phase = 'result';
             startGRCooldown();
             saveGame();
             return;
         }
 
-        const reward = won ? m.reward : isFinalist ? m.second : 0;
-        blueEssence.update(v => v + reward);
+        const baseReward = won ? m.reward : isFinalist ? m.second : 0;
+        const { total: reward, bonus: rewardBonus } = grantBE(baseReward);
 
         const xpTable = { cafe: 100, regional: 200, firststand: 300, msi: 500, worlds: 800 };
         const bpTable = { cafe: 50, regional: 100, firststand: 150, msi: 200, worlds: 300 };
@@ -433,7 +432,7 @@
         }
 
         saveGame();
-        tournamentResult = { won, reward, round: round + 1, isFinalist };
+        tournamentResult = { won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist };
         phase = 'result';
     }
 
@@ -844,7 +843,7 @@
                 {:else if tournamentResult?.isFinalist}Runner Up
                 {:else}Eliminated{/if}
             </h2>
-            {#if tournamentResult?.reward > 0}<div class="result-reward">+{tournamentResult.reward.toLocaleString()} BE</div>{/if}
+            {#if tournamentResult?.reward > 0}<div class="result-reward">+{tournamentResult.reward.toLocaleString()} BE{#if tournamentResult.bonus > 0} <span class="wealth-bonus">(+{tournamentResult.bonus.toLocaleString()} Wealth)</span>{/if}</div>{/if}
             <button class="sn-back-btn" style="margin-top:20px;" on:click={backToLobby}>Back to Lobby</button>
         </div>
     {/if}
@@ -995,6 +994,7 @@
     .result-title { font-size: 24px; font-weight: 900; margin-bottom: 8px; } .rt-win { color: #34d399; } .rt-lose { color: #f87171; }
     .result-sub { font-size: 12px; color: #94a3b8; }
     .result-reward { font-size: 22px; font-weight: 900; color: #60a5fa; margin-top: 12px; }
+    .wealth-bonus { font-size: 13px; color: #38bdf8; font-weight: 700; }
     .sn-back-btn { padding: 12px 32px; border-radius: 12px; background: rgba(51,65,85,0.5); color: #94a3b8; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border: 1px solid rgba(71,85,105,0.4); cursor: pointer; transition: all 0.12s; }
     .sn-back-btn:hover { background: rgba(71,85,105,0.6); color: #e2e8f0; }
 

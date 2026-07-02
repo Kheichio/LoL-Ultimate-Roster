@@ -13,15 +13,22 @@
     let loading = false;
     let lastSync = null;
 
+    function fmtNum(v) {
+        if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
+        if (v >= 1_000) return Math.floor(v / 1_000) + 'K';
+        return String(v);
+    }
+
     const columns = [
-        { key: 'trophies', label: 'Trophies', color: '#34d399' },
-        { key: 'totalPower', label: 'Power', color: '#22c55e' },
-        { key: 'rawPower', label: 'Raw', color: '#60a5fa' },
-        { key: 'splitsCompleted', label: 'Splits', color: '#94a3b8' },
-        { key: 'goldenRoads', label: 'GR', color: '#eab308' },
-        { key: 'clubSize', label: 'Cards', color: '#94a3b8' },
-        { key: 'signatureCards', label: 'Sig', color: '#c084fc' },
-        { key: 'holographicCards', label: 'Holo', color: '#fbbf24' },
+        { key: 'trophies',        label: 'Trophies', color: '#34d399' },
+        { key: 'totalPower',      label: 'Power',    color: '#22c55e' },
+        { key: 'rawPower',        label: 'Raw',      color: '#60a5fa' },
+        { key: 'totalBE',         label: 'BE',       color: '#3b82f6', format: fmtNum },
+        { key: 'splitsCompleted', label: 'Splits',   color: '#94a3b8' },
+        { key: 'goldenRoads',     label: 'GR',       color: '#eab308' },
+        { key: 'clubSize',        label: 'Cards',    color: '#94a3b8' },
+        { key: 'signatureCards',  label: 'Sig',      color: '#c084fc' },
+        { key: 'holographicCards',label: 'Holo',     color: '#fbbf24' },
     ];
 
     function getTitle(tp) {
@@ -113,6 +120,7 @@
                 trophies: entry.trophies,
                 totalPower: entry.totalPower,
                 rawPower: entry.rawPower,
+                totalBE: Math.min(50_000_000, Math.max(0, entry.totalBE || 0)),
                 clubSize: entry.clubSize,
                 signatureCards: entry.signatureCards,
                 holographicCards: entry.holographicCards,
@@ -163,7 +171,7 @@
                         trophies: d.trophies || 0,
                         totalPower: d.totalPower || 0,
                         rawPower: d.rawPower || d.totalPower || 0,
-                        totalBE: 0,
+                        totalBE: d.totalBE || 0,
                         clubSize: d.clubSize || 0,
                         signatureCards: d.signatureCards || 0,
                         holographicCards: d.holographicCards || 0,
@@ -286,7 +294,7 @@
                 </div>
                 {#each columns as col}
                     {@const val = p[col.key] || 0}
-                    <span class="lb-col lb-val" style="color: {sortBy === col.key ? col.color : '#94a3b8'}">{val}</span>
+                    <span class="lb-col lb-val" style="color: {sortBy === col.key ? col.color : '#94a3b8'}">{col.format ? col.format(val) : val}</span>
                 {/each}
                 <span class="lb-col lb-title-cell">{p.prestigeTitle}</span>
             </div>

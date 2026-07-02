@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
+    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -435,7 +435,7 @@
     function claimSplitReward() {
         const reward = splitReward;
         if (!reward) return;
-        blueEssence.update(v => v + reward.be);
+        const { total: earnedBE, bonus: wealthBonus } = grantBE(reward.be);
         trackStats.update(s => ({
             ...s,
             splitsCompleted: (s.splitsCompleted || 0) + 1,
@@ -453,11 +453,11 @@
             splitComplete: false,
             meta: [],
             lockedSquad: null,
-            trophyCase: [...(s.trophyCase || []), { split: s.currentSplit, name: splitName, year: splitYear, wins, losses, title: splitTitle.title, reward: reward.be }]
+            trophyCase: [...(s.trophyCase || []), { split: s.currentSplit, name: splitName, year: splitYear, wins, losses, title: splitTitle.title, reward: earnedBE }]
         }));
 
         playSound('claim');
-        showToast(`Split complete! ${splitTitle.title} — +${reward.be} BE`, 'success');
+        showToast(`Split complete! ${splitTitle.title} — +${earnedBE} BE${wealthBonus > 0 ? ` (+${wealthBonus} Wealth)` : ''}`, 'success');
         saveGame();
         phase = 'overview';
     }

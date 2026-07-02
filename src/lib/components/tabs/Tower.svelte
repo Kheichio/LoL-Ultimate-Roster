@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -230,10 +230,10 @@
                 playSound('win');
                 upgradeChoices = generateUpgrades(floor);
                 if (floor % 10 === 0) {
-                    const reward = Math.min(5000, 300 + Math.floor((floor / 10 - 1)) * 300);
-                    totalBEEarned += reward;
-                    blueEssence.update(v => v + reward);
-                    showToast(`Floor ${floor} cleared! +${reward} BE`, 'success');
+                    const baseReward = Math.min(5000, 300 + Math.floor((floor / 10 - 1)) * 300);
+                    const { total: floorReward, bonus: floorBonus } = grantBE(baseReward);
+                    totalBEEarned += floorReward;
+                    showToast(`Floor ${floor} cleared! +${floorReward} BE${floorBonus > 0 ? ` (+${floorBonus} Wealth)` : ''}`, 'success');
                 }
                 grantXP(50 + floor * 5);
                 grantBPXP(25 + floor * 2);

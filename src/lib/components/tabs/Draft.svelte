@@ -196,7 +196,7 @@
 
     function endDraft(won) {
         const reward = won ? 2000 : 500;
-        const total = grantBE(reward);
+        const { total, bonus } = grantBE(reward);
         grantXP(won ? 300 : 100);
         grantBPXP(won ? 150 : 50);
         trackStats.update(s => ({
@@ -205,7 +205,7 @@
             draftModesWon: (s.draftModesWon || 0) + (won ? 1 : 0),
         }));
         if (won) playSound('win'); else playSound('lose');
-        draftResult = { won, reward: total };
+        draftResult = { won, reward: total, bonus };
         phase = 'result';
         saveGame();
     }
@@ -406,7 +406,7 @@
             <div class="result-icon">{draftResult.won ? '🏆' : '💀'}</div>
             <h2 class="result-title">{draftResult.won ? 'Draft Won!' : 'Draft Lost'}</h2>
             <div class="result-score">{playerScore} — {cpuScore}</div>
-            <div class="result-reward">+{draftResult.reward} BE</div>
+            <div class="result-reward">+{draftResult.reward} BE{#if draftResult.bonus > 0} <span class="wealth-bonus">(+{draftResult.bonus} Wealth)</span>{/if}</div>
             <div class="result-btns">
                 <button class="draft-start" on:click={startDraft}>Play Again</button>
                 <button class="draft-back" on:click={backToLobby}>Back to Lobby</button>
@@ -510,5 +510,6 @@
     .result-title { font-size: 28px; font-weight: 900; color: #e2e8f0; margin-bottom: 8px; }
     .result-score { font-size: 18px; font-weight: 900; color: #64748b; margin-bottom: 8px; }
     .result-reward { font-size: 16px; font-weight: 900; color: #34d399; margin-bottom: 24px; }
+    .wealth-bonus { font-size: 12px; color: #38bdf8; font-weight: 700; }
     .result-btns { display: flex; gap: 12px; justify-content: center; }
 </style>

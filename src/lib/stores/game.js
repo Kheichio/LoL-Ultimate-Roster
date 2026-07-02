@@ -88,7 +88,8 @@ export function grantBE(amount) {
     const bonus = Math.round(amount * wealthLevel * 0.1);
     const total = amount + bonus;
     blueEssence.update(v => v + total);
-    return total;
+    // Returns { total, bonus } — bonus > 0 when Wealth Management is levelled
+    return { total, bonus };
 }
 
 // === Battle Pass XP ===

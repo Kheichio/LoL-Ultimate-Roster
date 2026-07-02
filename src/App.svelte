@@ -66,6 +66,7 @@
                 teamName: ti.name, teamLogo: ti.logo, teamColor: ti.color || '#3b82f6',
                 managerLevel: Math.min(1000, Math.max(1, get(managerLevel))), prestigeTitle: getTitle(tp),
                 trophies: tp, totalPower: totalPwr, rawPower: Math.min(99, Math.max(0, rawAvg)),
+                totalBE: Math.min(50_000_000, Math.max(0, get(blueEssence))),
                 clubSize: Math.min(10000, cl.length),
                 signatureCards: cl.filter(c => c.signature).length,
                 holographicCards: cl.filter(c => c.holographic).length,

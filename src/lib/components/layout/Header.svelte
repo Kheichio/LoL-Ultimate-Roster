@@ -1,5 +1,5 @@
 <script>
-    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige, skills } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
@@ -173,7 +173,7 @@
                 <span class="team-icon">{$teamIdentity.logo}</span>
                 <div class="team-text">
                     <span class="team-n">{$teamIdentity.name}</span>
-                    <span class="team-b">💎 {$blueEssence.toLocaleString()}</span>
+                    <span class="team-b">💎 {$blueEssence.toLocaleString()}{#if ($skills.wealth || 0) > 0}<span class="wealth-tag">+{($skills.wealth) * 10}% BE</span>{/if}</span>
                 </div>
             </div>
             {#if splitTimerDisplay}
@@ -275,6 +275,7 @@
     .team-text { display: flex; flex-direction: column; line-height: 1.2; }
     .team-n { font-size: 11px; font-weight: 800; color: #8b99ad; }
     .team-b { font-size: 13px; font-weight: 900; color: #60a5fa; }
+    .wealth-tag { margin-left: 5px; font-size: 9px; font-weight: 900; color: #38bdf8; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.3); border-radius: 6px; padding: 1px 5px; letter-spacing: 0.5px; vertical-align: middle; }
 
     /* Split cooldown timer */
     .split-timer {

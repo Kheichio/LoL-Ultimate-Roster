@@ -31,6 +31,7 @@ service cloud.firestore {
       && d.trophies    is int && d.trophies    >= 0  && d.trophies    <= 100000
       && d.managerLevel is int && d.managerLevel >= 1 && d.managerLevel <= 1000
       && d.rawPower    is int && d.rawPower    >= 0  && d.rawPower    <= 99
+      && d.totalBE     is number && d.totalBE  >= 0  && d.totalBE    <= 50000000
       // Timestamps must be recent (within 10 min of server time) to prevent replay
       && d.updatedAt is int
       && d.updatedAt > (request.time.toMillis() - 600000)

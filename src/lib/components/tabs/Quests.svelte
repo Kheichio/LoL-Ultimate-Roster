@@ -1,5 +1,5 @@
 <script>
-    import { blueEssence, trackStats, club, squad, saveGame, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed as achievementsClaimedStore } from '../../stores/game.js';
+    import { blueEssence, trackStats, club, squad, saveGame, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed as achievementsClaimedStore, grantBE } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
@@ -140,9 +140,9 @@
     function claimMilestone(q) {
         if (claimed[q.id] || getProgress(q.stat) < q.target) return;
         questsClaimed.update(c => ({ ...c, [q.id]: true }));
-        blueEssence.update(v => v + q.reward);
+        const { total: qTotal, bonus: qBonus } = grantBE(q.reward);
         playSound('claim');
-        showToast(`Quest complete! +${q.reward} BE`, 'success');
+        showToast(`Quest complete! +${qTotal} BE${qBonus > 0 ? ` (+${qBonus} Wealth)` : ''}`, 'success');
         saveGame();
     }
 
@@ -158,18 +158,18 @@
         const totalReward = q.reward * times;
         questsRepeatableBaselines.update(b => ({ ...b, [q.id]: base + q.target * times }));
         questsRepeatableCounts.update(c => ({ ...c, [q.id]: (c[q.id] || 0) + times }));
-        blueEssence.update(v => v + totalReward);
+        const { total: rTotal, bonus: rBonus } = grantBE(totalReward);
         playSound('claim');
-        showToast(`Contract claimed ×${times}! +${totalReward} BE`, 'success');
+        showToast(`Contract claimed ×${times}! +${rTotal} BE${rBonus > 0 ? ` (+${rBonus} Wealth)` : ''}`, 'success');
         saveGame();
     }
 
     function claimAchievement(a) {
         if (achievementsClaimed[a.id] || getAchievementProgress(a) < a.target) return;
         achievementsClaimedStore.update(c => ({ ...c, [a.id]: true }));
-        blueEssence.update(v => v + a.reward);
+        const { total: aTotal, bonus: aBonus } = grantBE(a.reward);
         playSound('claim');
-        showToast(`Achievement unlocked! +${a.reward} BE`, 'success');
+        showToast(`Achievement unlocked! +${aTotal} BE${aBonus > 0 ? ` (+${aBonus} Wealth)` : ''}`, 'success');
         saveGame();
     }
 
