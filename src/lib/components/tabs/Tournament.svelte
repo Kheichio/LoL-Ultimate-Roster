@@ -16,6 +16,8 @@
 
     // Salary Cap Mode state
     const SALARY_BUDGET = 50000;
+    const FLEX_DISCOUNT = 0.75;   // flex picks cost 25% less salary
+    const FLEX_STAT_PCT = 0.10;   // flex picks get -10% to all stats in match
     let salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
     let salaryPool = [];
     let salaryPickingRole = null;
@@ -23,14 +25,30 @@
     let _originalSquad = null;
 
     function salaryValue(rating) { return Math.max(0, (rating - 60) * 500); }
-    $: salaryUsed = Object.values(salarySquad).filter(Boolean).reduce((s, c) => s + salaryValue(c.rating), 0);
+    function flexSalaryValue(card, slotRole) {
+        const base = salaryValue(card.rating);
+        return card.role !== slotRole ? Math.round(base * FLEX_DISCOUNT) : base;
+    }
+
+    $: salaryUsed = ['TOP','JNG','MID','ADC','SUP'].reduce((s, role) => {
+        const c = salarySquad[role];
+        return c ? s + flexSalaryValue(c, role) : s;
+    }, 0);
     $: salaryRemaining = SALARY_BUDGET - salaryUsed;
     $: salaryComplete = ['TOP','JNG','MID','ADC','SUP'].every(r => salarySquad[r]);
     $: salaryCardPool = (() => {
         const q = salarySearch.toLowerCase();
         const roleOrder = ['TOP','JNG','MID','ADC','SUP'];
         let cards = salaryPool.filter(c => !q || c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
-        if (salaryPickingRole) return cards.filter(c => c.role === salaryPickingRole).sort((a,b) => b.rating - a.rating);
+        if (salaryPickingRole) {
+            // same-role cards first, then flex options — no longer filtered out
+            return cards.sort((a, b) => {
+                const am = a.role === salaryPickingRole ? 0 : 1;
+                const bm = b.role === salaryPickingRole ? 0 : 1;
+                if (am !== bm) return am - bm;
+                return b.rating - a.rating;
+            });
+        }
         return cards.sort((a,b) => { const ri = roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role); return ri !== 0 ? ri : b.rating - a.rating; });
     })();
 
@@ -56,11 +74,21 @@
         }
         const role = salaryPickingRole || card.role;
         if (!['TOP','JNG','MID','ADC','SUP'].includes(role)) { showToast('Select a role slot first.', 'info'); return; }
-        const val = salaryValue(card.rating);
-        const currentInRoleVal = salarySquad[role] ? salaryValue(salarySquad[role].rating) : 0;
-        const isInOtherSlot = Object.values(salarySquad).some(c => c && c.uniqueId === card.uniqueId);
-        const freedVal = isInOtherSlot ? val : 0;
-        if (salaryUsed - currentInRoleVal - freedVal + val > SALARY_BUDGET) { showToast('Over budget! Choose a lower-rated player.', 'error'); return; }
+        const val = flexSalaryValue(card, role);
+        // Cost freed from target slot's current occupant
+        const currentInRoleVal = salarySquad[role] ? flexSalaryValue(salarySquad[role], role) : 0;
+        // Cost freed from this card's current slot (if already assigned somewhere else)
+        let freedFromCurrentSlot = 0;
+        for (const r of ['TOP','JNG','MID','ADC','SUP']) {
+            if (salarySquad[r] && salarySquad[r].uniqueId === card.uniqueId) {
+                freedFromCurrentSlot = flexSalaryValue(card, r);
+                break;
+            }
+        }
+        if (salaryUsed - currentInRoleVal - freedFromCurrentSlot + val > SALARY_BUDGET) {
+            showToast('Over budget! Try a flex pick (off-role) for a 25% discount.', 'error');
+            return;
+        }
         const newSquad = { ...salarySquad };
         for (const r of ['TOP','JNG','MID','ADC','SUP']) {
             if (newSquad[r] && newSquad[r].uniqueId === card.uniqueId) newSquad[r] = null;
@@ -99,7 +127,22 @@
     function startSalaryTournament() {
         if (!salaryComplete) { showToast('Fill all 5 positions first.', 'error'); return; }
         _originalSquad = get(squad);
-        squad.set({ ...salarySquad, COACH: _originalSquad.COACH });
+        // Apply flex stat debuff (-10% all stats) for cards playing out of position
+        const builtSquad = { COACH: _originalSquad.COACH };
+        for (const role of ['TOP','JNG','MID','ADC','SUP']) {
+            const card = salarySquad[role];
+            if (!card) continue;
+            if (card.role !== role) {
+                const debuffedStats = {};
+                for (const [k, v] of Object.entries(card.stats || {})) {
+                    debuffedStats[k] = Math.round(v * (1 - FLEX_STAT_PCT));
+                }
+                builtSquad[role] = { ...card, stats: debuffedStats, _flexPick: true };
+            } else {
+                builtSquad[role] = card;
+            }
+        }
+        squad.set(builtSquad);
         activeMode = 'salarycap';
         enemies = [];
         for (let i = 0; i < 5; i++) enemies.push(generateSalaryCpuTeam());
@@ -604,7 +647,7 @@
     {:else if phase === 'salary_lobby'}
         <div class="trn-head">
             <h2 class="trn-title" style="color:#34d399;">💰 Salary Cap Mode</h2>
-            <p class="trn-desc">Click a role slot to select it, then click a card from the pool to assign. Budget: 50,000 CAP · Cost = (Rating − 60) × 500.</p>
+            <p class="trn-desc">Click a role slot, then pick a card. Budget: 50,000 CAP · Cost = (Rating − 60) × 500. <span style="color:#38bdf8;">Flex picks (wrong role) cost 25% less but get −10% stats in match.</span></p>
         </div>
         <div class="salary-header">
             <div class="salary-budget-bar">
@@ -628,11 +671,14 @@
                     <div class="salary-slot2" class:ss2-active={salaryPickingRole === role} on:click={() => salaryPickingRole = salaryPickingRole === role ? null : role}>
                         <div class="ss2-role-tag">{role}</div>
                         {#if salarySquad[role]}
+                            {@const slotCard = salarySquad[role]}
+                            {@const isFlexSlot = slotCard.role !== role}
                             <div class="ss2-card-area">
-                                <Card card={salarySquad[role]} mini={true} onclick={() => {}} />
+                                <Card card={slotCard} mini={true} onclick={() => {}} />
                             </div>
                             <div class="ss2-card-meta">
-                                <span class="ss2-cap-cost">{salaryValue(salarySquad[role].rating).toLocaleString()} CAP</span>
+                                <span class="ss2-cap-cost" style="color:{isFlexSlot ? '#38bdf8' : '#34d399'};">{flexSalaryValue(slotCard, role).toLocaleString()} CAP{isFlexSlot ? ' (flex)' : ''}</span>
+                                {#if isFlexSlot}<span class="flex-slot-badge">FLEX −10%</span>{/if}
                                 <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
                                 <button class="ss2-remove" on:click|stopPropagation={() => { salarySquad = {...salarySquad, [role]: null}; }}>✕</button>
                             </div>
@@ -657,7 +703,9 @@
             <div class="salary-pool-section">
                 <div class="spool-header">
                     {#if salaryPickingRole}
-                        <span class="spool-title" style="color:#34d399;">Picking {salaryPickingRole} — {salaryCardPool.length} options</span>
+                        {@const nativeCount = salaryCardPool.filter(c => c.role === salaryPickingRole).length}
+                        {@const flexCount = salaryCardPool.length - nativeCount}
+                        <span class="spool-title" style="color:#34d399;">Picking {salaryPickingRole} — {nativeCount} native · <span style="color:#38bdf8;">{flexCount} flex (−25% cost)</span></span>
                     {:else}
                         <span class="spool-title">All {salaryPool.length} cards · Click a slot first</span>
                     {/if}
@@ -666,23 +714,27 @@
                 <div class="salary-pool-grid">
                     {#each salaryCardPool as card}
                         {@const assigned = Object.values(salarySquad).some(c => c && c.uniqueId === card.uniqueId)}
-                        {@const val = salaryValue(card.rating)}
-                        {@const swapCost = salaryPickingRole && salarySquad[salaryPickingRole] ? salaryValue(salarySquad[salaryPickingRole].rating) : 0}
+                        {@const isFlex = salaryPickingRole !== null && card.role !== salaryPickingRole}
+                        {@const targetRole = salaryPickingRole || card.role}
+                        {@const val = flexSalaryValue(card, targetRole)}
+                        {@const swapCost = salaryPickingRole && salarySquad[salaryPickingRole] ? flexSalaryValue(salarySquad[salaryPickingRole], salaryPickingRole) : 0}
                         {@const overBudget = !assigned && (val - swapCost) > salaryRemaining}
                         <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div class="pool-card-wrap" class:pool-assigned={assigned} class:pool-over={overBudget && !assigned} on:click={() => clickPoolCard(card)}>
+                        <div class="pool-card-wrap" class:pool-assigned={assigned} class:pool-over={overBudget && !assigned} class:pool-flex={isFlex && !assigned} on:click={() => clickPoolCard(card)}>
                             <Card card={card} mini={true} onclick={() => {}} />
                             <div class="pool-card-footer">
-                                <span class="pool-role-tag">{card.role}</span>
-                                <span class="pool-cost-tag" style="color:{assigned ? '#94a3b8' : overBudget ? '#ef4444' : '#34d399'};">{val.toLocaleString()}</span>
+                                <span class="pool-role-tag" style="color:{isFlex ? '#38bdf8' : ''};">{card.role}{isFlex ? ' →FLEX' : ''}</span>
+                                <span class="pool-cost-tag" style="color:{assigned ? '#94a3b8' : overBudget ? '#ef4444' : isFlex ? '#38bdf8' : '#34d399'};">{val.toLocaleString()}</span>
                             </div>
                             {#if assigned}
                                 <div class="pool-badge pool-badge-in">IN SQUAD</div>
+                            {:else if isFlex}
+                                <div class="pool-badge pool-badge-flex">FLEX −10%</div>
                             {/if}
                         </div>
                     {/each}
                     {#if salaryCardPool.length === 0}
-                        <p style="color:#475569; font-size:12px; padding:12px;">{salaryPickingRole ? `No ${salaryPickingRole} cards in pool.` : 'No cards match your search.'}</p>
+                        <p style="color:#475569; font-size:12px; padding:12px;">No cards match your search.</p>
                     {/if}
                 </div>
             </div>
@@ -1041,7 +1093,7 @@
     .ss2-role-tag { font-size: 8px; font-weight: 900; text-transform: uppercase; color: #475569; letter-spacing: 1px; margin-bottom: 6px; }
     .ss2-card-area { display: flex; justify-content: center; margin-bottom: 6px; }
     .ss2-card-meta { display: flex; align-items: center; justify-content: space-between; }
-    .ss2-cap-cost { font-size: 10px; font-weight: 700; color: #34d399; }
+    .ss2-cap-cost { font-size: 10px; font-weight: 700; }
     .ss2-remove { font-size: 11px; color: #ef4444; background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
     .ss2-remove:hover { background: rgba(239,68,68,0.1); }
     .ss2-empty-slot { min-height: 50px; display: flex; align-items: center; justify-content: center; }
@@ -1062,8 +1114,12 @@
     .pool-role-tag { font-size: 8px; font-weight: 900; text-transform: uppercase; color: #475569; }
     .pool-cost-tag { font-size: 9px; font-weight: 700; }
     .pool-badge { position: absolute; top: 6px; right: 6px; font-size: 7px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 4px; pointer-events: none; }
-    .pool-badge-in { background: rgba(52,211,153,0.25); color: #34d399; border: 1px solid rgba(52,211,153,0.4); }
-    .pool-badge-sel { background: rgba(59,130,246,0.25); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); }
+    .pool-badge-in   { background: rgba(52,211,153,0.25); color: #34d399; border: 1px solid rgba(52,211,153,0.4); }
+    .pool-badge-sel  { background: rgba(59,130,246,0.25); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); }
+    .pool-badge-flex { background: rgba(56,189,248,0.2); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35); }
+    .pool-flex { border-color: rgba(56,189,248,0.25) !important; }
+    .pool-flex:hover { border-color: rgba(56,189,248,0.5) !important; box-shadow: 0 0 10px rgba(56,189,248,0.15); }
+    .flex-slot-badge { font-size: 8px; font-weight: 900; color: #38bdf8; background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.3); border-radius: 4px; padding: 1px 5px; letter-spacing: 0.5px; }
 
     /* Rival Challenge */
     .rivals-list { display: flex; flex-direction: column; gap: 8px; }
