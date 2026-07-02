@@ -103,14 +103,30 @@
     function generateEnemy(fl) {
         const db = getDB(); if (!db) return null;
         const pool = db.filter(p => p.role !== 'COACH');
-        const baseRating = Math.min(99, 65 + fl * 2);
-        const cpuBonus = Math.floor(fl * 0.8) + Math.floor(fl / 5) * 2;
-        const cpuStatBoost = Math.floor(fl / 2);
+
+        // Floor 1 targets Gold tier (~79-83).
+        // Slow ramp for the first 20 floors, then steeper.
+        // No upper cap — stat boosts keep scaling past 99.
+        const GOLD_FLOOR = 79;
+        const baseRating = fl <= 1
+            ? GOLD_FLOOR
+            : fl <= 20
+                ? GOLD_FLOOR + (fl - 1) * 1        // +1 per floor, floors 2-20 → 80-98
+                : 98 + (fl - 20) * 2;              // +2 per floor above 20 → scales infinitely
+
+        // Minimum card rating to draw from DB (clamp at 99 since DB doesn't go higher)
+        const minCardRating = Math.min(99, Math.max(GOLD_FLOOR, baseRating - 6));
+
+        // Stat boost applied on top of real card stats — this is what goes infinite
+        const cpuStatBoost = fl <= 20
+            ? Math.floor((fl - 1) / 3)             // tiny boost early (0–6)
+            : Math.floor((fl - 20) * 1.5) + 6;    // accelerates after floor 20
+
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const team = {}; const used = new Set();
         roles.forEach(role => {
-            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= Math.min(95, baseRating - 8));
-            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id)).sort((a,b) => b.rating - a.rating).slice(0, 5);
+            let rp = pool.filter(p => p.role === role && !used.has(p.id) && p.rating >= minCardRating);
+            if (rp.length < 3) rp = pool.filter(p => p.role === role && !used.has(p.id)).sort((a,b) => b.rating - a.rating).slice(0, 8);
             rp.sort((a,b) => b.rating - a.rating);
             const pick = rp[Math.floor(Math.random() * Math.max(1, Math.min(rp.length, 5)))];
             if (pick) {
@@ -121,7 +137,9 @@
             }
         });
         const cards = Object.values(team);
-        const avg = (cards.length > 0 ? Math.round(cards.reduce((s,c) => s + c.rating, 0) / cards.length) : baseRating) + cpuBonus;
+        const cardAvg = cards.length > 0 ? Math.round(cards.reduce((s,c) => s + c.rating, 0) / cards.length) : baseRating;
+        // avgRating drives the power comparison; also scales infinitely via the stat boost
+        const avg = cardAvg + cpuStatBoost;
         const names = ['Floor Guardians','Shadow Sentinels','Iron Wardens','Crystal Defenders','Dark Protectors','Storm Keepers','Frost Watchers','Thunder Lords','Crimson Guard','Neon Enforcers'];
         return { name: names[fl % names.length], cards: team, avgRating: avg };
     }
