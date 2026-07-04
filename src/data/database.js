@@ -1171,6 +1171,24 @@ const baseDatabase = [
     { id: 9254, name: "Ming",    role: "SUP",   team: "RNG", year: 2018, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 95, frm: 95, cmp: 96, map: 97, ldr: 96 } },
     { id: 9255, name: "Heart",   role: "COACH", team: "RNG", year: 2018, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 93, map: 94, ldr: 95 } },
 
+    // SKT T1 2017 — MSI Champions (14W-3L, 82% WR, 3-1 vs G2, Faker Finals MVP)
+    // Real stats: Peanut 7.4 KDA · Faker 4.7 KDA 24.9%DMG · Huni 3.4 KDA 25.3%DMG (carry top) · Bang 5.0 KDA · Wolf 64.5%KP best on team
+    { id: 9291, name: "Huni",    role: "TOP",   team: "SKT", year: 2017, rating: 92, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 93, frm: 87, cmp: 88, map: 87, ldr: 86 } },
+    { id: 9292, name: "Peanut",  role: "JNG",   team: "SKT", year: 2017, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 93, tmf: 94, frm: 96, cmp: 95, map: 97, ldr: 91 } },
+    { id: 9293, name: "Faker",   role: "MID",   team: "SKT", year: 2017, rating: 98, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 97, frm: 98, cmp: 98, map: 96, ldr: 99 } },
+    { id: 9294, name: "Bang",    role: "ADC",   team: "SKT", year: 2017, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 96, tmf: 95, frm: 95, cmp: 94, map: 91, ldr: 90 } },
+    { id: 9295, name: "Wolf",    role: "SUP",   team: "SKT", year: 2017, rating: 92, quality: "MSI", region: "Legacy", stats: { mec: 85, tmf: 94, frm: 92, cmp: 93, map: 94, ldr: 95 } },
+    { id: 9296, name: "kkOma",   role: "COACH", team: "SKT", year: 2017, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 95, frm: 97, cmp: 96, map: 97, ldr: 99 } },
+
+    // SKT T1 2016 — MSI Champions (12W-5L, 71% WR, 3-0 vs CLG, Faker Finals MVP)
+    // Real stats: Duke 7.0 KDA (tank/clean) · Blank 70.9%KP highest · Faker 4.7 KDA 65.2%KP 26.5%DMG · Bang 6.7 KDA 31.4%DMG · Wolf 69.2%KP
+    { id: 9297, name: "Duke",    role: "TOP",   team: "SKT", year: 2016, rating: 91, quality: "MSI", region: "Legacy", stats: { mec: 90, tmf: 89, frm: 94, cmp: 93, map: 88, ldr: 87 } },
+    { id: 9298, name: "Blank",   role: "JNG",   team: "SKT", year: 2016, rating: 89, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 91, frm: 89, cmp: 89, map: 93, ldr: 88 } },
+    { id: 9299, name: "Faker",   role: "MID",   team: "SKT", year: 2016, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 95, frm: 96, cmp: 96, map: 95, ldr: 98 } },
+    { id: 9300, name: "Bang",    role: "ADC",   team: "SKT", year: 2016, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 96, tmf: 94, frm: 95, cmp: 94, map: 90, ldr: 88 } },
+    { id: 9301, name: "Wolf",    role: "SUP",   team: "SKT", year: 2016, rating: 90, quality: "MSI", region: "Legacy", stats: { mec: 83, tmf: 92, frm: 90, cmp: 92, map: 92, ldr: 93 } },
+    { id: 9302, name: "kkOma",   role: "COACH", team: "SKT", year: 2016, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 94, frm: 96, cmp: 95, map: 96, ldr: 99 } },
+
     // === LEAGUE AWARDS 2025 ===
     // POTY — Chovy (Gen.G): dominant 2025 season, MSI winner, LCK title
     { id: 9260, name: "Chovy",    role: "MID",   team: "Gen.G", year: 2025, rating: 99, quality: "POTY", region: "LCK", stats: { mec: 98, tmf: 97, frm: 99, cmp: 98, map: 97, ldr: 95 } },

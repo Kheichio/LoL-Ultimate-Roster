@@ -151,11 +151,46 @@
         saveGame();
     }
 
+    function claimAllBP() {
+        const bp = get(battlePass);
+        const claimedSet = new Set(bp.claimed || []);
+        const currentTier = bp.tier || 0;
+
+        let totalBE = 0, totalSP = 0, cards = [], newClaimed = [...(bp.claimed || [])], count = 0;
+
+        for (const reward of BP_REWARDS) {
+            const canClaim = reward.tier <= currentTier && (!claimedSet.has(reward.tier) || reward.repeatable);
+            if (!canClaim) continue;
+            if (reward.type === 'be') totalBE += reward.amount;
+            else if (reward.type === 'sp') totalSP += reward.amount;
+            else if (reward.type === 'card') cards.push(reward.tier_q);
+            newClaimed.push(reward.tier);
+            claimedSet.add(reward.tier);
+            count++;
+        }
+
+        if (count === 0) { showToast('No rewards to claim!', 'info'); return; }
+
+        if (totalBE > 0) blueEssence.update(v => v + totalBE);
+        if (totalSP > 0) skillPoints.update(v => v + totalSP);
+        cards.forEach(tier_q => giveCard(tier_q));
+        battlePass.update(b => ({ ...b, claimed: newClaimed }));
+
+        playSound('claim');
+        let msg = `Claimed ${count} BP reward${count > 1 ? 's' : ''}!`;
+        if (totalBE > 0) msg += ` +${totalBE.toLocaleString()} BE`;
+        if (totalSP > 0) msg += ` +${totalSP} SP`;
+        if (cards.length > 0) msg += ` +${cards.length} card${cards.length > 1 ? 's' : ''}`;
+        showToast(msg, 'success');
+        saveGame();
+    }
+
     let activeTab = 'daily';
     let bpPage = 0;
     const BP_PER_PAGE = 20;
     $: bpSlice = BP_REWARDS.slice(bpPage * BP_PER_PAGE, (bpPage + 1) * BP_PER_PAGE);
     $: bpPages = Math.ceil(BP_REWARDS.length / BP_PER_PAGE);
+    $: claimableCount = BP_REWARDS.filter(r => r.tier <= bpTier && (!bpClaimed.has(r.tier) || r.repeatable)).length;
 </script>
 
 <section class="rw-page">
@@ -220,13 +255,18 @@
             <p class="bp-hint">Earn XP from Tournaments, Season Splits, Tower, Pack Opens — tiers unlock automatically!</p>
         </div>
 
-        <!-- BP Page Nav -->
-        <div class="bp-nav">
-            {#each Array(bpPages) as _, p}
-                <button class="bp-nav-btn" class:bp-nav-on={bpPage === p} on:click={() => bpPage = p}>
-                    {p * BP_PER_PAGE + 1}-{Math.min((p + 1) * BP_PER_PAGE, 100)}
-                </button>
-            {/each}
+        <!-- Claim All + Page Nav -->
+        <div class="bp-actions">
+            <div class="bp-nav">
+                {#each Array(bpPages) as _, p}
+                    <button class="bp-nav-btn" class:bp-nav-on={bpPage === p} on:click={() => bpPage = p}>
+                        {p * BP_PER_PAGE + 1}-{Math.min((p + 1) * BP_PER_PAGE, 100)}
+                    </button>
+                {/each}
+            </div>
+            <button class="bp-claim-all" class:bp-claim-all-pulse={claimableCount > 0} on:click={claimAllBP} disabled={claimableCount === 0}>
+                Claim All {#if claimableCount > 0}<span class="bp-ca-badge">{claimableCount}</span>{/if}
+            </button>
         </div>
 
         <div class="bp-grid">
@@ -324,7 +364,20 @@
     @keyframes pulse { 0%,100% { box-shadow: 0 0 8px rgba(99,102,241,0.3); } 50% { box-shadow: 0 0 20px rgba(99,102,241,0.6); } }
     .bp-hint { font-size: 9px; color: #334155; margin-top: 10px; }
 
-    .bp-nav { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+    .bp-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .bp-nav { display: flex; gap: 4px; flex-wrap: wrap; }
+    .bp-claim-all {
+        padding: 8px 18px; border-radius: 10px; display: flex; align-items: center; gap: 6px;
+        background: linear-gradient(135deg, #6366f1, #818cf8); color: white;
+        font-size: 11px; font-weight: 900; border: none; cursor: pointer;
+        transition: all 0.15s; white-space: nowrap;
+    }
+    .bp-claim-all:disabled { opacity: 0.35; cursor: default; background: rgba(30,41,59,0.4); }
+    .bp-claim-all-pulse { animation: pulse 1.5s ease-in-out infinite; }
+    .bp-ca-badge {
+        background: rgba(255,255,255,0.25); border-radius: 999px;
+        padding: 1px 7px; font-size: 10px; font-weight: 900;
+    }
     .bp-nav-btn {
         padding: 6px 12px; border-radius: 8px; font-size: 10px; font-weight: 800;
         background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.2);

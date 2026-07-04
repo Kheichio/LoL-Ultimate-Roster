@@ -19,6 +19,7 @@
 
     const CODES = {
         'MSISIG2024': { type: 'card', quality: 'MSI', signature: true, label: 'MSI Signature Card' },
+        'MSI2026': { type: 'card', quality: 'MSI', signature: true, label: 'MSI 2026 Signature Card' },
         'WELCOMEBACK': { type: 'be', amount: 5000, label: '5,000 Blue Essence' },
     };
 

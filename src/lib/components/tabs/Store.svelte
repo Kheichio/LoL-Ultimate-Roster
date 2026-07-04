@@ -19,7 +19,7 @@
     $: scoutLevel = $skills.scouting || 0;
     $: scoutBonus = scoutLevel * 0.25;
 
-    const MSI_EVENT_END = new Date('2026-06-30T23:59:59Z').getTime();
+    const MSI_EVENT_END = new Date('2026-07-12T23:59:59Z').getTime();
     const MSI_PITY_TARGET = 70;
     let eventTimeLeft = '';
     let eventTimer = null;
