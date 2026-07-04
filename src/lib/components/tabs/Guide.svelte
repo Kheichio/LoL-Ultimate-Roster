@@ -7,7 +7,7 @@
         { r: 'LCK', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
         { r: 'LPL', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
         { r: 'LEC', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LCS', years: ['2016','2024','2025','2026'],        note: 'No 2015' },
+        { r: 'LCS', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
         { r: 'LCP', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
     ];
     const specialData = [
