@@ -1186,8 +1186,17 @@ const baseDatabase = [
     { id: 9298, name: "Blank",   role: "JNG",   team: "SKT", year: 2016, rating: 89, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 91, frm: 89, cmp: 89, map: 93, ldr: 88 } },
     { id: 9299, name: "Faker",   role: "MID",   team: "SKT", year: 2016, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 95, frm: 96, cmp: 96, map: 95, ldr: 98 } },
     { id: 9300, name: "Bang",    role: "ADC",   team: "SKT", year: 2016, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 96, tmf: 94, frm: 95, cmp: 94, map: 90, ldr: 88 } },
-    { id: 9301, name: "Wolf",    role: "SUP",   team: "SKT", year: 2016, rating: 90, quality: "MSI", region: "Legacy", stats: { mec: 83, tmf: 92, frm: 90, cmp: 92, map: 92, ldr: 93 } },
-    { id: 9302, name: "kkOma",   role: "COACH", team: "SKT", year: 2016, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 94, frm: 96, cmp: 95, map: 96, ldr: 99 } },
+    { id: 9311, name: "Wolf",    role: "SUP",   team: "SKT", year: 2016, rating: 90, quality: "MSI", region: "Legacy", stats: { mec: 83, tmf: 92, frm: 90, cmp: 92, map: 92, ldr: 93 } },
+    { id: 9312, name: "kkOma",   role: "COACH", team: "SKT", year: 2016, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 94, frm: 96, cmp: 95, map: 96, ldr: 99 } },
+
+    // EDG Edward Gaming 2015 — INAUGURAL MSI Champions (10W-3L, 77% WR, beat SKT T1 3-2)
+    // Real stats: ClearLove 10.0 KDA 51K/21D/158A (best in tournament, Finals MVP) · Koro1 6.4 KDA 67K/32D/139A · Meiko 6.1 KDA 22K/36D/197A
+    { id: 9313, name: "Koro1",     role: "TOP",   team: "EDG", year: 2015, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 93, tmf: 92, frm: 94, cmp: 93, map: 91, ldr: 89 } },
+    { id: 9314, name: "ClearLove", role: "JNG",   team: "EDG", year: 2015, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 93, tmf: 95, frm: 97, cmp: 97, map: 98, ldr: 94 } },
+    { id: 9315, name: "PawN",      role: "MID",   team: "EDG", year: 2015, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 97, tmf: 94, frm: 93, cmp: 93, map: 91, ldr: 90 } },
+    { id: 9316, name: "Deft",      role: "ADC",   team: "EDG", year: 2015, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 95, frm: 95, cmp: 93, map: 91, ldr: 88 } },
+    { id: 9317, name: "Meiko",     role: "SUP",   team: "EDG", year: 2015, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 96, frm: 92, cmp: 93, map: 97, ldr: 96 } },
+    { id: 9318, name: "Aaron",     role: "COACH", team: "EDG", year: 2015, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 92, map: 93, ldr: 95 } },
 
     // === LEAGUE AWARDS 2025 ===
     // POTY — Chovy (Gen.G): dominant 2025 season, MSI winner, LCK title

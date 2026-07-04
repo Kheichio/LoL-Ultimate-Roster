@@ -6,7 +6,7 @@
     import CardInspectModal from './lib/components/modals/CardInspectModal.svelte';
     import AuthPanel from './lib/components/modals/AuthPanel.svelte';
     import { activeTab } from './lib/stores/ui.js';
-    import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks, checkMilestoneCards } from './lib/stores/game.js';
+    import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks, checkMilestoneCards, skills } from './lib/stores/game.js';
     import { currentUser, cloudSave } from './lib/stores/auth.js';
     import { getEffectiveRating, LEGACY_TIERS, getEra } from './lib/utils/cards.js';
     import { get } from 'svelte/store';
@@ -47,7 +47,8 @@
             const tmChem = !starters.length ? 0 : !nl.length ? 2 : new Set(nl.map(c => c.team)).size === 1 ? 2 : 0;
             const coachB = (() => { const c = sq.COACH; if (!c) return 0; return c.rating >= 98 ? 5 : c.rating >= 94 ? 4 : c.rating >= 90 ? 3 : c.rating >= 85 ? 2 : 1; })();
             const legB = (() => { const c = starters.filter(c => LEGACY_TIERS.includes(c.quality)).length; return c >= 4 ? 2 : c >= 2 ? 1 : 0; })();
-            const totalPwr = Math.min(145, Math.max(0, rawAvg + regChem + eraChem + tmChem + coachB + legB));
+            const condB = get(skills).conditioning || 0;
+            const totalPwr = Math.min(145, Math.max(0, rawAvg + regChem + eraChem + tmChem + coachB + legB + condB));
             const ts = get(trackStats);
             const tp = Math.min(100_000, Math.max(0, get(weightedTrophies)));
             const ti = get(teamIdentity);
@@ -99,7 +100,7 @@
 <CardInspectModal />
 <AuthPanel />
 
-<div class="version-badge">Beta 1.1.5 Public Build</div>
+<div class="version-badge">Beta 1.1.6 Public Build</div>
 
 <style>
     .version-badge {

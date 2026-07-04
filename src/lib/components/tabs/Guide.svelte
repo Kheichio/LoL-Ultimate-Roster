@@ -2,6 +2,25 @@
     let openSection = 'getting-started';
     function toggle(id) { openSection = openSection === id ? null : id; }
 
+    const COV_YEARS = ['2015','2016','2024','2025','2026'];
+    const regionData = [
+        { r: 'LCK', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LPL', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LEC', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LCS', years: ['2015','2024','2025','2026'],        note: 'No 2016' },
+        { r: 'LCP', years: ['2024','2025','2026'],               note: 'From 2024 only' },
+    ];
+    const specialData = [
+        { type: 'Worlds Champion', quality: 'Champion', qc: 'champion', pack: 'Champion Pack',    years: '2011 – 2025 (every year)', teams: 'FNC · TPA · SKT ×5 · SSW · SSG · IG · FPX · DK · EDG · DRX · T1 ×3' },
+        { type: 'Finals MVP',      quality: 'MVP',      qc: 'mvp',      pack: 'MVP Pack',         years: '2011 – 2025 (every year)', teams: 'One card per year — same winning team' },
+        { type: 'Worlds Finalist', quality: 'Finalist', qc: 'finalist', pack: 'First Stand+',    years: '2015, 2016, 2023, 2024, 2025', teams: 'KOO · SSG · WBG · BLG · KT' },
+        { type: 'MSI Champion',    quality: 'MSI',      qc: 'msi',      pack: 'MSI Pack',         years: '2015 – 2025 (no 2020)',   teams: 'EDG · SKT ×2 · RNG ×3 · G2 · JDG · Gen.G ×2' },
+        { type: 'First Stand',     quality: 'FirstStand', qc: 'firststand', pack: 'First Stand Pack', years: '2025, 2026',          teams: 'HLE (2025) · BLG (2026)' },
+        { type: 'Player of Year',  quality: 'POTY',     qc: 'poty',     pack: 'Awards Vault',     years: '2024, 2025',              teams: 'Faker / T1 (2024) · Chovy / Gen.G (2025)' },
+        { type: 'Team of Year',    quality: 'TOTY',     qc: 'toty',     pack: 'Awards Vault',     years: '2024, 2025',              teams: 'T1 full roster (both years)' },
+        { type: 'Rookie of Year',  quality: 'ROTY',     qc: 'roty',     pack: 'Awards Vault',     years: '2024, 2025',              teams: 'Massu / FQ (2024) · HongQ / CFO (2025)' },
+    ];
+
     const sections = [
         { id: 'getting-started', title: '🎮 Getting Started', content: [
             { q: 'How do I start?', a: 'Claim your free Starter Pack from the Store (6 cards, one per role). Assign them to your Squad, then enter the Gaming Cafe Tournament from the Play menu.' },
@@ -83,11 +102,14 @@
             { q: '2018 MSI — RNG (Champion)', a: 'Region: LPL · Result: 14W-4L, 78% WR · Roster: Letme, Karsa, Xiaohu, Uzi, Ming · Uzi named Finals MVP with 8.6 KDA and 39.4% damage share. Beat KZ 3-1 in the final. Cards: 9250–9255 (MSI quality).' },
             { q: '2017 MSI — SKT T1 (Champion)', a: 'Region: LCK · Result: 14W-3L, 82% WR · Roster: Huni, Peanut, Faker, Bang, Wolf, kkOma (coach) · Peanut led with 7.4 KDA. Wolf had best kill participation (64.5%). Huni played aggressive carry top (25.3% damage share). Beat G2 3-1 in the final. Cards: 9291–9296 (MSI quality).' },
             { q: '2016 MSI — SKT T1 (Champion)', a: 'Region: LCK · Result: 12W-5L, 71% WR · Roster: Duke, Blank, Faker, Bang, Wolf, kkOma (coach) · Bang led with 6.7 KDA and 31.4% damage share. Blank had highest kill participation (70.9%). Duke posted 7.0 KDA as a clean tank top laner. Beat CLG 3-0 in the final. Cards: 9297–9302 (MSI quality).' },
+            { q: '2015 MSI — EDG Edward Gaming (Inaugural Champion)', a: 'Region: LPL · Result: 10W-3L, 77% WR · Roster: Koro1, ClearLove, PawN, Deft, Meiko, Aaron (coach) · FIRST EVER MSI. ClearLove was the Finals MVP with the best KDA in the entire tournament: 10.0 (51K/21D/158A). Koro1 had 6.4 KDA (2nd in tournament), Meiko had 197 assists. Beat SKT T1 3-2 in the final. Cards: 9303–9308 (MSI quality).' },
             { q: 'MSI Pack Drop Rates', a: 'Base: 0.5% MSI · 1% Challenger · 5% Grandmaster · 10% Master · 20% Diamond · 35% Platinum · 28.5% Gold. During the MSI 2026 event (until July 12): same boosted rates, pack costs only 3,500 BE (was 5,000). Pity system guarantees an MSI card within 70 pulls.' },
             { q: 'MSI 2026 Event Code', a: 'Redeem code MSI2026 in the Account panel (top-right) for a free Signature MSI card. One-time use per account. Works until July 12, 2026.' },
         ]},
+        { id: 'card-coverage', title: '📊 Card Coverage by Region & Year', content: [] },
         { id: 'changelog', title: '📋 Update Log', content: [
-            { q: 'Beta 1.1.5 — Public Build', a: '• Battle Pass: Claim All button — collect every unlocked reward in one click\n• 12 new MSI champion cards based on real tournament data: SKT T1 2017 MSI (Huni/Peanut/Faker/Bang/Wolf/kkOma) and SKT T1 2016 MSI (Duke/Blank/Faker/Bang/Wolf/kkOma) — stats derived from actual KDA, damage share, and kill participation\n• MSI 2026 Event extended to July 12 — boosted drop rates, 3,500 BE pack price\n• New promo code: MSI2026 — free Signature MSI card (account panel)\n• Guide: MSI History section with year-by-year champion rosters, real stats, and card IDs\n• Salary Cap flex picks: any card can fill any role at 25% salary discount + −10% stat debuff\n• Wealth Management: +X% BE badge in header, bonus shown in all reward toasts\n• Anti-cheat: save integrity hash, card stat validation on load, Firebase leaderboard security rules\n• Unique team names auto-generated for new players (no more duplicate "My Team" on leaderboard)\n• Infinity Tower: starts at Gold tier, scales infinitely past floor 20 with no cap\n• Leaderboard now shows Blue Essence as a sortable column' },
+            { q: 'Beta 1.1.6 — Public Build', a: '• MSI 2015 EDG cards added — 6 new cards from the INAUGURAL MSI champion (ClearLove, PawN, Deft, Meiko, Koro1, Aaron). Stats based on real tournament data: ClearLove had 10.0 KDA (best in tournament), Finals MVP\n• 2015 is now the earliest year with MSI coverage — 2015 was the first ever MSI (no earlier tournaments exist)\n• Guide: Card Coverage table updated to show MSI 2015–2025 (no 2020), MSI History section updated with 2015 entry\n• Leaderboard power now correctly includes Conditioning skill bonus (fixes Squad vs Leaderboard mismatch)\n• Card Coverage by Region & Year table added to Guide — shows which years each region is in the game, and all special card types with packs, years, and teams' },
+            { q: 'Beta 1.1.5', a: '• Battle Pass: Claim All button — collect every unlocked reward in one click\n• 12 new MSI champion cards based on real tournament data: SKT T1 2017 MSI (Huni/Peanut/Faker/Bang/Wolf/kkOma) and SKT T1 2016 MSI (Duke/Blank/Faker/Bang/Wolf/kkOma) — stats derived from actual KDA, damage share, and kill participation\n• MSI 2026 Event extended to July 12 — boosted drop rates, 3,500 BE pack price\n• New promo code: MSI2026 — free Signature MSI card (account panel)\n• Guide: MSI History section with year-by-year champion rosters, real stats, and card IDs\n• Salary Cap flex picks: any card can fill any role at 25% salary discount + −10% stat debuff\n• Wealth Management: +X% BE badge in header, bonus shown in all reward toasts\n• Anti-cheat: save integrity hash, card stat validation on load, Firebase leaderboard security rules\n• Unique team names auto-generated for new players (no more duplicate "My Team" on leaderboard)\n• Infinity Tower: starts at Gold tier, scales infinitely past floor 20 with no cap\n• Leaderboard now shows Blue Essence as a sortable column' },
             { q: 'Beta 1.1.2', a: '• League Awards 2024 & 2025 cards: POTY (Faker, Chovy), TOTY (T1 full lineup both years), ROTY (Massu, HongQ) — 14 new ultra-rare cards\n• Awards Vault pack: 12,000 BE · 0.25% POTY · 1% TOTY · 3% ROTY — rarest pack in the game\n• Salary Cap Mode: Build a 50,000 CAP squad from your club. Cards priced by rating. Beat elite opponents for 8,000 BE\n• Rival Challenge: Fight another leaderboard player\'s saved squad. 3-match series, 3,000 BE reward\n• Prestige System: Reach Manager Lv 100 to Prestige. Resets XP/Skills, keeps all cards/BE/trophies. ⭐ badge in header\n• Career Milestone Cards: Earn special cards for achievements (First Worlds, Golden Road, Tower 100, etc.) Shown on Home page\n• Coming Soon updated: Franchise Mode, Friend List, Player Form System' },
             { q: 'Beta 1.1.1.2', a: '• 55 milestone quests (was 39), 10 repeatable contracts (was 7), 25 achievements (was 17)\n• New Draft Mode quests: Win/Play Draft milestones + repeatable contract\n• New economy quests: Perform 10/50 Upgrades\n• Higher-tier competitive goals: Win 10 First Stands, Win 5 MSIs, Win 5 Worlds, Win 100 Cafes\n• New achievements: 98+ Squad Avg, Manager Lv 100, Tower Floor 200, Own 1000 Cards, Win 10/50 Drafts\n• Draft Mode: cards now sort by natural role when picking for a position\n• Draft Mode: card clicks work properly for banning and picking (no more inspect popup)\n• Draft Mode: squad cards displayed on sides during match phase\n• MSI event pity counter now updates live after each pack open\n• ON (BLG) 2026 FirstStand card buffed to 97 to match base card' },
             { q: 'Beta 1.1.0', a: '• DRAFT MODE — New gamemode! 15 random cards, 5 bans each side, build a squad, best of 5. Off-role flex penalty (-10 stats), legacy cards are wildcards\n• MSI 2026 LIMITED EVENT — 24hr global event with boosted MSI pack drop rates + guaranteed MSI card pity at 70 pulls\n• Wealth Management skill: +10% bonus BE from all rewards per level (max 5)\n• Conditioning skill now works: +1 total power per level across all modes\n• Dynamic milestones on Home page, Legacy card tracker, Career stats expanded\n• Card Showcase moved to Club with drag-and-drop reordering\n• Archive completion uses full team size, Coming Soon gamemodes in Play tab' },
@@ -113,12 +135,70 @@
                 </button>
                 {#if openSection === section.id}
                     <div class="gs-body">
-                        {#each section.content as item}
-                            <div class="gs-item">
-                                <h4 class="gs-q">{item.q}</h4>
-                                <p class="gs-a">{item.a}</p>
+                        {#if section.id === 'card-coverage'}
+                            <div class="cov-wrap">
+                                <h4 class="cov-head">Regular Cards by Region & Year</h4>
+                                <p class="cov-sub">Years 2017–2023 have no regular region cards — Legacy event cards (Champion, MSI) cover those gaps.</p>
+                                <div class="cov-scroll">
+                                    <table class="cov-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="cov-th cov-th-left">Region</th>
+                                                {#each COV_YEARS as yr}<th class="cov-th">{yr}</th>{/each}
+                                                <th class="cov-th cov-th-left">Notes</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {#each regionData as row}
+                                                <tr>
+                                                    <td class="cov-region">{row.r}</td>
+                                                    {#each COV_YEARS as yr}
+                                                        <td class="cov-cell {row.years.includes(yr) ? 'cov-yes' : 'cov-no'}">
+                                                            {row.years.includes(yr) ? '✓' : '—'}
+                                                        </td>
+                                                    {/each}
+                                                    <td class="cov-note-cell">{row.note}</td>
+                                                </tr>
+                                            {/each}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <h4 class="cov-head" style="margin-top:24px">Special & Tournament Cards</h4>
+                                <p class="cov-sub">All special cards are in the "Legacy" region — they bypass era and region chemistry as wildcards.</p>
+                                <div class="cov-scroll">
+                                    <table class="cov-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="cov-th cov-th-left">Card Type</th>
+                                                <th class="cov-th">Quality</th>
+                                                <th class="cov-th cov-th-left">Pack</th>
+                                                <th class="cov-th cov-th-left">Years in Game</th>
+                                                <th class="cov-th cov-th-left">Teams / Players</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {#each specialData as row}
+                                                <tr>
+                                                    <td class="cov-type">{row.type}</td>
+                                                    <td class="cov-badge-cell"><span class="cov-badge cov-q-{row.qc}">{row.quality}</span></td>
+                                                    <td class="cov-note-cell">{row.pack}</td>
+                                                    <td class="cov-years-cell">{row.years}</td>
+                                                    <td class="cov-teams-cell">{row.teams}</td>
+                                                </tr>
+                                            {/each}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                        {/each}
+                        {:else}
+                            {#each section.content as item}
+                                <div class="gs-item">
+                                    <h4 class="gs-q">{item.q}</h4>
+                                    <p class="gs-a">{item.a}</p>
+                                </div>
+                            {/each}
+                        {/if}
                     </div>
                 {/if}
             </div>
@@ -155,4 +235,47 @@
     .gs-item:last-child { border-bottom: none; }
     .gs-q { font-size: 13px; font-weight: 900; color: #93c5fd; margin-bottom: 6px; }
     .gs-a { font-size: 12px; color: #94a3b8; line-height: 1.7; }
+
+    /* Card Coverage Tables */
+    .cov-wrap { padding-top: 4px; }
+    .cov-head { font-size: 13px; font-weight: 900; color: #93c5fd; margin-bottom: 6px; }
+    .cov-sub { font-size: 11px; color: #475569; margin-bottom: 12px; line-height: 1.5; }
+    .cov-scroll { overflow-x: auto; margin-bottom: 4px; }
+    .cov-table {
+        width: 100%; border-collapse: collapse; font-size: 11px; min-width: 420px;
+    }
+    .cov-th {
+        padding: 8px 12px; text-align: center; font-size: 10px; font-weight: 900;
+        color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;
+        border-bottom: 1px solid rgba(51,65,85,0.3); white-space: nowrap;
+    }
+    .cov-th-left { text-align: left; }
+    .cov-table tbody tr { border-bottom: 1px solid rgba(51,65,85,0.1); transition: background 0.1s; }
+    .cov-table tbody tr:hover { background: rgba(30,41,59,0.3); }
+    .cov-table tbody tr:last-child { border-bottom: none; }
+
+    .cov-region { padding: 9px 12px; font-weight: 900; font-size: 12px; color: #e2e8f0; white-space: nowrap; }
+    .cov-cell { padding: 9px 8px; text-align: center; font-weight: 900; font-size: 13px; }
+    .cov-yes { color: #34d399; }
+    .cov-no  { color: #334155; }
+    .cov-note-cell { padding: 9px 12px; font-size: 10px; color: #475569; white-space: nowrap; }
+
+    .cov-type       { padding: 9px 12px; font-weight: 700; font-size: 11px; color: #cbd5e1; white-space: nowrap; }
+    .cov-badge-cell { padding: 9px 8px; text-align: center; }
+    .cov-years-cell { padding: 9px 12px; font-size: 10px; color: #94a3b8; white-space: nowrap; }
+    .cov-teams-cell { padding: 9px 12px; font-size: 10px; color: #64748b; }
+
+    .cov-badge {
+        display: inline-block; padding: 2px 8px; border-radius: 999px;
+        font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px;
+        white-space: nowrap;
+    }
+    .cov-q-champion  { background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+    .cov-q-mvp       { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid rgba(249,115,22,0.3); }
+    .cov-q-finalist  { background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.3); }
+    .cov-q-msi       { background: rgba(6,182,212,0.15);  color: #22d3ee; border: 1px solid rgba(6,182,212,0.3); }
+    .cov-q-firststand{ background: rgba(20,184,166,0.15); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.3); }
+    .cov-q-poty      { background: rgba(234,179,8,0.15);  color: #facc15; border: 1px solid rgba(234,179,8,0.35); }
+    .cov-q-toty      { background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+    .cov-q-roty      { background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
 </style>
