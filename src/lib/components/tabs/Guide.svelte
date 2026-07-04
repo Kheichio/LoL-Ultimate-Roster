@@ -7,8 +7,8 @@
         { r: 'LCK', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
         { r: 'LPL', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
         { r: 'LEC', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LCS', years: ['2015','2024','2025','2026'],        note: 'No 2016' },
-        { r: 'LCP', years: ['2024','2025','2026'],               note: 'From 2024 only' },
+        { r: 'LCS', years: ['2016','2024','2025','2026'],        note: 'No 2015' },
+        { r: 'LCP', years: ['2015','2016','2024','2025','2026'], note: 'Full coverage' },
     ];
     const specialData = [
         { type: 'Worlds Champion', quality: 'Champion', qc: 'champion', pack: 'Champion Pack',    years: '2011 – 2025 (every year)', teams: 'FNC · TPA · SKT ×5 · SSW · SSG · IG · FPX · DK · EDG · DRX · T1 ×3' },
