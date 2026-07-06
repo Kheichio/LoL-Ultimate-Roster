@@ -82,6 +82,7 @@
     $: xpProgress = Math.min(100, ($managerXP / xpForNext) * 100);
 
     function getSkillCost(skillId) {
+        if (skillId === 'clubhouse') return 1;
         const current = $skills[skillId] || 0;
         return current + 1;
     }

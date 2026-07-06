@@ -46,23 +46,27 @@
     $: teamRgb = hexToRgb($teamIdentity.color || '#3b82f6');
 
     const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)', Champion:'linear-gradient(90deg, #d97706, #f59e0b)', MVP:'linear-gradient(90deg, #ec4899, #f43f5e)', Finalist:'linear-gradient(90deg, #94a3b8, #cbd5e1)', MSI:'linear-gradient(90deg, #14b8a6, #2dd4bf)', FirstStand:'linear-gradient(90deg, #f97316, #fb923c)', POTY:'linear-gradient(90deg, #e94560, #f87171)', ROTY:'linear-gradient(90deg, #06b6d4, #22d3ee)', TOTY:'linear-gradient(90deg, #f59e0b, #fbbf24)', GPOTY:'linear-gradient(90deg, #a855f7, #d8b4fe)', X:'linear-gradient(90deg, #f43f5e, #fb7185)' };
-    const iconOptions = ['🛡️','⚔️','🐲','🦅','🐺','🦁','🔥','❄️','⭐','💎','🌟','🏆','👑','🎯','🌙','☀️','🐉','🦊','🐻','🎮'];
-    const colorOptions = ['#3b82f6','#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#eab308','#10b981','#06b6d4','#64748b','#f97316','#14b8a6'];
+    const DEFAULT_ICONS = ['🛡️','⚔️','💎','🏆'];
+    const DEFAULT_COLORS = ['#3b82f6','#f59e0b','#10b981','#64748b'];
 
     let editing = false;
     let editName = '';
     let editLogo = '';
     let editColor = '';
+    let availableIcons = DEFAULT_ICONS;
+    let availableColors = DEFAULT_COLORS;
 
     function startEdit() {
         editName = $teamIdentity.name;
         editLogo = $teamIdentity.logo;
         editColor = $teamIdentity.color || '#3b82f6';
+        availableIcons = [...new Set([...DEFAULT_ICONS, ...($teamIdentity.unlockedIcons || []), editLogo])];
+        availableColors = [...new Set([...DEFAULT_COLORS, ...($teamIdentity.unlockedColors || []), editColor])];
         editing = true;
     }
     function saveEdit() {
         if (!editName.trim()) { showToast('Enter a team name.', 'error'); return; }
-        teamIdentity.set({ name: editName.trim(), logo: editLogo, color: editColor });
+        teamIdentity.update(t => ({ ...t, name: editName.trim(), logo: editLogo, color: editColor }));
         saveGame();
         editing = false;
         showToast('Team identity updated!', 'success');
@@ -145,7 +149,7 @@
                     <div class="edit-section">
                         <div class="edit-label">Team Icon</div>
                         <div class="icon-grid">
-                            {#each iconOptions as icon}
+                            {#each availableIcons as icon}
                                 <button class="icon-opt" class:icon-sel={editLogo === icon} on:click={() => editLogo = icon}>{icon}</button>
                             {/each}
                         </div>
@@ -153,7 +157,7 @@
                         <input type="text" bind:value={editName} maxlength="20" class="input" style="width:100%; font-size:13px; text-align:center; margin-bottom:10px;">
                         <div class="edit-label">Team Color</div>
                         <div class="color-grid">
-                            {#each colorOptions as c}
+                            {#each availableColors as c}
                                 <button class="color-opt" class:color-sel={editColor === c} style="background:{c};" on:click={() => editColor = c}></button>
                             {/each}
                         </div>

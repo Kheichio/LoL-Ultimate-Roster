@@ -185,6 +185,13 @@
                 if (bp === 0) return -1;
                 return ap - bp;
             });
+        } else if (sortBy === 'year') {
+            arr.sort((a, b) => {
+                const maxA = Math.max(...a.cards.map(c => c.year || 0));
+                const maxB = Math.max(...b.cards.map(c => c.year || 0));
+                if (maxB !== maxA) return maxB - maxA;
+                return a.team.localeCompare(b.team);
+            });
         }
         return arr;
     })();
@@ -294,6 +301,7 @@
         <div class="sort-group">
             {#each [
                 { value: 'team', label: 'Teams' },
+                { value: 'year', label: 'Year' },
                 { value: 'completion', label: 'Completion' },
                 { value: 'least', label: 'Least Cards' },
             ] as s}

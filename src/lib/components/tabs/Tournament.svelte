@@ -298,7 +298,14 @@
         rival: { name: 'Rival Challenge', icon: '⚔️', rounds: 5, minRating: 88, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 3000, second: 1000, color: '#f59e0b' },
     };
 
-    const GOLDEN_STAGES = ['regional', 'firststand', 'msi', 'worlds'];
+    const GOLDEN_STAGES = [
+        { mode: 'regional',   rounds: 3 },
+        { mode: 'firststand', rounds: 3 },
+        { mode: 'regional',   rounds: 3 },
+        { mode: 'msi',        rounds: 3 },
+        { mode: 'regional',   rounds: 3 },
+        { mode: 'worlds',     rounds: 4 },
+    ];
 
     function generateCpuTeam(mode, roundIdx) {
         const db = getDB();
@@ -347,10 +354,10 @@
         if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
         activeMode = 'goldenroad';
         goldenRoadStage = 0;
-        const mode = GOLDEN_STAGES[0];
-        const m = MODES[mode];
+        const { mode: grMode0, rounds: grRounds0 } = GOLDEN_STAGES[0];
+        const m = MODES[grMode0];
         enemies = [];
-        for (let i = 0; i < m.rounds; i++) enemies.push(generateCpuTeam(mode, i));
+        for (let i = 0; i < grRounds0; i++) enemies.push(generateCpuTeam(grMode0, i));
         round = 0;
         roundResults = [];
         tournamentResult = null;
@@ -408,7 +415,7 @@
 
     function endTournament(won) {
         if (activeMode === 'salarycap' && _originalSquad) { squad.set(_originalSquad); _originalSquad = null; }
-        const mode = activeMode === 'goldenroad' ? GOLDEN_STAGES[goldenRoadStage] : activeMode;
+        const mode = activeMode === 'goldenroad' ? GOLDEN_STAGES[goldenRoadStage].mode : activeMode;
         const m = MODES[mode];
         const isFinalist = !won && round >= enemies.length - 2;
 
@@ -425,12 +432,12 @@
             }
             if (goldenRoadStage < GOLDEN_STAGES.length - 1) {
                 goldenRoadStage++;
-                const nextMode = GOLDEN_STAGES[goldenRoadStage];
+                const { mode: nextMode, rounds: nextRounds } = GOLDEN_STAGES[goldenRoadStage];
                 const nm = MODES[nextMode];
                 enemies = [];
-                for (let i = 0; i < nm.rounds; i++) enemies.push(generateCpuTeam(nextMode, i));
+                for (let i = 0; i < nextRounds; i++) enemies.push(generateCpuTeam(nextMode, i));
                 round = 0; roundResults = []; matchLog = [];
-                showToast(`Golden Road: Advancing to ${nm.name}!`, 'success');
+                showToast(`Golden Road: Stage ${goldenRoadStage + 1}/6 — ${nm.name}!`, 'success');
                 phase = 'bracket';
                 return;
             }
@@ -484,7 +491,7 @@
         phase = 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
     }
 
-    $: currentModeName = activeMode === 'goldenroad' ? `Golden Road — ${MODES[GOLDEN_STAGES[goldenRoadStage]]?.name || ''}` : (MODES[activeMode]?.name || '');
+    $: currentModeName = activeMode === 'goldenroad' ? `Golden Road — ${MODES[GOLDEN_STAGES[goldenRoadStage]?.mode]?.name || ''}` : (MODES[activeMode]?.name || '');
     $: currentModeColor = activeMode === 'goldenroad' ? '#fbbf24' : (MODES[activeMode]?.color || '#10b981');
 </script>
 
@@ -583,7 +590,7 @@
                 <span class="mode-icon">👑</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canGoldenRoad ? '#fbbf24' : '#334155'};">Golden Road</h3>
-                    <p class="mode-sub">{canGoldenRoad ? 'Win Regional → First Stand → MSI → Worlds without losing' : 'Complete 1 Split to unlock'}</p>
+                    <p class="mode-sub">{canGoldenRoad ? '3 Regional → 3 First Stand → 3 Regional → 3 MSI → 3 Regional → 4 Worlds (19 games)' : 'Complete 1 Split to unlock'}</p>
                     {#if canGoldenRoad}<div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">Win: 25,000 BE + Glory</span></div>{/if}
                 </div>
                 {#if grOnCooldown}
@@ -778,7 +785,7 @@
             {#if activeMode === 'goldenroad'}
                 <div class="gr-stages">
                     {#each GOLDEN_STAGES as stg, si}
-                        <span class="gr-stage" class:gr-done={si < goldenRoadStage} class:gr-active={si === goldenRoadStage} class:gr-future={si > goldenRoadStage}>{MODES[stg].icon}</span>
+                        <span class="gr-stage" class:gr-done={si < goldenRoadStage} class:gr-active={si === goldenRoadStage} class:gr-future={si > goldenRoadStage}>{MODES[stg.mode].icon}</span>
                     {/each}
                 </div>
             {/if}
@@ -890,7 +897,7 @@
             </div>
             <h2 class="result-title" class:rt-win={tournamentResult?.won} class:rt-lose={!tournamentResult?.won}>
                 {#if tournamentResult?.goldenRoad}Golden Road Complete!
-                {:else if tournamentResult?.goldenRoadFailed}Golden Road Failed — Stage {(tournamentResult?.stage||0)+1}/4
+                {:else if tournamentResult?.goldenRoadFailed}Golden Road Failed — Stage {(tournamentResult?.stage||0)+1}/6
                 {:else if tournamentResult?.won}Champion!
                 {:else if tournamentResult?.isFinalist}Runner Up
                 {:else}Eliminated{/if}

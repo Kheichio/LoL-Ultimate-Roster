@@ -145,10 +145,10 @@
         else if (reward.type === 'sp') skillPoints.update(v => v + reward.amount);
         else if (reward.type === 'card') giveCard(reward.tier_q);
         else if (reward.type === 'icon') {
-            showToast(`Unlocked icon: ${reward.icon}`, 'success');
+            teamIdentity.update(t => ({ ...t, unlockedIcons: [...new Set([...(t.unlockedIcons || []), reward.icon])] }));
         }
         else if (reward.type === 'color') {
-            showToast(`Unlocked color!`, 'success');
+            teamIdentity.update(t => ({ ...t, unlockedColors: [...new Set([...(t.unlockedColors || []), reward.color])] }));
         }
 
         battlePass.update(bp => ({ ...bp, claimed: [...(bp.claimed || []), reward.tier] }));
@@ -163,7 +163,7 @@
         const claimedCounts = (bp.claimed || []).reduce((m, t) => { m.set(t, (m.get(t) || 0) + 1); return m; }, new Map());
         const currentTier = bp.tier || 0;
 
-        let totalBE = 0, totalSP = 0, cards = [], newClaimed = [...(bp.claimed || [])], count = 0;
+        let totalBE = 0, totalSP = 0, cards = [], icons = [], colors = [], newClaimed = [...(bp.claimed || [])], count = 0;
 
         for (const reward of BP_REWARDS) {
             let canClaim;
@@ -187,6 +187,8 @@
             if (reward.type === 'be') totalBE += reward.amount;
             else if (reward.type === 'sp') totalSP += reward.amount;
             else if (reward.type === 'card') cards.push(reward.tier_q);
+            else if (reward.type === 'icon') icons.push(reward.icon);
+            else if (reward.type === 'color') colors.push(reward.color);
             newClaimed.push(reward.tier);
             claimedSet.add(reward.tier);
             count++;
@@ -197,6 +199,13 @@
         if (totalBE > 0) blueEssence.update(v => v + totalBE);
         if (totalSP > 0) skillPoints.update(v => v + totalSP);
         cards.forEach(tier_q => giveCard(tier_q));
+        if (icons.length > 0 || colors.length > 0) {
+            teamIdentity.update(t => ({
+                ...t,
+                unlockedIcons: [...new Set([...(t.unlockedIcons || []), ...icons])],
+                unlockedColors: [...new Set([...(t.unlockedColors || []), ...colors])],
+            }));
+        }
         battlePass.update(b => ({ ...b, claimed: newClaimed }));
 
         playSound('claim');

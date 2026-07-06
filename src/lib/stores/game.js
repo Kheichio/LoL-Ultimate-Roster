@@ -9,7 +9,7 @@ export const club = writable([]);
 export const squad = writable({ COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null });
 export const bench = writable([null, null, null]);
 export const hasBoughtStarter = writable(false);
-export const teamIdentity = writable({ name: 'My Team', logo: '🛡️', color: '#3b82f6', favouriteTeam: '', favouritePlayer: '' });
+export const teamIdentity = writable({ name: 'My Team', logo: '🛡️', color: '#3b82f6', favouriteTeam: '', favouritePlayer: '', unlockedIcons: [], unlockedColors: [] });
 export const showcasePicks = writable([]);
 
 // === Progression ===
@@ -163,6 +163,8 @@ function generateTeamIdentity() {
         color: _pick(_COLOR),
         favouriteTeam: '',
         favouritePlayer: '',
+        unlockedIcons: [],
+        unlockedColors: [],
     };
 }
 
@@ -261,9 +263,9 @@ export function initGame() {
     } else if (id.name === 'My Team' && id.logo === '🛡️') {
         // Never customised — generate a unique name but keep any colour they may have changed
         const gen = generateTeamIdentity();
-        teamIdentity.set({ ...gen, color: id.color !== '#3b82f6' ? id.color : gen.color, favouriteTeam: id.favouriteTeam || '', favouritePlayer: id.favouritePlayer || '' });
+        teamIdentity.set({ ...gen, color: id.color !== '#3b82f6' ? id.color : gen.color, favouriteTeam: id.favouriteTeam || '', favouritePlayer: id.favouritePlayer || '', unlockedIcons: id.unlockedIcons || [], unlockedColors: id.unlockedColors || [] });
     } else {
-        teamIdentity.set(id);
+        teamIdentity.set({ unlockedIcons: [], unlockedColors: [], ...id });
     }
 
     const ts = loadFromStorage('lur_stats');
