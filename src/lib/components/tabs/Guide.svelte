@@ -2,13 +2,13 @@
     let openSection = 'getting-started';
     function toggle(id) { openSection = openSection === id ? null : id; }
 
-    const COV_YEARS = ['2013','2015','2016','2024','2025','2026'];
+    const COV_YEARS = ['2011','2012','2013','2015','2016','2024','2025','2026'];
     const regionData = [
-        { r: 'LCK', years: ['2013','2015','2016','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LPL', years: ['2013','2015','2016','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LEC', years: ['2013','2015','2016','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LCS', years: ['2015','2016','2024','2025','2026'],        note: 'No 2013' },
-        { r: 'LCP', years: ['2015','2016','2024','2025','2026'],        note: 'No 2013' },
+        { r: 'LCK', years: ['2011','2012','2013','2015','2016','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LPL', years: ['2011','2012','2013','2015','2016','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LEC', years: ['2011','2012','2013','2015','2016','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LCS', years: ['2015','2016','2024','2025','2026'],                     note: 'No 2011–2013' },
+        { r: 'LCP', years: ['2015','2016','2024','2025','2026'],                     note: 'No 2011–2013' },
     ];
     const specialData = [
         { type: 'Worlds Champion', quality: 'Champion', qc: 'champion', pack: 'Champion Pack',    years: '2011 – 2025 (every year)', teams: 'FNC · TPA · SKT ×5 · SSW · SSG · IG · FPX · DK · EDG · DRX · T1 ×3' },
