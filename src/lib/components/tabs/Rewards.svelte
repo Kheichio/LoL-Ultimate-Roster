@@ -116,8 +116,14 @@
     $: bpTier = $battlePass.tier || 0;
     $: bpXP = $battlePass.xp || 0;
     $: bpClaimed = new Set($battlePass.claimed || []);
+    $: bpClaimedCounts = ($battlePass.claimed || []).reduce((m, t) => { m.set(t, (m.get(t) || 0) + 1); return m; }, new Map());
     $: bpProgress = Math.min(100, (bpXP / XP_PER_TIER) * 100);
     $: canLevelUp = bpXP >= XP_PER_TIER;
+
+    function repTimesClaimable(reward, tier) {
+        if (!reward.repeatable || tier < reward.tier) return 0;
+        return Math.floor((tier - reward.tier) / 5) + 1;
+    }
 
     function levelUpBP() {
         if (!canLevelUp) return;
@@ -132,8 +138,8 @@
 
     function claimBPReward(reward) {
         if (reward.tier > bpTier) return;
-        if (bpClaimed.has(reward.tier) && !reward.repeatable) return;
-        if (reward.repeatable && reward.tier > bpTier) return;
+        if (!reward.repeatable && bpClaimed.has(reward.tier)) return;
+        if (reward.repeatable && (bpClaimedCounts.get(reward.tier) || 0) >= repTimesClaimable(reward, bpTier)) return;
 
         if (reward.type === 'be') blueEssence.update(v => v + reward.amount);
         else if (reward.type === 'sp') skillPoints.update(v => v + reward.amount);
@@ -154,12 +160,29 @@
     function claimAllBP() {
         const bp = get(battlePass);
         const claimedSet = new Set(bp.claimed || []);
+        const claimedCounts = (bp.claimed || []).reduce((m, t) => { m.set(t, (m.get(t) || 0) + 1); return m; }, new Map());
         const currentTier = bp.tier || 0;
 
         let totalBE = 0, totalSP = 0, cards = [], newClaimed = [...(bp.claimed || [])], count = 0;
 
         for (const reward of BP_REWARDS) {
-            const canClaim = reward.tier <= currentTier && (!claimedSet.has(reward.tier) || reward.repeatable);
+            let canClaim;
+            if (reward.repeatable) {
+                const timesClaimable = repTimesClaimable(reward, currentTier);
+                const timesClaimed = claimedCounts.get(reward.tier) || 0;
+                const remaining = timesClaimable - timesClaimed;
+                if (remaining <= 0) continue;
+                // claim all remaining cycles at once
+                for (let i = 0; i < remaining; i++) {
+                    if (reward.type === 'be') totalBE += reward.amount;
+                    else if (reward.type === 'sp') totalSP += reward.amount;
+                    newClaimed.push(reward.tier);
+                    claimedCounts.set(reward.tier, (claimedCounts.get(reward.tier) || 0) + 1);
+                    count++;
+                }
+                continue;
+            }
+            canClaim = reward.tier <= currentTier && !claimedSet.has(reward.tier);
             if (!canClaim) continue;
             if (reward.type === 'be') totalBE += reward.amount;
             else if (reward.type === 'sp') totalSP += reward.amount;
@@ -190,7 +213,10 @@
     const BP_PER_PAGE = 20;
     $: bpSlice = BP_REWARDS.slice(bpPage * BP_PER_PAGE, (bpPage + 1) * BP_PER_PAGE);
     $: bpPages = Math.ceil(BP_REWARDS.length / BP_PER_PAGE);
-    $: claimableCount = BP_REWARDS.filter(r => r.tier <= bpTier && (!bpClaimed.has(r.tier) || r.repeatable)).length;
+    $: claimableCount = BP_REWARDS.reduce((n, r) => {
+        if (r.repeatable) return n + Math.max(0, repTimesClaimable(r, bpTier) - (bpClaimedCounts.get(r.tier) || 0));
+        return n + (r.tier <= bpTier && !bpClaimed.has(r.tier) ? 1 : 0);
+    }, 0);
 </script>
 
 <section class="rw-page">
@@ -273,7 +299,7 @@
             {#each bpSlice as reward}
                 {@const unlocked = reward.tier <= bpTier}
                 {@const isClaimed = bpClaimed.has(reward.tier)}
-                {@const canClaim = unlocked && (!isClaimed || reward.repeatable)}
+                {@const canClaim = unlocked && (reward.repeatable ? (bpClaimedCounts.get(reward.tier) || 0) < repTimesClaimable(reward, bpTier) : !isClaimed)}
                 <div class="bp-tile" class:bp-unlocked={unlocked} class:bp-locked={!unlocked} class:bp-rep={reward.repeatable}>
                     <span class="bpt-tier">{reward.tier}</span>
                     <span class="bpt-icon">{reward.icon || '🎁'}</span>
