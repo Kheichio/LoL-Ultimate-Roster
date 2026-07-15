@@ -15,6 +15,39 @@ body {
     min-height: 100vh;
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+}
+
+/* === SITE FOOTER ===
+   The footer lives in index.html, outside #app, so it ships in the static HTML
+   rather than waiting on Svelte to mount. #app grows to fill the viewport so the
+   footer rests at the bottom instead of hanging below the fold. */
+#app {
+    flex: 1 0 auto;
+    display: flex;
+    flex-direction: column;
+}
+.site-footer {
+    flex-shrink: 0;
+    text-align: center;
+    padding: 18px 16px 24px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #475569;
+    letter-spacing: 0.3px;
+    border-top: 1px solid rgba(51, 65, 85, 0.15);
+}
+.site-footer a {
+    color: #64748b;
+    font-weight: 700;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(100, 116, 139, 0.35);
+}
+.site-footer a:hover { color: #3b82f6; border-bottom-color: #3b82f6; }
+/* clears the fixed version badge pinned bottom-right */
+@media (max-width: 768px) {
+    .site-footer { padding-bottom: 34px; }
 }
 
 /* === SCROLLBAR === */

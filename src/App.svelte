@@ -116,7 +116,7 @@
         user-select: none;
     }
     .app-shell {
-        min-height: 100vh;
+        flex: 1 0 auto;
         display: flex;
         flex-direction: column;
     }
