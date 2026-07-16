@@ -29,9 +29,6 @@
         { from: 'Platinum', to: 'Grandmaster', count: 6, minLevel: 3 },
         { from: 'Diamond', to: 'Grandmaster', count: 4, minLevel: 3 },
         { from: 'Master', to: 'Grandmaster', count: 3, minLevel: 3 },
-        { from: 'Diamond', to: 'Challenger', count: 6, minLevel: 4 },
-        { from: 'Master', to: 'Challenger', count: 4, minLevel: 4 },
-        { from: 'Grandmaster', to: 'Challenger', count: 2, minLevel: 4 },
     ];
 
     let offers = [];

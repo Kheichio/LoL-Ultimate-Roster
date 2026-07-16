@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import { club, squad, blueEssence, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, skills, collectionRegistry, unlocks, seasonData, battlePass, hasBoughtStarter, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed, saveGame } from './game.js';
+import { club, squad, blueEssence, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, skills, collectionRegistry, unlocks, seasonData, battlePass, hasBoughtStarter, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed, academy, saveGame } from './game.js';
 import { showToast } from './toasts.js';
 
 export const currentUser = writable(null);
@@ -84,6 +84,7 @@ export async function cloudSave() {
         lol_quests_rbase_v1: JSON.stringify(get(questsRepeatableBaselines)),
         lol_quests_rcounts_v1: JSON.stringify(get(questsRepeatableCounts)),
         lol_achievements_v1: JSON.stringify(get(achievementsClaimed)),
+        lol_academy_v1: JSON.stringify(get(academy)),
         savedAt: Date.now(),
         teamName: get(teamIdentity).name || 'My Team',
     };
@@ -133,6 +134,7 @@ export async function cloudLoad() {
         if (data.lol_quests_rbase_v1) questsRepeatableBaselines.set(JSON.parse(data.lol_quests_rbase_v1));
         if (data.lol_quests_rcounts_v1) questsRepeatableCounts.set(JSON.parse(data.lol_quests_rcounts_v1));
         if (data.lol_achievements_v1) achievementsClaimed.set(JSON.parse(data.lol_achievements_v1));
+        if (data.lol_academy_v1) academy.set({ ...get(academy), ...JSON.parse(data.lol_academy_v1) });
 
         saveGame();
         showToast(`Cloud data loaded! (${get(club).length} cards)`, 'success');

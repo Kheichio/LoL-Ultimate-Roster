@@ -100,7 +100,7 @@
 <CardInspectModal />
 <AuthPanel />
 
-<div class="version-badge">Beta 1.1.6 Public Build</div>
+<div class="version-badge">Beta 1.2 Public Build</div>
 
 <style>
     .version-badge {

@@ -4,6 +4,7 @@
     import Store from '../tabs/Store.svelte';
     import Club from '../tabs/Club.svelte';
     import Squad from '../tabs/Squad.svelte';
+    import Academy from '../tabs/Academy.svelte';
     import Tournament from '../tabs/Tournament.svelte';
     import Archive from '../tabs/Archive.svelte';
     import Quests from '../tabs/Quests.svelte';
@@ -31,6 +32,8 @@
         <Club />
     {:else if tab === 'squad'}
         <Squad />
+    {:else if tab === 'academy'}
+        <Academy />
     {:else if tab === 'tournament'}
         <Tournament />
     {:else if tab === 'collection'}

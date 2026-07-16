@@ -50,6 +50,10 @@ export const prestige = writable(0);
 // === Milestone Cards ===
 export const milestoneCards = writable([]);
 
+// === Academy (auto-farming secondary team) ===
+// 5 role slots (separate from the main squad) + sentAt epoch (0 = idle, >0 = farming since that time).
+export const academy = writable({ TOP: null, JNG: null, MID: null, ADC: null, SUP: null, sentAt: 0 });
+
 // === Derived ===
 export const clubCapacity = derived(skills, $s => 100 + ($s.clubhouse || 0) * 50);
 export const isClubFull = derived([club, clubCapacity], ([$c, $cap]) => $c.length >= $cap);
@@ -195,6 +199,7 @@ export function saveGame() {
         saveToStorage('lur_archive_rewards', get(archiveRewards));
         saveToStorage('lur_prestige', get(prestige));
         saveToStorage('lur_milestone_cards', get(milestoneCards));
+        saveToStorage('lur_academy', get(academy));
         // Integrity signature — written last so it covers all values above
         saveToStorage('lur_s', signSave(get(blueEssence), get(managerLevel), get(prestige), get(club).length));
     }, 100);
@@ -328,5 +333,16 @@ export function initGame() {
                     stats: { mec: def.rating - 2, tmf: def.rating - 1, frm: def.rating, cmp: def.rating, map: def.rating - 1, ldr: def.rating + 1 } };
             });
         milestoneCards.set(valid);
+    }
+
+    // Academy — validate the 5 assigned cards against the DB; keep the farming timestamp
+    const rawAcademy = loadFromStorage('lur_academy');
+    if (rawAcademy && typeof rawAcademy === 'object') {
+        const result = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null, sentAt: 0 };
+        for (const role of ['TOP', 'JNG', 'MID', 'ADC', 'SUP']) {
+            if (rawAcademy[role]) result[role] = validateCard(rawAcademy[role], getCardById, dbLoaded) || null;
+        }
+        result.sentAt = Math.max(0, Math.floor(Number(rawAcademy.sentAt) || 0));
+        academy.set(result);
     }
 }

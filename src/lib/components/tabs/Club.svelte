@@ -1,9 +1,9 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, showcasePicks, saveGame, clubCapacity } from '../../stores/game.js';
+    import { club, squad, academy, blueEssence, showcasePicks, saveGame, clubCapacity } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { inspectingCard } from '../../stores/ui.js';
-    import { getSellValue, TIER_ORDER, LEGACY_TIERS } from '../../utils/cards.js';
+    import { inspectingCard, openConfirmModal } from '../../stores/ui.js';
+    import { getSellValue, getEffectiveRating, TIER_ORDER, LEGACY_TIERS, TIER_COLORS } from '../../utils/cards.js';
     import { get } from 'svelte/store';
 
     let search = '';
@@ -47,15 +47,83 @@
     $: sigCount = $club.filter(c => c.signature).length;
     $: favCount = $club.filter(c => c.favorite).length;
 
+    // --- Bulk sell helpers ---
+    $: squadIds = new Set(Object.values($squad).filter(Boolean).map(s => s.uniqueId));
+    $: academyIds = new Set(['TOP','JNG','MID','ADC','SUP'].map(r => $academy[r]?.uniqueId).filter(Boolean));
+    // Cards in the squad or academy are in-use and never sellable.
+    $: protectedIds = new Set([...squadIds, ...academyIds]);
+
+    function keeperScore(c) {
+        return getEffectiveRating(c) * 100 + (c.signature ? 40 : 0) + (c.holographic ? 20 : 0) + (c.favorite ? 10 : 0) + (c.locked ? 5 : 0);
+    }
+    // For each player owned more than once, keep the best copy; return the rest that are safe to sell.
+    function collectDuplicates(clubCards, protectedIds) {
+        const byId = new Map();
+        for (const c of clubCards) {
+            if (!byId.has(c.id)) byId.set(c.id, []);
+            byId.get(c.id).push(c);
+        }
+        const toSell = [];
+        for (const group of byId.values()) {
+            if (group.length < 2) continue;
+            const keeper = [...group].sort((a, b) => keeperScore(b) - keeperScore(a))[0];
+            for (const c of group) {
+                if (c.uniqueId === keeper.uniqueId) continue;
+                if (c.locked || c.favorite || protectedIds.has(c.uniqueId)) continue;
+                toSell.push(c);
+            }
+        }
+        return toSell;
+    }
+    // Standard tiers the player actually owns and can bulk-sell (protected cards excluded).
+    $: quickSellTiers = TIER_ORDER.map(tier => {
+        const cards = $club.filter(c => c.quality === tier && !c.locked && !c.favorite && !protectedIds.has(c.uniqueId));
+        return { tier, count: cards.length, total: cards.reduce((s, c) => s + getSellValue(c.quality, c), 0) };
+    }).filter(t => t.count > 0);
+    $: dupeSellList = collectDuplicates($club, protectedIds);
+    $: dupeInfo = { count: dupeSellList.length, total: dupeSellList.reduce((s, c) => s + getSellValue(c.quality, c), 0) };
+
     function sellCard(card) {
-        const inSquad = Object.values($squad).some(s => s && s.uniqueId === card.uniqueId);
-        if (inSquad) { showToast('Card is in your squad.', 'error'); return; }
+        if (squadIds.has(card.uniqueId)) { showToast('Card is in your squad.', 'error'); return; }
+        if (academyIds.has(card.uniqueId)) { showToast('Card is in your academy.', 'error'); return; }
         if (card.locked) { showToast('Card is locked.', 'error'); return; }
         const price = getSellValue(card.quality, card);
         club.update(c => c.filter(x => x.uniqueId !== card.uniqueId));
         blueEssence.update(v => v + price);
         showToast(`Sold ${card.name} for ${price} BE`, 'info');
         saveGame();
+    }
+
+    function quickSellTier(tier) {
+        const cards = $club.filter(c => c.quality === tier && !c.locked && !c.favorite && !protectedIds.has(c.uniqueId));
+        if (!cards.length) { showToast(`No sellable ${tier} cards.`, 'error'); return; }
+        const total = cards.reduce((s, c) => s + getSellValue(c.quality, c), 0);
+        openConfirmModal(
+            `Sell all ${cards.length} ${tier} card${cards.length > 1 ? 's' : ''} for ${total} BE? Locked, favourited, and squad cards are kept.`,
+            () => {
+                const ids = new Set(cards.map(c => c.uniqueId));
+                club.update(c => c.filter(x => !ids.has(x.uniqueId)));
+                blueEssence.update(v => v + total);
+                showToast(`Sold ${cards.length} ${tier} card${cards.length > 1 ? 's' : ''} for ${total} BE`, 'success');
+                saveGame();
+            }
+        );
+    }
+
+    function sellDuplicates() {
+        const cards = collectDuplicates($club, protectedIds);
+        if (!cards.length) { showToast('No duplicates to sell.', 'info'); return; }
+        const total = cards.reduce((s, c) => s + getSellValue(c.quality, c), 0);
+        openConfirmModal(
+            `Sell ${cards.length} duplicate${cards.length > 1 ? 's' : ''} for ${total} BE? This keeps the best copy of each player; locked, favourited, and squad cards are kept.`,
+            () => {
+                const ids = new Set(cards.map(c => c.uniqueId));
+                club.update(c => c.filter(x => !ids.has(x.uniqueId)));
+                blueEssence.update(v => v + total);
+                showToast(`Sold ${cards.length} duplicate${cards.length > 1 ? 's' : ''} for ${total} BE`, 'success');
+                saveGame();
+            }
+        );
     }
 
     function toggleLock(card) {
@@ -172,6 +240,21 @@
         <span class="filter-count">{filtered.length} shown</span>
     </div>
 
+    <!-- Bulk sell actions -->
+    {#if quickSellTiers.length > 0 || dupeInfo.count > 0}
+        <div class="bulk-bar">
+            <span class="bulk-label">Quick Sell</span>
+            {#each quickSellTiers as t}
+                <button class="bulk-btn" style="border-left:3px solid {TIER_COLORS[t.tier] || '#475569'};" on:click={() => quickSellTier(t.tier)}>
+                    {t.tier} <span class="bulk-ct">{t.count}</span> <span class="bulk-be">+{t.total}</span>
+                </button>
+            {/each}
+            <button class="bulk-btn bulk-dupes" on:click={sellDuplicates} disabled={dupeInfo.count === 0}>
+                Sell Duplicates <span class="bulk-ct">{dupeInfo.count}</span> <span class="bulk-be">+{dupeInfo.total}</span>
+            </button>
+        </div>
+    {/if}
+
     <!-- Card Grid -->
     {#if filtered.length === 0}
         <div class="club-empty">
@@ -195,13 +278,13 @@
                             class="ca-btn" class:ca-showcase-on={isInShowcase(card)}
                             on:click={() => isInShowcase(card) ? removeFromShowcase(card.uniqueId) : addToShowcase(card)}
                         >{isInShowcase(card) ? '⭐' : '☆'}</button>
-                        {#if !card.locked && !Object.values($squad).some(s => s && s.uniqueId === card.uniqueId)}
+                        {#if !card.locked && !protectedIds.has(card.uniqueId)}
                             <button class="ca-btn ca-sell" on:click={() => sellCard(card)}>
                                 +{getSellValue(card.quality, card)}
                             </button>
                         {:else}
                             <span class="ca-status">
-                                {Object.values($squad).some(s => s && s.uniqueId === card.uniqueId) ? 'Squad' : 'Locked'}
+                                {squadIds.has(card.uniqueId) ? 'Squad' : academyIds.has(card.uniqueId) ? 'Academy' : 'Locked'}
                             </span>
                         {/if}
                     </div>
@@ -271,6 +354,25 @@
     .filter-search { flex: 1; min-width: 160px; padding: 9px 14px; font-size: 12px; }
     .filter-select { font-size: 11px; padding: 9px 14px; }
     .filter-count { font-size: 10px; color: #475569; font-weight: 700; margin-left: auto; }
+
+    /* Bulk sell actions */
+    .bulk-bar {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+        padding: 12px 18px; border-radius: 14px; margin-top: -8px; margin-bottom: 20px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.18);
+    }
+    .bulk-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; margin-right: 2px; }
+    .bulk-btn {
+        padding: 6px 10px; border-radius: 8px; font-size: 10px; font-weight: 800; cursor: pointer;
+        background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3);
+        color: #cbd5e1; transition: all 0.12s; display: inline-flex; align-items: center; gap: 5px;
+    }
+    .bulk-btn:hover { background: rgba(51,65,85,0.6); color: #f1f5f9; }
+    .bulk-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .bulk-ct { font-size: 9px; color: #94a3b8; font-weight: 700; }
+    .bulk-be { font-size: 9px; color: #34d399; font-weight: 800; }
+    .bulk-dupes { margin-left: auto; background: rgba(127,29,29,0.15); border-color: rgba(239,68,68,0.2); color: #f87171; }
+    .bulk-dupes:hover:not(:disabled) { background: rgba(127,29,29,0.3); color: #fca5a5; }
 
     /* Empty state */
     .club-empty {

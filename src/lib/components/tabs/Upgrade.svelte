@@ -13,7 +13,6 @@
         { from: 'Platinum', to: 'Diamond', count: 8, cost: 400 },
         { from: 'Diamond', to: 'Master', count: 8, cost: 800 },
         { from: 'Master', to: 'Grandmaster', count: 5, cost: 1500 },
-        { from: 'Grandmaster', to: 'Challenger', count: 5, cost: 3000 },
     ];
 
     const roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];

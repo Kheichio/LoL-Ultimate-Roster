@@ -45,6 +45,15 @@ body {
     border-bottom: 1px solid rgba(100, 116, 139, 0.35);
 }
 .site-footer a:hover { color: #3b82f6; border-bottom-color: #3b82f6; }
+.legal-disclaimer {
+    max-width: 720px;
+    margin: 12px auto 0;
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1.55;
+    color: #334155;
+    letter-spacing: 0.2px;
+}
 /* clears the fixed version badge pinned bottom-right */
 @media (max-width: 768px) {
     .site-footer { padding-bottom: 34px; }

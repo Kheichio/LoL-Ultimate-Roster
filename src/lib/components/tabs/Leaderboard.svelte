@@ -301,7 +301,10 @@
         {/each}
 
         {#if players.length <= 1 && !loading}
-            <div class="lb-empty">Sign in to see other players and sync your data to the leaderboard.</div>
+            <div class="lb-empty">No managers on the board yet — be the first!</div>
+        {/if}
+        {#if !$currentUser && !loading}
+            <div class="lb-empty">You're viewing as a guest. Sign in to add your team to the board.</div>
         {/if}
     </div>
 </section>

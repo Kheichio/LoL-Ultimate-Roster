@@ -273,7 +273,7 @@
     [data-text="dark"] .card-stats { border-color: rgba(0,0,0,0.15); }
 
     /* === TIER BACKGROUNDS === */
-    .tier-bronze { background: linear-gradient(145deg, #92643a 0%, #6b4423 40%, #4a2f15 100%); border: 3px solid #8b6239; }
+    .tier-bronze { background: linear-gradient(145deg, #c39468 0%, #a97c55 45%, #8a6440 100%); border: 3px solid #b08862; }
     .tier-silver { background: linear-gradient(145deg, #e2e8f0 0%, #94a3b8 40%, #64748b 100%); border: 3px solid #94a3b8; }
     .tier-gold { background: linear-gradient(145deg, #fef08a 0%, #eab308 40%, #a16207 100%); border: 3px solid #ca8a04; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 12px rgba(234,179,8,0.15); }
     .tier-platinum { background: linear-gradient(145deg, #a7f3d0 0%, #10b981 40%, #047857 100%); border: 3px solid #059669; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 12px rgba(16,185,129,0.2); }

@@ -79,7 +79,6 @@
             { from: 'Bronze', count: 10, cost: 50 }, { from: 'Silver', count: 10, cost: 100 },
             { from: 'Gold', count: 10, cost: 200 }, { from: 'Platinum', count: 8, cost: 400 },
             { from: 'Diamond', count: 8, cost: 800 }, { from: 'Master', count: 5, cost: 1500 },
-            { from: 'Grandmaster', count: 5, cost: 3000 },
         ];
         const roles = ['TOP','JNG','MID','ADC','SUP','COACH'];
         const sqIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
@@ -107,21 +106,22 @@
         { id: 'store', label: 'Store', accent: true },
         { id: 'club', label: 'Club' },
         { id: 'squad', label: 'Squad', accent: true },
+        { id: 'academy', label: 'Academy' },
         { id: 'season', label: 'Season' },
     ];
 
     const rightTabs = [
         { id: 'quests', label: 'Quests' },
+        { id: 'rewards', label: 'Rewards' },
         { id: 'upgrade', label: 'Upgrade' },
         { id: 'skills', label: 'Skills' },
         { id: 'collection', label: 'Archive' },
-        { id: 'leaderboard', label: 'Board' },
+        { id: 'leaderboard', label: 'Ranking' },
     ];
 
     const subTabs = [
         { id: 'welcome', label: 'Welcome' },
         { id: 'guide', label: 'Guide' },
-        { id: 'rewards', label: 'Rewards' },
         { id: 'trade', label: 'Trade' },
     ];
 

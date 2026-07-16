@@ -120,6 +120,7 @@
     })();
 
     const updates = [
+        { ver: '1.2', text: 'Academy auto-farming team, Club quick-sell + sell duplicates, MSI 2026 champions (HLE), public leaderboard, Challenger no longer craftable, softer bronze cards' },
         { ver: '1.1.2', text: 'League Awards cards (POTY/TOTY/ROTY 2024+2025), Salary Cap Mode, Rival Challenge, Prestige System, Milestone Cards' },
         { ver: '1.1.1.2', text: '55 quests, 25 achievements, Draft Mode fixes, pity counter fix, ON card buff' },
         { ver: '1.1.0', text: 'Draft Mode, MSI 2026 Event, Wealth skill, Conditioning fix, dynamic milestones' },
