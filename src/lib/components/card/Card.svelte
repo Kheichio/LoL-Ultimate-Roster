@@ -312,20 +312,23 @@
     .tier-coach { background: linear-gradient(145deg, #022c22 0%, #064e3b 100%); border: 3px dashed #10b981; }
 
     /* Effects */
-    .card-signature { outline: 2px solid rgba(255,215,0,0.5); outline-offset: 2px; animation: sig-glow 2s ease-in-out infinite; }
-    .card-signature::after { content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%; background: linear-gradient(105deg, transparent 20%, rgba(255,215,0,0.1) 40%, rgba(255,215,0,0.2) 50%, rgba(255,215,0,0.1) 60%, transparent 80%); animation: sig-sweep 3s ease-in-out infinite; pointer-events: none; border-radius: inherit; z-index: 5; }
-    @keyframes sig-glow { 0%,100% { outline-color: rgba(255,215,0,0.5); } 50% { outline-color: rgba(255,215,0,0.8); } }
-    @keyframes sig-sweep { 0%,100% { left: -100%; } 50% { left: 140%; } }
-    /* Holographic — animated iridescent foil across the card face + soft rainbow glow */
+    /* Signature — prestigious white light sweep + shimmering white↔gold rim */
+    .card-signature { outline: 2px solid rgba(255,255,255,0.6); outline-offset: 2px; animation: sig-glow 2.4s ease-in-out infinite; }
+    .card-signature::after { content: ''; position: absolute; top: 0; left: -100%; width: 55%; height: 100%; background: linear-gradient(105deg, transparent 15%, rgba(255,255,255,0.25) 40%, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0.25) 60%, transparent 85%); mix-blend-mode: screen; animation: sig-sweep 3s ease-in-out infinite; pointer-events: none; border-radius: inherit; z-index: 5; }
+    @keyframes sig-glow { 0%,100% { outline-color: rgba(255,255,255,0.55); } 50% { outline-color: rgba(255,215,0,0.9); } }
+    @keyframes sig-sweep { 0% { left: -100%; } 55%,100% { left: 145%; } }
+    /* Holographic — animated iridescent foil across the card face + soft rainbow glow.
+       A faint white wash (baked into holo-glow's inset shadow) gently pales the base
+       tier colour so the foil reads clearly instead of drowning in saturated gradients. */
     .card-holographic { animation: holo-glow 5s linear infinite; }
     .card-holographic::before {
         content: ''; position: absolute; inset: 0; border-radius: inherit;
         background:
-            linear-gradient(115deg, transparent 0%, transparent 32%, rgba(255,255,255,0.45) 45%, rgba(255,255,255,0.15) 52%, transparent 62%, transparent 100%),
-            linear-gradient(125deg, rgba(255,0,132,0.5) 0%, rgba(0,229,255,0.5) 22%, rgba(0,255,148,0.5) 42%, rgba(255,221,0,0.5) 62%, rgba(214,0,255,0.5) 82%, rgba(255,0,132,0.5) 100%);
+            linear-gradient(115deg, transparent 0%, transparent 30%, rgba(255,255,255,0.75) 46%, rgba(255,255,255,0.3) 53%, transparent 64%, transparent 100%),
+            linear-gradient(125deg, rgba(255,0,132,0.62) 0%, rgba(0,229,255,0.62) 22%, rgba(0,255,148,0.62) 42%, rgba(255,221,0,0.62) 62%, rgba(214,0,255,0.62) 82%, rgba(255,0,132,0.62) 100%);
         background-size: 220% 220%, 260% 260%;
         mix-blend-mode: overlay;
-        opacity: 0.65;
+        opacity: 0.85;
         pointer-events: none;
         z-index: 4;
         animation: holo-foil 5s ease-in-out infinite;
@@ -336,8 +339,8 @@
         100% { background-position: 0% 0%,   0% 50%; }
     }
     @keyframes holo-glow {
-        0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(255,0,132,0.4); }
-        33%     { box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(0,229,255,0.4); }
-        66%     { box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(0,255,148,0.4); }
+        0%,100% { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.14), 0 8px 24px rgba(0,0,0,0.4), 0 0 26px rgba(255,0,132,0.55); }
+        33%     { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.14), 0 8px 24px rgba(0,0,0,0.4), 0 0 26px rgba(0,229,255,0.55); }
+        66%     { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.14), 0 8px 24px rgba(0,0,0,0.4), 0 0 26px rgba(0,255,148,0.55); }
     }
 </style>

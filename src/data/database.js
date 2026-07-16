@@ -1143,11 +1143,11 @@ const baseDatabase = [
     { id: 9205, name: "Duro",   role: "SUP", team: "Gen.G", year: 2025, rating: 88, quality: "MSI", region: "Legacy", stats: { mec: 83, tmf: 90, frm: 89, cmp: 88, map: 91, ldr: 87 } },
 
     // HLE 2026 — MSI Champions (beat BLG 3-2; Zeus Finals MVP, Zeka statistical MVP)
-    { id: 9224, name: "Zeus",     role: "TOP", team: "HLE", year: 2026, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 97, tmf: 96, frm: 96, cmp: 94, map: 90, ldr: 91 } },
-    { id: 9225, name: "Kanavi",   role: "JNG", team: "HLE", year: 2026, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 93, tmf: 94, frm: 93, cmp: 92, map: 95, ldr: 92 } },
-    { id: 9226, name: "Zeka",     role: "MID", team: "HLE", year: 2026, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 98, frm: 97, cmp: 97, map: 92, ldr: 91 } },
-    { id: 9227, name: "Gumayusi", role: "ADC", team: "HLE", year: 2026, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 97, tmf: 96, frm: 96, cmp: 92, map: 89, ldr: 88 } },
-    { id: 9228, name: "Delight",  role: "SUP", team: "HLE", year: 2026, rating: 92, quality: "MSI", region: "Legacy", stats: { mec: 85, tmf: 94, frm: 91, cmp: 92, map: 95, ldr: 94 } },
+    { id: 9224, name: "Zeus",     role: "TOP", team: "HLE", year: 2026, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 99, tmf: 97, frm: 98, cmp: 95, map: 91, ldr: 92 } },
+    { id: 9225, name: "Kanavi",   role: "JNG", team: "HLE", year: 2026, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 95, tmf: 96, frm: 96, cmp: 93, map: 96, ldr: 93 } },
+    { id: 9226, name: "Zeka",     role: "MID", team: "HLE", year: 2026, rating: 97, quality: "MSI", region: "Legacy", stats: { mec: 99, tmf: 98, frm: 97, cmp: 97, map: 92, ldr: 91 } },
+    { id: 9227, name: "Gumayusi", role: "ADC", team: "HLE", year: 2026, rating: 96, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 96, frm: 97, cmp: 98, map: 90, ldr: 89 } },
+    { id: 9228, name: "Delight",  role: "SUP", team: "HLE", year: 2026, rating: 94, quality: "MSI", region: "Legacy", stats: { mec: 86, tmf: 95, frm: 93, cmp: 93, map: 96, ldr: 95 } },
     { id: 9229, name: "Mowgli",   role: "COACH", team: "HLE", year: 2026, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 20, tmf: 91, frm: 93, cmp: 92, map: 93, ldr: 95 } },
 
     // RNG 2022 — MSI Champions (83.3% WR, 24G)
