@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
+    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -418,6 +418,7 @@
                 });
             });
 
+            logMatch({ mode: 'season', result: matchWon ? 'win' : 'loss', opponent: currentOpponent.name, be: 0, xp: matchWon ? 150 : 60 });
             saveGame();
             phase = 'matchResult';
         }

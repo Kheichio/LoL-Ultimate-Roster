@@ -1,8 +1,9 @@
 <script>
-    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige, skills } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige, skills, academy } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
+    import { friendRequestCount } from '../../stores/friends.js';
     import { loadFromStorage } from '../../utils/storage.js';
 
     function isSameDay(d1, d2) {
@@ -14,6 +15,11 @@
     $: dailyAvailable = !isSameDay($dailyLogin.lastClaim, Date.now());
     $: bpCanLevel = ($battlePass.xp || 0) >= 1000;
     $: spAvailable = $skillPoints > 0;
+
+    // Academy farm — badge when a run is ready to collect
+    let acNow = Date.now();
+    const acInterval = setInterval(() => { acNow = Date.now(); }, 15000);
+    $: academyReady = ($academy.sentAt > 0 && acNow >= $academy.sentAt + 3600000) ? 1 : 0;
 
     $: archiveUnclaimed = (() => {
         const reg = $collectionRegistry;
@@ -99,6 +105,8 @@
         collection: archiveUnclaimed > 0 ? archiveUnclaimed : 0,
         quests: questBadge,
         upgrade: upgradeAvailable,
+        academy: academyReady,
+        friends: $friendRequestCount,
     };
 
     const leftTabs = [
@@ -122,6 +130,7 @@
     const subTabs = [
         { id: 'welcome', label: 'Welcome' },
         { id: 'guide', label: 'Guide' },
+        { id: 'friends', label: 'Friends' },
         { id: 'trade', label: 'Trade' },
     ];
 
@@ -159,7 +168,7 @@
         }
     }
     restoreHeaderCooldown();
-    onDestroy(() => { if (splitTimerInterval) clearInterval(splitTimerInterval); });
+    onDestroy(() => { if (splitTimerInterval) clearInterval(splitTimerInterval); clearInterval(acInterval); });
 </script>
 
 <header class="hdr">
@@ -188,7 +197,10 @@
         <div class="hdr-center desktop-only">
             <div class="row-1">
                 {#each leftTabs as t}
-                    <button class="nt" class:nt-on={$activeTab === t.id} class:nt-accent={t.accent} on:click={() => navTo(t.id)}>{t.label}</button>
+                    <button class="nt" class:nt-on={$activeTab === t.id} class:nt-accent={t.accent} on:click={() => navTo(t.id)}>
+                        {t.label}
+                        {#if notifications[t.id]}<span class="nav-badge">{notifications[t.id]}</span>{/if}
+                    </button>
                 {/each}
 
                 <button class="play" class:play-on={$activeTab === 'tournament'} on:click={() => navTo('tournament')}>

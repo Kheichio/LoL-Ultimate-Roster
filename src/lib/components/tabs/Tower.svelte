@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -229,15 +229,18 @@
             if (playerScore >= 2) {
                 playSound('win');
                 upgradeChoices = generateUpgrades(floor);
+                let floorBE = 0;
                 if (floor % 10 === 0) {
                     const baseReward = Math.min(5000, 300 + Math.floor((floor / 10 - 1)) * 300);
                     const { total: floorReward, bonus: floorBonus } = grantBE(baseReward);
+                    floorBE = floorReward;
                     totalBEEarned += floorReward;
                     showToast(`Floor ${floor} cleared! +${floorReward} BE${floorBonus > 0 ? ` (+${floorBonus} Wealth)` : ''}`, 'success');
                 }
                 grantXP(50 + floor * 5);
                 grantBPXP(25 + floor * 2);
                 if (floor > bestFloor) trackStats.update(s => ({ ...s, towerHighestFloor: floor }));
+                logMatch({ mode: 'tower', result: 'win', opponent: currentEnemy.name, be: floorBE, xp: 50 + floor * 5, floor });
                 saveTowerRun();
                 saveGame();
                 phase = 'upgrade';
@@ -246,6 +249,7 @@
                 grantBPXP(10 + floor);
                 playSound('lose');
                 if (floor > bestFloor) trackStats.update(s => ({ ...s, towerHighestFloor: floor - 1 }));
+                logMatch({ mode: 'tower', result: 'loss', opponent: currentEnemy.name, be: 0, xp: 30 + floor * 3, floor });
                 clearTowerRun();
                 saveGame();
                 phase = 'dead';

@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -207,6 +207,7 @@
         if (won) playSound('win'); else playSound('lose');
         draftResult = { won, reward: total, bonus };
         phase = 'result';
+        logMatch({ mode: 'draft', result: won ? 'win' : 'loss', opponent: 'CPU Draft', be: total, xp: won ? 300 : 100 });
         saveGame();
     }
 

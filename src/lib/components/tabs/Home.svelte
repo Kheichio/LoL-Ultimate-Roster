@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, prestige, milestoneCards, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, prestige, milestoneCards, matchHistory, saveGame } from '../../stores/game.js';
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
@@ -15,6 +15,23 @@
         return TIER_ORDER.map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0).reverse();
     })();
     $: recentCards = [...$club].slice(-5).reverse();
+
+    $: recentMatches = ($matchHistory || []).slice(0, 6);
+    const MODE_LABELS = { season: 'Season', goldenroad: 'Golden Road', cafe: 'Gaming Cafe', regional: 'Regional', firststand: 'First Stand', msi: 'MSI', worlds: 'Worlds', salarycap: 'Salary Cap', rival: 'Rival', tower: 'Tower', draft: 'Draft' };
+    const MODE_ICONS = { season: '📅', goldenroad: '🌟', cafe: '☕', regional: '🏆', firststand: '🥇', msi: '🌍', worlds: '👑', salarycap: '💰', rival: '⚔️', tower: '🗼', draft: '📋' };
+    function modeLabel(m) { return MODE_LABELS[m] || m; }
+    function modeIcon(m) { return MODE_ICONS[m] || '🎮'; }
+    function relTime(ts) {
+        if (!ts) return '';
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 60) return 'just now';
+        const min = Math.floor(s / 60);
+        if (min < 60) return `${min}m ago`;
+        const h = Math.floor(min / 60);
+        if (h < 24) return `${h}h ago`;
+        return `${Math.floor(h / 24)}d ago`;
+    }
+    function resultLabel(r) { return r === 'win' ? 'W' : r === 'finalist' ? '2nd' : 'L'; }
     $: holoCount = $club.filter(c => c.holographic).length;
     $: sigCount = $club.filter(c => c.signature).length;
 
@@ -223,20 +240,6 @@
                 <div class="panel-label purple">Coming Soon</div>
                 <div class="cs-list">
                     <div class="cs-item">
-                        <span class="cs-icon">🏟️</span>
-                        <div>
-                            <div class="cs-name">Franchise Mode</div>
-                            <div class="cs-desc">Manage a team across multiple seasons. Sign, trade, and develop players.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
-                        <span class="cs-icon">🤝</span>
-                        <div>
-                            <div class="cs-name">Friend List</div>
-                            <div class="cs-desc">Add friends, view their squads, and challenge them directly.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
                         <span class="cs-icon">📊</span>
                         <div>
                             <div class="cs-name">Player Form System</div>
@@ -344,6 +347,29 @@
                 <div class="recent-cards">
                     {#each recentCards as card (card.uniqueId)}
                         <Card {card} mini={true} />
+                    {/each}
+                </div>
+            </div>
+            {/if}
+
+            <!-- Recent Matches -->
+            {#if recentMatches.length > 0}
+            <div class="panel" style="padding: 20px;">
+                <div class="panel-label">Recent Matches</div>
+                <div class="rm-list">
+                    {#each recentMatches as mt}
+                        <div class="rm-row">
+                            <span class="rm-result rm-{mt.result}">{resultLabel(mt.result)}</span>
+                            <span class="rm-icon">{modeIcon(mt.mode)}</span>
+                            <div class="rm-info">
+                                <span class="rm-mode">{modeLabel(mt.mode)}{mt.floor ? ` · Floor ${mt.floor}` : ''}</span>
+                                <span class="rm-opp">vs {mt.opponent || '—'}</span>
+                            </div>
+                            <div class="rm-rewards">
+                                {#if mt.be > 0}<span class="rm-be">+{mt.be.toLocaleString()} BE</span>{/if}
+                                <span class="rm-time">{relTime(mt.ts)}</span>
+                            </div>
+                        </div>
                     {/each}
                 </div>
             </div>
@@ -598,6 +624,21 @@
 
     /* Recent Cards */
     .recent-cards { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; margin-top: 4px; }
+
+    /* Recent Matches */
+    .rm-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+    .rm-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.3); }
+    .rm-result { flex: 0 0 auto; min-width: 32px; text-align: center; font-size: 11px; font-weight: 900; padding: 3px 6px; border-radius: 6px; }
+    .rm-win { background: rgba(52,211,153,0.15); color: #34d399; }
+    .rm-loss { background: rgba(248,113,113,0.12); color: #f87171; }
+    .rm-finalist { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    .rm-icon { font-size: 16px; flex: 0 0 auto; }
+    .rm-info { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+    .rm-mode { font-size: 12px; font-weight: 800; color: #cbd5e1; }
+    .rm-opp { font-size: 10px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+    .rm-rewards { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
+    .rm-be { font-size: 10px; font-weight: 800; color: #34d399; }
+    .rm-time { font-size: 9px; color: #475569; }
 
     /* Tier bars */
     .tier-bars { display: flex; flex-direction: column; gap: 6px; }

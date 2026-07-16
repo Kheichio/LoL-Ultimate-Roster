@@ -1,11 +1,18 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, grantBE, saveGame } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { switchTab } from '../../stores/ui.js';
+    import { switchTab, pendingChallenge } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
+    import { onMount } from 'svelte';
+
+    // A friend challenge queued from the Friends tab: start it as a Rival Challenge.
+    onMount(() => {
+        const pc = get(pendingChallenge);
+        if (pc) { pendingChallenge.set(null); startRivalChallenge(pc); }
+    });
 
     let phase = 'lobby';
     let activeMode = null;
@@ -426,6 +433,7 @@
                 playSound('lose');
                 tournamentResult = { won: false, reward: 0, round: round + 1, isFinalist: false, goldenRoadFailed: true, stage: goldenRoadStage };
                 phase = 'result';
+                logMatch({ mode: 'goldenroad', result: 'loss', opponent: currentEnemy?.name || 'Golden Road', be: 0, xp: 100 });
                 startGRCooldown();
                 saveGame();
                 return;
@@ -448,6 +456,7 @@
             playSound('win');
             tournamentResult = { won: true, reward: grTotal, bonus: grBonus, goldenRoad: true };
             phase = 'result';
+            logMatch({ mode: 'goldenroad', result: 'win', opponent: 'Golden Road', be: grTotal, xp: 2000 });
             startGRCooldown();
             saveGame();
             return;
@@ -481,6 +490,7 @@
             playSound('lose');
         }
 
+        logMatch({ mode, result: won ? 'win' : isFinalist ? 'finalist' : 'loss', opponent: currentEnemy?.name || m?.name || 'Tournament', be: reward, xp: won ? (xpTable[mode] || 100) : Math.round((xpTable[mode] || 100) * 0.4) });
         saveGame();
         tournamentResult = { won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist };
         phase = 'result';

@@ -316,6 +316,28 @@
     .card-signature::after { content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%; background: linear-gradient(105deg, transparent 20%, rgba(255,215,0,0.1) 40%, rgba(255,215,0,0.2) 50%, rgba(255,215,0,0.1) 60%, transparent 80%); animation: sig-sweep 3s ease-in-out infinite; pointer-events: none; border-radius: inherit; z-index: 5; }
     @keyframes sig-glow { 0%,100% { outline-color: rgba(255,215,0,0.5); } 50% { outline-color: rgba(255,215,0,0.8); } }
     @keyframes sig-sweep { 0%,100% { left: -100%; } 50% { left: 140%; } }
-    .card-holographic { outline: 3px solid transparent; outline-offset: 2px; animation: holo-outline 2s linear infinite; }
-    @keyframes holo-outline { 0% { outline-color: #ff0000; filter: drop-shadow(0 0 6px #ff0000); } 16% { outline-color: #ff7700; } 33% { outline-color: #ffff00; } 50% { outline-color: #00ff00; } 66% { outline-color: #0077ff; } 83% { outline-color: #8b00ff; } 100% { outline-color: #ff0000; filter: drop-shadow(0 0 6px #ff0000); } }
+    /* Holographic — animated iridescent foil across the card face + soft rainbow glow */
+    .card-holographic { animation: holo-glow 5s linear infinite; }
+    .card-holographic::before {
+        content: ''; position: absolute; inset: 0; border-radius: inherit;
+        background:
+            linear-gradient(115deg, transparent 0%, transparent 32%, rgba(255,255,255,0.45) 45%, rgba(255,255,255,0.15) 52%, transparent 62%, transparent 100%),
+            linear-gradient(125deg, rgba(255,0,132,0.5) 0%, rgba(0,229,255,0.5) 22%, rgba(0,255,148,0.5) 42%, rgba(255,221,0,0.5) 62%, rgba(214,0,255,0.5) 82%, rgba(255,0,132,0.5) 100%);
+        background-size: 220% 220%, 260% 260%;
+        mix-blend-mode: overlay;
+        opacity: 0.65;
+        pointer-events: none;
+        z-index: 4;
+        animation: holo-foil 5s ease-in-out infinite;
+    }
+    @keyframes holo-foil {
+        0%   { background-position: 0% 0%,   0% 50%; }
+        50%  { background-position: 100% 100%, 100% 50%; }
+        100% { background-position: 0% 0%,   0% 50%; }
+    }
+    @keyframes holo-glow {
+        0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(255,0,132,0.4); }
+        33%     { box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(0,229,255,0.4); }
+        66%     { box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 16px rgba(0,255,148,0.4); }
+    }
 </style>

@@ -40,6 +40,9 @@ if (localStorage.getItem('lur_light_mode') === '1') {
 
 export const splitCooldownEnd = writable(0);
 
+// Set by the Friends tab to hand a friend's squad to the Tournament tab's Rival Challenge flow.
+export const pendingChallenge = writable(null);
+
 export function switchTab(tab) {
     activeTab.set(tab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
