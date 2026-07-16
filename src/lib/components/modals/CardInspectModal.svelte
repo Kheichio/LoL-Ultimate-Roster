@@ -1,6 +1,7 @@
 <script>
     import Card from '../card/Card.svelte';
     import { inspectingCard } from '../../stores/ui.js';
+    import { trapFocus } from '../../utils/a11y.js';
     import { club, squad, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { getDB, getEffectiveStats, getEffectiveRating, TIER_COLORS } from '../../utils/cards.js';
@@ -66,7 +67,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="overlay" on:click={close} on:mousemove={handleMouseMove}>
-    <div class="modal" on:click|stopPropagation>
+    <div class="modal" on:click|stopPropagation use:trapFocus={{ onClose: close }} role="dialog" aria-modal="true" aria-label="Card details" tabindex="-1">
         <!-- Close -->
         <button class="close-x" on:click={close}>✕</button>
 

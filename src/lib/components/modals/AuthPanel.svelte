@@ -7,6 +7,7 @@
     import { clearStorage } from '../../utils/storage.js';
     import { getDB, makeUniqueId } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
+    import { trapFocus } from '../../utils/a11y.js';
 
     let view = 'signin'; // signin | register | settings
     let email = '';
@@ -94,7 +95,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="overlay" on:click|self={close}>
-    <div class="modal">
+    <div class="modal" use:trapFocus={{ onClose: close }} role="dialog" aria-modal="true" aria-label="Account" tabindex="-1">
         <!-- Close button -->
         <button class="close-btn" on:click={close}>✕</button>
 

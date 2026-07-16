@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import { club, squad, blueEssence, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, skills, collectionRegistry, unlocks, seasonData, battlePass, hasBoughtStarter, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed, academy, matchHistory, saveGame } from './game.js';
+import { club, teamIdentity, snapshotState, applyState } from './game.js';
 import { showToast } from './toasts.js';
 
 export const currentUser = writable(null);
@@ -68,24 +68,11 @@ export async function cloudSave() {
     if (!user || !window.fbDb) { showToast('Sign in first.', 'error'); return; }
     authLoading.set(true);
 
+    // v2 format — one JSON blob of the full store snapshot, so cloud always carries
+    // exactly what local persists (no dropped stores) and stays in sync automatically.
     const data = {
-        lol_be_v7_pro: JSON.stringify(get(blueEssence)),
-        lol_club_v7_pro: JSON.stringify(get(club)),
-        lol_squad_v7_pro: JSON.stringify(get(squad)),
-        lol_starter_v7_pro: JSON.stringify(get(hasBoughtStarter)),
-        lol_identity_v7_pro: JSON.stringify(get(teamIdentity)),
-        lol_stats_v7_pro: JSON.stringify(get(trackStats)),
-        lol_collection_v7_pro: JSON.stringify(get(collectionRegistry)),
-        lol_unlocks_v1: JSON.stringify(get(unlocks)),
-        lol_season_v1: JSON.stringify(get(seasonData)),
-        lol_battlepass_v1: JSON.stringify(get(battlePass)),
-        lol_prog_v7_pro: JSON.stringify({ xp: get(managerXP), level: get(managerLevel), sp: get(skillPoints), skills: get(skills) }),
-        lol_quests_claimed_v1: JSON.stringify(get(questsClaimed)),
-        lol_quests_rbase_v1: JSON.stringify(get(questsRepeatableBaselines)),
-        lol_quests_rcounts_v1: JSON.stringify(get(questsRepeatableCounts)),
-        lol_achievements_v1: JSON.stringify(get(achievementsClaimed)),
-        lol_academy_v1: JSON.stringify(get(academy)),
-        lol_matchhistory_v1: JSON.stringify(get(matchHistory)),
+        v: 2,
+        save: JSON.stringify(snapshotState()),
         savedAt: Date.now(),
         teamName: get(teamIdentity).name || 'My Team',
     };
@@ -109,36 +96,39 @@ export async function cloudLoad() {
         if (!doc.exists) { showToast('No cloud save found.', 'info'); authLoading.set(false); return; }
         const data = doc.data();
 
-        // Load v1 format data
-        if (data.lol_be_v7_pro) blueEssence.set(Number(JSON.parse(data.lol_be_v7_pro)));
-        if (data.lol_club_v7_pro) club.set(JSON.parse(data.lol_club_v7_pro));
-        if (data.lol_squad_v7_pro) squad.set(JSON.parse(data.lol_squad_v7_pro));
-        if (data.lol_starter_v7_pro) {
-            const val = JSON.parse(data.lol_starter_v7_pro);
-            hasBoughtStarter.set(val === true || val === 'true');
-        }
-        if (data.lol_identity_v7_pro) teamIdentity.set(JSON.parse(data.lol_identity_v7_pro));
-        if (data.lol_stats_v7_pro) trackStats.set({ ...get(trackStats), ...JSON.parse(data.lol_stats_v7_pro) });
-        if (data.lol_collection_v7_pro) collectionRegistry.set(JSON.parse(data.lol_collection_v7_pro));
-        if (data.lol_unlocks_v1) unlocks.set({ ...get(unlocks), ...JSON.parse(data.lol_unlocks_v1) });
-        if (data.lol_season_v1) seasonData.set({ ...get(seasonData), ...JSON.parse(data.lol_season_v1) });
-        if (data.lol_battlepass_v1) battlePass.set({ ...get(battlePass), ...JSON.parse(data.lol_battlepass_v1) });
-        if (data.lol_prog_v7_pro) {
-            const prog = JSON.parse(data.lol_prog_v7_pro);
-            if (prog.xp != null) managerXP.set(prog.xp);
-            if (prog.level != null) managerLevel.set(prog.level);
-            if (prog.sp != null) skillPoints.set(prog.sp);
-            if (prog.skills) skills.set({ ...get(skills), ...prog.skills });
+        let state = null;
+        if (data.save) {
+            // v2 format — a full snapshot of every store
+            try { state = JSON.parse(data.save); } catch { state = null; }
+        } else if (data.lol_be_v7_pro || data.lol_club_v7_pro) {
+            // Legacy v1 cloud format — remap the old keys into the current snapshot shape
+            const P = (s) => { try { return s == null ? undefined : JSON.parse(s); } catch { return undefined; } };
+            state = {
+                lur_be: P(data.lol_be_v7_pro),
+                lur_club: P(data.lol_club_v7_pro),
+                lur_squad: P(data.lol_squad_v7_pro),
+                lur_starter: P(data.lol_starter_v7_pro),
+                lur_identity: P(data.lol_identity_v7_pro),
+                lur_stats: P(data.lol_stats_v7_pro),
+                lur_collection: P(data.lol_collection_v7_pro),
+                lur_unlocks: P(data.lol_unlocks_v1),
+                lur_season: P(data.lol_season_v1),
+                lur_battlepass: P(data.lol_battlepass_v1),
+                lur_progression: P(data.lol_prog_v7_pro),
+                lur_quests_claimed: P(data.lol_quests_claimed_v1),
+                lur_quests_rbase: P(data.lol_quests_rbase_v1),
+                lur_quests_rcounts: P(data.lol_quests_rcounts_v1),
+                lur_achievements_claimed: P(data.lol_achievements_v1),
+                lur_academy: P(data.lol_academy_v1),
+                lur_matchhistory: P(data.lol_matchhistory_v1),
+            };
         }
 
-        if (data.lol_quests_claimed_v1) questsClaimed.set(JSON.parse(data.lol_quests_claimed_v1));
-        if (data.lol_quests_rbase_v1) questsRepeatableBaselines.set(JSON.parse(data.lol_quests_rbase_v1));
-        if (data.lol_quests_rcounts_v1) questsRepeatableCounts.set(JSON.parse(data.lol_quests_rcounts_v1));
-        if (data.lol_achievements_v1) achievementsClaimed.set(JSON.parse(data.lol_achievements_v1));
-        if (data.lol_academy_v1) academy.set({ ...get(academy), ...JSON.parse(data.lol_academy_v1) });
-        if (data.lol_matchhistory_v1) { const mh = JSON.parse(data.lol_matchhistory_v1); if (Array.isArray(mh)) matchHistory.set(mh.slice(0, 50)); }
+        if (!state) { showToast('No readable cloud save found.', 'info'); authLoading.set(false); return; }
 
-        saveGame();
+        // Route through localStorage + initGame() so every card is validated/clamped
+        // exactly like a local load — no unvalidated writes, no dropped stores.
+        applyState(state);
         showToast(`Cloud data loaded! (${get(club).length} cards)`, 'success');
     } catch (e) {
         showToast('Cloud load failed: ' + e.message, 'error');

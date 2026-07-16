@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, battlePass, dailyLogin, skillPoints, teamIdentity, collectionRegistry, saveGame } from '../../stores/game.js';
+    import { blueEssence, club, battlePass, dailyLogin, skillPoints, teamIdentity, collectionRegistry, grantBE, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { getDB, makeUniqueId, TIER_ORDER } from '../../utils/cards.js';
@@ -75,14 +75,19 @@
         else if (!last || !isSameDay(last, now)) streak = 1;
 
         const reward = DAILY_REWARDS[((($dailyLogin.totalDays || 0) % 28))];
-        if (reward.type === 'be') blueEssence.update(v => v + reward.amount);
+        // Escalating streak bonus: +50 BE per consecutive day, capped at a 30-day streak (+1500 BE).
+        const streakBonus = Math.min(streak, 30) * 50;
+        let beGain = streakBonus;
+        if (reward.type === 'be') beGain += reward.amount;
         else if (reward.type === 'sp') skillPoints.update(v => v + reward.amount);
         else if (reward.type === 'card') giveCard(reward.tier);
         else if (reward.type === 'bpxp') battlePass.update(bp => ({ ...bp, xp: (bp.xp || 0) + reward.amount }));
+        // Route the day's BE + streak bonus through Wealth Management
+        grantBE(beGain);
 
         dailyLogin.set({ lastClaim: now, streak, totalDays: ($dailyLogin.totalDays || 0) + 1 });
         playSound('claim');
-        showToast(`Day ${currentDay} claimed! ${reward.label}`, 'success');
+        showToast(`Day ${currentDay} claimed! ${reward.label} · +${streakBonus} BE streak bonus 🔥${streak}`, 'success');
         saveGame();
     }
 

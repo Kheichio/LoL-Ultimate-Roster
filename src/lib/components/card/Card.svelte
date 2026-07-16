@@ -33,8 +33,6 @@
     }
 </script>
 
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<!-- svelte-ignore a11y-click-events-have-key-events -->
 <div
     class="card {tierClass}"
     class:card-mini={mini}
@@ -44,7 +42,11 @@
     class:clickable={onclick}
     data-quality={card.quality}
     data-text={textColor}
+    role="button"
+    tabindex="0"
+    aria-label="{card.name}, {card.role}, {card.quality} rating {eRating}"
     on:click={onclick || inspect}
+    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (onclick || inspect)(e); } }}
 >
     <!-- Tier Header -->
     <div class="card-header" class:sig-header={isSig}>
@@ -122,6 +124,7 @@
     .card-mini .role-icon { width: 12px; height: 12px; }
     .card-mini .card-meta { font-size: 10px; }
     .clickable { cursor: pointer; }
+    .card:focus-visible { outline: 3px solid #60a5fa; outline-offset: 3px; }
     .card-unowned { filter: grayscale(1) brightness(0.5); opacity: 0.6; }
 
     /* Signature font overrides */

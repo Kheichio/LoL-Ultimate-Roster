@@ -16,7 +16,7 @@ export const showcasePicks = writable([]);
 export const managerXP = writable(0);
 export const managerLevel = writable(1);
 export const skillPoints = writable(0);
-export const skills = writable({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, mentorship: 0, bootcamp: 0 });
+export const skills = writable({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, stamina: 0, mentorship: 0, trading: 0, bench: 0, wealth: 0, clubhouse: 0 });
 
 // === Tracking ===
 export const trackStats = writable({
@@ -126,7 +126,7 @@ export function prestigeManager() {
     managerLevel.set(1);
     managerXP.set(0);
     skillPoints.set(0);
-    skills.set({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, mentorship: 0, bootcamp: 0, wealth: 0, bench: 0, clubhouse: 0, stamina: 0 });
+    skills.set({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, stamina: 0, mentorship: 0, trading: 0, bench: 0, wealth: 0, clubhouse: 0 });
     return true;
 }
 
@@ -182,35 +182,55 @@ function generateTeamIdentity() {
 // === Save / Load ===
 let _saveDebounce = null;
 
+// Single source of truth: every persisted store → its storage key. Shared by local
+// save (saveGame), cloud save, and cloud load so the three can never drift apart.
+export function snapshotState() {
+    return {
+        lur_be: get(blueEssence),
+        lur_club: get(club),
+        lur_squad: get(squad),
+        lur_bench: get(bench),
+        lur_starter: get(hasBoughtStarter),
+        lur_showcase: get(showcasePicks),
+        lur_identity: get(teamIdentity),
+        lur_stats: get(trackStats),
+        lur_progression: { xp: get(managerXP), level: get(managerLevel), sp: get(skillPoints), skills: get(skills) },
+        lur_collection: get(collectionRegistry),
+        lur_unlocks: get(unlocks),
+        lur_season: get(seasonData),
+        lur_battlepass: get(battlePass),
+        lur_dailylogin: get(dailyLogin),
+        lur_quests_claimed: get(questsClaimed),
+        lur_quests_rbase: get(questsRepeatableBaselines),
+        lur_quests_rcounts: get(questsRepeatableCounts),
+        lur_achievements_claimed: get(achievementsClaimed),
+        lur_archive_rewards: get(archiveRewards),
+        lur_prestige: get(prestige),
+        lur_milestone_cards: get(milestoneCards),
+        lur_academy: get(academy),
+        lur_matchhistory: get(matchHistory),
+    };
+}
+
 export function saveGame() {
     if (_saveDebounce) clearTimeout(_saveDebounce);
     _saveDebounce = setTimeout(() => {
-        saveToStorage('lur_be', get(blueEssence));
-        saveToStorage('lur_club', get(club));
-        saveToStorage('lur_squad', get(squad));
-        saveToStorage('lur_bench', get(bench));
-        saveToStorage('lur_starter', get(hasBoughtStarter));
-        saveToStorage('lur_showcase', get(showcasePicks));
-        saveToStorage('lur_identity', get(teamIdentity));
-        saveToStorage('lur_stats', get(trackStats));
-        saveToStorage('lur_progression', { xp: get(managerXP), level: get(managerLevel), sp: get(skillPoints), skills: get(skills) });
-        saveToStorage('lur_collection', get(collectionRegistry));
-        saveToStorage('lur_unlocks', get(unlocks));
-        saveToStorage('lur_season', get(seasonData));
-        saveToStorage('lur_battlepass', get(battlePass));
-        saveToStorage('lur_dailylogin', get(dailyLogin));
-        saveToStorage('lur_quests_claimed', get(questsClaimed));
-        saveToStorage('lur_quests_rbase', get(questsRepeatableBaselines));
-        saveToStorage('lur_quests_rcounts', get(questsRepeatableCounts));
-        saveToStorage('lur_achievements_claimed', get(achievementsClaimed));
-        saveToStorage('lur_archive_rewards', get(archiveRewards));
-        saveToStorage('lur_prestige', get(prestige));
-        saveToStorage('lur_milestone_cards', get(milestoneCards));
-        saveToStorage('lur_academy', get(academy));
-        saveToStorage('lur_matchhistory', get(matchHistory));
+        const state = snapshotState();
+        for (const [k, v] of Object.entries(state)) saveToStorage(k, v);
         // Integrity signature — written last so it covers all values above
         saveToStorage('lur_s', signSave(get(blueEssence), get(managerLevel), get(prestige), get(club).length));
     }, 100);
+}
+
+// Write a full snapshot (key → value) into localStorage, then re-hydrate every store
+// via initGame() so cloud loads get the exact same validation/clamping as local loads.
+export function applyState(state) {
+    if (!state || typeof state !== 'object') return;
+    for (const [k, v] of Object.entries(state)) {
+        if (v !== undefined) saveToStorage(k, v);
+    }
+    initGame();
+    saveGame();
 }
 
 export function initGame() {

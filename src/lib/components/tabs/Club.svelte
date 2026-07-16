@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, academy, blueEssence, showcasePicks, saveGame, clubCapacity } from '../../stores/game.js';
+    import { club, squad, academy, blueEssence, showcasePicks, saveGame, clubCapacity, skills, grantBE } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard, openConfirmModal } from '../../stores/ui.js';
     import { getSellValue, getEffectiveRating, TIER_ORDER, LEGACY_TIERS, TIER_COLORS } from '../../utils/cards.js';
@@ -78,33 +78,33 @@
     // Standard tiers the player actually owns and can bulk-sell (protected cards excluded).
     $: quickSellTiers = TIER_ORDER.map(tier => {
         const cards = $club.filter(c => c.quality === tier && !c.locked && !c.favorite && !protectedIds.has(c.uniqueId));
-        return { tier, count: cards.length, total: cards.reduce((s, c) => s + getSellValue(c.quality, c), 0) };
+        return { tier, count: cards.length, total: cards.reduce((s, c) => s + getSellValue(c.quality, c, $skills.transfer), 0) };
     }).filter(t => t.count > 0);
     $: dupeSellList = collectDuplicates($club, protectedIds);
-    $: dupeInfo = { count: dupeSellList.length, total: dupeSellList.reduce((s, c) => s + getSellValue(c.quality, c), 0) };
+    $: dupeInfo = { count: dupeSellList.length, total: dupeSellList.reduce((s, c) => s + getSellValue(c.quality, c, $skills.transfer), 0) };
 
     function sellCard(card) {
         if (squadIds.has(card.uniqueId)) { showToast('Card is in your squad.', 'error'); return; }
         if (academyIds.has(card.uniqueId)) { showToast('Card is in your academy.', 'error'); return; }
         if (card.locked) { showToast('Card is locked.', 'error'); return; }
-        const price = getSellValue(card.quality, card);
+        const price = getSellValue(card.quality, card, $skills.transfer);
         club.update(c => c.filter(x => x.uniqueId !== card.uniqueId));
-        blueEssence.update(v => v + price);
-        showToast(`Sold ${card.name} for ${price} BE`, 'info');
+        const earned = grantBE(price).total;
+        showToast(`Sold ${card.name} for ${earned} BE`, 'info');
         saveGame();
     }
 
     function quickSellTier(tier) {
         const cards = $club.filter(c => c.quality === tier && !c.locked && !c.favorite && !protectedIds.has(c.uniqueId));
         if (!cards.length) { showToast(`No sellable ${tier} cards.`, 'error'); return; }
-        const total = cards.reduce((s, c) => s + getSellValue(c.quality, c), 0);
+        const total = cards.reduce((s, c) => s + getSellValue(c.quality, c, $skills.transfer), 0);
         openConfirmModal(
             `Sell all ${cards.length} ${tier} card${cards.length > 1 ? 's' : ''} for ${total} BE? Locked, favourited, and squad cards are kept.`,
             () => {
                 const ids = new Set(cards.map(c => c.uniqueId));
                 club.update(c => c.filter(x => !ids.has(x.uniqueId)));
-                blueEssence.update(v => v + total);
-                showToast(`Sold ${cards.length} ${tier} card${cards.length > 1 ? 's' : ''} for ${total} BE`, 'success');
+                const earned = grantBE(total).total;
+                showToast(`Sold ${cards.length} ${tier} card${cards.length > 1 ? 's' : ''} for ${earned} BE`, 'success');
                 saveGame();
             }
         );
@@ -113,14 +113,14 @@
     function sellDuplicates() {
         const cards = collectDuplicates($club, protectedIds);
         if (!cards.length) { showToast('No duplicates to sell.', 'info'); return; }
-        const total = cards.reduce((s, c) => s + getSellValue(c.quality, c), 0);
+        const total = cards.reduce((s, c) => s + getSellValue(c.quality, c, $skills.transfer), 0);
         openConfirmModal(
             `Sell ${cards.length} duplicate${cards.length > 1 ? 's' : ''} for ${total} BE? This keeps the best copy of each player; locked, favourited, and squad cards are kept.`,
             () => {
                 const ids = new Set(cards.map(c => c.uniqueId));
                 club.update(c => c.filter(x => !ids.has(x.uniqueId)));
-                blueEssence.update(v => v + total);
-                showToast(`Sold ${cards.length} duplicate${cards.length > 1 ? 's' : ''} for ${total} BE`, 'success');
+                const earned = grantBE(total).total;
+                showToast(`Sold ${cards.length} duplicate${cards.length > 1 ? 's' : ''} for ${earned} BE`, 'success');
                 saveGame();
             }
         );
@@ -280,7 +280,7 @@
                         >{isInShowcase(card) ? '⭐' : '☆'}</button>
                         {#if !card.locked && !protectedIds.has(card.uniqueId)}
                             <button class="ca-btn ca-sell" on:click={() => sellCard(card)}>
-                                +{getSellValue(card.quality, card)}
+                                +{getSellValue(card.quality, card, $skills.transfer)}
                             </button>
                         {:else}
                             <span class="ca-status">

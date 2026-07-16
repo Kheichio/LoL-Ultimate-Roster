@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, saveGame, isClubFull } from '../../stores/game.js';
+    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, isClubFull } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
     import { getDB, rollPackTier, makeUniqueId, getSellValue } from '../../utils/cards.js';
@@ -217,7 +217,7 @@
             if (keepIds.has(c.uniqueId)) {
                 toKeep.push(c);
             } else {
-                const val = getSellValue(c.quality, c);
+                const val = getSellValue(c.quality, c, $skills.transfer);
                 totalBE += val;
                 soldCount++;
                 toSell.push(c);
@@ -225,9 +225,9 @@
         });
         if (soldCount > 0) {
             club.update(cl => cl.filter(x => !toSell.some(s => s.uniqueId === x.uniqueId)));
-            blueEssence.update(v => v + totalBE);
+            const earned = grantBE(totalBE).total;
             saveGame();
-            showToast(`Sold ${soldCount} cards for ${totalBE} BE`, 'info');
+            showToast(`Sold ${soldCount} cards for ${earned} BE`, 'info');
         }
         showPulls = false;
         pulledCards = [];

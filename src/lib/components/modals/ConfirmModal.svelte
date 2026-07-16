@@ -1,5 +1,6 @@
 <script>
     import { confirmModalState, closeConfirmModal } from '../../stores/ui.js';
+    import { trapFocus } from '../../utils/a11y.js';
 
     function handleConfirm() {
         if ($confirmModalState.onConfirm) $confirmModalState.onConfirm();
@@ -11,7 +12,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="confirm-overlay" on:click|self={closeConfirmModal}>
-    <div class="confirm-box">
+    <div class="confirm-box" use:trapFocus={{ onClose: closeConfirmModal }} role="dialog" aria-modal="true" aria-label="Confirmation" tabindex="-1">
         <div class="confirm-icon">⚠️</div>
         <h3 class="confirm-title">Are you sure?</h3>
         <p class="confirm-msg">{$confirmModalState.message}</p>

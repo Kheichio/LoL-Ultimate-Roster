@@ -1,5 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
+    import { trapFocus } from '../../utils/a11y.js';
 
     export let player = null;
     export let onClose = () => {};
@@ -9,7 +10,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="pm-overlay" on:click|self={onClose}>
-    <div class="pm-modal" style="--tc: {player.teamColor || '#3b82f6'};">
+    <div class="pm-modal" style="--tc: {player.teamColor || '#3b82f6'};" use:trapFocus={{ onClose }} role="dialog" aria-modal="true" aria-label="Player profile" tabindex="-1">
         <div class="pm-bg"></div>
 
         <!-- Header -->
