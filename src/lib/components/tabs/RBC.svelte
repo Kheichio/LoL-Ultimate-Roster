@@ -4,7 +4,7 @@
     import { club, squad, academy, trackStats, rbcState, freePacks, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal, switchTab } from '../../stores/ui.js';
-    import { getEffectiveRating } from '../../utils/cards.js';
+    import { getEffectiveRating, TIER_ORDER, ALL_SPECIAL } from '../../utils/cards.js';
     import { CHALLENGES, REWARD_PACKS, todayKey, msUntilReset, claimedToday, requirementChips, validateSubmission } from '../../utils/rbc.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -29,6 +29,17 @@
     let slots = [];         // array of length req.count — card objects or null
     let pickerIdx = -1;     // which slot the picker is filling
 
+    // Picker filters + sort — make it easy to find cards that fit a challenge's tags
+    let pickSearch = '';
+    let pickRole = 'all';
+    let pickRegion = 'all';
+    let pickTier = 'all';
+    let pickSort = 'rating-desc';
+    const ROLE_ORDER = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];
+    const TIER_RANK = [...TIER_ORDER, ...ALL_SPECIAL];
+    const tierRank = q => TIER_RANK.indexOf(q);
+    function clearPickFilters() { pickSearch = ''; pickRole = 'all'; pickRegion = 'all'; pickTier = 'all'; }
+
     // Reward — RBCs grant free Store packs, not loose cards
     let showReward = false;
     let rewardMeta = null;
@@ -44,6 +55,33 @@
         .sort((a, b) => getEffectiveRating(b) - getEffectiveRating(a));
     $: pickerCards = eligible.filter(c => !slotIds.has(c.uniqueId));
 
+    // Filter option lists — derived from ALL eligible cards so options stay stable
+    $: pickRegions = [...new Set(eligible.map(c => c.region))].sort();
+    $: pickTiers = [...new Set(eligible.map(c => c.quality))].sort((a, b) => tierRank(b) - tierRank(a));
+    $: pickRolesAvail = ROLE_ORDER.filter(r => eligible.some(c => c.role === r));
+
+    // Apply the active filters + sort to the pickable cards
+    $: pickerView = (() => {
+        let list = pickerCards;
+        if (pickRole !== 'all') list = list.filter(c => c.role === pickRole);
+        if (pickRegion !== 'all') list = list.filter(c => c.region === pickRegion);
+        if (pickTier !== 'all') list = list.filter(c => c.quality === pickTier);
+        const q = pickSearch.trim().toLowerCase();
+        if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
+        const byRating = (a, b) => getEffectiveRating(b) - getEffectiveRating(a);
+        list = [...list];
+        switch (pickSort) {
+            case 'rating-asc': list.sort((a, b) => getEffectiveRating(a) - getEffectiveRating(b)); break;
+            case 'name': list.sort((a, b) => a.name.localeCompare(b.name) || byRating(a, b)); break;
+            case 'team': list.sort((a, b) => a.team.localeCompare(b.team) || byRating(a, b)); break;
+            case 'tier': list.sort((a, b) => tierRank(b.quality) - tierRank(a.quality) || byRating(a, b)); break;
+            case 'region': list.sort((a, b) => a.region.localeCompare(b.region) || byRating(a, b)); break;
+            case 'role': list.sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || byRating(a, b)); break;
+            default: list.sort(byRating);
+        }
+        return list;
+    })();
+
     $: validation = active ? validateSubmission(active, slots) : null;
 
     function startChallenge(ch) {
@@ -51,8 +89,10 @@
         active = ch;
         slots = Array(ch.req.count).fill(null);
         pickerIdx = -1;
+        clearPickFilters();
+        pickSort = 'rating-desc';
     }
-    function closeChallenge() { active = null; slots = []; pickerIdx = -1; }
+    function closeChallenge() { active = null; slots = []; pickerIdx = -1; clearPickFilters(); }
     function openPicker(i) { pickerIdx = i; }
     function closePicker() { pickerIdx = -1; }
     function pickCard(card) {
@@ -229,13 +269,44 @@
 <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="ov ov-top" on:click={closePicker}>
     <div class="pick-modal" on:click|stopPropagation>
-        <button class="ov-close" on:click={closePicker}>✕</button>
-        <div class="pick-head">Choose a player <span class="pick-count">{pickerCards.length} eligible</span></div>
+        <div class="pick-top">
+            <button class="ov-close" on:click={closePicker}>✕</button>
+            <div class="pick-head">Choose a player <span class="pick-count">{pickerView.length} of {pickerCards.length}</span></div>
+            <div class="pick-controls">
+                <input class="pick-search" type="text" placeholder="Search name or team…" bind:value={pickSearch} />
+                <select class="pick-sel" bind:value={pickRole} aria-label="Filter by role">
+                    <option value="all">All roles</option>
+                    {#each pickRolesAvail as r}<option value={r}>{r}</option>{/each}
+                </select>
+                <select class="pick-sel" bind:value={pickRegion} aria-label="Filter by region">
+                    <option value="all">All regions</option>
+                    {#each pickRegions as r}<option value={r}>{r}</option>{/each}
+                </select>
+                <select class="pick-sel" bind:value={pickTier} aria-label="Filter by tier">
+                    <option value="all">All tiers</option>
+                    {#each pickTiers as t}<option value={t}>{t}</option>{/each}
+                </select>
+                <select class="pick-sel" bind:value={pickSort} aria-label="Sort by">
+                    <option value="rating-desc">Rating ↓</option>
+                    <option value="rating-asc">Rating ↑</option>
+                    <option value="name">Name A–Z</option>
+                    <option value="team">Team</option>
+                    <option value="tier">Tier</option>
+                    <option value="region">Region</option>
+                    <option value="role">Role</option>
+                </select>
+                {#if pickRole !== 'all' || pickRegion !== 'all' || pickTier !== 'all' || pickSearch.trim()}
+                    <button class="pick-clear" on:click={clearPickFilters}>Clear</button>
+                {/if}
+            </div>
+        </div>
         {#if pickerCards.length === 0}
             <div class="pick-empty">No eligible players. Unlock cards or clear your squad to free some up.</div>
+        {:else if pickerView.length === 0}
+            <div class="pick-empty">No players match these filters. <button class="pick-clear-inline" on:click={clearPickFilters}>Clear filters</button></div>
         {:else}
             <div class="pick-grid">
-                {#each pickerCards as card (card.uniqueId)}
+                {#each pickerView as card (card.uniqueId)}
                     <Card {card} mini={true} onclick={() => pickCard(card)} />
                 {/each}
             </div>
@@ -344,8 +415,17 @@
 
     /* Picker */
     .pick-modal { position: relative; width: 100%; max-width: 1050px; max-height: 88vh; overflow-y: auto; padding: 24px; border-radius: 20px; background: linear-gradient(170deg, #0d1224, #0a0f1c); border: 1px solid rgba(71,85,105,0.25); }
-    .pick-head { font-size: 16px; font-weight: 900; color: #e2e8f0; margin-bottom: 16px; }
+    .pick-top { position: sticky; top: 0; z-index: 3; background: #0d1224; margin: -24px -24px 14px; padding: 22px 24px 14px; border-bottom: 1px solid rgba(71,85,105,0.2); }
+    .pick-head { font-size: 16px; font-weight: 900; color: #e2e8f0; }
     .pick-count { font-size: 11px; font-weight: 700; color: #64748b; margin-left: 8px; }
+    .pick-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .pick-search { flex: 1 1 180px; min-width: 130px; padding: 8px 12px; border-radius: 10px; background: rgba(15,23,42,0.6); border: 1px solid rgba(71,85,105,0.3); color: #e2e8f0; font-size: 12px; font-weight: 600; }
+    .pick-search::placeholder { color: #475569; }
+    .pick-search:focus, .pick-sel:focus { outline: none; border-color: rgba(251,191,36,0.5); }
+    .pick-sel { padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.6); border: 1px solid rgba(71,85,105,0.3); color: #e2e8f0; font-size: 12px; font-weight: 700; cursor: pointer; }
+    .pick-clear { padding: 8px 14px; border-radius: 10px; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); color: #f87171; font-size: 11px; font-weight: 800; cursor: pointer; }
+    .pick-clear:hover { background: rgba(239,68,68,0.2); }
+    .pick-clear-inline { background: none; border: none; color: #fbbf24; font-weight: 800; cursor: pointer; text-decoration: underline; font-size: 13px; }
     .pick-empty { color: #475569; font-size: 13px; text-align: center; padding: 40px 0; font-style: italic; }
     .pick-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 
