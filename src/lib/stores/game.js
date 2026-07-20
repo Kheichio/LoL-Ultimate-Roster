@@ -57,6 +57,9 @@ export const academy = writable({ TOP: null, JNG: null, MID: null, ADC: null, SU
 // Roster Building Challenges — which challenges have been completed on the current day.
 export const rbcState = writable({ day: '', claimed: {} });
 
+// Free packs earned from RBCs — { [storePackId]: count }. Opened for free in the Store.
+export const freePacks = writable({});
+
 // === Match History (recent results log, newest first, capped at 50) ===
 export const matchHistory = writable([]);
 export function logMatch(entry) {
@@ -212,6 +215,7 @@ export function snapshotState() {
         lur_milestone_cards: get(milestoneCards),
         lur_academy: get(academy),
         lur_rbc: get(rbcState),
+        lur_freepacks: get(freePacks),
         lur_matchhistory: get(matchHistory),
     };
 }
@@ -387,5 +391,15 @@ export function initGame() {
             day: typeof rawRbc.day === 'string' ? rawRbc.day : '',
             claimed: (rawRbc.claimed && typeof rawRbc.claimed === 'object') ? rawRbc.claimed : {},
         });
+    }
+
+    const rawFp = loadFromStorage('lur_freepacks');
+    if (rawFp && typeof rawFp === 'object' && !Array.isArray(rawFp)) {
+        const clean = {};
+        for (const [k, v] of Object.entries(rawFp)) {
+            const n = Math.max(0, Math.floor(Number(v) || 0));
+            if (n > 0) clean[k] = Math.min(n, 999);
+        }
+        freePacks.set(clean);
     }
 }

@@ -1,6 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, isClubFull } from '../../stores/game.js';
+    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, isClubFull, freePacks } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
     import { getDB, rollPackTier, makeUniqueId, getSellValue } from '../../utils/cards.js';
@@ -19,17 +19,43 @@
     $: scoutLevel = $skills.scouting || 0;
     $: scoutBonus = scoutLevel * 0.25;
 
+    // --- Limited-time Store events (boosted pack + discount + pity guarantee) ---
     const MSI_EVENT_END = new Date('2026-07-12T23:59:59Z').getTime();
     const MSI_PITY_TARGET = 70;
+    const EWC_EVENT_END = new Date('2026-07-27T23:59:59Z').getTime();
+    const EWC_PITY_TARGET = 100;
     let eventTimeLeft = '';
     let eventTimer = null;
 
-    $: msiEventActive = Date.now() < MSI_EVENT_END;
     let msiPityCount = parseInt(localStorage.getItem('lur_msi_pity') || '0');
+    let ewcPityCount = parseInt(localStorage.getItem('lur_ewc_pity') || '0');
+
+    // Event registry keyed by the pack id it boosts. getMsiEventDrops / getEwcEventDrops
+    // are hoisted function declarations, so referencing them here is safe.
+    const EVENTS = {
+        msi: { name: 'MSI 2026 Event', tier: 'MSI', end: MSI_EVENT_END, pity: MSI_PITY_TARGET, pityKey: 'lur_msi_pity', base: 5000, discount: 3500, color: '#2dd4bf', drops: getMsiEventDrops },
+        ewc: { name: 'EWC 2026 Event', tier: 'EWC', end: EWC_EVENT_END, pity: EWC_PITY_TARGET, pityKey: 'lur_ewc_pity', base: 4000, discount: 3000, color: '#ffd24a', drops: getEwcEventDrops },
+    };
+
+    function currentEventEnd() {
+        const now = Date.now();
+        if (now < EWC_EVENT_END) return EWC_EVENT_END;
+        if (now < MSI_EVENT_END) return MSI_EVENT_END;
+        return 0;
+    }
+
+    // The event currently live (if any) — drives the banner. EWC wins if windows overlap.
+    $: activeEvent = (() => {
+        const now = Date.now();
+        if (now < EWC_EVENT_END) return { ...EVENTS.ewc, pityCount: ewcPityCount };
+        if (now < MSI_EVENT_END) return { ...EVENTS.msi, pityCount: msiPityCount };
+        return null;
+    })();
 
     function updateEventTimer() {
-        const remaining = Math.max(0, MSI_EVENT_END - Date.now());
-        if (remaining <= 0) { eventTimeLeft = 'Event Ended'; if (eventTimer) { clearInterval(eventTimer); eventTimer = null; } return; }
+        const end = currentEventEnd();
+        const remaining = Math.max(0, end - Date.now());
+        if (end === 0 || remaining <= 0) { eventTimeLeft = 'Event Ended'; return; }
         const h = Math.floor(remaining / 3600000);
         const m = Math.floor((remaining % 3600000) / 60000);
         const s = Math.floor((remaining % 60000) / 1000);
@@ -71,6 +97,11 @@
 
     const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','EWC','POTY','ROTY','TOTY','GPOTY','X']);
 
+    // Free packs earned from Roster Building Challenges, resolved to their Store pack.
+    $: freePackList = Object.entries($freePacks)
+        .map(([id, count]) => ({ id, count: Number(count) || 0, pack: allPacks.find(p => p.id === id) }))
+        .filter(x => x.pack && x.count > 0);
+
     function rollFromDrops(drops) {
         const rng = Math.random() * 100;
         let cumulative = 0;
@@ -93,38 +124,53 @@
         ];
     }
 
+    function getEwcEventDrops() {
+        return [
+            { tier: 'EWC', pct: 2 },
+            { tier: 'Challenger', pct: 3 },
+            { tier: 'Grandmaster', pct: 5 },
+            { tier: 'Master', pct: 8 },
+            { tier: 'Diamond', pct: 15 },
+            { tier: 'Platinum', pct: 27 },
+            { tier: 'Gold', pct: 40 },
+        ];
+    }
+
     function getPackCost(pack) {
-        if (pack.id === 'msi' && Date.now() < MSI_EVENT_END) return 3500;
+        const ev = EVENTS[pack.id];
+        if (ev && Date.now() < ev.end) return ev.discount;
         return pack.cost;
     }
 
-    function buyPack(pack) {
+    function buyPack(pack, free = false) {
         if (get(isClubFull)) { showToast('Club is full! Sell cards or upgrade Clubhouse in Skills to make room.', 'error'); return; }
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
-        const cost = getPackCost(pack);
-        const be = get(blueEssence);
-        if (be < cost) { showToast('Not enough BE.', 'error'); return; }
-
-        blueEssence.update(v => v - cost);
+        if (free) {
+            if ((get(freePacks)[pack.id] || 0) <= 0) { showToast('No free packs of that type.', 'error'); return; }
+        } else {
+            const cost = getPackCost(pack);
+            if (get(blueEssence) < cost) { showToast('Not enough BE.', 'error'); return; }
+            blueEssence.update(v => v - cost);
+        }
         const pulled = [];
         const holoChance = 0.01;
         const sigChance = 0.001;
-        const isMsiEvent = pack.id === 'msi' && Date.now() < MSI_EVENT_END;
-        const drops = isMsiEvent ? getMsiEventDrops() : pack.drops;
-        let pity = isMsiEvent ? parseInt(localStorage.getItem('lur_msi_pity') || '0') : 0;
-        let gotMsi = false;
+        const ev = free ? null : (EVENTS[pack.id] && Date.now() < EVENTS[pack.id].end ? EVENTS[pack.id] : null);
+        const drops = ev ? ev.drops() : pack.drops;
+        let pity = ev ? parseInt(localStorage.getItem(ev.pityKey) || '0') : 0;
+        let gotGuaranteed = false;
 
         for (let i = 0; i < pack.count; i++) {
             let tier;
-            if (isMsiEvent && !gotMsi && pity >= MSI_PITY_TARGET - 1) {
-                tier = 'MSI';
-                gotMsi = true;
+            if (ev && !gotGuaranteed && pity >= ev.pity - 1) {
+                tier = ev.tier;
+                gotGuaranteed = true;
             } else {
                 tier = rollFromDrops(drops);
             }
-            if (isMsiEvent) {
-                if (tier === 'MSI') { pity = 0; gotMsi = true; } else { pity++; }
+            if (ev) {
+                if (tier === ev.tier) { pity = 0; gotGuaranteed = true; } else { pity++; }
             }
             let pool;
             if (SPECIAL_QUALS.has(tier)) {
@@ -139,7 +185,21 @@
             if (Math.random() < holoChance) { inst.holographic = true; inst.locked = true; }
             pulled.push(inst);
         }
-        if (isMsiEvent) { localStorage.setItem('lur_msi_pity', String(pity)); msiPityCount = pity; }
+        if (ev) {
+            localStorage.setItem(ev.pityKey, String(pity));
+            if (ev.tier === 'MSI') msiPityCount = pity;
+            else if (ev.tier === 'EWC') ewcPityCount = pity;
+        }
+
+        // Consume exactly one free-pack credit for a free open.
+        if (free) {
+            freePacks.update(fp => {
+                const n = (fp[pack.id] || 0) - 1;
+                const u = { ...fp };
+                if (n > 0) u[pack.id] = n; else delete u[pack.id];
+                return u;
+            });
+        }
 
         club.update(c => [...c, ...pulled]);
         collectionRegistry.update(reg => {
@@ -162,7 +222,7 @@
         grantBPXP(30);
         playSound(sigsPulled > 0 ? 'rare' : holosPulled > 0 ? 'rare' : 'pack');
         pulledCards = pulled;
-        pullTitle = `${pack.name} Pack Opened!`;
+        pullTitle = free ? `Free ${pack.name} Pack Opened!` : `${pack.name} Pack Opened!`;
         showPulls = true;
         revealedCount = 0;
         pulled.forEach((_, i) => { setTimeout(() => { revealedCount = i + 1; }, 400 + i * 450); });
@@ -256,19 +316,19 @@
 
 <section class="store">
     <!-- Event Banner -->
-    {#if msiEventActive}
-        <div class="event-banner event-active">
+    {#if activeEvent}
+        <div class="event-banner event-active" style="--ev: {activeEvent.color};">
             <div class="eb-left">
                 <span class="eb-live">LIVE</span>
                 <div class="eb-info">
-                    <div class="eb-title">MSI 2026 Event</div>
-                    <div class="eb-desc">MSI Pack drop rates boosted! Guaranteed MSI card after {MSI_PITY_TARGET} pulls without one.</div>
+                    <div class="eb-title" style="color: {activeEvent.color};">{activeEvent.name}</div>
+                    <div class="eb-desc" style="color: {activeEvent.color};">{activeEvent.tier} Pack {activeEvent.base.toLocaleString()} → <b>{activeEvent.discount.toLocaleString()} BE</b>, boosted drops, and a guaranteed {activeEvent.tier} card within {activeEvent.pity} pulls.</div>
                 </div>
             </div>
             <div class="eb-right">
                 <div class="eb-pity">
                     <span class="eb-pity-label">Pity Counter</span>
-                    <span class="eb-pity-val">{msiPityCount}/{MSI_PITY_TARGET}</span>
+                    <span class="eb-pity-val" style="color: {activeEvent.color};">{activeEvent.pityCount}/{activeEvent.pity}</span>
                 </div>
                 <div class="eb-timer">
                     <span class="eb-timer-label">Ends in</span>
@@ -278,10 +338,10 @@
         </div>
     {:else}
         <div class="event-banner event-ended">
-            <span class="eb-ended-icon">🌊</span>
+            <span class="eb-ended-icon">🏆</span>
             <div class="eb-info">
-                <div class="eb-title" style="color: #475569;">MSI 2026 Event</div>
-                <div class="eb-desc" style="color: #334155;">This event has ended. Stay tuned for the next one!</div>
+                <div class="eb-title" style="color: #475569;">Store Event</div>
+                <div class="eb-desc" style="color: #334155;">No event running right now. Stay tuned for the next one!</div>
             </div>
             <span class="eb-ended-tag">Ended</span>
         </div>
@@ -301,6 +361,23 @@
             </div>
         </div>
     </button>
+    {/if}
+
+    <!-- Free Packs (earned from RBCs) -->
+    {#if freePackList.length > 0}
+    <div class="free-packs">
+        <div class="fp-header">🎁 Free Packs <span class="fp-hint">— earned from Roster Building Challenges</span></div>
+        <div class="fp-row">
+            {#each freePackList as fp (fp.id)}
+                <div class="fp-card" style="background: {fp.pack.bg}; border-color: {fp.pack.borderColor};">
+                    <div class="fp-badge" style="color: {fp.pack.color}; border-color: {fp.pack.borderColor};">×{fp.count}</div>
+                    <div class="fp-title">{fp.pack.name}</div>
+                    <div class="fp-sub">{fp.pack.count} cards · Free</div>
+                    <button class="fp-btn" style="background: {fp.pack.color};" on:click={() => buyPack(fp.pack, true)}>Open Free</button>
+                </div>
+            {/each}
+        </div>
+    </div>
     {/if}
 
     <!-- Packs Grid -->
@@ -428,13 +505,13 @@
         padding: 14px 20px; border-radius: 14px; margin-bottom: 20px; flex-wrap: wrap;
     }
     .event-active {
-        background: linear-gradient(135deg, rgba(13,148,136,0.12), rgba(45,212,191,0.08));
-        border: 1px solid rgba(45,212,191,0.3);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--ev, #2dd4bf) 14%, transparent), color-mix(in srgb, var(--ev, #2dd4bf) 7%, transparent));
+        border: 1px solid color-mix(in srgb, var(--ev, #2dd4bf) 35%, transparent);
         animation: eventPulse 3s ease-in-out infinite;
     }
     @keyframes eventPulse {
-        0%, 100% { border-color: rgba(45,212,191,0.3); }
-        50% { border-color: rgba(45,212,191,0.6); }
+        0%, 100% { border-color: color-mix(in srgb, var(--ev, #2dd4bf) 30%, transparent); }
+        50% { border-color: color-mix(in srgb, var(--ev, #2dd4bf) 60%, transparent); }
     }
     .event-ended {
         background: rgba(12,16,28,0.4); border: 1px solid rgba(51,65,85,0.15);
@@ -490,6 +567,18 @@
         background: linear-gradient(135deg, #059669, #10b981); color: white;
         font-weight: 900; font-size: 14px; letter-spacing: 0.5px;
     }
+
+    /* Free Packs */
+    .free-packs { margin-bottom: 28px; }
+    .fp-header { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #fbbf24; margin-bottom: 14px; }
+    .fp-hint { color: #64748b; font-weight: 700; text-transform: none; letter-spacing: 0; font-size: 10px; }
+    .fp-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .fp-card { position: relative; overflow: hidden; border: 1px solid; border-radius: 14px; padding: 18px 14px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .fp-badge { position: absolute; top: 8px; right: 8px; font-size: 12px; font-weight: 900; border: 1px solid; border-radius: 100px; padding: 2px 9px; background: rgba(0,0,0,0.35); }
+    .fp-title { font-size: 17px; font-weight: 900; color: #f1f5f9; margin-top: 4px; }
+    .fp-sub { font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    .fp-btn { width: 100%; padding: 9px; border-radius: 10px; border: none; color: #0b1220; font-size: 11px; font-weight: 900; cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+    .fp-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.3); }
 
     /* Packs */
     .packs-header { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #64748b; margin-bottom: 14px; }

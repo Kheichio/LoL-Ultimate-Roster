@@ -1,11 +1,10 @@
 <script>
     import Card from '../card/Card.svelte';
     import { onDestroy } from 'svelte';
-    import { club, squad, academy, collectionRegistry, trackStats, rbcState, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
+    import { club, squad, academy, trackStats, rbcState, freePacks, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { openConfirmModal } from '../../stores/ui.js';
-    import { getDB, getEffectiveRating } from '../../utils/cards.js';
-    import { rollCardsFromDrops } from '../../utils/packs.js';
+    import { openConfirmModal, switchTab } from '../../stores/ui.js';
+    import { getEffectiveRating } from '../../utils/cards.js';
     import { CHALLENGES, REWARD_PACKS, todayKey, msUntilReset, claimedToday, requirementChips, validateSubmission } from '../../utils/rbc.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -30,10 +29,10 @@
     let slots = [];         // array of length req.count — card objects or null
     let pickerIdx = -1;     // which slot the picker is filling
 
-    // Reward reveal
+    // Reward — RBCs grant free Store packs, not loose cards
     let showReward = false;
-    let rewardCards = [];
     let rewardMeta = null;
+    let rewardCount = 0;
 
     $: activeSquadIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
     $: academyIds = new Set(['TOP', 'JNG', 'MID', 'ADC', 'SUP'].map(r => $academy[r]).filter(Boolean).map(c => c.uniqueId));
@@ -67,28 +66,25 @@
     function confirmComplete() {
         if (!active || !validation || !validation.valid || claimed[active.id]) return;
         const pack = REWARD_PACKS[active.reward.pack];
+        const n = active.reward.count;
         openConfirmModal(
-            `Submit these ${active.reward.count} players? They will be CONSUMED and you'll receive a free ${pack.label} pack (5 cards).`,
+            `Submit these players? They will be CONSUMED and you'll receive ${n} free ${pack.label} pack${n > 1 ? 's' : ''} to open in the Store.`,
             doComplete
         );
     }
 
     function doComplete() {
         if (!active || !validation || !validation.valid || claimed[active.id]) return;
-        const db = getDB();
-        if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
 
         const ch = active;
         const pack = REWARD_PACKS[ch.reward.pack];
         const consumeIds = new Set(slots.filter(Boolean).map(c => c.uniqueId));
-        const pulled = rollCardsFromDrops(db, pack.drops, ch.reward.count, 'rbc_');
 
-        club.update(c => [...c.filter(x => !consumeIds.has(x.uniqueId)), ...pulled]);
-        collectionRegistry.update(reg => {
-            const u = { ...reg };
-            pulled.forEach(c => { u[c.id] = true; });
-            return u;
-        });
+        // Consume the submitted players, then grant exactly reward.count free packs of the
+        // reward type (opened for free in the Store). Guarded by the claimed check above so
+        // a challenge can never grant its packs twice in one day.
+        club.update(c => c.filter(x => !consumeIds.has(x.uniqueId)));
+        freePacks.update(fp => ({ ...fp, [ch.reward.pack]: (fp[ch.reward.pack] || 0) + ch.reward.count }));
         rbcState.update(s => {
             const base = s && s.day === today ? (s.claimed || {}) : {};
             return { day: today, claimed: { ...base, [ch.id]: true } };
@@ -98,8 +94,8 @@
         grantBPXP(40);
         playSound('rare');
 
-        rewardCards = pulled;
         rewardMeta = pack;
+        rewardCount = ch.reward.count;
         showReward = true;
         active = null;
         slots = [];
@@ -107,7 +103,8 @@
         saveGame();
     }
 
-    function closeReward() { showReward = false; rewardCards = []; rewardMeta = null; }
+    function closeReward() { showReward = false; rewardMeta = null; rewardCount = 0; }
+    function goToStore() { closeReward(); switchTab('store'); }
 </script>
 
 <section class="rbc">
@@ -129,7 +126,7 @@
         <ol class="ri-steps">
             <li><b>Pick a challenge</b> below. Each asks for a themed set of 5 players (same region, same team, a rating floor, etc.).</li>
             <li><b>Submit players from your Club</b> that meet every requirement. Squad, Academy, locked, holographic and signature cards are protected and can't be used.</li>
-            <li><b>Submitted players are consumed</b> — in exchange you get a <b>free 5-card reward pack</b>, no Blue Essence needed.</li>
+            <li><b>Submitted players are consumed</b> — in exchange you get <b>5 free packs</b> to open in the Store, no Blue Essence needed.</li>
             <li><b>The tougher the challenge, the better the pack.</b> Rewards scale from Premium up to a full EWC pack.</li>
             <li>Each challenge can be completed <b>once per day</b>. Everything resets at midnight.</li>
         </ol>
@@ -247,19 +244,18 @@
 </div>
 {/if}
 
-<!-- Reward Reveal -->
+<!-- Reward earned -->
 {#if showReward}
 <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="ov" on:click={closeReward}>
     <div class="rew-modal" on:click|stopPropagation>
-        <div class="rew-title" style="color: {rewardMeta?.color};">{rewardMeta?.label} Pack — Opened!</div>
-        <div class="rew-sub">{rewardCards.length} cards added to your Club</div>
-        <div class="rew-grid">
-            {#each rewardCards as card (card.uniqueId)}
-                <Card {card} mini={true} />
-            {/each}
+        <div class="rew-emoji">🎁</div>
+        <div class="rew-title" style="color: {rewardMeta?.color};">Challenge Complete!</div>
+        <div class="rew-sub">You earned <b style="color: {rewardMeta?.color};">{rewardCount}× {rewardMeta?.label} Pack{rewardCount > 1 ? 's' : ''}</b><br>Open them free in the Store — no Blue Essence needed.</div>
+        <div class="rew-actions">
+            <button class="rew-btn" on:click={goToStore}>Open in Store →</button>
+            <button class="rew-later" on:click={closeReward}>Later</button>
         </div>
-        <button class="rew-btn" on:click={closeReward}>Continue</button>
     </div>
 </div>
 {/if}
@@ -353,11 +349,14 @@
     .pick-empty { color: #475569; font-size: 13px; text-align: center; padding: 40px 0; font-style: italic; }
     .pick-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 
-    /* Reward reveal */
-    .rew-modal { position: relative; width: 100%; max-width: 1050px; max-height: 90vh; overflow-y: auto; padding: 30px; border-radius: 22px; background: linear-gradient(170deg, #0d1224, #0a0f1c); border: 1px solid rgba(71,85,105,0.25); box-shadow: 0 25px 80px rgba(0,0,0,0.6); text-align: center; }
+    /* Reward earned */
+    .rew-modal { position: relative; width: 100%; max-width: 460px; padding: 32px; border-radius: 22px; background: linear-gradient(170deg, #0d1224, #0a0f1c); border: 1px solid rgba(71,85,105,0.25); box-shadow: 0 25px 80px rgba(0,0,0,0.6); text-align: center; }
+    .rew-emoji { font-size: 48px; margin-bottom: 8px; }
     .rew-title { font-size: 20px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; }
-    .rew-sub { font-size: 11px; color: #64748b; margin: 4px 0 22px; }
-    .rew-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 22px; }
-    .rew-btn { padding: 12px 34px; border-radius: 12px; border: none; background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; font-size: 13px; font-weight: 900; cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+    .rew-sub { font-size: 13px; color: #94a3b8; margin: 8px 0 24px; line-height: 1.6; }
+    .rew-actions { display: flex; gap: 10px; justify-content: center; }
+    .rew-btn { padding: 12px 28px; border-radius: 12px; border: none; background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; font-size: 13px; font-weight: 900; cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
     .rew-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,130,246,0.4); }
+    .rew-later { padding: 12px 22px; border-radius: 12px; background: rgba(51,65,85,0.4); border: 1px solid rgba(71,85,105,0.2); color: #94a3b8; font-size: 13px; font-weight: 800; cursor: pointer; }
+    .rew-later:hover { background: rgba(51,65,85,0.6); color: #e2e8f0; }
 </style>
