@@ -18,6 +18,7 @@
     import Friends from '../tabs/Friends.svelte';
     import Tower from '../tabs/Tower.svelte';
     import Draft from '../tabs/Draft.svelte';
+    import RBC from '../tabs/RBC.svelte';
 
     export let tab;
 </script>
@@ -35,6 +36,8 @@
         <Squad />
     {:else if tab === 'academy'}
         <Academy />
+    {:else if tab === 'rbc'}
+        <RBC />
     {:else if tab === 'tournament'}
         <Tournament />
     {:else if tab === 'collection'}

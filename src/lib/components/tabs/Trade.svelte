@@ -1,247 +1,170 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, collectionRegistry, skills, saveGame } from '../../stores/game.js';
+    import { club, squad, academy, blueEssence, trackStats, collectionRegistry, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
+    import { openConfirmModal } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
-    import { getDB, makeUniqueId, TIER_ORDER, ALL_SPECIAL, TIER_COLORS } from '../../utils/cards.js';
+    import { getDB, getEffectiveRating, ALL_SPECIAL, TIER_COLORS } from '../../utils/cards.js';
+    import { rollCardsFromDrops } from '../../utils/packs.js';
     import { get } from 'svelte/store';
 
-    const BASE_TRADE_COUNT = 3;
-    const ROTATE_MS = 15 * 60 * 1000;
-    const REFRESH_COST = 1000;
-
-    $: tradeSkillLevel = $skills.trading || 0;
-    $: tradeCount = BASE_TRADE_COUNT + (tradeSkillLevel >= 4 ? 2 : tradeSkillLevel >= 2 ? 1 : 0);
-    $: cardDiscount = Math.floor(tradeSkillLevel / 2);
-    $: refreshDiscount = tradeSkillLevel >= 4 ? 500 : tradeSkillLevel >= 2 ? 250 : 0;
-    $: actualRefreshCost = REFRESH_COST - refreshDiscount;
-
-    const TRADE_PATHS = [
-        { from: 'Bronze', to: 'Platinum', count: 8, minLevel: 0 },
-        { from: 'Silver', to: 'Platinum', count: 5, minLevel: 0 },
-        { from: 'Gold', to: 'Platinum', count: 3, minLevel: 0 },
-        { from: 'Silver', to: 'Diamond', count: 10, minLevel: 1 },
-        { from: 'Gold', to: 'Diamond', count: 6, minLevel: 1 },
-        { from: 'Platinum', to: 'Diamond', count: 3, minLevel: 1 },
-        { from: 'Gold', to: 'Master', count: 8, minLevel: 2 },
-        { from: 'Platinum', to: 'Master', count: 4, minLevel: 2 },
-        { from: 'Diamond', to: 'Master', count: 3, minLevel: 2 },
-        { from: 'Platinum', to: 'Grandmaster', count: 6, minLevel: 3 },
-        { from: 'Diamond', to: 'Grandmaster', count: 4, minLevel: 3 },
-        { from: 'Master', to: 'Grandmaster', count: 3, minLevel: 3 },
+    // Mystery Trades — pay a large sum of Blue Essence plus a stack of spare cards for
+    // ONE fully random player, guaranteed Master tier or higher (up to any Legacy/Award
+    // card — no upper limit). You never see the reward in advance. Holographic and
+    // signature versions are never produced.
+    const MYSTERY_TRADES = [
+        { id: 'elite', name: 'Elite Mystery', color: '#a855f7', cardCost: 8, beCost: 10000,
+          blurb: 'A guaranteed Master or better.',
+          drops: [{ tier: 'Master', pct: 60 }, { tier: 'Grandmaster', pct: 30 }, { tier: 'Challenger', pct: 8 }, { tier: 'SPECIAL', pct: 2 }] },
+        { id: 'prestige', name: 'Prestige Mystery', color: '#f59e0b', cardCost: 8, beCost: 25000,
+          blurb: 'Real shot at a Challenger or Legacy card.',
+          drops: [{ tier: 'Master', pct: 38 }, { tier: 'Grandmaster', pct: 34 }, { tier: 'Challenger', pct: 18 }, { tier: 'SPECIAL', pct: 10 }] },
+        { id: 'legendary', name: 'Legendary Mystery', color: '#ec4899', cardCost: 8, beCost: 60000,
+          blurb: 'Best odds at a Champion, MVP or EWC card.',
+          drops: [{ tier: 'Master', pct: 18 }, { tier: 'Grandmaster', pct: 27 }, { tier: 'Challenger', pct: 30 }, { tier: 'SPECIAL', pct: 25 }] },
     ];
 
-    let offers = [];
-    let nextRotation = 0;
-    let timeLeft = '';
-    let timerInterval = null;
     let showResult = false;
     let resultCard = null;
-
-    function getSeed() {
-        return Math.floor(Date.now() / ROTATE_MS);
-    }
-
-    function seededRandom(seed) {
-        let s = seed;
-        return function() {
-            s = (s * 1103515245 + 12345) & 0x7fffffff;
-            return s / 0x7fffffff;
-        };
-    }
-
-    function generateOffers(seed, count) {
-        const rng = seededRandom(seed);
-        const level = get(skills).trading || 0;
-        const discount = Math.floor(level / 2);
-        const available = TRADE_PATHS.filter(p => level >= p.minLevel);
-        const shuffled = [...available].sort(() => rng() - 0.5);
-        const selected = shuffled.slice(0, count);
-
-        const db = getDB();
-        if (!db) return selected.map(t => ({ ...t, targetCard: null }));
-
-        return selected.map(t => {
-            const discounted = Math.max(1, t.count - discount);
-            const pool = db.filter(p =>
-                p.quality === t.to &&
-                !ALL_SPECIAL.includes(p.quality) &&
-                p.role !== 'COACH'
-            );
-            const target = pool.length > 0 ? pool[Math.floor(rng() * pool.length)] : null;
-            return { ...t, count: discounted, originalCount: t.count, targetCard: target };
-        });
-    }
-
-    function loadOffers() {
-        const seed = getSeed();
-        const level = get(skills).trading || 0;
-        const count = BASE_TRADE_COUNT + (level >= 4 ? 2 : level >= 2 ? 1 : 0);
-        offers = generateOffers(seed, count);
-        nextRotation = (seed + 1) * ROTATE_MS;
-        updateTimer();
-    }
-
-    function updateTimer() {
-        const remaining = Math.max(0, nextRotation - Date.now());
-        const mins = Math.floor(remaining / 60000);
-        const secs = Math.floor((remaining % 60000) / 1000);
-        timeLeft = `${mins}:${secs.toString().padStart(2, '0')}`;
-        if (remaining <= 0) loadOffers();
-    }
-
-    function refreshOffers() {
-        const cost = actualRefreshCost;
-        if (get(blueEssence) < cost) {
-            showToast(`Need ${cost} BE to refresh.`, 'error');
-            return;
-        }
-        blueEssence.update(v => v - cost);
-        const newSeed = Date.now();
-        const level = get(skills).trading || 0;
-        const count = BASE_TRADE_COUNT + (level >= 4 ? 2 : level >= 2 ? 1 : 0);
-        offers = generateOffers(newSeed, count);
-        nextRotation = Date.now() + ROTATE_MS;
-        saveGame();
-        showToast('Trade offers refreshed!', 'success');
-    }
+    let resultTradeColor = '#f59e0b';
 
     $: activeSquadIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
+    $: academyIds = new Set(['TOP', 'JNG', 'MID', 'ADC', 'SUP'].map(r => $academy[r]).filter(Boolean).map(c => c.uniqueId));
 
-    function getEligible(offer) {
-        return $club.filter(c =>
-            c.quality === offer.from &&
-            !ALL_SPECIAL.includes(c.quality) &&
-            !c.signature && !c.holographic &&
-            !c.locked &&
-            !activeSquadIds.has(c.uniqueId)
-        ).sort((a, b) => a.rating - b.rating);
+    // Cards eligible to feed into a trade: your lowest-value spares. Squad, Academy,
+    // locked, holographic, signature and Legacy/Award cards are all protected.
+    $: fodder = $club
+        .filter(c =>
+            !activeSquadIds.has(c.uniqueId) && !academyIds.has(c.uniqueId) &&
+            !c.locked && !c.signature && !c.holographic && !ALL_SPECIAL.includes(c.quality))
+        .sort((a, b) => getEffectiveRating(a) - getEffectiveRating(b));
+
+    function tierSummary(cards) {
+        const counts = {};
+        cards.forEach(c => { counts[c.quality] = (counts[c.quality] || 0) + 1; });
+        return Object.entries(counts).map(([tier, n]) => ({ tier, n }));
     }
 
-    function executeTrade(offer, idx) {
-        if (offer.completed) return;
-        const eligible = getEligible(offer);
-        if (eligible.length < offer.count) {
-            showToast(`Need ${offer.count} ${offer.from} cards. You have ${eligible.length}.`, 'error');
+    function labelFor(tier) {
+        return tier === 'SPECIAL' ? 'Legacy / Award' : tier;
+    }
+    function colorFor(tier) {
+        return tier === 'SPECIAL' ? '#fbbf24' : (TIER_COLORS[tier] || '#94a3b8');
+    }
+
+    function requestTrade(trade) {
+        if (fodder.length < trade.cardCost) {
+            showToast(`Need ${trade.cardCost} spare (non-Legacy, unlocked) cards. You have ${fodder.length}.`, 'error');
             return;
         }
-        if (!offer.targetCard) {
-            showToast('No target card available.', 'error');
+        if (get(blueEssence) < trade.beCost) {
+            showToast(`Need ${trade.beCost.toLocaleString()} BE for this trade.`, 'error');
+            return;
+        }
+        openConfirmModal(
+            `Run ${trade.name}? This consumes ${trade.cardCost} of your lowest-rated spare cards and ${trade.beCost.toLocaleString()} BE for ONE random Master-or-better card.`,
+            () => doTrade(trade)
+        );
+    }
+
+    function doTrade(trade) {
+        const db = getDB();
+        if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
+        if (fodder.length < trade.cardCost || get(blueEssence) < trade.beCost) {
+            showToast('Trade no longer available.', 'error');
             return;
         }
 
-        offers = offers.map((o, i) => i === idx ? { ...o, completed: true } : o);
+        const consume = fodder.slice(0, trade.cardCost);
+        const consumeIds = new Set(consume.map(c => c.uniqueId));
+        const rolled = rollCardsFromDrops(db, trade.drops, 1, 'trade_', { includeCoach: false });
+        if (rolled.length === 0) { showToast('Trade failed to roll a card. Try again.', 'error'); return; }
+        const newCard = rolled[0];
 
-        const toConsume = eligible.slice(0, offer.count);
-        const consumeIds = new Set(toConsume.map(c => c.uniqueId));
-        const newCard = { ...offer.targetCard, uniqueId: makeUniqueId('trade_') };
-
+        blueEssence.update(v => v - trade.beCost);
         club.update(c => [...c.filter(x => !consumeIds.has(x.uniqueId)), newCard]);
         collectionRegistry.update(reg => ({ ...reg, [newCard.id]: true }));
-        trackStats.update(s => ({ ...s, soldCount: (s.soldCount || 0) + offer.count }));
+        trackStats.update(s => ({ ...s, soldCount: (s.soldCount || 0) + trade.cardCost, tradesDone: (s.tradesDone || 0) + 1 }));
 
         playSound('rare');
         resultCard = newCard;
+        resultTradeColor = trade.color;
         showResult = true;
         saveGame();
-        showToast(`Traded ${offer.count}× ${offer.from} → ${newCard.name} (${offer.to})!`, 'success');
+        showToast(`${trade.name}: received ${newCard.name} (${newCard.quality})!`, 'success');
     }
 
     function closeResult() { showResult = false; resultCard = null; }
-
-    // Init
-    loadOffers();
-    timerInterval = setInterval(updateTimer, 1000);
-
-    import { onDestroy } from 'svelte';
-    onDestroy(() => { if (timerInterval) clearInterval(timerInterval); });
 </script>
 
 <section class="trade-page">
     <div class="trade-head">
         <div>
-            <h2 class="trade-title">Trade Market</h2>
-            <p class="trade-desc">Trade lower-tier cards for higher-tier players. Offers rotate every 15 minutes.</p>
+            <h2 class="trade-title">Mystery Trade Market</h2>
+            <p class="trade-desc">Feed in your spare cards plus Blue Essence for ONE fully random player — <b>guaranteed Master tier or higher</b>, all the way up to Legacy &amp; Award cards. No previews, no limits.</p>
         </div>
-        <div class="trade-controls">
-            <div class="trade-timer">
-                <span class="tt-label">Next rotation</span>
-                <span class="tt-time">{timeLeft}</span>
-            </div>
-            <button class="trade-refresh" on:click={refreshOffers}>
-                Refresh · {actualRefreshCost} BE
-                {#if refreshDiscount > 0}<span class="tr-disc">(-{refreshDiscount})</span>{/if}
-            </button>
+        <div class="trade-bank">
+            <span class="tb-label">Your BE</span>
+            <span class="tb-val">💎 {$blueEssence.toLocaleString()}</span>
         </div>
     </div>
 
     <div class="trade-grid">
-        {#each offers as offer, i}
-            {@const eligible = getEligible(offer)}
-            {@const canTrade = !offer.completed && eligible.length >= offer.count && offer.targetCard}
-            {@const fromColor = TIER_COLORS[offer.from] || '#64748b'}
-            {@const toColor = TIER_COLORS[offer.to] || '#64748b'}
-            <div class="trade-card" style={offer.completed ? 'opacity: 0.4;' : ''}>
-                <!-- Left: Trade info -->
-                <div class="tc-info">
-                    <div class="tc-give">
-                        <div class="tc-section-label">Trade In</div>
-                        <div class="tc-tier" style="color: {fromColor};">{offer.count}× {offer.from}</div>
-                        {#if !offer.completed}
-                            <div class="tc-have" class:tc-enough={eligible.length >= offer.count} class:tc-short={eligible.length < offer.count}>
-                                You have: {eligible.length}
-                            </div>
-                        {/if}
+        {#each MYSTERY_TRADES as trade}
+            {@const consume = fodder.slice(0, trade.cardCost)}
+            {@const enoughCards = fodder.length >= trade.cardCost}
+            {@const enoughBE = $blueEssence >= trade.beCost}
+            {@const canDo = enoughCards && enoughBE}
+            <div class="mt-card" style="--accent: {trade.color};">
+                <div class="mt-top">
+                    <div class="mt-name">{trade.name}</div>
+                    <div class="mt-blurb">{trade.blurb}</div>
+                </div>
+
+                <div class="mt-cost">
+                    <div class="mt-cost-row">
+                        <span class="mt-cost-label">Trade in</span>
+                        <span class="mt-cost-val" class:mt-short={!enoughCards}>{trade.cardCost} cards ({fodder.length} spare)</span>
                     </div>
-
-                    <div class="tc-arrow">→</div>
-
-                    <div class="tc-get">
-                        <div class="tc-section-label">Receive</div>
-                        {#if offer.targetCard}
-                            <div class="tc-target-tier" style="color: {toColor}; border-color: {toColor};">{offer.to}</div>
-                            <div class="tc-target-name">{offer.targetCard.name}</div>
-                            <div class="tc-target-info">{offer.targetCard.team} [{offer.targetCard.year}] · {offer.targetCard.role}</div>
-                        {:else}
-                            <div class="tc-target-none">No card available</div>
-                        {/if}
+                    <div class="mt-cost-row">
+                        <span class="mt-cost-label">Cost</span>
+                        <span class="mt-cost-val" class:mt-short={!enoughBE}>💎 {trade.beCost.toLocaleString()} BE</span>
                     </div>
-
-                    {#if offer.completed}
-                        <span class="tc-done">Completed ✓</span>
-                    {:else}
-                        <button
-                            class="tc-btn"
-                            class:tc-btn-ready={canTrade}
-                            class:tc-btn-disabled={!canTrade}
-                            disabled={!canTrade}
-                            on:click={() => executeTrade(offer, i)}
-                        >
-                            {#if !offer.targetCard}
-                                Unavailable
-                            {:else if eligible.length < offer.count}
-                                Need {offer.count - eligible.length} more
-                            {:else}
-                                Trade →
-                            {/if}
-                        </button>
+                    {#if enoughCards}
+                        <div class="mt-fodder">
+                            {#each tierSummary(consume) as { tier, n }}
+                                <span class="mt-chip" style="color: {TIER_COLORS[tier] || '#94a3b8'};">{n}× {tier}</span>
+                            {/each}
+                        </div>
                     {/if}
                 </div>
 
-                <!-- Right: Card preview -->
-                <div class="tc-preview">
-                    {#if offer.targetCard}
-                        <Card card={offer.targetCard} mini={true} />
-                    {:else}
-                        <div class="tc-no-card">?</div>
-                    {/if}
+                <div class="mt-odds">
+                    <div class="mt-odds-label">Reward odds</div>
+                    {#each trade.drops as d}
+                        <div class="mt-odd">
+                            <span class="mt-odd-tier" style="color: {colorFor(d.tier)};">{labelFor(d.tier)}</span>
+                            <div class="mt-odd-bar"><div class="mt-odd-fill" style="width: {d.pct}%; background: {colorFor(d.tier)};"></div></div>
+                            <span class="mt-odd-pct">{d.pct}%</span>
+                        </div>
+                    {/each}
                 </div>
+
+                <button class="mt-btn" disabled={!canDo} on:click={() => requestTrade(trade)}>
+                    {#if !enoughCards}
+                        Need {trade.cardCost - fodder.length} more spare cards
+                    {:else if !enoughBE}
+                        Not enough BE
+                    {:else}
+                        Trade for Mystery Card →
+                    {/if}
+                </button>
             </div>
         {/each}
     </div>
 
     <div class="trade-note">
-        Signature and holographic cards cannot be traded in. Locked cards and cards in your squad are excluded.
+        Squad, Academy, locked, holographic, signature and Legacy/Award cards are always protected — only your lowest-rated spare cards are consumed. Rewards are never holographic or signature.
     </div>
 </section>
 
@@ -250,7 +173,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="result-overlay" on:click={closeResult}>
-    <div class="result-label">Trade Complete!</div>
+    <div class="result-label" style="color: {resultTradeColor};">Mystery Card Revealed!</div>
     <div class="result-reveal">
         <Card card={resultCard} />
     </div>
@@ -259,118 +182,66 @@
 {/if}
 
 <style>
-    .trade-page { max-width: 1000px; margin: 0 auto; padding-bottom: 40px; }
+    .trade-page { max-width: 1100px; margin: 0 auto; padding-bottom: 40px; }
 
-    .trade-head { display: flex; justify-content: space-between; align-items: start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .trade-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
     .trade-title { font-size: 22px; font-weight: 900; color: #f59e0b; }
-    .trade-desc { font-size: 12px; color: #64748b; margin-top: 3px; }
-    .trade-controls { display: flex; align-items: center; gap: 12px; }
-    .trade-timer {
-        display: flex; flex-direction: column; align-items: center;
-        padding: 8px 16px; border-radius: 10px;
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-    }
-    .tt-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; }
-    .tt-time { font-size: 18px; font-weight: 900; color: #e2e8f0; font-family: monospace; }
-    .trade-refresh {
-        padding: 10px 18px; border-radius: 10px;
-        background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2);
-        color: #fbbf24; font-size: 11px; font-weight: 900;
-        cursor: pointer; transition: all 0.12s;
-    }
-    .trade-refresh:hover { background: rgba(245,158,11,0.2); border-color: rgba(245,158,11,0.35); }
-    .tr-disc { font-size: 9px; color: #34d399; margin-left: 4px; }
+    .trade-desc { font-size: 12px; color: #64748b; margin-top: 3px; max-width: 620px; line-height: 1.5; }
+    .trade-desc b { color: #fbbf24; }
+    .trade-bank { display: flex; flex-direction: column; align-items: center; padding: 8px 18px; border-radius: 12px; background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.2); }
+    .tb-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; }
+    .tb-val { font-size: 16px; font-weight: 900; color: #60a5fa; }
 
-    /* Trade grid */
-    .trade-grid { display: flex; flex-direction: column; gap: 12px; }
+    .trade-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    .mt-card {
+        border: 1px solid rgba(148,163,184,0.12); border-left: 3px solid var(--accent);
+        border-radius: 16px; padding: 20px;
+        background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 12%, transparent) 0%, rgba(12,16,28,0.6) 55%);
+        display: flex; flex-direction: column; gap: 16px;
+    }
+    .mt-top { }
+    .mt-name { font-size: 18px; font-weight: 900; color: #f1f5f9; }
+    .mt-blurb { font-size: 11px; color: #94a3b8; margin-top: 3px; font-style: italic; }
 
-    .trade-card {
-        display: flex; align-items: center; gap: 20px;
-        padding: 20px 24px; border-radius: 16px;
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        transition: border-color 0.12s;
-    }
-    .trade-card:hover { border-color: rgba(245,158,11,0.15); }
-    .tc-info { flex: 1; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-    .tc-preview { flex-shrink: 0; }
-    .tc-no-card {
-        width: 180px; height: 280px; border-radius: 14px;
-        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2);
-        display: flex; align-items: center; justify-content: center;
-        font-size: 32px; font-weight: 900; color: #1e293b;
-    }
-    @media (max-width: 700px) {
-        .trade-card { flex-direction: column; text-align: center; }
-        .tc-info { justify-content: center; }
-    }
+    .mt-cost { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: rgba(15,23,42,0.4); }
+    .mt-cost-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+    .mt-cost-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; }
+    .mt-cost-val { font-weight: 900; color: #e2e8f0; }
+    .mt-short { color: #f87171; }
+    .mt-fodder { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+    .mt-chip { font-size: 9px; font-weight: 800; background: rgba(0,0,0,0.25); border: 1px solid rgba(148,163,184,0.12); border-radius: 100px; padding: 2px 8px; }
 
-    .tc-section-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; margin-bottom: 6px; }
-    .tc-tier { font-size: 18px; font-weight: 900; }
-    .tc-have { font-size: 11px; font-weight: 700; margin-top: 4px; }
-    .tc-enough { color: #34d399; }
-    .tc-short { color: #f87171; }
-    .tc-arrow { font-size: 24px; font-weight: 900; color: #334155; }
+    .mt-odds { display: flex; flex-direction: column; gap: 5px; }
+    .mt-odds-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; margin-bottom: 2px; }
+    .mt-odd { display: flex; align-items: center; gap: 8px; }
+    .mt-odd-tier { font-size: 11px; font-weight: 800; width: 92px; }
+    .mt-odd-bar { flex: 1; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+    .mt-odd-fill { height: 100%; border-radius: 4px; }
+    .mt-odd-pct { font-size: 11px; font-weight: 900; color: #94a3b8; width: 34px; text-align: right; }
 
-    /* Target card info */
+    .mt-btn {
+        margin-top: 2px; padding: 13px; border-radius: 12px; border: none;
+        font-size: 12px; font-weight: 900; letter-spacing: 0.3px; cursor: pointer;
+        background: var(--accent); color: #0b1220; transition: transform 0.12s, box-shadow 0.12s;
+    }
+    .mt-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
+    .mt-btn:disabled { background: rgba(30,41,59,0.6); color: #475569; cursor: not-allowed; }
 
-    .tc-target-tier {
-        display: inline-block; font-size: 9px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; padding: 2px 10px; border-radius: 6px;
-        border: 1px solid; background: rgba(0,0,0,0.2); width: fit-content;
-    }
-    .tc-target-name { font-size: 16px; font-weight: 900; color: #f1f5f9; margin-top: 4px; }
-    .tc-target-info { font-size: 10px; color: #64748b; }
-    .tc-target-none { font-size: 12px; color: #334155; font-style: italic; }
-
-    /* Trade button */
-    .tc-btn {
-        padding: 12px 20px; border-radius: 12px;
-        font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px;
-        border: none; cursor: pointer; transition: all 0.15s;
-        white-space: nowrap;
-    }
-    .tc-btn-ready {
-        background: linear-gradient(135deg, #d97706, #f59e0b); color: #1c1917;
-        box-shadow: 0 4px 12px rgba(245,158,11,0.2);
-    }
-    .tc-btn-ready:hover { box-shadow: 0 6px 20px rgba(245,158,11,0.35); transform: translateY(-1px); }
-    .tc-btn-disabled {
-        background: rgba(30,41,59,0.5); color: #475569; cursor: not-allowed;
-        border: 1px solid rgba(51,65,85,0.2);
-    }
-
-    .tc-done {
-        font-size: 10px; font-weight: 900; color: #34d399;
-        text-transform: uppercase; letter-spacing: 1px;
-        padding: 8px 16px; white-space: nowrap;
-    }
-
-    .trade-note {
-        margin-top: 20px; text-align: center;
-        font-size: 10px; color: #334155; font-style: italic;
-    }
+    .trade-note { margin-top: 22px; text-align: center; font-size: 10px; color: #334155; font-style: italic; line-height: 1.5; }
 
     /* Result overlay */
     .result-overlay {
         position: fixed; inset: 0; z-index: 80;
         background: rgba(0,0,0,0.9); backdrop-filter: blur(16px);
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-        padding: 16px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px;
     }
-    .result-label {
-        font-size: 16px; font-weight: 900; color: #f59e0b;
-        text-transform: uppercase; letter-spacing: 3px; margin-bottom: 24px;
-    }
+    .result-label { font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 24px; }
     .result-reveal { animation: tradeReveal 0.5s cubic-bezier(0.16,1,0.3,1) forwards; }
-    @keyframes tradeReveal {
-        from { opacity: 0; transform: scale(0.5) rotateY(90deg); }
-        to { opacity: 1; transform: scale(1) rotateY(0deg); }
-    }
+    @keyframes tradeReveal { from { opacity: 0; transform: scale(0.5) rotateY(90deg); } to { opacity: 1; transform: scale(1) rotateY(0deg); } }
     .result-btn {
         margin-top: 24px; padding: 12px 32px; border-radius: 12px;
         background: rgba(51,65,85,0.4); border: 1px solid rgba(71,85,105,0.2);
-        color: #e2e8f0; font-size: 13px; font-weight: 800;
-        cursor: pointer; transition: all 0.12s;
+        color: #e2e8f0; font-size: 13px; font-weight: 800; cursor: pointer; transition: all 0.12s;
     }
     .result-btn:hover { background: rgba(51,65,85,0.6); }
 </style>

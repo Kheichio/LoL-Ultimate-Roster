@@ -137,6 +137,7 @@
     })();
 
     const updates = [
+        { ver: 'Beta 1.3.0', text: 'RBCs & EWC — Roster Building Challenges: a new daily mode (tab between Academy and Season) where you submit themed 5-card sets for free reward packs (Premium → EWC). EWC champion cards (T1 2024, Gen.G 2025, DK 2026) + EWC Store pack. Trade Market reworked into expensive, fully-random Master+ Mystery Trades. Friends moved next to Ranking; Home career stats reordered & recoloured.' },
         { ver: '1.2', text: 'Academy auto-farming team, Club quick-sell + sell duplicates, MSI 2026 champions (HLE), public leaderboard, Challenger no longer craftable, softer bronze cards' },
         { ver: '1.1.2', text: 'League Awards cards (POTY/TOTY/ROTY 2024+2025), Salary Cap Mode, Rival Challenge, Prestige System, Milestone Cards' },
         { ver: '1.1.1.2', text: '55 quests, 25 achievements, Draft Mode fixes, pity counter fix, ON card buff' },
@@ -453,20 +454,21 @@
                 <div class="panel-label">Career Stats</div>
                 <div class="career-list">
                     {#each [
-                        ['Cafe Wins', $trackStats.cafeWins || 0, ''],
-                        ['Regional Wins', $trackStats.regionalSplitWon || 0, 'color-blue'],
-                        ['First Stand', $trackStats.firstStandWon || 0, 'color-orange'],
-                        ['MSI Wins', $trackStats.msiWon || 0, 'color-cyan'],
-                        ['Worlds Wins', $trackStats.worldsWon || 0, 'color-amber'],
-                        ['Golden Roads', $trackStats.goldenRoads || 0, 'color-yellow'],
-                        ['Splits Done', $trackStats.splitsCompleted || 0, 'color-blue'],
-                        ['Tower Best', $trackStats.towerHighestFloor || 0, 'color-red'],
-                        ['Packs Opened', $trackStats.packs || 0, ''],
-                        ['Cards Sold', $trackStats.soldCount || 0, ''],
-                    ] as [label, value, cls]}
-                        <div class="career-row">
-                            <span class="career-label">{label}</span>
-                            <span class="career-val {cls}">{value}</span>
+                        { label: 'Golden Roads',  value: $trackStats.goldenRoads || 0,       color: '#fde047', icon: '🌟' },
+                        { label: 'Worlds Wins',   value: $trackStats.worldsWon || 0,          color: '#fbbf24', icon: '👑' },
+                        { label: 'MSI Wins',      value: $trackStats.msiWon || 0,             color: '#2dd4bf', icon: '🌍' },
+                        { label: 'First Stand',   value: $trackStats.firstStandWon || 0,      color: '#fb923c', icon: '🥇' },
+                        { label: 'Regional Wins', value: $trackStats.regionalSplitWon || 0,   color: '#60a5fa', icon: '🏆' },
+                        { label: 'Splits Done',   value: $trackStats.splitsCompleted || 0,    color: '#a78bfa', icon: '📅' },
+                        { label: 'Cafe Wins',     value: $trackStats.cafeWins || 0,           color: '#4ade80', icon: '☕' },
+                        { label: 'Tower Best',    value: $trackStats.towerHighestFloor || 0,  color: '#f87171', icon: '🗼' },
+                        { label: 'Packs Opened',  value: $trackStats.packs || 0,              color: '#e879f9', icon: '📦' },
+                        { label: 'Cards Sold',    value: $trackStats.soldCount || 0,          color: '#94a3b8', icon: '💰' },
+                    ] as stat}
+                        <div class="career-row" style="border-left-color: {stat.color}; background: linear-gradient(90deg, rgba({hexToRgb(stat.color)}, 0.14), transparent 72%);">
+                            <span class="career-icon">{stat.icon}</span>
+                            <span class="career-label">{stat.label}</span>
+                            <span class="career-val" style="color: {stat.color};">{stat.value}</span>
                         </div>
                     {/each}
                 </div>
@@ -487,8 +489,8 @@
 
     /* Panel base */
     .panel {
-        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.04) 0%, rgba(12, 16, 28, 0.6) 40%);
-        border: 1px solid rgba(var(--team-rgb), 0.08);
+        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.16) 0%, rgba(12, 16, 28, 0.62) 46%);
+        border: 1px solid rgba(var(--team-rgb), 0.2);
         border-radius: 16px;
         backdrop-filter: blur(6px);
     }
@@ -530,8 +532,8 @@
     .stats-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
     @media (max-width: 768px) { .stats-strip { grid-template-columns: repeat(3, 1fr); } }
     .stat-tile {
-        background: linear-gradient(160deg, rgba(var(--team-rgb), 0.05) 0%, rgba(12,16,28,0.6) 50%);
-        border: 1px solid rgba(var(--team-rgb), 0.06);
+        background: linear-gradient(160deg, rgba(var(--team-rgb), 0.2) 0%, rgba(12,16,28,0.62) 58%);
+        border: 1px solid rgba(var(--team-rgb), 0.22);
         border-radius: 14px; padding: 14px 8px; text-align: center;
         display: flex; flex-direction: column; align-items: center; gap: 2px;
     }
@@ -593,8 +595,8 @@
     .sq-slot { text-align: center; flex: 1; }
     .sq-role { font-size: 8px; font-weight: 900; color: #475569; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 1px; }
     .sq-card {
-        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.06) 0%, rgba(30,41,59,0.4) 60%);
-        border: 1px solid rgba(var(--team-rgb), 0.1);
+        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.22) 0%, rgba(30,41,59,0.4) 66%);
+        border: 1px solid rgba(var(--team-rgb), 0.26);
         border-radius: 10px; padding: 10px 6px;
     }
     .sq-rating { font-size: 20px; font-weight: 900; color: #e2e8f0; }
@@ -692,14 +694,18 @@
     .update-text { color: #475569; line-height: 1.4; }
 
     /* Career */
-    .career-list { display: flex; flex-direction: column; gap: 4px; }
-    .career-row { display: flex; justify-content: space-between; font-size: 11px; padding: 4px 0; }
-    .career-label { color: #475569; }
-    .career-val { font-weight: 800; color: #94a3b8; }
+    .career-list { display: flex; flex-direction: column; gap: 5px; }
+    .career-row {
+        display: flex; align-items: center; gap: 8px; font-size: 11px;
+        padding: 6px 9px; border-radius: 8px;
+        border-left: 3px solid #475569; transition: transform 0.1s;
+    }
+    .career-row:hover { transform: translateX(2px); }
+    .career-icon { font-size: 13px; flex-shrink: 0; line-height: 1; }
+    .career-label { color: #cbd5e1; flex: 1; font-weight: 700; }
+    .career-val { font-weight: 900; font-size: 14px; flex-shrink: 0; }
 
     /* Extra colors */
-    .color-orange { color: #fb923c; }
-    .color-cyan { color: #22d3ee; }
     .panel-label.gold { color: #fbbf24; }
     .panel-label.purple { color: #c084fc; }
 

@@ -1,9 +1,10 @@
 <script>
-    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige, skills, academy } from '../../stores/game.js';
+    import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige, skills, academy, rbcState } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
     import { friendRequestCount } from '../../stores/friends.js';
+    import { CHALLENGES, todayKey, claimedToday } from '../../utils/rbc.js';
     import { loadFromStorage } from '../../utils/storage.js';
 
     function isSameDay(d1, d2) {
@@ -20,6 +21,12 @@
     let acNow = Date.now();
     const acInterval = setInterval(() => { acNow = Date.now(); }, 15000);
     $: academyReady = ($academy.sentAt > 0 && acNow >= $academy.sentAt + 3600000) ? 1 : 0;
+
+    // RBC — badge shows how many daily challenges are still available today
+    $: rbcAvailable = (() => {
+        const done = claimedToday($rbcState, todayKey(acNow));
+        return CHALLENGES.filter(ch => !done[ch.id]).length;
+    })();
 
     $: archiveUnclaimed = (() => {
         const reg = $collectionRegistry;
@@ -106,6 +113,7 @@
         quests: questBadge,
         upgrade: upgradeAvailable,
         academy: academyReady,
+        rbc: rbcAvailable,
         friends: $friendRequestCount,
     };
 
@@ -115,6 +123,7 @@
         { id: 'club', label: 'Club' },
         { id: 'squad', label: 'Squad', accent: true },
         { id: 'academy', label: 'Academy' },
+        { id: 'rbc', label: 'RBCs' },
         { id: 'season', label: 'Season' },
     ];
 
@@ -125,12 +134,12 @@
         { id: 'skills', label: 'Skills' },
         { id: 'collection', label: 'Archive' },
         { id: 'leaderboard', label: 'Ranking' },
+        { id: 'friends', label: 'Friends' },
     ];
 
     const subTabs = [
         { id: 'welcome', label: 'Welcome' },
         { id: 'guide', label: 'Guide' },
-        { id: 'friends', label: 'Friends' },
         { id: 'trade', label: 'Trade' },
     ];
 

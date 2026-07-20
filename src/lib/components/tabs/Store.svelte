@@ -52,6 +52,9 @@
         { id: 'firststand', name: 'First Stand', sub: 'Event Pack', cost: 3000, count: 5, special: true,
           color: '#fb923c', borderColor: 'rgba(251,146,60,0.2)', bg: 'linear-gradient(170deg, #1a1008 0%, #1c0f05 60%, #201208 100%)',
           drops: [{ tier: 'FirstStand', pct: 0.5 }, { tier: 'Challenger', pct: 1 }, { tier: 'Grandmaster', pct: 2 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 26.5 }, { tier: 'Gold', pct: 50 }] },
+        { id: 'ewc', name: 'EWC', sub: 'Event Pack', cost: 4000, count: 5, special: true,
+          color: '#ffd24a', borderColor: 'rgba(255,210,74,0.25)', bg: 'linear-gradient(170deg, #1c1608 0%, #14110a 60%, #201a0c 100%)',
+          drops: [{ tier: 'EWC', pct: 0.5 }, { tier: 'Challenger', pct: 1 }, { tier: 'Grandmaster', pct: 2 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 26.5 }, { tier: 'Gold', pct: 50 }] },
         { id: 'msi', name: 'MSI', sub: 'Event Pack', cost: 5000, count: 5, special: true,
           color: '#2dd4bf', borderColor: 'rgba(45,212,191,0.2)', bg: 'linear-gradient(170deg, #042f2e 0%, #0a1f1e 60%, #0d2524 100%)',
           drops: [{ tier: 'MSI', pct: 0.5 }, { tier: 'Challenger', pct: 1 }, { tier: 'Grandmaster', pct: 2 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 26.5 }, { tier: 'Gold', pct: 50 }] },
@@ -66,7 +69,7 @@
           drops: [{ tier: 'POTY', pct: 0.1 }, { tier: 'TOTY', pct: 0.9 }, { tier: 'ROTY', pct: 2 }, { tier: 'Challenger', pct: 2 }, { tier: 'Grandmaster', pct: 5 }, { tier: 'Master', pct: 8 }, { tier: 'Diamond', pct: 20 }, { tier: 'Platinum', pct: 62 }] },
     ];
 
-    const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','POTY','ROTY','TOTY','GPOTY','X']);
+    const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','EWC','POTY','ROTY','TOTY','GPOTY','X']);
 
     function rollFromDrops(drops) {
         const rng = Math.random() * 100;

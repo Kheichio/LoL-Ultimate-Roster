@@ -1267,6 +1267,36 @@ const baseDatabase = [
     { id: 9305, name: "Delight", role: "SUP", team: "HLE", year: 2025, rating: 93, quality: "FirstStand", region: "Legacy", stats: { mec: 85, tmf: 95, frm: 93, cmp: 92, map: 96, ldr: 91 } },
 
     // ==========================================
+    // --- 6c. ESPORTS WORLD CUP (EWC) CHAMPIONS ---
+    // Upgraded editions of the winning roster's base card — every stat strictly beats
+    // the base year card, scaled to that tournament's performance.
+    // ==========================================
+
+    // T1 2024 — Inaugural EWC Champions (beat Top Esports 3-1; Faker Finals MVP; Gumayusi 10-champ standout)
+    { id: 9600, name: "Zeus",     role: "TOP",   team: "T1", year: 2024, rating: 96, quality: "EWC", region: "Legacy", stats: { mec: 98, tmf: 94, frm: 97, cmp: 93, map: 88, ldr: 85 } },
+    { id: 9601, name: "Oner",     role: "JNG",   team: "T1", year: 2024, rating: 93, quality: "EWC", region: "Legacy", stats: { mec: 95, tmf: 92, frm: 90, cmp: 91, map: 93, ldr: 89 } },
+    { id: 9602, name: "Faker",    role: "MID",   team: "T1", year: 2024, rating: 96, quality: "EWC", region: "Legacy", stats: { mec: 92, tmf: 97, frm: 92, cmp: 97, map: 96, ldr: 97 } },
+    { id: 9603, name: "Gumayusi", role: "ADC",   team: "T1", year: 2024, rating: 94, quality: "EWC", region: "Legacy", stats: { mec: 96, tmf: 97, frm: 98, cmp: 100, map: 85, ldr: 87 } },
+    { id: 9604, name: "Keria",    role: "SUP",   team: "T1", year: 2024, rating: 96, quality: "EWC", region: "Legacy", stats: { mec: 88, tmf: 95, frm: 96, cmp: 98, map: 99, ldr: 93 } },
+    { id: 9605, name: "kkOma",    role: "COACH", team: "T1", year: 2024, rating: 99, quality: "EWC", region: "Legacy", stats: { mec: 22, tmf: 97, frm: 99, cmp: 99, map: 100, ldr: 100 } },
+
+    // Gen.G 2025 — EWC Champions (undefeated 26-match win streak; Kiin Finals MVP; back-to-back with MSI)
+    { id: 9606, name: "Kiin",     role: "TOP",   team: "Gen.G", year: 2025, rating: 97, quality: "EWC", region: "Legacy", stats: { mec: 96, tmf: 97, frm: 98, cmp: 96, map: 91, ldr: 92 } },
+    { id: 9607, name: "Canyon",   role: "JNG",   team: "Gen.G", year: 2025, rating: 98, quality: "EWC", region: "Legacy", stats: { mec: 98, tmf: 97, frm: 100, cmp: 96, map: 99, ldr: 93 } },
+    { id: 9608, name: "Chovy",    role: "MID",   team: "Gen.G", year: 2025, rating: 99, quality: "EWC", region: "Legacy", stats: { mec: 100, tmf: 98, frm: 100, cmp: 98, map: 95, ldr: 92 } },
+    { id: 9609, name: "Ruler",    role: "ADC",   team: "Gen.G", year: 2025, rating: 96, quality: "EWC", region: "Legacy", stats: { mec: 97, tmf: 97, frm: 97, cmp: 94, map: 90, ldr: 90 } },
+    { id: 9610, name: "Duro",     role: "SUP",   team: "Gen.G", year: 2025, rating: 88, quality: "EWC", region: "Legacy", stats: { mec: 85, tmf: 88, frm: 88, cmp: 87, map: 90, ldr: 87 } },
+    { id: 9611, name: "Kim",      role: "COACH", team: "Gen.G", year: 2025, rating: 90, quality: "EWC", region: "Legacy", stats: { mec: 24, tmf: 89, frm: 91, cmp: 90, map: 92, ldr: 94 } },
+
+    // DK 2026 — EWC Champions (Cinderella title run; ShowMaker the veteran carry & leader)
+    { id: 9612, name: "Siwoo",     role: "TOP",   team: "DK", year: 2026, rating: 90, quality: "EWC", region: "Legacy", stats: { mec: 91, tmf: 89, frm: 90, cmp: 85, map: 86, ldr: 83 } },
+    { id: 9613, name: "Lucid",     role: "JNG",   team: "DK", year: 2026, rating: 92, quality: "EWC", region: "Legacy", stats: { mec: 94, tmf: 91, frm: 92, cmp: 89, map: 91, ldr: 88 } },
+    { id: 9614, name: "ShowMaker", role: "MID",   team: "DK", year: 2026, rating: 94, quality: "EWC", region: "Legacy", stats: { mec: 95, tmf: 94, frm: 94, cmp: 96, map: 94, ldr: 95 } },
+    { id: 9615, name: "Smash",     role: "ADC",   team: "DK", year: 2026, rating: 91, quality: "EWC", region: "Legacy", stats: { mec: 93, tmf: 90, frm: 92, cmp: 87, map: 85, ldr: 84 } },
+    { id: 9616, name: "Career",    role: "SUP",   team: "DK", year: 2026, rating: 88, quality: "EWC", region: "Legacy", stats: { mec: 83, tmf: 89, frm: 87, cmp: 86, map: 88, ldr: 85 } },
+    { id: 9617, name: "cvMax",     role: "COACH", team: "DK", year: 2026, rating: 94, quality: "EWC", region: "Legacy", stats: { mec: 38, tmf: 92, frm: 93, cmp: 91, map: 93, ldr: 94 } },
+
+    // ==========================================
     // --- 6b. WORLDS FINALISTS ---
     // ==========================================
 

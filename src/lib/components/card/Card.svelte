@@ -299,6 +299,12 @@
     .tier-finalist { background: linear-gradient(145deg, #0f172a 0%, #334155 40%, #1e293b 100%); border: 3px solid #94a3b8; box-shadow: 0 0 18px rgba(148,163,184,0.4); }
     .tier-msi { background: linear-gradient(145deg, #042f2e 0%, #0f766e 40%, #134e4a 100%); border: 3px solid #2dd4bf; box-shadow: 0 0 18px rgba(45,212,191,0.4); }
     .tier-firststand { background: linear-gradient(145deg, #431407 0%, #c2410c 40%, #7c2d12 100%); border: 3px solid #fb923c; box-shadow: 0 0 16px rgba(251,146,60,0.4); }
+    /* EWC — Esports World Cup trophy card: obsidian-gold with a regal gold shimmer + faint emerald aura */
+    .tier-ewc { background: linear-gradient(145deg, #1a1508 0%, #2a1e06 40%, #0d0b04 100%); border: 3px solid #ffd24a; box-shadow: 0 0 22px rgba(255,210,74,0.55), 0 0 44px rgba(16,185,129,0.12); animation: ewc-shine 3.5s ease-in-out infinite; }
+    @keyframes ewc-shine {
+        0%,100% { box-shadow: 0 0 22px rgba(255,210,74,0.5), 0 0 44px rgba(16,185,129,0.1); border-color: #ffd24a; }
+        50% { box-shadow: 0 0 40px rgba(255,210,74,0.9), 0 0 70px rgba(16,185,129,0.22); border-color: #ffe08a; }
+    }
 
     /* New award tiers */
     .tier-poty { background: linear-gradient(145deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%); border: 3px solid #e94560; box-shadow: 0 0 20px rgba(233,69,96,0.4); animation: poty-glow 3s ease-in-out infinite; }

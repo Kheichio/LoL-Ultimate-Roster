@@ -253,7 +253,7 @@
     function generateOpponents() {
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return false; }
-        const regularPool = db.filter(p => p.role !== 'COACH' && !['Champion','MVP','Finalist','MSI','FirstStand','POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
+        const regularPool = db.filter(p => p.role !== 'COACH' && !['Champion','MVP','Finalist','MSI','FirstStand','EWC','POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
         const elitePool = db.filter(p => p.role !== 'COACH');
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const teamNames = ['Shadow Wolves', 'Storm Dragons', 'Iron Phoenix', 'Crystal Bears', 'Neon Tigers',

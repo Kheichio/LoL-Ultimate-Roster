@@ -54,6 +54,9 @@ export const milestoneCards = writable([]);
 // 5 role slots (separate from the main squad) + sentAt epoch (0 = idle, >0 = farming since that time).
 export const academy = writable({ TOP: null, JNG: null, MID: null, ADC: null, SUP: null, sentAt: 0 });
 
+// Roster Building Challenges — which challenges have been completed on the current day.
+export const rbcState = writable({ day: '', claimed: {} });
+
 // === Match History (recent results log, newest first, capped at 50) ===
 export const matchHistory = writable([]);
 export function logMatch(entry) {
@@ -208,6 +211,7 @@ export function snapshotState() {
         lur_prestige: get(prestige),
         lur_milestone_cards: get(milestoneCards),
         lur_academy: get(academy),
+        lur_rbc: get(rbcState),
         lur_matchhistory: get(matchHistory),
     };
 }
@@ -376,4 +380,12 @@ export function initGame() {
 
     const rawMH = loadFromStorage('lur_matchhistory');
     if (rawMH && Array.isArray(rawMH)) matchHistory.set(rawMH.slice(0, 50));
+
+    const rawRbc = loadFromStorage('lur_rbc');
+    if (rawRbc && typeof rawRbc === 'object') {
+        rbcState.set({
+            day: typeof rawRbc.day === 'string' ? rawRbc.day : '',
+            claimed: (rawRbc.claimed && typeof rawRbc.claimed === 'object') ? rawRbc.claimed : {},
+        });
+    }
 }

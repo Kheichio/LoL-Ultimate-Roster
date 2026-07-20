@@ -124,6 +124,7 @@
         { id: 'finalists', label: '🥈 Finalists', color: '#cbd5e1', bg: 'rgba(100,116,139,0.2)', border: 'rgba(148,163,184,0.5)' },
         { id: 'champion', label: '🏆 Champion', color: '#fcd34d', bg: 'rgba(217,119,6,0.2)', border: 'rgba(245,158,11,0.5)' },
         { id: 'mvp', label: '✨ MVP', color: '#f9a8d4', bg: 'rgba(219,39,119,0.2)', border: 'rgba(236,72,153,0.5)' },
+        { id: 'ewc', label: '🥇 EWC', color: '#ffd24a', bg: 'rgba(202,138,4,0.2)', border: 'rgba(255,210,74,0.5)' },
         { id: 'poty', label: '🌟 Player of Year', color: '#fca5a5', bg: 'rgba(220,38,38,0.2)', border: 'rgba(239,68,68,0.5)' },
         { id: 'roty', label: '🌱 Rookie of Year', color: '#67e8f9', bg: 'rgba(8,145,178,0.2)', border: 'rgba(6,182,212,0.5)' },
         { id: 'toty', label: '👑 Team of Year', color: '#fde047', bg: 'rgba(202,138,4,0.2)', border: 'rgba(234,179,8,0.5)' },
@@ -136,7 +137,7 @@
 
     const catToQuality = {
         firststand: 'FirstStand', msi: 'MSI', finalists: 'Finalist',
-        champion: 'Champion', mvp: 'MVP',
+        champion: 'Champion', mvp: 'MVP', ewc: 'EWC',
         poty: 'POTY', roty: 'ROTY', toty: 'TOTY', gpoty: 'GPOTY', x: 'X'
     };
     qualityToCat = Object.fromEntries(Object.entries(catToQuality).map(([k, v]) => [v, k]));
