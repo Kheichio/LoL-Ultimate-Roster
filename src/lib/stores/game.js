@@ -60,6 +60,10 @@ export const rbcState = writable({ day: '', claimed: {} });
 // Free packs earned from RBCs — { [storePackId]: count }. Opened for free in the Store.
 export const freePacks = writable({});
 
+// Transfer Market — rotating signings board. { window: <15-min index or null>, claimed: { [cardId]: true } }.
+// Persisted alongside the club/BE so a sign and its claim record commit atomically in one save.
+export const tradeMarket = writable({ window: null, claimed: {} });
+
 // === Match History (recent results log, newest first, capped at 50) ===
 export const matchHistory = writable([]);
 export function logMatch(entry) {
@@ -216,6 +220,7 @@ export function snapshotState() {
         lur_academy: get(academy),
         lur_rbc: get(rbcState),
         lur_freepacks: get(freePacks),
+        lur_trademarket: get(tradeMarket),
         lur_matchhistory: get(matchHistory),
     };
 }
@@ -401,5 +406,13 @@ export function initGame() {
             if (n > 0) clean[k] = Math.min(n, 999);
         }
         freePacks.set(clean);
+    }
+
+    const rawTM = loadFromStorage('lur_trademarket');
+    if (rawTM && typeof rawTM === 'object' && !Array.isArray(rawTM)) {
+        tradeMarket.set({
+            window: typeof rawTM.window === 'number' ? rawTM.window : null,
+            claimed: (rawTM.claimed && typeof rawTM.claimed === 'object' && !Array.isArray(rawTM.claimed)) ? rawTM.claimed : {},
+        });
     }
 }

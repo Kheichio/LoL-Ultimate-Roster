@@ -137,6 +137,7 @@
     })();
 
     const updates = [
+        { ver: 'Beta 1.3.4', text: 'Transfer Market — the Trade tab now shows exactly which player you\'re signing (no more mystery). A randomised board of 6 real listings refreshes every 15 minutes; each can be signed once per rotation. Cost (spare cards + Blue Essence) scales with the player\'s tier, from Gold all the way up to Challenger and Legacy/Award cards.' },
         { ver: 'Beta 1.3.0', text: 'RBCs & EWC — Roster Building Challenges: a new daily mode (tab between Academy and Season) where you submit themed 5-card sets for free reward packs (Premium → EWC). EWC champion cards (T1 2024, Gen.G 2025, DK 2026) + EWC Store pack. Trade Market reworked into expensive, fully-random Master+ Mystery Trades. Friends moved next to Ranking; Home career stats reordered & recoloured.' },
         { ver: '1.2', text: 'Academy auto-farming team, Club quick-sell + sell duplicates, MSI 2026 champions (HLE), public leaderboard, Challenger no longer craftable, softer bronze cards' },
         { ver: '1.1.2', text: 'League Awards cards (POTY/TOTY/ROTY 2024+2025), Salary Cap Mode, Rival Challenge, Prestige System, Milestone Cards' },

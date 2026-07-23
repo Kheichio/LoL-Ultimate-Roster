@@ -340,7 +340,17 @@
         const rawAvg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : rating;
         const roundBonus = Math.round((m.cpuBonus || 0) * ((roundIdx + 1) / m.rounds));
         const grStageBonus = activeMode === 'goldenroad' ? goldenRoadStage * 5 : 0;
-        const totalAvg = rawAvg + roundBonus + grStageBonus;
+        let totalAvg = rawAvg + roundBonus + grStageBonus;
+        // Golden Road world final: the last Worlds stage used to reach ~140+ total power, which is
+        // effectively unbeatable since a maxed squad tops out around 120. Cap that final stage at
+        // 120 total power (the winnable peak) and ramp the 4 matches up to it, so the world final
+        // is a fair 120 ceiling instead of an impossible wall. Enemy card stats are already fair
+        // (~98 raw), so only the inflated headline power needs adjusting down to match.
+        if (activeMode === 'goldenroad' && mode === 'worlds') {
+            const WORLD_FINAL_CAP = 120;
+            const ramp = 114 + Math.round((WORLD_FINAL_CAP - 114) * (roundIdx / Math.max(1, m.rounds - 1)));
+            totalAvg = Math.min(totalAvg, ramp);
+        }
         const names = ['Iron Wolves','Silver Fangs','Bronze Legion','Rookie Squad','Cafe Regulars','Local Heroes','Storm Dragons','Crystal Bears','Dark Knights','Solar Flare','Frost Giants','Thunder Hawks','Crimson Vipers','Neon Tigers','Iron Phoenix'];
         return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: totalAvg };
     }

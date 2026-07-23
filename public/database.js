@@ -1289,12 +1289,12 @@ const baseDatabase = [
     { id: 9611, name: "Kim",      role: "COACH", team: "Gen.G", year: 2025, rating: 90, quality: "EWC", region: "Legacy", stats: { mec: 24, tmf: 89, frm: 91, cmp: 90, map: 92, ldr: 94 } },
 
     // DK 2026 — EWC Champions (Cinderella title run; ShowMaker the veteran carry & leader)
-    { id: 9612, name: "Siwoo",     role: "TOP",   team: "DK", year: 2026, rating: 90, quality: "EWC", region: "Legacy", stats: { mec: 91, tmf: 89, frm: 90, cmp: 85, map: 86, ldr: 83 } },
-    { id: 9613, name: "Lucid",     role: "JNG",   team: "DK", year: 2026, rating: 92, quality: "EWC", region: "Legacy", stats: { mec: 94, tmf: 91, frm: 92, cmp: 89, map: 91, ldr: 88 } },
-    { id: 9614, name: "ShowMaker", role: "MID",   team: "DK", year: 2026, rating: 94, quality: "EWC", region: "Legacy", stats: { mec: 95, tmf: 94, frm: 94, cmp: 96, map: 94, ldr: 95 } },
-    { id: 9615, name: "Smash",     role: "ADC",   team: "DK", year: 2026, rating: 91, quality: "EWC", region: "Legacy", stats: { mec: 93, tmf: 90, frm: 92, cmp: 87, map: 85, ldr: 84 } },
-    { id: 9616, name: "Career",    role: "SUP",   team: "DK", year: 2026, rating: 88, quality: "EWC", region: "Legacy", stats: { mec: 83, tmf: 89, frm: 87, cmp: 86, map: 88, ldr: 85 } },
-    { id: 9617, name: "cvMax",     role: "COACH", team: "DK", year: 2026, rating: 94, quality: "EWC", region: "Legacy", stats: { mec: 38, tmf: 92, frm: 93, cmp: 91, map: 93, ldr: 94 } },
+    { id: 9612, name: "Siwoo",     role: "TOP",   team: "DK", year: 2026, rating: 92, quality: "EWC", region: "Legacy", stats: { mec: 93, tmf: 91, frm: 92, cmp: 88, map: 88, ldr: 85 } },
+    { id: 9613, name: "Lucid",     role: "JNG",   team: "DK", year: 2026, rating: 94, quality: "EWC", region: "Legacy", stats: { mec: 96, tmf: 93, frm: 94, cmp: 91, map: 93, ldr: 90 } },
+    { id: 9614, name: "ShowMaker", role: "MID",   team: "DK", year: 2026, rating: 97, quality: "EWC", region: "Legacy", stats: { mec: 97, tmf: 96, frm: 96, cmp: 99, map: 95, ldr: 98 } },
+    { id: 9615, name: "Smash",     role: "ADC",   team: "DK", year: 2026, rating: 95, quality: "EWC", region: "Legacy", stats: { mec: 97, tmf: 93, frm: 96, cmp: 91, map: 88, ldr: 87 } },
+    { id: 9616, name: "Career",    role: "SUP",   team: "DK", year: 2026, rating: 90, quality: "EWC", region: "Legacy", stats: { mec: 86, tmf: 91, frm: 90, cmp: 89, map: 91, ldr: 88 } },
+    { id: 9617, name: "cvMax",     role: "COACH", team: "DK", year: 2026, rating: 95, quality: "EWC", region: "Legacy", stats: { mec: 42, tmf: 94, frm: 95, cmp: 93, map: 95, ldr: 96 } },
 
     // ==========================================
     // --- 6b. WORLDS FINALISTS ---

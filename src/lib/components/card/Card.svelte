@@ -280,10 +280,10 @@
     .tier-silver { background: linear-gradient(145deg, #e2e8f0 0%, #94a3b8 40%, #64748b 100%); border: 3px solid #94a3b8; }
     .tier-gold { background: linear-gradient(145deg, #fef08a 0%, #eab308 40%, #a16207 100%); border: 3px solid #ca8a04; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 12px rgba(234,179,8,0.15); }
     .tier-platinum { background: linear-gradient(145deg, #a7f3d0 0%, #10b981 40%, #047857 100%); border: 3px solid #059669; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 12px rgba(16,185,129,0.2); }
-    .tier-diamond { background: linear-gradient(145deg, #bfdbfe 0%, #3b82f6 35%, #1e40af 100%); border: 3px solid #60a5fa; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 18px rgba(59,130,246,0.35); }
+    .tier-diamond { background: linear-gradient(145deg, #bfdbfe 0%, #3b82f6 40%, #2563eb 100%); border: 3px solid #60a5fa; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 18px rgba(59,130,246,0.35); }
     .tier-master { background: linear-gradient(145deg, #e9d5ff 0%, #a855f7 40%, #7e22ce 100%); border: 3px solid #9333ea; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 18px rgba(168,85,247,0.3); }
-    .tier-grandmaster { background: linear-gradient(145deg, #fecaca 0%, #ef4444 40%, #991b1b 100%); border: 3px solid #dc2626; box-shadow: 0 0 18px rgba(239,68,68,0.5); animation: gm-pulse 2.5s ease-in-out infinite; }
-    @keyframes gm-pulse { 0%,100% { box-shadow: 0 0 18px rgba(239,68,68,0.5); } 50% { box-shadow: 0 0 28px rgba(239,68,68,0.8), 0 0 60px rgba(239,68,68,0.3); } }
+    .tier-grandmaster { background: linear-gradient(145deg, #fcd9d9 0%, #ec6a6a 40%, #a83f3f 100%); border: 3px solid #d97676; box-shadow: 0 0 16px rgba(216,110,110,0.42); animation: gm-pulse 2.8s ease-in-out infinite; }
+    @keyframes gm-pulse { 0%,100% { box-shadow: 0 0 16px rgba(216,110,110,0.42); } 50% { box-shadow: 0 0 24px rgba(216,110,110,0.6), 0 0 50px rgba(216,110,110,0.22); } }
 
     .tier-challenger { background: linear-gradient(45deg, #f59e0b, #fbbf24, #7c3aed, #3b82f6, #a855f7, #f59e0b); background-size: 300% 300%; border: none; padding: 3px; animation: chall-flow 3s ease infinite; box-shadow: 0 0 20px rgba(245,158,11,0.5); position: relative; overflow: hidden !important; }
     .tier-challenger .card-header, .tier-challenger .card-body { background: linear-gradient(145deg, #0f172a 0%, #1e1b4b 50%, #0c0a1e 100%); }
@@ -299,11 +299,69 @@
     .tier-finalist { background: linear-gradient(145deg, #0f172a 0%, #334155 40%, #1e293b 100%); border: 3px solid #94a3b8; box-shadow: 0 0 18px rgba(148,163,184,0.4); }
     .tier-msi { background: linear-gradient(145deg, #042f2e 0%, #0f766e 40%, #134e4a 100%); border: 3px solid #2dd4bf; box-shadow: 0 0 18px rgba(45,212,191,0.4); }
     .tier-firststand { background: linear-gradient(145deg, #431407 0%, #c2410c 40%, #7c2d12 100%); border: 3px solid #fb923c; box-shadow: 0 0 16px rgba(251,146,60,0.4); }
-    /* EWC — Esports World Cup trophy card: obsidian-gold with a regal gold shimmer + faint emerald aura */
-    .tier-ewc { background: linear-gradient(145deg, #1a1508 0%, #2a1e06 40%, #0d0b04 100%); border: 3px solid #ffd24a; box-shadow: 0 0 22px rgba(255,210,74,0.55), 0 0 44px rgba(16,185,129,0.12); animation: ewc-shine 3.5s ease-in-out infinite; }
-    @keyframes ewc-shine {
-        0%,100% { box-shadow: 0 0 22px rgba(255,210,74,0.5), 0 0 44px rgba(16,185,129,0.1); border-color: #ffd24a; }
-        50% { box-shadow: 0 0 40px rgba(255,210,74,0.9), 0 0 70px rgba(16,185,129,0.22); border-color: #ffe08a; }
+    /* EWC — Esports World Cup "Trophy Forge": a brushed molten-gold + emerald-jewel metallic frame
+       (border:none + 3px padding, like challenger) wrapping opaque near-black panels so white text
+       stays readable. A slow 14s living-metal drift, a tri-hue trophy halo (gold→emerald→champagne,
+       no cyan so it never reads as diamond), and a resting champagne→emerald sheen that sweeps the
+       WHOLE card once per cycle. No pseudo-elements → never collides with holographic/signature. */
+    .tier-ewc {
+        border: none;
+        padding: 3px;
+        background: linear-gradient(135deg,
+            #8a6a1a 0%, #d4af37 12%, #f7ecb0 22%, #d4af37 33%, #b8860b 45%,
+            #0f9d63 51%, #34d399 55%, #0f9d63 59%, #b8860b 68%, #d4af37 80%, #f7ecb0 90%, #8a6a1a 100%);
+        background-size: 300% 300%;
+        background-position: 0% 50%;
+        box-shadow:
+            0 8px 24px rgba(0,0,0,0.45),
+            inset 0 3px 0 rgba(255,231,170,0.5),
+            0 0 20px rgba(212,175,55,0.45),
+            0 0 46px rgba(15,157,99,0.16);
+        animation: ewc-drift 14s ease-in-out infinite, ewc-halo 4s ease-in-out infinite;
+    }
+    .tier-ewc .card-header {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 44%, rgba(255,244,206,0.10) 47%, rgba(255,255,255,0.22) 50%, rgba(168,255,214,0.12) 53%, rgba(255,255,255,0) 56%),
+            linear-gradient(160deg, #0d130f 0%, #080b09 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 13px 13px 0 0;
+        border-bottom: 1px solid rgba(212,175,55,0.4);
+        animation: ewc-sheen 5.5s ease-in-out infinite;
+    }
+    .tier-ewc .card-body {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 44%, rgba(255,244,206,0.10) 47%, rgba(255,255,255,0.22) 50%, rgba(168,255,214,0.12) 53%, rgba(255,255,255,0) 56%),
+            linear-gradient(160deg, #0b110d 0%, #0d1512 45%, #060807 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 0 0 13px 13px;
+        box-shadow:
+            inset 0 1px 0 rgba(255,248,224,0.12),
+            inset 0 0 28px rgba(0,0,0,0.5);
+        animation: ewc-sheen 5.5s ease-in-out infinite;
+    }
+    @keyframes ewc-drift {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+    }
+    @keyframes ewc-halo {
+        0%, 100% {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,231,170,0.5), 0 0 20px rgba(212,175,55,0.45), 0 0 46px rgba(15,157,99,0.16);
+        }
+        33% {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,238,190,0.6), 0 0 34px rgba(20,190,120,0.6), 0 0 62px rgba(212,175,55,0.22);
+        }
+        66% {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,244,214,0.62), 0 0 34px rgba(245,224,140,0.7), 0 0 62px rgba(15,157,99,0.24);
+        }
+    }
+    @keyframes ewc-sheen {
+        0%   { background-position: 100% 0%, 0% 0%; }
+        40%  { background-position: 0% 0%, 0% 0%; }
+        100% { background-position: 0% 0%, 0% 0%; }
     }
 
     /* New award tiers */

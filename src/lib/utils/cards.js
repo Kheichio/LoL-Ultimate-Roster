@@ -44,7 +44,7 @@ export function getSellValue(quality, card = null, transferLevel = 0) {
 }
 
 export function isDarkCard(quality, role) {
-    const dark = ['Challenger', 'Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC', 'Diamond', 'POTY', 'ROTY', 'TOTY', 'GPOTY', 'X'];
+    const dark = ['Challenger', 'Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC', 'POTY', 'ROTY', 'TOTY', 'GPOTY', 'X'];
     return dark.includes(quality) || role === 'COACH';
 }
 
@@ -71,7 +71,7 @@ export const TIER_COLORS = {
     Bronze: '#b0835c', Silver: '#94a3b8', Gold: '#eab308', Platinum: '#10b981',
     Diamond: '#3b82f6', Master: '#a855f7', Grandmaster: '#ef4444', Challenger: '#f59e0b',
     Champion: '#d97706', MVP: '#ec4899', Finalist: '#94a3b8', MSI: '#2dd4bf',
-    FirstStand: '#fb923c', EWC: '#ffd24a', POTY: '#e94560', ROTY: '#00b4d8', TOTY: '#fca311',
+    FirstStand: '#fb923c', EWC: '#e8c766', POTY: '#e94560', ROTY: '#00b4d8', TOTY: '#fca311',
     GPOTY: '#e0aaff', X: '#ff6b6b',
 };
 
