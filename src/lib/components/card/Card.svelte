@@ -282,8 +282,8 @@
     .tier-platinum { background: linear-gradient(145deg, #a7f3d0 0%, #10b981 40%, #047857 100%); border: 3px solid #059669; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 12px rgba(16,185,129,0.2); }
     .tier-diamond { background: linear-gradient(145deg, #bfdbfe 0%, #3b82f6 40%, #2563eb 100%); border: 3px solid #60a5fa; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 18px rgba(59,130,246,0.35); }
     .tier-master { background: linear-gradient(145deg, #e9d5ff 0%, #a855f7 40%, #7e22ce 100%); border: 3px solid #9333ea; box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 18px rgba(168,85,247,0.3); }
-    .tier-grandmaster { background: linear-gradient(145deg, #fcd9d9 0%, #ec6a6a 40%, #a83f3f 100%); border: 3px solid #d97676; box-shadow: 0 0 16px rgba(216,110,110,0.42); animation: gm-pulse 2.8s ease-in-out infinite; }
-    @keyframes gm-pulse { 0%,100% { box-shadow: 0 0 16px rgba(216,110,110,0.42); } 50% { box-shadow: 0 0 24px rgba(216,110,110,0.6), 0 0 50px rgba(216,110,110,0.22); } }
+    .tier-grandmaster { background: linear-gradient(145deg, #fca5a5 0%, #e04343 40%, #9e2323 100%); border: 3px solid #d33636; box-shadow: 0 0 16px rgba(220,38,38,0.42); animation: gm-pulse 2.6s ease-in-out infinite; }
+    @keyframes gm-pulse { 0%,100% { box-shadow: 0 0 16px rgba(220,38,38,0.42); } 50% { box-shadow: 0 0 26px rgba(220,38,38,0.62), 0 0 54px rgba(220,38,38,0.22); } }
 
     .tier-challenger { background: linear-gradient(45deg, #f59e0b, #fbbf24, #7c3aed, #3b82f6, #a855f7, #f59e0b); background-size: 300% 300%; border: none; padding: 3px; animation: chall-flow 3s ease infinite; box-shadow: 0 0 20px rgba(245,158,11,0.5); position: relative; overflow: hidden !important; }
     .tier-challenger .card-header, .tier-challenger .card-body { background: linear-gradient(145deg, #0f172a 0%, #1e1b4b 50%, #0c0a1e 100%); }
@@ -292,8 +292,46 @@
     @keyframes chall-flow { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
 
     /* Legacy / Award tiers */
-    .tier-champion { background: linear-gradient(145deg, #1c1917 0%, #292524 40%, #0c0a09 100%); border: 3px solid #d97706; box-shadow: 0 0 22px rgba(217,119,6,0.5); animation: champ-shimmer 4s ease-in-out infinite; }
-    @keyframes champ-shimmer { 0%,100% { box-shadow: 0 0 22px rgba(217,119,6,0.5); } 50% { box-shadow: 0 0 36px rgba(217,119,6,0.8); } }
+    /* Champion — imperial coronation (World Championship, the pinnacle title). SOLID technique
+       (no padding-frame) so it never reads as a sibling of the gold+emerald EWC frame. A deep
+       royal-purple → aubergine → near-black-violet field, dark the whole way down so white text
+       reads over the header, the big rating/name AND the bottom stats grid. Grandeur is all GOLD:
+       an ornate gold|dark|gold double-trim (one box-shadow), a crown-glow from just above the top
+       edge, an inset warm-gold vignette, a pulsing gold halo, and a slow champagne sheen that
+       sweeps once then rests off-card. No pseudo-elements; cheap paint-only. */
+    .tier-champion {
+        background:
+            linear-gradient(115deg, transparent 40%, rgba(255,238,190,0.05) 47%, rgba(255,245,208,0.13) 50%, rgba(255,238,190,0.05) 53%, transparent 60%),
+            radial-gradient(135% 90% at 50% -16%, rgba(255,214,132,0.15) 0%, rgba(255,206,120,0.05) 34%, rgba(255,206,120,0) 60%),
+            linear-gradient(160deg, #3d0f57 0%, #2a0937 40%, #14051f 74%, #0c0316 100%);
+        background-size: 250% 100%, 100% 100%, 100% 100%;
+        background-position: 200% 0, 0 0, 0 0;
+        background-repeat: no-repeat;
+        border: 3px solid #ecc766;
+        box-shadow:
+            0 8px 24px rgba(0,0,0,0.5),
+            inset 0 0 0 2px rgba(18,4,26,0.90),
+            inset 0 0 0 4px rgba(233,196,106,0.45),
+            inset 0 2px 3px rgba(255,240,200,0.16),
+            inset 0 0 42px rgba(150,102,26,0.22),
+            0 0 22px rgba(224,170,70,0.50),
+            0 0 50px rgba(200,150,44,0.16);
+        animation: champ-sheen 7s ease-in-out infinite, champ-glow 4s ease-in-out infinite;
+    }
+    @keyframes champ-sheen {
+        0%       { background-position: 200% 0, 0 0, 0 0; }
+        55%,100% { background-position: -60% 0, 0 0, 0 0; }
+    }
+    @keyframes champ-glow {
+        0%,100% {
+            border-color: #ecc766;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5), inset 0 0 0 2px rgba(18,4,26,0.90), inset 0 0 0 4px rgba(233,196,106,0.45), inset 0 2px 3px rgba(255,240,200,0.16), inset 0 0 42px rgba(150,102,26,0.22), 0 0 22px rgba(224,170,70,0.50), 0 0 50px rgba(200,150,44,0.16);
+        }
+        50% {
+            border-color: #ffdd88;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5), inset 0 0 0 2px rgba(18,4,26,0.90), inset 0 0 0 4px rgba(255,224,140,0.60), inset 0 2px 3px rgba(255,246,214,0.24), inset 0 0 46px rgba(184,128,36,0.30), 0 0 34px rgba(236,190,80,0.80), 0 0 66px rgba(210,158,50,0.26);
+        }
+    }
     .tier-mvp { background: linear-gradient(145deg, #4a0426 0%, #2d1055 40%, #be185d 100%); border: 3px solid #ec4899; box-shadow: 0 0 20px rgba(236,72,153,0.5); animation: mvp-pulse 2.8s ease-in-out infinite; }
     @keyframes mvp-pulse { 0%,100% { box-shadow: 0 0 20px rgba(236,72,153,0.5); } 50% { box-shadow: 0 0 34px rgba(236,72,153,0.8); } }
     .tier-finalist { background: linear-gradient(145deg, #0f172a 0%, #334155 40%, #1e293b 100%); border: 3px solid #94a3b8; box-shadow: 0 0 18px rgba(148,163,184,0.4); }
@@ -368,8 +406,57 @@
     .tier-poty { background: linear-gradient(145deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%); border: 3px solid #e94560; box-shadow: 0 0 20px rgba(233,69,96,0.4); animation: poty-glow 3s ease-in-out infinite; }
     @keyframes poty-glow { 0%,100% { box-shadow: 0 0 20px rgba(233,69,96,0.4); } 50% { box-shadow: 0 0 32px rgba(233,69,96,0.7); } }
     .tier-roty { background: linear-gradient(145deg, #0d1b2a 0%, #1b263b 40%, #415a77 100%); border: 3px solid #00b4d8; box-shadow: 0 0 18px rgba(0,180,216,0.4); }
-    .tier-toty { background: linear-gradient(145deg, #14213d 0%, #fca311 30%, #e5e5e5 100%); border: 3px solid #fca311; box-shadow: 0 0 22px rgba(252,163,17,0.5); animation: toty-glow 3s ease-in-out infinite; }
-    @keyframes toty-glow { 0%,100% { box-shadow: 0 0 22px rgba(252,163,17,0.5); } 50% { box-shadow: 0 0 35px rgba(252,163,17,0.8); } }
+    /* TOTY — Team of the Year "All-Star Chrome": a brushed platinum/silver metallic FRAME
+       (border:none + 3px padding, like challenger/EWC) wrapping opaque deep-sapphire panels so
+       white text stays readable across the whole card (fixes the old navy→orange→near-white bug).
+       Strictly cool metal — zero gold, zero cyan — so it stands apart from EWC (gold+emerald), the
+       royal-gold Champion, POTY (crimson) and ROTY (cyan). A silver glint drifts around the frame,
+       a halo breathes platinum-white over a low sapphire undertone, and a soft sheen sweeps the
+       face once then rests off-card. Cheap paint-only; no pseudo-elements. */
+    .tier-toty {
+        border: none;
+        padding: 3px;
+        background: linear-gradient(135deg, #29374e 0%, #7d92b4 10%, #d6e4f7 18%, #a9bad8 26%, #43567a 38%, #eef4ff 50%, #6f83a8 62%, #d6e4f7 74%, #8a9fc2 84%, #29374e 100%);
+        background-size: 300% 300%;
+        background-position: 0% 50%;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,255,255,0.55), 0 0 20px rgba(210,224,243,0.5), 0 0 46px rgba(37,99,235,0.16);
+        animation: toty-drift 10s ease-in-out infinite, toty-halo 5s ease-in-out infinite;
+    }
+    .tier-toty .card-header {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 34%, rgba(236,242,250,0.10) 42%, rgba(255,255,255,0.24) 50%, rgba(236,242,250,0.10) 58%, rgba(255,255,255,0) 66%),
+            linear-gradient(160deg, #0c1f4a 0%, #081736 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 13px 13px 0 0;
+        border-bottom: 1px solid rgba(180,205,240,0.32);
+        animation: toty-sheen 10s ease-in-out infinite;
+    }
+    .tier-toty .card-body {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 34%, rgba(236,242,250,0.10) 42%, rgba(255,255,255,0.24) 50%, rgba(236,242,250,0.10) 58%, rgba(255,255,255,0) 66%),
+            linear-gradient(160deg, #0b1d45 0%, #0c1f4a 45%, #07142f 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 0 0 13px 13px;
+        box-shadow: inset 0 1px 0 rgba(210,230,255,0.12), inset 0 0 28px rgba(0,0,0,0.5);
+        animation: toty-sheen 10s ease-in-out infinite;
+    }
+    @keyframes toty-drift {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+    }
+    @keyframes toty-halo {
+        0%, 100% { box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,255,255,0.55), 0 0 20px rgba(210,224,243,0.5), 0 0 46px rgba(37,99,235,0.16); }
+        50%      { box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,255,255,0.72), 0 0 32px rgba(232,240,251,0.74), 0 0 62px rgba(37,99,235,0.26); }
+    }
+    @keyframes toty-sheen {
+        0%   { background-position: 100% 0%, 0% 0%; }
+        40%  { background-position: 0% 0%, 0% 0%; }
+        100% { background-position: 0% 0%, 0% 0%; }
+    }
     .tier-gpoty { background: linear-gradient(145deg, #0b0c10 0%, #1a1a2e 30%, #533483 100%); border: 3px solid #e0aaff; box-shadow: 0 0 24px rgba(224,170,255,0.4), 0 0 50px rgba(224,170,255,0.15); animation: gpoty-glow 2.5s ease-in-out infinite; }
     @keyframes gpoty-glow { 0%,100% { box-shadow: 0 0 24px rgba(224,170,255,0.4); } 50% { box-shadow: 0 0 38px rgba(224,170,255,0.7), 0 0 70px rgba(224,170,255,0.2); } }
     .tier-x { background: linear-gradient(145deg, #0a0a0a 0%, #1a1a1a 40%, #2d2d2d 100%); border: 3px solid #ff6b6b; box-shadow: 0 0 18px rgba(255,107,107,0.3); animation: x-pulse 2s linear infinite; }
