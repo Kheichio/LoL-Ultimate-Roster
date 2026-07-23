@@ -86,6 +86,11 @@
 
     let benchPickerOpen = false;
     let benchPickerIdx = null;
+    let benchSearch = '';
+    let benchRoleFilter = 'ALL';
+    let benchSort = 'rating';
+    const BENCH_ROLES = ['ALL', 'TOP', 'JNG', 'MID', 'ADC', 'SUP'];
+    const BENCH_SORTS = [['rating','RTG'], ['mec','MEC'], ['tmf','TMF'], ['frm','FRM'], ['cmp','CMP'], ['map','MAP'], ['ldr','LDR']];
 
     $: benchUsedIds = new Set([
         ...Object.values($squad).filter(Boolean).map(c => c.uniqueId),
@@ -95,13 +100,15 @@
     $: benchPickerPool = (() => {
         if (benchPickerIdx === null) return [];
         let pool = $club.filter(c => c.role !== 'COACH' && !benchUsedIds.has(c.uniqueId));
-        pool.sort((a, b) => b.rating - a.rating);
-        return pool;
+        if (benchRoleFilter !== 'ALL') pool = pool.filter(c => c.role === benchRoleFilter);
+        if (benchSearch) { const q = benchSearch.toLowerCase(); pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q)); }
+        const val = c => benchSort === 'rating' ? getEffectiveRating(c) : (getEffectiveStats(c)[benchSort] || 0);
+        return pool.slice().sort((a, b) => val(b) - val(a));
     })();
 
     function openBenchPicker(idx) {
         if (splitActive) { showToast('Bench is locked during an active split. Use the swap buttons below.', 'error'); return; }
-        benchPickerIdx = idx; benchPickerOpen = true;
+        benchPickerIdx = idx; benchSearch = ''; benchRoleFilter = 'ALL'; benchSort = 'rating'; benchPickerOpen = true;
     }
     function closeBenchPicker() { benchPickerOpen = false; benchPickerIdx = null; }
     function assignBench(card) {
@@ -304,14 +311,29 @@
     <div class="pk-panel">
         <div class="pk-head">
             <div class="pk-left"><span class="pk-title">Bench {(benchPickerIdx || 0) + 1}</span><span class="pk-ct">{benchPickerPool.length}</span></div>
-            <div class="pk-right"><button class="pk-x" on:click={closeBenchPicker}>✕</button></div>
+            <div class="pk-right"><input type="text" bind:value={benchSearch} placeholder="Search name/team..." class="input pk-search"><button class="pk-x" on:click={closeBenchPicker}>✕</button></div>
+        </div>
+        <div class="pk-controls">
+            <div class="pk-fgroup">
+                <span class="pk-flbl">Role</span>
+                {#each BENCH_ROLES as r}
+                    <button class="pk-chip" class:pk-chip-on={benchRoleFilter===r} on:click={() => benchRoleFilter=r}>{r}</button>
+                {/each}
+            </div>
+            <div class="pk-fgroup">
+                <span class="pk-flbl">Sort by</span>
+                {#each BENCH_SORTS as [k, lbl]}
+                    <button class="pk-chip pk-chip-sort" class:pk-chip-on={benchSort===k} on:click={() => benchSort=k}>{lbl}</button>
+                {/each}
+            </div>
         </div>
         <div class="pk-body">
-            {#if benchPickerPool.length===0}<div class="pk-empty">No eligible cards.</div>
+            {#if benchPickerPool.length===0}<div class="pk-empty">No cards match these filters.</div>
             {:else}<div class="pk-grid">
-                {#each benchPickerPool.slice(0, 30) as card (card.uniqueId)}
+                {#each benchPickerPool as card (card.uniqueId)}
                     <div class="pk-wrap">
                         <Card {card} mini={true} onclick={() => assignBench(card)} />
+                        {#if benchSort !== 'rating'}<div class="pk-sortval">{benchSort.toUpperCase()} {getEffectiveStats(card)[benchSort]}</div>{/if}
                     </div>
                 {/each}
             </div>{/if}
@@ -452,6 +474,29 @@
         background:rgba(217,119,6,.85); color:#fff;
         font-size:8px; font-weight:900; text-align:center;
         padding:3px; border-radius:0 0 14px 14px; letter-spacing:1px;
+    }
+    /* Bench picker filters + sort */
+    .pk-controls {
+        display:flex; flex-wrap:wrap; gap:12px 22px; align-items:center;
+        padding:12px 24px; border-bottom:1px solid rgba(51,65,85,.15);
+        background:rgba(10,15,28,.4);
+    }
+    .pk-fgroup { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .pk-flbl { font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:#475569; margin-right:2px; }
+    .pk-chip {
+        padding:5px 11px; border-radius:8px; font-size:11px; font-weight:800; cursor:pointer;
+        background:rgba(51,65,85,.25); border:1px solid rgba(71,85,105,.25); color:#94a3b8;
+        transition:background .12s, border-color .12s, color .12s; letter-spacing:.5px;
+    }
+    .pk-chip:hover { border-color:rgba(96,165,250,.4); color:#cbd5e1; }
+    .pk-chip-on { background:rgba(59,130,246,.22); border-color:rgba(96,165,250,.6); color:#93c5fd; }
+    .pk-chip-sort.pk-chip-on { background:rgba(16,185,129,.2); border-color:rgba(52,211,153,.6); color:#6ee7b7; }
+    .pk-search { width:170px; padding:6px 10px; font-size:11px; }
+    .pk-sortval {
+        position:absolute; top:6px; right:6px; z-index:3;
+        background:rgba(16,185,129,.92); color:#04120c;
+        font-size:9px; font-weight:900; letter-spacing:.5px;
+        padding:2px 7px; border-radius:999px; box-shadow:0 2px 6px rgba(0,0,0,.4);
     }
 
     /* Stat comparison */
