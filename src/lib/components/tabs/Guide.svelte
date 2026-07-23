@@ -2,11 +2,11 @@
     let openSection = 'getting-started';
     function toggle(id) { openSection = openSection === id ? null : id; }
 
-    const COV_YEARS = ['2011','2012','2013','2014','2015','2016','2017','2024','2025','2026'];
+    const COV_YEARS = ['2011','2012','2013','2014','2015','2016','2017','2018','2019','2020','2024','2025','2026'];
     const regionData = [
-        { r: 'LCK', years: ['2011','2012','2013','2014','2015','2016','2017','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LPL', years: ['2011','2012','2013','2014','2015','2016','2017','2024','2025','2026'], note: 'Full coverage' },
-        { r: 'LEC', years: ['2011','2012','2013','2014','2015','2016','2017','2024','2025','2026'], note: 'Full coverage' },
+        { r: 'LCK', years: ['2011','2012','2013','2014','2015','2016','2017','2018','2019','2020','2024','2025','2026'], note: 'Full + Summer 18–20' },
+        { r: 'LPL', years: ['2011','2012','2013','2014','2015','2016','2017','2018','2019','2020','2024','2025','2026'], note: 'Full + Summer 18–20' },
+        { r: 'LEC', years: ['2011','2012','2013','2014','2015','2016','2017','2018','2019','2020','2024','2025','2026'], note: 'Full + Summer 18–20' },
         { r: 'LCS', years: ['2015','2016','2024','2025','2026'],                                   note: 'No 2011–2014, No 2017' },
         { r: 'LCP', years: ['2015','2016','2024','2025','2026'],                                   note: 'No 2011–2014, No 2017' },
     ];
@@ -31,6 +31,8 @@
         { id: 'cards', title: '🃏 Cards & Tiers', content: [
             { q: 'Card Tiers (lowest to highest)', a: 'Bronze → Silver → Gold → Platinum → Diamond → Master → Grandmaster → Challenger. Special tiers: Champion, MVP, Finalist, MSI, FirstStand, EWC, POTY, ROTY, TOTY, GPOTY, X.' },
             { q: 'Card Stats', a: 'Each card has 6 stats: MEC (Mechanics), TMF (Teamfight), FRM (Form), CMP (Composure), MAP (Macro), LDR (Leadership). These determine combat performance.' },
+            { q: 'Ratings & Stats (1.4.0)', a: 'A card\'s overall rating lines up with its six stats — the two scale together, so a strong stat line means a high rating. Elite 98–100 stats only appear on elite-rated (97+) cards, and coaches are rated on everything except Mechanics.' },
+            { q: 'Card Looks (1.4.0)', a: 'Several tiers were redesigned: EWC is a brushed gold-and-emerald "Trophy Forge" frame, Champion an imperial purple-and-gold "coronation", and Team of the Year an all-star platinum chrome. Diamond cards switched to dark text so they no longer look like coach cards, and the Grandmaster red is softer on the eyes.' },
             { q: 'Signature Cards (+2 all stats, +2 rating)', a: 'Extremely rare (0.1% per card). Adds +2 to all 6 stats and +2 to the card rating. Has a golden glow effect. Can stack with Holographic.' },
             { q: 'Holographic Cards (+1 all stats, +1 rating)', a: 'Rare (1% per card). Adds +1 to all 6 stats and +1 to the card rating. Has a rainbow outline effect. Can stack with Signature for +3 total.' },
             { q: 'Locking & Favouriting', a: 'Lock cards to prevent accidental selling or trading. Favourite cards to sort them to the top of your club. Both can be done from the Club tab or Card Detail view.' },
@@ -53,6 +55,7 @@
             { q: 'Chemistry Bonuses', a: 'Region: Same region gives up to +5. Era: Same era gives up to +5 (Eras: 2011-13, 2014-16, 2017-19, 2020-22, 2023-25, 2026+). Team: Full same-team gives +2. Coach: Higher-rated coach gives +1 to +5. Legacy tier cards bypass era/region as wildcards.' },
             { q: 'Auto Fill', a: 'The Auto Fill button picks the best cards by total stat sum for each role from your club.' },
             { q: 'Stat Comparison', a: 'When picking cards in the squad builder, you see a stat comparison panel showing the difference vs your current card for each stat.' },
+            { q: 'Bench Selection (1.4.0)', a: 'Opening a bench slot shows every eligible card, with filters by role and sorting by rating or any single stat (MEC/TMF/FRM/CMP/MAP/LDR) — so you can quickly line up the exact specialist you want ready to swap in mid-split.' },
         ]},
         { id: 'combat', title: '⚔️ Combat System', content: [
             { q: 'How combat works', a: 'Each round, 3 random plays are drawn from 5 stats (Mechanical, Teamfight, Macro, Form, Composure). Pick one — your team average in that stat is compared to the CPU\'s. The stat difference is added to your Total Power vs their rating, plus random variance (±5).' },
@@ -66,7 +69,7 @@
             { q: 'First Stand (Win/2nd Regional)', a: '5 rounds, tough opponents. Win: 3,000 BE, 2nd: 1,000 BE. Winning unlocks MSI.' },
             { q: 'MSI (Win First Stand or Regional)', a: '7 rounds, elite competition. Win: 5,000 BE, 2nd: 2,000 BE. Winning unlocks Worlds.' },
             { q: 'World Championship (Win Regional or MSI)', a: '7 rounds, the ultimate challenge. Win: 10,000 BE, 2nd: 4,000 BE.' },
-            { q: 'Golden Road (Complete 1 Split)', a: 'Win Regional → First Stand → MSI → Worlds in sequence without losing ANY match. Fail once and it\'s over. Reward: 25,000 BE.' },
+            { q: 'Golden Road (Complete 1 Split)', a: 'Win Regional → First Stand → MSI → Worlds in sequence without losing ANY match. Fail once and it\'s over. The final Worlds stage is capped at 120 total power (1.4.0) so a fully-built squad can realistically close out the gauntlet. Reward: 25,000 BE.' },
             { q: 'Salary Cap Mode (Always available)', a: 'Build a squad from your own club within a 50,000 CAP budget. Card value = (Rating - 60) × 500. Forces strategic choices — you can\'t just use your best players. 5 elite rounds. Win: 8,000 BE.' },
             { q: 'Rival Challenge (Requires cloud save)', a: 'Browse the leaderboard and challenge another manager\'s saved squad. Fight their actual squad in a 3-match series. Win: 3,000 BE. Requires Firebase sign-in.' },
         ]},
@@ -126,6 +129,8 @@
         ]},
         { id: 'card-coverage', title: '📊 Card Coverage by Region & Year', content: [] },
         { id: 'changelog', title: '📋 Update Log', content: [
+            { q: 'Beta 1.4.0 — Summer Splits 2018–2020', a: '• NEW CARDS — 637 of them: complete LCK, LPL and LEC Summer Split rosters for 2018, 2019 and 2020 (main teams + head coaches, no academies). Every player is rated to that split\'s real performance, so the best performers rank highest — Uzi & Rookie (2018), the DAMWON 2020 Worlds core, and the G2 / FPX super-teams of 2019 sit at the top, while off-years (e.g. SKT missing the 2018 playoffs) are reflected too. Region tags: LCK / LPL / LEC (2018 EU teams tagged LEC).\n• CARD REDESIGNS — EWC cards became a brushed gold-and-emerald "Trophy Forge" frame; Champion cards an imperial purple-and-gold "coronation"; Team of the Year an all-star platinum chrome. Diamond cards now use dark text (no more mixups with coach cards) and the Grandmaster red is softer on the eyes.\n• EWC 2026 (Dplus KIA) buffed — Smash and ShowMaker headline the upgrades, with the whole roster raised to match their Cinderella run.\n• BENCH — the bench picker now shows every eligible card with role filters and sort-by-any-stat (rating or MEC/TMF/FRM/CMP/MAP/LDR).\n• GOLDEN ROAD — the final Worlds stage is now capped at 120 total power, so a fully-built squad can realistically finish the gauntlet.\n• BALANCE — a league-wide pass so every card\'s rating lines up with its stats: an elite 98–100 stat now only appears on elite-rated cards, and coach Mechanics are consistent across the board.' },
+            { q: 'Beta 1.3.4 — Transfer Market', a: '• TRANSFER MARKET — the Trade tab now shows exactly which player you\'re signing (no more mystery). A randomised board of 6 real listings refreshes every 15 minutes; each can be signed once per rotation. Cost (spare cards + Blue Essence) scales with the player\'s tier, from Gold all the way up to Challenger and Legacy/Award cards.' },
             { q: 'Beta 1.3.0 — RBCs & EWC', a: '• NEW MODE — Roster Building Challenges (RBCs): a new tab between Academy and Season. Complete daily themed 5-player challenges by submitting cards from your Club — the cards are consumed and you earn 5 free packs to open in the Store. Five challenges (difficulty 1–5) with rewards scaling from Premium packs up to full EWC packs. Everything resets at midnight.\n• NEW CARDS — Esports World Cup (EWC) champions: EWC 2024 (T1), EWC 2025 (Gen.G) and EWC 2026 (Dplus KIA). Each EWC card is a strictly upgraded edition of that player\'s base card, scaled to their run. New EWC card tier plus an EWC Store pack (4,000 BE).\n• TRADE MARKET REWORKED — trades are finally worth doing. The new Mystery Trades consume your spare cards plus Blue Essence for ONE fully random player, guaranteed Master tier or higher, all the way up to Legacy & Award cards. Three tiers with escalating cost and better odds.\n• UI — Friends moved up next to Ranking so the top nav is balanced; Home career stats reordered by prestige (Golden Road → Worlds → MSI → First Stand → Regional → Splits) with a unique colour each; team colour is now far more visible on the Home page panels.' },
             { q: 'Beta 1.2.3 — Fixes & Accessibility', a: '• FIXED — the Transfer Network skill now actually boosts your sell prices (+5% per level). It was doing nothing before — check your Skills tab!\n• Wealth Management now also boosts Blue Essence from card sells and daily logins, not just tournament and quest rewards.\n• NEW — Daily Login streak bonus: every consecutive day you claim grants escalating bonus BE, up to +1,500 at a 30-day streak.\n• FIXED — Cloud saves no longer drop your Prestige, daily streak, bench, or Showcase, and now validate your roster on load just like local saves.\n• Accessibility & mobile: full keyboard navigation with focus-trapped menus, visible focus outlines, reduced-motion support, and pinch-to-zoom is re-enabled on phones.\n• Under the hood: unified match chemistry logic for more consistent balance, plus dead-code cleanup.' },
             { q: 'Beta 1.2.2 — Foil & Signature Polish', a: '• ✨ Holographic cards are far easier to spot — the rainbow foil is now brighter and more opaque, and a soft pale wash lifts the base tier colour so the shimmer reads clearly on every card.\n• Signature cards got a prestige glow-up — a bright white light-sweep glides across the card face and the border shimmers white → gold.\n• MSI 2026 (HLE) rebalanced — the MSI-champion versions of Zeus, Kanavi, Zeka, Gumayusi and Delight now beat their base 2026 cards on every stat, scaled up to their title-winning run.' },
@@ -161,7 +166,7 @@
                         {#if section.id === 'card-coverage'}
                             <div class="cov-wrap">
                                 <h4 class="cov-head">Regular Cards by Region & Year</h4>
-                                <p class="cov-sub">Years 2017–2023 have no regular region cards — Legacy event cards (Champion, MSI) cover those gaps.</p>
+                                <p class="cov-sub">2018–2020 now have LCK/LPL/LEC Summer Split rosters (main teams + coaches, rated to summer performance). Years 2017 and 2021–2023 have no regular region cards — Legacy event cards (Champion, MSI) cover those gaps.</p>
                                 <div class="cov-scroll">
                                     <table class="cov-table">
                                         <thead>
