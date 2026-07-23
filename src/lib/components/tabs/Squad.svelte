@@ -11,7 +11,16 @@
     $: splitActive = (($seasonData.opponents || []).length > 0 && ($seasonData.matchResults || []).filter(r => r === true || r === false).length < 10);
     const roleIcons = { TOP:'/icons/Top_icon.png', JNG:'/icons/Jungle_icon.png', MID:'/icons/Middle_icon.png', ADC:'/icons/Bottom_icon.png', SUP:'/icons/Support_icon.png', COACH:'/icons/Specialist_icon.png' };
 
-    let pickerOpen = false, pickerRole = null, pickerSearch = '';
+    let pickerOpen = false, pickerRole = null, pickerSearch = '', pickerEra = 'ALL';
+
+    const ERA_OPTIONS = [
+        { value: 1, label: 'Era 1 (2013 & earlier)' },
+        { value: 2, label: 'Era 2 (2014-2016)' },
+        { value: 3, label: 'Era 3 (2017-2019)' },
+        { value: 4, label: 'Era 4 (2020-2022)' },
+        { value: 5, label: 'Era 5 (2023-2025)' },
+        { value: 6, label: 'Era 6 (2026+)' },
+    ];
 
     $: starters = ROLES.map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
@@ -25,14 +34,22 @@
     $: conditioningBonus = $skills.conditioning || 0;
     $: totalPower = squadReady ? avgRating+regionChem+eraChem+teamChem+coachBonus+legacyBonus+conditioningBonus : 0;
 
-    $: pickerPool = (() => {
+    // Everything eligible for the open slot, before search/era — the era dropdown reads its options
+    // from here so they don't shift as the other filters change.
+    $: pickerBase = (() => {
         if (!pickerRole) return [];
         const used = new Set(ALL_SLOTS.filter(r => r !== pickerRole).map(r => $squad[r]?.uniqueId).filter(Boolean));
         let pool = $club.filter(c => !used.has(c.uniqueId));
         if (pickerRole === 'COACH') pool = pool.filter(c => c.role === 'COACH');
         else pool = pool.filter(c => c.role !== 'COACH' && (c.role === pickerRole || LEGACY_TIERS.includes(c.quality)));
         pool.sort((a,b) => { const ag=a.role===pickerRole?0:1, bg=b.role===pickerRole?0:1; return ag!==bg?ag-bg:b.rating-a.rating; });
-        if (pickerSearch) { const q=pickerSearch.toLowerCase(); pool=pool.filter(c=>c.name.toLowerCase().includes(q)||c.team.toLowerCase().includes(q)); }
+        return pool;
+    })();
+    $: pickerEraOptions = ERA_OPTIONS.filter(e => pickerBase.some(c => getEra(c.year) === e.value));
+    $: pickerPool = (() => {
+        let pool = pickerBase;
+        if (pickerSearch) { const q=pickerSearch.toLowerCase(); pool=pool.filter(c=>c.name.toLowerCase().includes(q)||c.team.toLowerCase().includes(q)||String(c.year||'').includes(q)); }
+        if (pickerEra !== 'ALL') pool = pool.filter(c => getEra(c.year) === pickerEra);
         return pool;
     })();
 
@@ -54,7 +71,7 @@
 
     function openPicker(role) {
         if (splitActive) { showToast('Squad is locked during an active split. Use bench swaps only.', 'error'); return; }
-        pickerRole=role; pickerSearch=''; pickerOpen=true;
+        pickerRole=role; pickerSearch=''; pickerEra='ALL'; pickerOpen=true;
     }
     function closePicker() { pickerOpen=false; pickerRole=null; }
     function assignCard(card) { squad.update(s=>({...s,[pickerRole]:card})); closePicker(); saveGame(); }
@@ -88,6 +105,7 @@
     let benchPickerIdx = null;
     let benchSearch = '';
     let benchRoleFilter = 'ALL';
+    let benchEra = 'ALL';
     let benchSort = 'rating';
     const BENCH_ROLES = ['ALL', 'TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const BENCH_SORTS = [['rating','RTG'], ['mec','MEC'], ['tmf','TMF'], ['frm','FRM'], ['cmp','CMP'], ['map','MAP'], ['ldr','LDR']];
@@ -97,18 +115,21 @@
         ...(Array.isArray($bench) ? $bench : []).filter(Boolean).map(c => c.uniqueId)
     ]);
 
+    $: benchPickerBase = benchPickerIdx === null ? [] : $club.filter(c => c.role !== 'COACH' && !benchUsedIds.has(c.uniqueId));
+    $: benchEraOptions = ERA_OPTIONS.filter(e => benchPickerBase.some(c => getEra(c.year) === e.value));
     $: benchPickerPool = (() => {
         if (benchPickerIdx === null) return [];
-        let pool = $club.filter(c => c.role !== 'COACH' && !benchUsedIds.has(c.uniqueId));
+        let pool = benchPickerBase;
         if (benchRoleFilter !== 'ALL') pool = pool.filter(c => c.role === benchRoleFilter);
-        if (benchSearch) { const q = benchSearch.toLowerCase(); pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q)); }
+        if (benchEra !== 'ALL') pool = pool.filter(c => getEra(c.year) === benchEra);
+        if (benchSearch) { const q = benchSearch.toLowerCase(); pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q) || String(c.year || '').includes(q)); }
         const val = c => benchSort === 'rating' ? getEffectiveRating(c) : (getEffectiveStats(c)[benchSort] || 0);
         return pool.slice().sort((a, b) => val(b) - val(a));
     })();
 
     function openBenchPicker(idx) {
         if (splitActive) { showToast('Bench is locked during an active split. Use the swap buttons below.', 'error'); return; }
-        benchPickerIdx = idx; benchSearch = ''; benchRoleFilter = 'ALL'; benchSort = 'rating'; benchPickerOpen = true;
+        benchPickerIdx = idx; benchSearch = ''; benchRoleFilter = 'ALL'; benchEra = 'ALL'; benchSort = 'rating'; benchPickerOpen = true;
     }
     function closeBenchPicker() { benchPickerOpen = false; benchPickerIdx = null; }
     function assignBench(card) {
@@ -270,7 +291,14 @@
     <div class="pk-panel">
         <div class="pk-head">
             <div class="pk-left"><img src={roleIcons[pickerRole]} alt="" style="width:18px;height:18px;opacity:.6"><span class="pk-title">{pickerRole}</span><span class="pk-ct">{pickerPool.length}</span></div>
-            <div class="pk-right"><input type="text" bind:value={pickerSearch} placeholder="Search..." class="input" style="width:150px;padding:6px 10px;font-size:11px;"><button class="pk-x" on:click={closePicker}>✕</button></div>
+            <div class="pk-right">
+                <input type="text" bind:value={pickerSearch} placeholder="Search name, team or year..." class="input pk-search">
+                <select bind:value={pickerEra} class="input pk-era">
+                    <option value="ALL">All Eras</option>
+                    {#each pickerEraOptions as e}<option value={e.value}>{e.label}</option>{/each}
+                </select>
+                <button class="pk-x" on:click={closePicker}>✕</button>
+            </div>
         </div>
         <div class="pk-body">
             {#if pickerPool.length===0}<div class="pk-empty">No eligible cards.</div>
@@ -311,7 +339,14 @@
     <div class="pk-panel">
         <div class="pk-head">
             <div class="pk-left"><span class="pk-title">Bench {(benchPickerIdx || 0) + 1}</span><span class="pk-ct">{benchPickerPool.length}</span></div>
-            <div class="pk-right"><input type="text" bind:value={benchSearch} placeholder="Search name/team..." class="input pk-search"><button class="pk-x" on:click={closeBenchPicker}>✕</button></div>
+            <div class="pk-right">
+                <input type="text" bind:value={benchSearch} placeholder="Search name/team/year..." class="input pk-search">
+                <select bind:value={benchEra} class="input pk-era">
+                    <option value="ALL">All Eras</option>
+                    {#each benchEraOptions as e}<option value={e.value}>{e.label}</option>{/each}
+                </select>
+                <button class="pk-x" on:click={closeBenchPicker}>✕</button>
+            </div>
         </div>
         <div class="pk-controls">
             <div class="pk-fgroup">
@@ -492,6 +527,7 @@
     .pk-chip-on { background:rgba(59,130,246,.22); border-color:rgba(96,165,250,.6); color:#93c5fd; }
     .pk-chip-sort.pk-chip-on { background:rgba(16,185,129,.2); border-color:rgba(52,211,153,.6); color:#6ee7b7; }
     .pk-search { width:170px; padding:6px 10px; font-size:11px; }
+    .pk-era { padding:6px 10px; font-size:11px; font-weight:700; }
     .pk-sortval {
         position:absolute; top:6px; right:6px; z-index:3;
         background:rgba(16,185,129,.92); color:#04120c;

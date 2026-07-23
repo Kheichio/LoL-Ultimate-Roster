@@ -3,12 +3,22 @@
     import { collectionRegistry, archiveRewards, blueEssence, battlePass, saveGame, grantXP } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
-    import { getDB, TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, ALL_SPECIAL } from '../../utils/cards.js';
+    import { getDB, getEra, TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, ALL_SPECIAL } from '../../utils/cards.js';
 
     let activeCategory = 'regular';
     let activeRegion = 'LCK';
     let search = '';
+    let eraFilter = 'ALL';
     let sortBy = 'team';
+
+    const ERA_OPTIONS = [
+        { value: 1, label: 'Era 1 (2013 & earlier)' },
+        { value: 2, label: 'Era 2 (2014-2016)' },
+        { value: 3, label: 'Era 3 (2017-2019)' },
+        { value: 4, label: 'Era 4 (2020-2022)' },
+        { value: 5, label: 'Era 5 (2023-2025)' },
+        { value: 6, label: 'Era 6 (2026+)' },
+    ];
 
     $: claimedCards = ($archiveRewards && $archiveRewards.claimedCards) || {};
     $: claimedTeams = ($archiveRewards && $archiveRewards.claimedTeams) || {};
@@ -130,6 +140,7 @@
         { id: 'toty', label: '👑 Team of Year', color: '#fde047', bg: 'rgba(202,138,4,0.2)', border: 'rgba(234,179,8,0.5)' },
         { id: 'gpoty', label: '🌍 Global POTY', color: '#d8b4fe', bg: 'rgba(147,51,234,0.2)', border: 'rgba(168,85,247,0.5)' },
         { id: 'x', label: '✕ Community Pick', color: '#fda4af', bg: 'rgba(225,29,72,0.2)', border: 'rgba(244,63,94,0.5)' },
+        { id: 'halloflegends', label: '🔥 Hall of Legends', color: '#f5c542', bg: 'rgba(255,0,51,0.2)', border: 'rgba(255,0,51,0.55)' },
     ];
 
     const regions = ['LCK', 'LPL', 'LEC', 'LCS', 'LCP'];
@@ -138,23 +149,29 @@
     const catToQuality = {
         firststand: 'FirstStand', msi: 'MSI', finalists: 'Finalist',
         champion: 'Champion', mvp: 'MVP', ewc: 'EWC',
-        poty: 'POTY', roty: 'ROTY', toty: 'TOTY', gpoty: 'GPOTY', x: 'X'
+        poty: 'POTY', roty: 'ROTY', toty: 'TOTY', gpoty: 'GPOTY', x: 'X',
+        halloflegends: 'Hall of Legends'
     };
     qualityToCat = Object.fromEntries(Object.entries(catToQuality).map(([k, v]) => [v, k]));
 
     $: db = getDB() || [];
-    $: cards = (() => {
-        let pool;
+    // Everything in the current category/region, before the browsing filters — the era dropdown
+    // offers only the eras this pool actually contains.
+    $: categoryPool = (() => {
         if (activeCategory === 'regular') {
-            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
-        } else {
-            const qual = catToQuality[activeCategory];
-            pool = qual ? db.filter(c => c.quality === qual) : [];
+            return db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
         }
+        const qual = catToQuality[activeCategory];
+        return qual ? db.filter(c => c.quality === qual) : [];
+    })();
+    $: eraOptions = ERA_OPTIONS.filter(e => categoryPool.some(c => getEra(c.year) === e.value));
+    $: cards = (() => {
+        let pool = categoryPool;
         if (search) {
             const q = search.toLowerCase();
-            pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
+            pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q) || String(c.year || '').includes(q));
         }
+        if (eraFilter !== 'ALL') pool = pool.filter(c => getEra(c.year) === eraFilter);
         return pool;
     })();
 
@@ -298,7 +315,13 @@
 
     <!-- Search + Sort -->
     <div class="controls-bar">
-        <input type="text" bind:value={search} placeholder="Search player or team..." class="input archive-search">
+        <input type="text" bind:value={search} placeholder="Search player, team or year..." class="input archive-search">
+        <select bind:value={eraFilter} class="input archive-era">
+            <option value="ALL">All Eras</option>
+            {#each eraOptions as e}
+                <option value={e.value}>{e.label}</option>
+            {/each}
+        </select>
         <div class="sort-group">
             {#each [
                 { value: 'team', label: 'Teams' },
@@ -318,7 +341,7 @@
     <!-- Card Grid by Team -->
     {#if grouped.length === 0}
         <div class="empty-state">
-            <p>{search ? 'No cards match your search.' : 'No cards in this category yet.'}</p>
+            <p>{search || eraFilter !== 'ALL' ? 'No cards match your search.' : 'No cards in this category yet.'}</p>
         </div>
     {:else}
         <div class="team-list">
@@ -517,6 +540,12 @@
         min-width: 150px;
         padding: 8px 12px;
         font-size: 12px;
+    }
+
+    .archive-era {
+        padding: 8px 10px;
+        font-size: 12px;
+        font-weight: 700;
     }
 
     .sort-group {

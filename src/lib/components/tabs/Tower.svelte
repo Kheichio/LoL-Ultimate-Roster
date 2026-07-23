@@ -3,7 +3,7 @@
     import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
-    import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
+    import { getDB, LEGACY_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
@@ -103,7 +103,8 @@
 
     function generateEnemy(fl) {
         const db = getDB(); if (!db) return null;
-        const pool = db.filter(p => p.role !== 'COACH');
+        // Mythics are perfect 100s and Awards-Vault-only — the CPU never gets handed one
+        const pool = db.filter(p => p.role !== 'COACH' && !MYTHIC_TIERS.includes(p.quality));
 
         // Floor 1 targets Gold tier (~79-83).
         // Slow ramp for the first 20 floors, then steeper.

@@ -1059,7 +1059,7 @@ const baseDatabase = [
     { id: 9025, name: "Ghost", role: "ADC", team: "DK", year: 2020, rating: 93, quality: "Champion", region: "Legacy", stats: { mec: 90, tmf: 96, frm: 94, cmp: 96, map: 94, ldr: 92 } },
     { id: 9026, name: "BeryL", role: "SUP", team: "DK", year: 2020, rating: 96, quality: "Champion", region: "Legacy", stats: { mec: 82, tmf: 96, frm: 98, cmp: 97, map: 99, ldr: 98 } },
     
-    { id: 9027, name: "Doinb", role: "MID", team: "FPX", year: 2019, rating: 96, quality: "Champion", region: "Legacy", stats: { mec: 89, tmf: 98, frm: 94, cmp: 99, map: 99, ldr: 99 } },
+    { id: 9027, name: "Doinb", role: "MID", team: "FPX", year: 2019, rating: 98, quality: "Champion", region: "Legacy", stats: { mec: 94, tmf: 99, frm: 97, cmp: 99, map: 99, ldr: 100 } },
     { id: 9028, name: "Tian", role: "JNG", team: "FPX", year: 2019, rating: 95, quality: "Champion", region: "Legacy", stats: { mec: 96, tmf: 95, frm: 94, cmp: 94, map: 96, ldr: 91 } },
     { id: 9029, name: "Crisp", role: "SUP", team: "FPX", year: 2019, rating: 94, quality: "Champion", region: "Legacy", stats: { mec: 85, tmf: 94, frm: 94, cmp: 95, map: 95, ldr: 92 } },
     { id: 9030, name: "Lwx", role: "ADC", team: "FPX", year: 2019, rating: 93, quality: "Champion", region: "Legacy", stats: { mec: 94, tmf: 94, frm: 95, cmp: 91, map: 92, ldr: 89 } },
@@ -1074,7 +1074,7 @@ const baseDatabase = [
     { id: 9037, name: "Kingen", role: "TOP", team: "DRX", year: 2022, rating: 93, quality: "Champion", region: "Legacy", stats: { mec: 94, tmf: 94, frm: 91, cmp: 90, map: 90, ldr: 89 } },
     { id: 9038, name: "Pyosik", role: "JNG", team: "DRX", year: 2022, rating: 92, quality: "Champion", region: "Legacy", stats: { mec: 93, tmf: 92, frm: 90, cmp: 92, map: 91, ldr: 91 } },
     { id: 9039, name: "Zeka", role: "MID", team: "DRX", year: 2022, rating: 94, quality: "Champion", region: "Legacy", stats: { mec: 97, tmf: 93, frm: 93, cmp: 90, map: 91, ldr: 88 } },
-    { id: 9040, name: "Deft", role: "ADC", team: "DRX", year: 2022, rating: 95, quality: "Champion", region: "Legacy", stats: { mec: 94, tmf: 96, frm: 95, cmp: 95, map: 94, ldr: 97 } },
+    { id: 9040, name: "Deft", role: "ADC", team: "DRX", year: 2022, rating: 97, quality: "Champion", region: "Legacy", stats: { mec: 98, tmf: 97, frm: 97, cmp: 97, map: 95, ldr: 98 } },
     { id: 9041, name: "BeryL",    role: "SUP", team: "DRX", year: 2022, rating: 96, quality: "Champion", region: "Legacy", stats: { mec: 81, tmf: 95, frm: 98, cmp: 99, map: 99, ldr: 99 } },
 
     // T1 2025 — World Champions
@@ -1207,6 +1207,17 @@ const baseDatabase = [
     { id: 9316, name: "Deft",      role: "ADC",   team: "EDG", year: 2015, rating: 95, quality: "MSI", region: "Legacy", stats: { mec: 98, tmf: 95, frm: 95, cmp: 93, map: 91, ldr: 88 } },
     { id: 9317, name: "Meiko",     role: "SUP",   team: "EDG", year: 2015, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 87, tmf: 96, frm: 92, cmp: 93, map: 97, ldr: 96 } },
     { id: 9318, name: "Aaron",     role: "COACH", team: "EDG", year: 2015, rating: 93, quality: "MSI", region: "Legacy", stats: { mec: 23, tmf: 91, frm: 93, cmp: 92, map: 93, ldr: 95 } },
+
+    // ==========================================
+    // --- HALL OF LEGENDS ---
+    // ==========================================
+    // Riot's real Hall of Legends — only two players have ever been inducted, so this
+    // tier holds exactly two cards: Faker (2024, the inaugural inductee) and Uzi (2025).
+    // Highest tier in the game: every card is a perfect 100 across all six stats. Only
+    // source is the Awards Vault pack (0.001% per slot), so they must never be added to
+    // any other pack, reward, trade or CPU pool.
+    { id: 13000, name: "Faker",     role: "MID", team: "T1",    year: 2024, rating: 100, quality: "Hall of Legends", region: "Legacy", stats: { mec: 100, tmf: 100, frm: 100, cmp: 100, map: 100, ldr: 100 } },
+    { id: 13001, name: "Uzi",       role: "ADC", team: "RNG",   year: 2025, rating: 100, quality: "Hall of Legends", region: "Legacy", stats: { mec: 100, tmf: 100, frm: 100, cmp: 100, map: 100, ldr: 100 } },
 
     // === LEAGUE AWARDS 2025 ===
     // POTY — Chovy (Gen.G): dominant 2025 season, MSI winner, LCK title

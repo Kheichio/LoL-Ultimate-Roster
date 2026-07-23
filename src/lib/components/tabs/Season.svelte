@@ -4,7 +4,7 @@
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
-    import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
+    import { getDB, LEGACY_TIERS, ALL_SPECIAL, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import { get } from 'svelte/store';
 
@@ -253,8 +253,9 @@
     function generateOpponents() {
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return false; }
-        const regularPool = db.filter(p => p.role !== 'COACH' && !['Champion','MVP','Finalist','MSI','FirstStand','EWC','POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
-        const elitePool = db.filter(p => p.role !== 'COACH');
+        const regularPool = db.filter(p => p.role !== 'COACH' && !ALL_SPECIAL.includes(p.quality));
+        // Mythic cards are perfect 100s — an unbeatable CPU roster, so keep them out even of BOSS teams
+        const elitePool = db.filter(p => p.role !== 'COACH' && !MYTHIC_TIERS.includes(p.quality));
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const teamNames = ['Shadow Wolves', 'Storm Dragons', 'Iron Phoenix', 'Crystal Bears', 'Neon Tigers',
                           'Dark Knights', 'Solar Flare', 'Frost Giants', 'Thunder Hawks', 'Crimson Vipers'];

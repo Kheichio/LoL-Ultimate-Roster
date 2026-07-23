@@ -5,6 +5,8 @@
     import { currentUser } from '../../stores/auth.js';
     import { friendRequestCount } from '../../stores/friends.js';
     import { CHALLENGES, todayKey, claimedToday } from '../../utils/rbc.js';
+    import { milestoneQuests, repeatableQuests, achievements, LINEUP_ROLES, lineupAvg } from '../../utils/quests.js';
+    import { HALL_OF_LEGENDS } from '../../utils/cards.js';
     import { loadFromStorage } from '../../utils/storage.js';
 
     function isSameDay(d1, d2) {
@@ -38,51 +40,44 @@
         return count;
     })();
 
+    // Quest/achievement tables come from utils/quests.js — the Quests tab reads the same
+    // lists, so a newly added quest can never badge in one place and not the other.
     $: questBadge = (() => {
         const ts = $trackStats;
         const qc = $questsClaimed;
         const ac = $achievementsClaimed;
         const rb = $questsRepeatableBaselines;
         let count = 0;
-        const mq = [
-            ['mq1','packs',5],['mq2','packs',25],['mq3','packs',100],['mq9','packs',250],['mq60','packs',500],
-            ['mq4','holographicPulled',1],['mq5','holographicPulled',5],['mq8','holographicPulled',10],['mq61','holographicPulled',25],
-            ['mq6','signaturesPulled',1],['mq7','signaturesPulled',5],['mq62','signaturesPulled',10],
-            ['mq10','soldCount',10],['mq11','soldCount',50],['mq12','soldCount',200],['mq13','soldCount',500],
-            ['mq63','upgradesPerformed',10],['mq64','upgradesPerformed',50],
-            ['mq20','tournamentsWon',1],['mq21','tournamentsWon',5],['mq22','tournamentsWon',25],['mq50','tournamentsWon',100],
-            ['mq23','cafeWins',1],['mq24','cafeWins',10],['mq25','cafeWins',50],['mq73','cafeWins',100],
-            ['mq26','regionalSplitWon',1],['mq27','regionalSplitWon',5],['mq51','regionalSplitWon',25],
-            ['mq28','firstStandWon',1],['mq29','firstStandWon',5],['mq70','firstStandWon',10],
-            ['mq35','msiWon',1],['mq36','msiWon',3],['mq71','msiWon',5],
-            ['mq37','worldsWon',1],['mq38','worldsWon',3],['mq72','worldsWon',5],
-            ['mq65','draftModesWon',1],['mq66','draftModesWon',5],['mq67','draftModesWon',25],
-            ['mq68','draftModesPlayed',10],['mq69','draftModesPlayed',50],
-            ['mq30','splitsCompleted',1],['mq31','splitsCompleted',5],['mq32','splitsCompleted',25],['mq39','splitsCompleted',50],['mq75','splitsCompleted',100],
-            ['mq33','goldenRoads',1],['mq34','goldenRoads',5],['mq40','goldenRoads',10],['mq76','goldenRoads',25],
-            ['mq41','towerHighestFloor',10],['mq42','towerHighestFloor',25],['mq43','towerHighestFloor',50],['mq44','towerHighestFloor',100],['mq74','towerHighestFloor',200],
-        ];
-        for (const [id, stat, target] of mq) {
-            if (!qc[id] && (ts[stat] || 0) >= target) count++;
+        for (const q of milestoneQuests) {
+            if (!qc[q.id] && (ts[q.stat] || 0) >= q.target) count++;
         }
-        const rq = [['rq1','packs',3],['rq6','packs',5],['rq2','tournamentsWon',3],['rq4','cafeWins',5],['rq3','soldCount',5],['rq7','soldCount',10],['rq5','splitsCompleted',2],['rq8','draftModesWon',2],['rq9','tournamentsWon',10],['rq10','upgradesPerformed',5]];
-        for (const [id, stat, target] of rq) {
-            if (Math.max(0, (ts[stat] || 0) - (rb[id] || 0)) >= target) count++;
+        for (const q of repeatableQuests) {
+            // Contracts stack — same maths the Quests tab claims with.
+            count += Math.floor(Math.max(0, (ts[q.stat] || 0) - (rb[q.id] || 0)) / q.target);
         }
-        const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
-        const sqAvg = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + c.rating, 0) / starters.length) : 0;
-        const achChecks = [
-            ['a1',sqAvg,80],['a2',sqAvg,90],['a3',sqAvg,95],['a19',sqAvg,98],
-            ['a4',$club.length,50],['a5',$club.length,200],['a6',$club.length,500],['a18',$club.length,1000],
-            ['a7',$weightedTrophies,50],['a8',$weightedTrophies,200],['a14',$weightedTrophies,500],['a15',$weightedTrophies,1000],
-            ['a22',$club.filter(c => c.signature).length,5],['a9',$club.filter(c => c.signature).length,10],
-            ['a10',$club.filter(c => c.holographic).length,25],['a23',$club.filter(c => c.holographic).length,50],
-            ['a11',$managerLevel,10],['a12',$managerLevel,25],['a13',$managerLevel,50],['a20',$managerLevel,100],
-            ['a16',ts.towerHighestFloor||0,50],['a17',ts.towerHighestFloor||0,100],['a21',ts.towerHighestFloor||0,200],
-            ['a24',ts.draftModesWon||0,10],['a25',ts.draftModesWon||0,50],
-        ];
-        for (const [id, val, target] of achChecks) {
-            if (!ac[id] && val >= target) count++;
+        const achProgress = (a) => {
+            try {
+                if (a.type === 'squadAvg') return lineupAvg($squad);
+                if (a.type === 'academySize') return LINEUP_ROLES.filter(r => $academy[r]).length;
+                if (a.type === 'academyAvg') return lineupAvg($academy);
+                if (a.type === 'clubSize') return ($club || []).length;
+                if (a.type === 'discovered') return Object.keys($collectionRegistry || {}).length;
+                if (a.type === 'trophies') return $weightedTrophies || 0;
+                if (a.type === 'sigCards') return ($club || []).filter(c => c && c.signature).length;
+                if (a.type === 'holoCards') return ($club || []).filter(c => c && c.holographic).length;
+                if (a.type === 'holCards') return ($club || []).filter(c => c && c.quality === HALL_OF_LEGENDS).length;
+                if (a.type === 'be') return $blueEssence || 0;
+                if (a.type === 'managerLvl') return $managerLevel || 1;
+                if (a.type === 'prestige') return $prestige || 0;
+                if (a.type === 'bpTier') return $battlePass.tier || 0;
+                if (a.type === 'towerBest') return ts.towerHighestFloor || 0;
+                if (a.type === 'draftWins') return ts.draftModesWon || 0;
+                if (a.type === 'rbcToday') return Object.keys(claimedToday($rbcState, todayKey(acNow))).length;
+            } catch(e) { return 0; }
+            return 0;
+        };
+        for (const a of achievements) {
+            if (!ac[a.id] && achProgress(a) >= a.target) count++;
         }
         return count;
     })();

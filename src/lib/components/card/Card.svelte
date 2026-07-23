@@ -403,8 +403,73 @@
     }
 
     /* New award tiers */
-    .tier-poty { background: linear-gradient(145deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%); border: 3px solid #e94560; box-shadow: 0 0 20px rgba(233,69,96,0.4); animation: poty-glow 3s ease-in-out infinite; }
-    @keyframes poty-glow { 0%,100% { box-shadow: 0 0 20px rgba(233,69,96,0.4); } 50% { box-shadow: 0 0 32px rgba(233,69,96,0.7); } }
+    /* POTY — Player of the Year "Crimson Regalia": a brushed CRIMSON metallic frame
+       (border:none + 3px padding, like challenger/EWC/TOTY) wrapping OPAQUE midnight-navy
+       panels, so the header, the huge rating, the name AND the bottom stats grid all keep
+       white text readable — the old flat navy + red-border build read cheap next to
+       Champion/EWC. Strictly crimson / rose / midnight with a single cool silver glint in the
+       metal: zero gold, so it can never be mistaken for Champion (purple+gold), EWC
+       (gold+emerald) or Hall of Legends (red+gold+black). Slow living-metal drift, a breathing
+       crimson halo, and one rose sheen that sweeps the face then rests off-card. Paint-only;
+       no pseudo-elements, so it never collides with holographic/signature. */
+    .tier-poty {
+        border: none;
+        padding: 3px;
+        background: linear-gradient(135deg,
+            #40091a 0%, #8c1030 9%, #e94560 18%, #ff93a8 26%, #e94560 34%,
+            #c8d2e4 43%, #ffc0cd 48%, #e94560 56%,
+            #9c1236 66%, #e94560 78%, #ff9fb0 88%, #40091a 100%);
+        background-size: 300% 300%;
+        background-position: 0% 50%;
+        box-shadow:
+            0 8px 24px rgba(0,0,0,0.45),
+            inset 0 3px 0 rgba(255,196,210,0.5),
+            0 0 20px rgba(233,69,96,0.5),
+            0 0 46px rgba(150,20,50,0.18);
+        animation: poty-drift 12s ease-in-out infinite, poty-halo 4.5s ease-in-out infinite;
+    }
+    .tier-poty .card-header {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 40%, rgba(255,210,222,0.10) 45%, rgba(255,240,246,0.24) 50%, rgba(233,69,96,0.14) 55%, rgba(255,255,255,0) 60%),
+            linear-gradient(160deg, #16203f 0%, #0d1428 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 13px 13px 0 0;
+        border-bottom: 1px solid rgba(233,69,96,0.42);
+        animation: poty-sheen 8s ease-in-out infinite;
+    }
+    .tier-poty .card-body {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 40%, rgba(255,210,222,0.10) 45%, rgba(255,240,246,0.24) 50%, rgba(233,69,96,0.14) 55%, rgba(255,255,255,0) 60%),
+            linear-gradient(160deg, #141d3a 0%, #101832 45%, #080d1c 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 0 0 13px 13px;
+        box-shadow:
+            inset 0 1px 0 rgba(255,214,224,0.12),
+            inset 0 0 34px rgba(233,69,96,0.10),
+            inset 0 0 28px rgba(0,0,0,0.5);
+        animation: poty-sheen 8s ease-in-out infinite;
+    }
+    /* Crimson trim on the shared sub-elements so the frame colour carries into the face */
+    .tier-poty .card-avatar { border-color: rgba(255,150,170,0.42); background: rgba(0,0,0,0.35); }
+    .tier-poty .card-stats { border-color: rgba(233,69,96,0.28); }
+    .tier-poty .card-role { background: rgba(0,0,0,0.32); }
+    @keyframes poty-drift {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+    }
+    @keyframes poty-halo {
+        0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,196,210,0.5), 0 0 20px rgba(233,69,96,0.5), 0 0 46px rgba(150,20,50,0.18); }
+        50%     { box-shadow: 0 8px 24px rgba(0,0,0,0.45), inset 0 3px 0 rgba(255,224,232,0.68), 0 0 34px rgba(255,90,120,0.82), 0 0 68px rgba(180,26,60,0.30); }
+    }
+    @keyframes poty-sheen {
+        0%   { background-position: 100% 0%, 0% 0%; }
+        45%  { background-position: 0% 0%, 0% 0%; }
+        100% { background-position: 0% 0%, 0% 0%; }
+    }
     .tier-roty { background: linear-gradient(145deg, #0d1b2a 0%, #1b263b 40%, #415a77 100%); border: 3px solid #00b4d8; box-shadow: 0 0 18px rgba(0,180,216,0.4); }
     /* TOTY — Team of the Year "All-Star Chrome": a brushed platinum/silver metallic FRAME
        (border:none + 3px padding, like challenger/EWC) wrapping opaque deep-sapphire panels so
@@ -461,6 +526,95 @@
     @keyframes gpoty-glow { 0%,100% { box-shadow: 0 0 24px rgba(224,170,255,0.4); } 50% { box-shadow: 0 0 38px rgba(224,170,255,0.7), 0 0 70px rgba(224,170,255,0.2); } }
     .tier-x { background: linear-gradient(145deg, #0a0a0a 0%, #1a1a1a 40%, #2d2d2d 100%); border: 3px solid #ff6b6b; box-shadow: 0 0 18px rgba(255,107,107,0.3); animation: x-pulse 2s linear infinite; }
     @keyframes x-pulse { 0%,100% { border-color: #ff6b6b; } 50% { border-color: #ffd93d; } }
+
+    /* Hall of Legends — the apex tier, "Molten Immortality". The heaviest frame in the game
+       (border:none + 4px padding, one step thicker than every other padding-frame tier) cast in
+       molten crimson → ember → gold metal that drifts slowly, wrapping OPAQUE obsidian panels so
+       white text stays legible over a near-black face. Prestige comes from layering: a double
+       halo (gold inner, crimson outer) over a deep blood-red bloom, an inset warm vignette, and a
+       slow regal gold sheen that sweeps once then rests off-card. Red+gold+black reads instantly
+       apart from POTY (crimson+midnight, no gold), Champion (purple+gold), EWC (gold+emerald),
+       Grandmaster (plain red) and X (flat black). Paint-only, no pseudo-elements — those belong
+       to holographic/signature — and only transform-free background-position/box-shadow animate,
+       so a full grid of these stays cheap. */
+    .tier-halloflegends {
+        border: none;
+        padding: 4px;
+        background: linear-gradient(135deg,
+            #1c0406 0%, #6d0f18 7%, #b81c25 14%, #e63946 20%, #ff7a3d 27%,
+            #f0b03c 34%, #ffeeb4 42%, #ffd76e 48%, #d4af37 55%,
+            #b8860b 62%, #a3121f 72%, #e63946 80%, #7d0d14 90%, #1c0406 100%);
+        background-size: 300% 300%;
+        background-position: 0% 50%;
+        box-shadow:
+            0 10px 30px rgba(0,0,0,0.6),
+            inset 0 3px 0 rgba(255,236,186,0.55),
+            0 0 18px rgba(255,196,88,0.60),
+            0 0 40px rgba(214,40,52,0.42),
+            0 0 78px rgba(120,12,20,0.24);
+        animation: hol-drift 16s ease-in-out infinite, hol-halo 5.5s ease-in-out infinite;
+    }
+    .tier-halloflegends .card-header {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 40%, rgba(255,206,120,0.10) 45%, rgba(255,242,208,0.26) 50%, rgba(230,57,70,0.14) 55%, rgba(255,255,255,0) 60%),
+            linear-gradient(160deg, #180809 0%, #0a0304 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 12px 12px 0 0;
+        border-bottom: 1px solid rgba(255,196,88,0.45);
+        animation: hol-sheen 9s ease-in-out infinite;
+    }
+    .tier-halloflegends .card-body {
+        background:
+            linear-gradient(110deg, rgba(255,255,255,0) 40%, rgba(255,206,120,0.10) 45%, rgba(255,242,208,0.26) 50%, rgba(230,57,70,0.14) 55%, rgba(255,255,255,0) 60%),
+            linear-gradient(160deg, #150708 0%, #1a0a09 45%, #060202 100%);
+        background-size: 300% 100%, 100% 100%;
+        background-repeat: no-repeat, no-repeat;
+        background-position: 100% 0%, 0% 0%;
+        border-radius: 0 0 12px 12px;
+        box-shadow:
+            inset 0 1px 0 rgba(255,226,168,0.14),
+            inset 0 0 36px rgba(160,28,20,0.32),
+            inset 0 0 26px rgba(0,0,0,0.6);
+        animation: hol-sheen 9s ease-in-out infinite;
+    }
+    /* Gilded trim on the shared sub-elements, plus white text forced on regardless of the
+       data-text flag — the panels are obsidian, and isDarkCard() lives in utils/cards.js. */
+    .card.tier-halloflegends .card-header,
+    .card.tier-halloflegends .card-role,
+    .card.tier-halloflegends .avatar-initials,
+    .card.tier-halloflegends .card-name,
+    .card.tier-halloflegends .stat-value { color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.65); }
+    .card.tier-halloflegends .card-rating { color: #fff; text-shadow: 0 0 20px rgba(255,180,80,0.45), 0 2px 6px rgba(0,0,0,0.8); }
+    .card.tier-halloflegends .card-region,
+    .card.tier-halloflegends .card-team { color: rgba(255,232,196,0.72); text-shadow: 0 1px 2px rgba(0,0,0,0.55); }
+    .card.tier-halloflegends .stat-label { color: rgba(255,222,178,0.58); }
+    .card.tier-halloflegends .card-stats { border-color: rgba(255,196,88,0.24); }
+    .tier-halloflegends .card-avatar { border-color: rgba(255,196,88,0.5); background: rgba(0,0,0,0.45); }
+    .tier-halloflegends .card-role { background: rgba(0,0,0,0.38); }
+    /* "HALL OF LEGENDS" is 15 chars — the generic 11px/2.5px header would wrap on the full card
+       and badly on the 180px mini, so tighten it here only (never the shared .card-header rule).
+       :not(.sig-header) keeps the Marck Script signature header untouched. */
+    .card.tier-halloflegends .card-header:not(.sig-header) { font-size: 10px; letter-spacing: 1.4px; white-space: nowrap; }
+    .card-mini.tier-halloflegends .card-header:not(.sig-header) { font-size: 8px; letter-spacing: 0.8px; white-space: nowrap; }
+    @keyframes hol-drift {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+    }
+    @keyframes hol-halo {
+        0%, 100% {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6), inset 0 3px 0 rgba(255,236,186,0.55), 0 0 18px rgba(255,196,88,0.60), 0 0 40px rgba(214,40,52,0.42), 0 0 78px rgba(120,12,20,0.24);
+        }
+        50% {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6), inset 0 3px 0 rgba(255,246,214,0.72), 0 0 28px rgba(255,214,120,0.88), 0 0 56px rgba(230,57,70,0.60), 0 0 96px rgba(160,18,28,0.32);
+        }
+    }
+    @keyframes hol-sheen {
+        0%   { background-position: 100% 0%, 0% 0%; }
+        42%  { background-position: 0% 0%, 0% 0%; }
+        100% { background-position: 0% 0%, 0% 0%; }
+    }
 
     /* Coach */
     .tier-coach { background: linear-gradient(145deg, #022c22 0%, #064e3b 100%); border: 3px dashed #10b981; }

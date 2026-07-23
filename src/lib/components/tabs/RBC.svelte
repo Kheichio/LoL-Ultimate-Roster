@@ -4,7 +4,7 @@
     import { club, squad, academy, trackStats, rbcState, freePacks, grantXP, grantBPXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal, switchTab } from '../../stores/ui.js';
-    import { getEffectiveRating, TIER_ORDER, ALL_SPECIAL } from '../../utils/cards.js';
+    import { getEffectiveRating, getEra, TIER_ORDER, ALL_SPECIAL } from '../../utils/cards.js';
     import { CHALLENGES, REWARD_PACKS, todayKey, msUntilReset, claimedToday, requirementChips, validateSubmission } from '../../utils/rbc.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -34,11 +34,20 @@
     let pickRole = 'all';
     let pickRegion = 'all';
     let pickTier = 'all';
+    let pickEra = 'all';
     let pickSort = 'rating-desc';
     const ROLE_ORDER = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];
     const TIER_RANK = [...TIER_ORDER, ...ALL_SPECIAL];
     const tierRank = q => TIER_RANK.indexOf(q);
-    function clearPickFilters() { pickSearch = ''; pickRole = 'all'; pickRegion = 'all'; pickTier = 'all'; }
+    const ERA_OPTIONS = [
+        { value: 1, label: 'Era 1 (2013 & earlier)' },
+        { value: 2, label: 'Era 2 (2014-2016)' },
+        { value: 3, label: 'Era 3 (2017-2019)' },
+        { value: 4, label: 'Era 4 (2020-2022)' },
+        { value: 5, label: 'Era 5 (2023-2025)' },
+        { value: 6, label: 'Era 6 (2026+)' },
+    ];
+    function clearPickFilters() { pickSearch = ''; pickRole = 'all'; pickRegion = 'all'; pickTier = 'all'; pickEra = 'all'; }
 
     // Reward — RBCs grant free Store packs, not loose cards
     let showReward = false;
@@ -59,6 +68,7 @@
     $: pickRegions = [...new Set(eligible.map(c => c.region))].sort();
     $: pickTiers = [...new Set(eligible.map(c => c.quality))].sort((a, b) => tierRank(b) - tierRank(a));
     $: pickRolesAvail = ROLE_ORDER.filter(r => eligible.some(c => c.role === r));
+    $: pickEras = ERA_OPTIONS.filter(e => eligible.some(c => getEra(c.year) === e.value));
 
     // Apply the active filters + sort to the pickable cards
     $: pickerView = (() => {
@@ -66,8 +76,9 @@
         if (pickRole !== 'all') list = list.filter(c => c.role === pickRole);
         if (pickRegion !== 'all') list = list.filter(c => c.region === pickRegion);
         if (pickTier !== 'all') list = list.filter(c => c.quality === pickTier);
+        if (pickEra !== 'all') list = list.filter(c => getEra(c.year) === pickEra);
         const q = pickSearch.trim().toLowerCase();
-        if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
+        if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q) || String(c.year || '').includes(q));
         const byRating = (a, b) => getEffectiveRating(b) - getEffectiveRating(a);
         list = [...list];
         switch (pickSort) {
@@ -273,7 +284,7 @@
             <button class="ov-close" on:click={closePicker}>✕</button>
             <div class="pick-head">Choose a player <span class="pick-count">{pickerView.length} of {pickerCards.length}</span></div>
             <div class="pick-controls">
-                <input class="pick-search" type="text" placeholder="Search name or team…" bind:value={pickSearch} />
+                <input class="pick-search" type="text" placeholder="Search name, team or year…" bind:value={pickSearch} />
                 <select class="pick-sel" bind:value={pickRole} aria-label="Filter by role">
                     <option value="all">All roles</option>
                     {#each pickRolesAvail as r}<option value={r}>{r}</option>{/each}
@@ -286,6 +297,10 @@
                     <option value="all">All tiers</option>
                     {#each pickTiers as t}<option value={t}>{t}</option>{/each}
                 </select>
+                <select class="pick-sel" bind:value={pickEra} aria-label="Filter by era">
+                    <option value="all">All eras</option>
+                    {#each pickEras as e}<option value={e.value}>{e.label}</option>{/each}
+                </select>
                 <select class="pick-sel" bind:value={pickSort} aria-label="Sort by">
                     <option value="rating-desc">Rating ↓</option>
                     <option value="rating-asc">Rating ↑</option>
@@ -295,7 +310,7 @@
                     <option value="region">Region</option>
                     <option value="role">Role</option>
                 </select>
-                {#if pickRole !== 'all' || pickRegion !== 'all' || pickTier !== 'all' || pickSearch.trim()}
+                {#if pickRole !== 'all' || pickRegion !== 'all' || pickTier !== 'all' || pickEra !== 'all' || pickSearch.trim()}
                     <button class="pick-clear" on:click={clearPickFilters}>Clear</button>
                 {/if}
             </div>

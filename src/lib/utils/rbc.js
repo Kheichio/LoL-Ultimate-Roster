@@ -2,10 +2,10 @@
 // You submit a set of players that meet a challenge's requirements; the cards are
 // consumed and you receive a free 5-card reward pack. Harder challenges (more
 // investment) grant a better reward pack. Challenges reset once per calendar day.
-import { getEra, getEffectiveRating, LEGACY_TIERS, AWARD_TIERS } from './cards.js';
+import { getEra, getEffectiveRating, ALL_SPECIAL } from './cards.js';
 
-// Legacy + award tiers count as "special" for the Hall of Legends requirement.
-export const SPECIAL_SET = new Set([...LEGACY_TIERS, ...AWARD_TIERS]);
+// Legacy, award and mythic tiers all count as "special" for the Legendary Five requirement.
+export const SPECIAL_SET = new Set(ALL_SPECIAL);
 
 // Reward packs — each grants 5 cards. Slightly juicier top-end than the Store packs
 // of the same name, because you paid for them in cards. Sums per pack = 100.
@@ -41,7 +41,9 @@ export const CHALLENGES = [
       blurb: 'Five from one team.',
       req: { count: 5, minAvg: 88, sameTeam: true },
       reward: { pack: 'msi', count: 5 } },
-    { id: 'rbc_legends', name: 'Hall of Legends', difficulty: 5, color: '#ffd24a', icon: '👑',
+    // Display name deliberately avoids "Hall of Legends" — that is now a card tier, and two
+    // things with the same name in the UI reads as a bug. The id stays for saved progress.
+    { id: 'rbc_legends', name: 'Legendary Five', difficulty: 5, color: '#ffd24a', icon: '👑',
       blurb: 'Elite five with real pedigree.',
       req: { count: 5, minAvg: 90, minSpecial: 2 },
       reward: { pack: 'ewc', count: 5 } },
@@ -73,7 +75,7 @@ export function requirementChips(challenge) {
     if (r.sameRegion) chips.push('Same region');
     if (r.sameEra) chips.push('Same era');
     if (r.sameTeam) chips.push('Same team');
-    if (r.minSpecial) chips.push(`${r.minSpecial}+ Legacy/Award cards`);
+    if (r.minSpecial) chips.push(`${r.minSpecial}+ Legacy/Award/HoL cards`);
     return chips;
 }
 
@@ -93,7 +95,7 @@ export function validateSubmission(challenge, cards) {
     if (r.sameTeam) checks.push({ label: 'All from the same team', ok: complete && new Set(filled.map(c => c.team)).size === 1 });
     if (r.minSpecial) {
         const n = filled.filter(c => SPECIAL_SET.has(c.quality)).length;
-        checks.push({ label: `${r.minSpecial}+ Legacy/Award cards (${n})`, ok: n >= r.minSpecial });
+        checks.push({ label: `${r.minSpecial}+ Legacy/Award/HoL cards (${n})`, ok: n >= r.minSpecial });
     }
 
     return { valid: complete && checks.every(c => c.ok), avg, checks };

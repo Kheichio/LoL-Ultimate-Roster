@@ -1,9 +1,14 @@
-const SPECIAL_QUALITIES = new Set(['Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC', 'Signature', 'POTY', 'ROTY', 'TOTY', 'GPOTY', 'X']);
+const SPECIAL_QUALITIES = new Set(['Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC', 'Signature', 'POTY', 'ROTY', 'TOTY', 'GPOTY', 'X', 'Hall of Legends']);
 
 export const TIER_ORDER = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Grandmaster', 'Challenger'];
 export const LEGACY_TIERS = ['Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC'];
 export const AWARD_TIERS = ['POTY', 'ROTY', 'TOTY', 'GPOTY', 'X'];
-export const ALL_SPECIAL = [...LEGACY_TIERS, ...AWARD_TIERS];
+export const HALL_OF_LEGENDS = 'Hall of Legends';
+// Mythic tiers are protected from ratingToQuality() like legacy/award tiers, but they are
+// deliberately kept OUT of the generic 'SPECIAL' random pools so the Awards Vault stays
+// their only source — no pack or trade roll may ever produce one.
+export const MYTHIC_TIERS = ['Hall of Legends'];
+export const ALL_SPECIAL = [...LEGACY_TIERS, ...AWARD_TIERS, ...MYTHIC_TIERS];
 
 export function ratingToQuality(rating) {
     if (rating >= 98) return 'Challenger';
@@ -35,7 +40,7 @@ export function getCardById(id) {
 }
 
 export function getSellValue(quality, card = null, transferLevel = 0) {
-    const vals = { Bronze: 2, Silver: 5, Gold: 15, Platinum: 30, Diamond: 50, Master: 90, Grandmaster: 150, MVP: 175, Challenger: 300, Champion: 250, Finalist: 200, MSI: 220, EWC: 240, FirstStand: 180, Coach: 20, POTY: 500, TOTY: 350, ROTY: 200, GPOTY: 400, X: 300 };
+    const vals = { Bronze: 2, Silver: 5, Gold: 15, Platinum: 30, Diamond: 50, Master: 90, Grandmaster: 150, MVP: 175, Challenger: 300, Champion: 250, Finalist: 200, MSI: 220, EWC: 240, FirstStand: 180, Coach: 20, POTY: 500, TOTY: 350, ROTY: 200, GPOTY: 400, X: 300, 'Hall of Legends': 1000 };
     let base = vals[quality] || 2;
     if (card && card.holographic) base *= 1.5;
     // Transfer Network skill — +5% sell value per level
@@ -44,7 +49,7 @@ export function getSellValue(quality, card = null, transferLevel = 0) {
 }
 
 export function isDarkCard(quality, role) {
-    const dark = ['Challenger', 'Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC', 'POTY', 'ROTY', 'TOTY', 'GPOTY', 'X'];
+    const dark = ['Challenger', 'Champion', 'MVP', 'Finalist', 'MSI', 'FirstStand', 'EWC', 'POTY', 'ROTY', 'TOTY', 'GPOTY', 'X', 'Hall of Legends'];
     return dark.includes(quality) || role === 'COACH';
 }
 
@@ -72,7 +77,7 @@ export const TIER_COLORS = {
     Diamond: '#3b82f6', Master: '#a855f7', Grandmaster: '#ef4444', Challenger: '#f59e0b',
     Champion: '#ecc766', MVP: '#ec4899', Finalist: '#94a3b8', MSI: '#2dd4bf',
     FirstStand: '#fb923c', EWC: '#e8c766', POTY: '#e94560', ROTY: '#00b4d8', TOTY: '#d6e4f7',
-    GPOTY: '#e0aaff', X: '#ff6b6b',
+    GPOTY: '#e0aaff', X: '#ff6b6b', 'Hall of Legends': '#ff0033',
 };
 
 export function getEra(year) {

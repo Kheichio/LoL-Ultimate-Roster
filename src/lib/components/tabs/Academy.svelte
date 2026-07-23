@@ -2,7 +2,7 @@
     import Card from '../card/Card.svelte';
     import { club, squad, academy, trackStats, grantBE, grantXP, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
-    import { getEffectiveRating } from '../../utils/cards.js';
+    import { getEffectiveRating, getEra } from '../../utils/cards.js';
     import { onMount, onDestroy } from 'svelte';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
@@ -40,20 +40,38 @@
     }
 
     // --- Roster picker ---
-    let pickerOpen = false, pickerRole = null, pickerSearch = '';
-    $: pickerPool = (() => {
+    let pickerOpen = false, pickerRole = null, pickerSearch = '', pickerEra = 'ALL';
+
+    const ERA_OPTIONS = [
+        { value: 1, label: 'Era 1 (2013 & earlier)' },
+        { value: 2, label: 'Era 2 (2014-2016)' },
+        { value: 3, label: 'Era 3 (2017-2019)' },
+        { value: 4, label: 'Era 4 (2020-2022)' },
+        { value: 5, label: 'Era 5 (2023-2025)' },
+        { value: 6, label: 'Era 6 (2026+)' },
+    ];
+
+    // Everything eligible for the open slot, before search/era — the era dropdown reads its options
+    // from here so they don't shift as the other filters change.
+    $: pickerBase = (() => {
         if (!pickerRole) return [];
         const squadIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
         const academyIds = new Set(ROLES.filter(r => r !== pickerRole).map(r => $academy[r]?.uniqueId).filter(Boolean));
         let pool = $club.filter(c => c.role === pickerRole && !squadIds.has(c.uniqueId) && !academyIds.has(c.uniqueId));
         pool.sort((a, b) => b.rating - a.rating);
-        if (pickerSearch) { const q = pickerSearch.toLowerCase(); pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q)); }
+        return pool;
+    })();
+    $: pickerEraOptions = ERA_OPTIONS.filter(e => pickerBase.some(c => getEra(c.year) === e.value));
+    $: pickerPool = (() => {
+        let pool = pickerBase;
+        if (pickerSearch) { const q = pickerSearch.toLowerCase(); pool = pool.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q) || String(c.year || '').includes(q)); }
+        if (pickerEra !== 'ALL') pool = pool.filter(c => getEra(c.year) === pickerEra);
         return pool;
     })();
 
     function openPicker(role) {
         if (locked) { showToast('Academy is training — collect the run first to change the roster.', 'error'); return; }
-        pickerRole = role; pickerSearch = ''; pickerOpen = true;
+        pickerRole = role; pickerSearch = ''; pickerEra = 'ALL'; pickerOpen = true;
     }
     function closePicker() { pickerOpen = false; pickerRole = null; }
     function assignCard(card) { academy.update(a => ({ ...a, [pickerRole]: card })); closePicker(); saveGame(); }
@@ -156,7 +174,14 @@
     <div class="pk-panel">
         <div class="pk-head">
             <div class="pk-left"><img src={roleIcons[pickerRole]} alt="" style="width:18px;height:18px;opacity:.6"><span class="pk-title">{pickerRole}</span><span class="pk-ct">{pickerPool.length}</span></div>
-            <div class="pk-right"><input type="text" bind:value={pickerSearch} placeholder="Search..." class="input" style="width:150px;padding:6px 10px;font-size:11px;"><button class="pk-x" on:click={closePicker}>✕</button></div>
+            <div class="pk-right">
+                <input type="text" bind:value={pickerSearch} placeholder="Search name, team or year..." class="input pk-search">
+                <select bind:value={pickerEra} class="input pk-era">
+                    <option value="ALL">All Eras</option>
+                    {#each pickerEraOptions as e}<option value={e.value}>{e.label}</option>{/each}
+                </select>
+                <button class="pk-x" on:click={closePicker}>✕</button>
+            </div>
         </div>
         <div class="pk-body">
             {#if pickerPool.length === 0}<div class="pk-empty">No eligible cards. Academy players can't already be in your main squad.</div>
@@ -255,6 +280,8 @@
     .pk-right { display: flex; align-items: center; gap: 10px; }
     .pk-title { font-size: 16px; font-weight: 900; color: #5eead4; letter-spacing: 1px; }
     .pk-ct { font-size: 11px; color: #475569; font-weight: 700; }
+    .pk-search { width: 170px; padding: 6px 10px; font-size: 11px; }
+    .pk-era { padding: 6px 10px; font-size: 11px; font-weight: 700; }
     .pk-x { width: 32px; height: 32px; border-radius: 10px; background: rgba(51,65,85,.3); border: 1px solid rgba(71,85,105,.2); color: #64748b; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }
     .pk-x:hover { background: rgba(239,68,68,.15); color: #f87171; }
     .pk-body { flex: 1; overflow-y: auto; padding: 20px 24px; }

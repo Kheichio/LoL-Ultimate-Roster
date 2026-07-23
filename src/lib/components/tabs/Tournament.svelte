@@ -3,7 +3,7 @@
     import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, pendingChallenge } from '../../stores/ui.js';
-    import { getDB, makeUniqueId, LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
+    import { getDB, makeUniqueId, LEGACY_TIERS, AWARD_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
@@ -22,17 +22,52 @@
     let currentEnemy = null;
     let matchLog = [];
 
+    // Tiers a CPU opponent may never be built from: award cards are reserved for the top pools and
+    // mythic (Hall of Legends) cards are perfect-100s that would be unbeatable in anyone's hands.
+    const CPU_EXCLUDED_TIERS = [...AWARD_TIERS, ...MYTHIC_TIERS];
+
     // Salary Cap Mode state
-    const SALARY_BUDGET = 50000;
+    // Balance target: 85,000 CAP buys ~4 strong natural picks (91-94) plus a cheap fifth, or
+    // 3 superstars (95+) plus two budget fillers. Five 95+ naturals costs 120,000 — and 90,000
+    // even with every pick flexed — so an all-superstar squad stays impossible while flex is a
+    // strategic option rather than a requirement. No coach on either side in this mode.
+    const SALARY_BASE_BUDGET = 85000;
+    let salaryBudget = SALARY_BASE_BUDGET;   // lifted per-run only if the club is too elite to fit
     const FLEX_DISCOUNT = 0.75;   // flex picks cost 25% less salary
     const FLEX_STAT_PCT = 0.10;   // flex picks get -10% to all stats in match
+    // Rating bands priced in 4,000 steps so the base price AND its 25% flex discount both land on
+    // a round 1,000 (20,000 -> 15,000) — a squad's cost can be added up in your head.
+    const SALARY_BANDS = [
+        { min: 99, cost: 32000 },
+        { min: 97, cost: 28000 },
+        { min: 95, cost: 24000 },
+        { min: 93, cost: 20000 },
+        { min: 91, cost: 16000 },
+        { min: 88, cost: 12000 },
+        { min: 85, cost: 8000 },
+        { min: 0,  cost: 4000 },
+    ];
+    const SALARY_MIN_COST = 4000;   // cheapest band — every slot costs at least this much
+    const ERA_OPTIONS = [
+        { value: 'all', label: 'All Eras' },
+        { value: 1, label: 'Era 1 (≤2013)' },
+        { value: 2, label: 'Era 2 (2014-2016)' },
+        { value: 3, label: 'Era 3 (2017-2019)' },
+        { value: 4, label: 'Era 4 (2020-2022)' },
+        { value: 5, label: 'Era 5 (2023-2025)' },
+        { value: 6, label: 'Era 6 (2026+)' },
+    ];
     let salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
     let salaryPool = [];
     let salaryPickingRole = null;
     let salarySearch = '';
+    let salaryEra = 'all';
     let _originalSquad = null;
 
-    function salaryValue(rating) { return Math.max(0, (rating - 60) * 500); }
+    function salaryValue(rating) {
+        const band = SALARY_BANDS.find(b => rating >= b.min);
+        return band ? band.cost : SALARY_MIN_COST;
+    }
     function flexSalaryValue(card, slotRole) {
         const base = salaryValue(card.rating);
         return card.role !== slotRole ? Math.round(base * FLEX_DISCOUNT) : base;
@@ -42,12 +77,18 @@
         const c = salarySquad[role];
         return c ? s + flexSalaryValue(c, role) : s;
     }, 0);
-    $: salaryRemaining = SALARY_BUDGET - salaryUsed;
+    $: salaryRemaining = salaryBudget - salaryUsed;
     $: salaryComplete = ['TOP','JNG','MID','ADC','SUP'].every(r => salarySquad[r]);
     $: salaryCardPool = (() => {
-        const q = salarySearch.toLowerCase();
+        const q = salarySearch.trim().toLowerCase();
         const roleOrder = ['TOP','JNG','MID','ADC','SUP'];
-        let cards = salaryPool.filter(c => !q || c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
+        // Text search also matches the year, so typing "2019" surfaces that year's cards.
+        // Era dropdown and text search combine with AND.
+        let cards = salaryPool.filter(c => {
+            const hitText = !q || c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q) || String(c.year || '').includes(q);
+            const hitEra = salaryEra === 'all' || getEra(c.year) === salaryEra;
+            return hitText && hitEra;
+        });
         if (salaryPickingRole) {
             // same-role cards first, then flex options — no longer filtered out
             return cards.sort((a, b) => {
@@ -60,13 +101,44 @@
         return cards.sort((a,b) => { const ri = roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role); return ri !== 0 ? ri : b.rating - a.rating; });
     })();
 
+    // Cheapest legal five in a pool: the five cheapest cards with every pick flexed. A role
+    // derangement always exists unless all five play the same role, in which case one of them
+    // has to sit natural at full price.
+    function cheapestSquadCost(pool) {
+        const five = [...pool].sort((a, b) => salaryValue(a.rating) - salaryValue(b.rating)).slice(0, 5);
+        if (five.length < 5) return Infinity;
+        let cost = five.reduce((s, c) => s + Math.round(salaryValue(c.rating) * FLEX_DISCOUNT), 0);
+        if (new Set(five.map(c => c.role)).size === 1) {
+            const base = salaryValue(five[0].rating);
+            cost += base - Math.round(base * FLEX_DISCOUNT);
+        }
+        return cost;
+    }
+
     function startSalaryCap() {
         salarySquad = { TOP: null, JNG: null, MID: null, ADC: null, SUP: null };
         salaryPickingRole = null;
         salarySearch = '';
+        salaryEra = 'all';
         const nonCoach = get(club).filter(c => c.role !== 'COACH');
         const shuffled = [...nonCoach].sort(() => Math.random() - 0.5);
-        salaryPool = shuffled.slice(0, 15);
+        const pool = shuffled.slice(0, 15);
+        // A random draw from an elite club can hold no affordable five, and there is no reroll —
+        // that would dead-end the mode. Swap the priciest draws for the club's cheapest cards until
+        // a legal squad exists; only if the club itself has nothing cheaper is the cap lifted.
+        const byCost = [...nonCoach].sort((a, b) => salaryValue(a.rating) - salaryValue(b.rating));
+        for (const cheap of byCost) {
+            if (cheapestSquadCost(pool) <= SALARY_BASE_BUDGET) break;
+            if (pool.some(p => p.uniqueId === cheap.uniqueId)) continue;
+            let priciest = 0;
+            pool.forEach((c, i) => { if (salaryValue(c.rating) > salaryValue(pool[priciest].rating)) priciest = i; });
+            pool[priciest] = cheap;
+        }
+        const floorCost = cheapestSquadCost(pool);
+        salaryBudget = Number.isFinite(floorCost)
+            ? Math.max(SALARY_BASE_BUDGET, Math.ceil(floorCost / 5000) * 5000)
+            : SALARY_BASE_BUDGET;
+        salaryPool = pool;
         phase = 'salary_lobby';
     }
 
@@ -93,8 +165,11 @@
                 break;
             }
         }
-        if (salaryUsed - currentInRoleVal - freedFromCurrentSlot + val > SALARY_BUDGET) {
-            showToast('Over budget! Try a flex pick (off-role) for a 25% discount.', 'error');
+        if (salaryUsed - currentInRoleVal - freedFromCurrentSlot + val > salaryBudget) {
+            // Already flexed? The discount hint is useless — tell them to free up salary instead.
+            showToast(card.role !== role
+                ? 'Over budget! Drop a pricier pick to free up salary.'
+                : 'Over budget! Try a flex pick (off-role) for a 25% discount.', 'error');
             return;
         }
         const newSquad = { ...salarySquad };
@@ -106,37 +181,48 @@
         salaryPickingRole = null;
     }
 
-    function generateSalaryCpuTeam() {
+    function generateSalaryCpuTeam(roundIdx = 0) {
         const db = getDB();
         if (!db) return generateCpuTeam('worlds', 2);
         const roles = ['TOP','JNG','MID','ADC','SUP'];
-        let remaining = SALARY_BUDGET;
+        // Fill the slots in random order and jitter how much each one may spend, so the CPU
+        // sometimes splurges on a star and pads with budget cards instead of always buying five
+        // identical mid-tier players. It can never overspend: every unfilled slot keeps one
+        // cheapest-band card in reserve. No coach — the player cannot draft one either.
+        const order = [...roles].sort(() => Math.random() - 0.5);
+        let remaining = salaryBudget;
         const team = {};
-        roles.forEach((role, i) => {
-            const slotsLeft = roles.length - i;
-            const maxForSlot = Math.floor(remaining / slotsLeft);
-            const pool = db.filter(p => p.role === role && p.rating >= 65 && salaryValue(p.rating) <= maxForSlot)
+        const used = new Set();
+        order.forEach((role, i) => {
+            const reserve = (order.length - i - 1) * SALARY_MIN_COST;
+            const evenShare = remaining / (order.length - i);
+            const maxForSlot = Math.min(remaining - reserve, Math.max(SALARY_MIN_COST, Math.round(evenShare * (0.75 + Math.random() * 0.9))));
+            const pool = db.filter(p => p.role === role && !used.has(p.id) && p.rating >= 80
+                    && !CPU_EXCLUDED_TIERS.includes(p.quality) && salaryValue(p.rating) <= maxForSlot)
                 .sort((a, b) => b.rating - a.rating);
-            if (pool.length > 0) {
-                const pick = pool[Math.floor(Math.random() * Math.min(6, pool.length))];
-                team[role] = pick;
-                remaining -= salaryValue(pick.rating);
-            } else {
-                const fallback = db.filter(p => p.role === role && salaryValue(p.rating) <= remaining)
+            let pick = pool.length > 0 ? pool[Math.floor(Math.random() * Math.min(6, pool.length))] : null;
+            if (!pick) {
+                pick = db.filter(p => p.role === role && !used.has(p.id)
+                        && !CPU_EXCLUDED_TIERS.includes(p.quality) && salaryValue(p.rating) <= remaining - reserve)
                     .sort((a, b) => b.rating - a.rating)[0];
-                if (fallback) { team[role] = fallback; remaining -= salaryValue(fallback.rating); }
             }
+            if (pick) { team[role] = pick; used.add(pick.id); remaining -= salaryValue(pick.rating); }
         });
         const cards = Object.values(team).filter(Boolean);
-        const rawAvg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : 75;
-        return { name: 'Cap Challenger', cards: team, avgRating: rawAvg };
+        const rawAvg = cards.length > 0 ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : 85;
+        // Same round-by-round escalation the other modes get, so the 5-round run still ramps up.
+        const m = MODES.salarycap;
+        const roundBonus = Math.round((m.cpuBonus || 0) * (roundIdx / Math.max(1, m.rounds - 1)));
+        return { name: 'Cap Challenger', cards: team, avgRating: rawAvg + roundBonus };
     }
 
     function startSalaryTournament() {
         if (!salaryComplete) { showToast('Fill all 5 positions first.', 'error'); return; }
         _originalSquad = get(squad);
+        // Salary Cap never lets you draft a coach, so the main squad's coach must NOT come along
+        // for the ride — both sides run coach-less. calcCoachBonus(null) is 0.
+        const builtSquad = { COACH: null };
         // Apply flex stat debuff (-10% all stats) for cards playing out of position
-        const builtSquad = { COACH: _originalSquad.COACH };
         for (const role of ['TOP','JNG','MID','ADC','SUP']) {
             const card = salarySquad[role];
             if (!card) continue;
@@ -153,7 +239,7 @@
         squad.set(builtSquad);
         activeMode = 'salarycap';
         enemies = [];
-        for (let i = 0; i < 5; i++) enemies.push(generateSalaryCpuTeam());
+        for (let i = 0; i < MODES.salarycap.rounds; i++) enemies.push(generateSalaryCpuTeam(i));
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
         phase = 'bracket';
     }
@@ -241,7 +327,13 @@
         }
     }
     initGRCooldown();
-    onDestroy(() => { if (grTimer) clearInterval(grTimer); });
+    // Leaving the tab mid-run must give the real squad (and its coach) back, or Salary Cap's
+    // coach-less five would stick around as the player's actual squad.
+    onDestroy(() => {
+        if (grTimer) clearInterval(grTimer);
+        // Save too: the 10-minute autosave may already have written the temporary squad to disk.
+        if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; saveGame(); }
+    });
 
     $: grOnCooldown = grCooldownLeft > 0;
     $: grCooldownDisplay = (() => {
@@ -302,7 +394,7 @@
         firststand: { name: 'First Stand', icon: '🟠', rounds: 5, minRating: 85, maxRating: 98, pool: 'elite', cpuBonus: 10, reward: 3000, second: 1000, color: '#f97316', statKey: 'firstStandWon' },
         msi: { name: 'MSI', icon: '🌊', rounds: 7, minRating: 90, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 5000, second: 2000, color: '#06b6d4', statKey: 'msiWon' },
         worlds: { name: 'World Championship', icon: '🏆', rounds: 7, minRating: 93, maxRating: 99, pool: 'elite', cpuBonus: 20, reward: 10000, second: 4000, color: '#f59e0b', statKey: 'worldsWon' },
-        salarycap: { name: 'Salary Cap', icon: '💰', rounds: 5, minRating: 85, maxRating: 99, pool: 'elite', cpuBonus: 18, reward: 8000, second: 3000, color: '#34d399' },
+        salarycap: { name: 'Salary Cap', icon: '💰', rounds: 5, minRating: 85, maxRating: 99, pool: 'elite', cpuBonus: 12, reward: 8000, second: 3000, color: '#34d399' },
         rival: { name: 'Rival Challenge', icon: '⚔️', rounds: 5, minRating: 88, maxRating: 99, pool: 'elite', cpuBonus: 15, reward: 3000, second: 1000, color: '#f59e0b' },
     };
 
@@ -323,8 +415,8 @@
         const ratingCap = m.maxRating;
         let pool;
         if (m.pool === 'regular') pool = db.filter(p => p.role !== 'COACH' && ['Bronze','Silver','Gold'].includes(p.quality));
-        else if (m.pool === 'elite') pool = db.filter(p => p.role !== 'COACH');
-        else pool = db.filter(p => p.role !== 'COACH' && !['POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
+        else if (m.pool === 'elite') pool = db.filter(p => p.role !== 'COACH' && !MYTHIC_TIERS.includes(p.quality));
+        else pool = db.filter(p => p.role !== 'COACH' && !CPU_EXCLUDED_TIERS.includes(p.quality));
         pool = pool.filter(p => p.rating <= ratingCap + 3);
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const team = {};
@@ -508,7 +600,7 @@
     }
 
     function backToLobby() {
-        if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; }
+        if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; saveGame(); }
         phase = 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
     }
 
@@ -650,7 +742,7 @@
                 <span class="mode-icon">💰</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: #34d399;">Salary Cap Mode</h3>
-                    <p class="mode-sub">Build a squad within a 50,000 CAP budget. Higher-rated cards cost more. 5 rounds, elite opponents.</p>
+                    <p class="mode-sub">Build a squad within an 85,000 CAP budget. Prices are banded by rating (4,000 – 32,000). No coach. 5 rounds, elite opponents.</p>
                     <div class="mode-prizes"><span class="mp-w">Win: 8,000 BE</span><span class="mp-l">2nd: 3,000 BE</span></div>
                 </div>
                 {#if $club.filter(c => c.role !== 'COACH').length >= 5}
@@ -675,18 +767,18 @@
     {:else if phase === 'salary_lobby'}
         <div class="trn-head">
             <h2 class="trn-title" style="color:#34d399;">💰 Salary Cap Mode</h2>
-            <p class="trn-desc">Click a role slot, then pick a card. Budget: 50,000 CAP · Cost = (Rating − 60) × 500. <span style="color:#38bdf8;">Flex picks (wrong role) cost 25% less but get −10% stats in match.</span></p>
+            <p class="trn-desc">Click a role slot, then pick a card. Budget: {salaryBudget.toLocaleString()} CAP · Cost is banded by rating, 4,000 → 32,000. No coach in this mode. <span style="color:#38bdf8;">Flex picks (wrong role) cost 25% less but get −10% stats in match.</span></p>
         </div>
         <div class="salary-header">
             <div class="salary-budget-bar">
                 <div class="sb-label">Budget</div>
                 <div class="sb-bar-track">
-                    <div class="sb-bar-fill" style="width:{Math.min(100,(salaryUsed/SALARY_BUDGET)*100)}%; background:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};"></div>
+                    <div class="sb-bar-fill" style="width:{Math.min(100,(salaryUsed/salaryBudget)*100)}%; background:{salaryUsed > salaryBudget ? '#ef4444' : '#34d399'};"></div>
                 </div>
                 <div class="sb-numbers">
-                    <span style="color:{salaryUsed > SALARY_BUDGET ? '#ef4444' : '#34d399'};">{salaryUsed.toLocaleString()} used</span>
+                    <span style="color:{salaryUsed > salaryBudget ? '#ef4444' : '#34d399'};">{salaryUsed.toLocaleString()} used</span>
                     <span style="color:#64748b;"> / </span>
-                    <span>{SALARY_BUDGET.toLocaleString()} CAP</span>
+                    <span>{salaryBudget.toLocaleString()} CAP</span>
                     <span style="color:{salaryRemaining < 0 ? '#ef4444' : '#94a3b8'}; margin-left:8px;">({salaryRemaining >= 0 ? '+' : ''}{salaryRemaining.toLocaleString()} left)</span>
                 </div>
             </div>
@@ -737,7 +829,12 @@
                     {:else}
                         <span class="spool-title">All {salaryPool.length} cards · Click a slot first</span>
                     {/if}
-                    <input class="spool-search" type="text" placeholder="Search..." bind:value={salarySearch} />
+                    <div class="spool-filters">
+                        <select class="spool-search spool-era" bind:value={salaryEra}>
+                            {#each ERA_OPTIONS as opt}<option value={opt.value}>{opt.label}</option>{/each}
+                        </select>
+                        <input class="spool-search" type="text" placeholder="Name, team or year..." bind:value={salarySearch} />
+                    </div>
                 </div>
                 <div class="salary-pool-grid">
                     {#each salaryCardPool as card}
@@ -762,7 +859,7 @@
                         </div>
                     {/each}
                     {#if salaryCardPool.length === 0}
-                        <p style="color:#475569; font-size:12px; padding:12px;">No cards match your search.</p>
+                        <p style="color:#475569; font-size:12px; padding:12px;">No cards match your filters.</p>
                     {/if}
                 </div>
             </div>
@@ -1133,6 +1230,8 @@
     .spool-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
     .spool-title { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; white-space: nowrap; }
     .spool-search { padding: 7px 12px; border-radius: 8px; background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.3); color: #e2e8f0; font-size: 12px; width: 160px; }
+    .spool-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .spool-era { width: auto; font-family: inherit; font-weight: 700; cursor: pointer; }
     .salary-pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(184px, 1fr)); gap: 10px; }
     .pool-card-wrap { position: relative; border-radius: 14px; overflow: hidden; border: 2px solid transparent; cursor: pointer; transition: all 0.15s; background: rgba(15,23,42,0.3); }
     .pool-card-wrap:hover:not(.pool-assigned):not(.pool-over) { border-color: rgba(52,211,153,0.4); box-shadow: 0 0 10px rgba(52,211,153,0.2); }

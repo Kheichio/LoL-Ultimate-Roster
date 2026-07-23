@@ -71,6 +71,11 @@
           perLevel: '+10% bonus BE from all rewards per level',
           textColor: 'text-sky-400', barFill: 'bg-sky-500',
           btnActive: 'bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border-sky-500/40' },
+        { id: 'bulk', name: 'Bulk Opening', icon: '📦', maxLevel: 4,
+          desc: 'Open several packs of the same type in a single click from the Store.',
+          perLevel: '+1 pack per bulk open (1 → 5 at max)',
+          textColor: 'text-indigo-400', barFill: 'bg-indigo-500',
+          btnActive: 'bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border-indigo-500/40' },
         { id: 'clubhouse', name: 'Club Capacity', icon: '🏟️', maxLevel: 20,
           desc: 'Increases maximum cards in your club.',
           perLevel: '+50 card capacity per level',
@@ -106,9 +111,11 @@
         'text-blue-400': '#60a5fa', 'text-purple-400': '#a855f7', 'text-orange-400': '#fb923c',
         'text-emerald-400': '#34d399', 'text-amber-400': '#fbbf24', 'text-cyan-400': '#22d3ee',
         'text-rose-400': '#fb7185', 'text-yellow-400': '#facc15', 'text-teal-400': '#2dd4bf', 'text-sky-400': '#38bdf8',
+        'text-indigo-400': '#818cf8',
         'bg-blue-500': '#3b82f6', 'bg-purple-500': '#a855f7', 'bg-orange-500': '#f97316',
         'bg-emerald-500': '#10b981', 'bg-amber-500': '#f59e0b', 'bg-cyan-500': '#06b6d4',
-        'bg-rose-500': '#f43f5e', 'bg-yellow-500': '#eab308', 'bg-teal-500': '#14b8a6', 'bg-sky-500': '#0ea5e9'
+        'bg-rose-500': '#f43f5e', 'bg-yellow-500': '#eab308', 'bg-teal-500': '#14b8a6', 'bg-sky-500': '#0ea5e9',
+        'bg-indigo-500': '#6366f1'
     };
 
     const btnColorMap = {
@@ -121,7 +128,8 @@
         'text-rose-400': { bg: 'rgba(244,63,94,0.2)', bgHover: 'rgba(244,63,94,0.4)', text: '#fda4af', border: 'rgba(244,63,94,0.4)' },
         'text-yellow-400': { bg: 'rgba(234,179,8,0.2)', bgHover: 'rgba(234,179,8,0.4)', text: '#fde047', border: 'rgba(234,179,8,0.4)' },
         'text-teal-400': { bg: 'rgba(20,184,166,0.2)', bgHover: 'rgba(20,184,166,0.4)', text: '#5eead4', border: 'rgba(20,184,166,0.4)' },
-        'text-sky-400': { bg: 'rgba(14,165,233,0.2)', bgHover: 'rgba(14,165,233,0.4)', text: '#7dd3fc', border: 'rgba(14,165,233,0.4)' }
+        'text-sky-400': { bg: 'rgba(14,165,233,0.2)', bgHover: 'rgba(14,165,233,0.4)', text: '#7dd3fc', border: 'rgba(14,165,233,0.4)' },
+        'text-indigo-400': { bg: 'rgba(79,70,229,0.2)', bgHover: 'rgba(79,70,229,0.4)', text: '#a5b4fc', border: 'rgba(99,102,241,0.4)' }
     };
 </script>
 

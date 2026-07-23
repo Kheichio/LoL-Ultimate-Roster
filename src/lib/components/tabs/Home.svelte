@@ -4,7 +4,7 @@
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
-    import { TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, getEffectiveRating } from '../../utils/cards.js';
+    import { TIER_ORDER, ALL_SPECIAL, getEffectiveRating } from '../../utils/cards.js';
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
@@ -62,7 +62,7 @@
     }
     $: teamRgb = hexToRgb($teamIdentity.color || '#3b82f6');
 
-    const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)', Champion:'linear-gradient(90deg, #d97706, #f59e0b)', MVP:'linear-gradient(90deg, #ec4899, #f43f5e)', Finalist:'linear-gradient(90deg, #94a3b8, #cbd5e1)', MSI:'linear-gradient(90deg, #14b8a6, #2dd4bf)', FirstStand:'linear-gradient(90deg, #f97316, #fb923c)', POTY:'linear-gradient(90deg, #e94560, #f87171)', ROTY:'linear-gradient(90deg, #06b6d4, #22d3ee)', TOTY:'linear-gradient(90deg, #f59e0b, #fbbf24)', GPOTY:'linear-gradient(90deg, #a855f7, #d8b4fe)', X:'linear-gradient(90deg, #f43f5e, #fb7185)' };
+    const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)', Champion:'linear-gradient(90deg, #d97706, #f59e0b)', MVP:'linear-gradient(90deg, #ec4899, #f43f5e)', Finalist:'linear-gradient(90deg, #94a3b8, #cbd5e1)', MSI:'linear-gradient(90deg, #14b8a6, #2dd4bf)', FirstStand:'linear-gradient(90deg, #f97316, #fb923c)', POTY:'linear-gradient(90deg, #e94560, #f87171)', ROTY:'linear-gradient(90deg, #06b6d4, #22d3ee)', TOTY:'linear-gradient(90deg, #f59e0b, #fbbf24)', GPOTY:'linear-gradient(90deg, #a855f7, #d8b4fe)', X:'linear-gradient(90deg, #f43f5e, #fb7185)', 'Hall of Legends':'linear-gradient(90deg, #0a0a0a, #ff0033 55%, #fbbf24)' };
     const DEFAULT_ICONS = ['🛡️','⚔️','💎','🏆'];
     const DEFAULT_COLORS = ['#3b82f6','#f59e0b','#10b981','#64748b'];
 
@@ -129,11 +129,12 @@
         return [...incomplete.slice(0, 4), ...complete.slice(-1)].slice(0, 5);
     })();
 
-    $: legacyCount = $club.filter(c => [...LEGACY_TIERS, ...AWARD_TIERS].includes(c.quality)).length;
+    // ALL_SPECIAL covers legacy + award + mythic, so Hall of Legends shows up here too
+    $: legacyCount = $club.filter(c => ALL_SPECIAL.includes(c.quality)).length;
     $: legacyBreakdown = (() => {
         const counts = {};
-        $club.forEach(c => { if ([...LEGACY_TIERS, ...AWARD_TIERS].includes(c.quality)) counts[c.quality] = (counts[c.quality] || 0) + 1; });
-        return [...LEGACY_TIERS, ...AWARD_TIERS].map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0);
+        $club.forEach(c => { if (ALL_SPECIAL.includes(c.quality)) counts[c.quality] = (counts[c.quality] || 0) + 1; });
+        return ALL_SPECIAL.map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0);
     })();
 
     const updates = [

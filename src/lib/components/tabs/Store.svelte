@@ -1,9 +1,9 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, isClubFull, freePacks } from '../../stores/game.js';
+    import { blueEssence, club, hasBoughtStarter, collectionRegistry, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, isClubFull, clubCapacity, bulkOpenMax, freePacks } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard } from '../../stores/ui.js';
-    import { getDB, rollPackTier, makeUniqueId, getSellValue } from '../../utils/cards.js';
+    import { getDB, rollPackTier, makeUniqueId, getSellValue, AWARD_TIERS, MYTHIC_TIERS, TIER_COLORS } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { get } from 'svelte/store';
 
@@ -92,10 +92,32 @@
           drops: [{ tier: 'MVP', pct: 0.5 }, { tier: 'Challenger', pct: 1 }, { tier: 'Grandmaster', pct: 2 }, { tier: 'Master', pct: 5 }, { tier: 'Diamond', pct: 15 }, { tier: 'Platinum', pct: 76.5 }] },
         { id: 'awards', name: 'Awards Vault', sub: 'Limited Pack', cost: 12000, count: 5, special: true,
           color: '#fbbf24', borderColor: 'rgba(251,191,36,0.3)', bg: 'linear-gradient(170deg, #1c1500 0%, #1a1200 60%, #231800 100%)',
-          drops: [{ tier: 'POTY', pct: 0.1 }, { tier: 'TOTY', pct: 0.9 }, { tier: 'ROTY', pct: 2 }, { tier: 'Challenger', pct: 2 }, { tier: 'Grandmaster', pct: 5 }, { tier: 'Master', pct: 8 }, { tier: 'Diamond', pct: 20 }, { tier: 'Platinum', pct: 62 }] },
+          drops: [{ tier: 'Hall of Legends', pct: 0.001 }, { tier: 'POTY', pct: 0.1 }, { tier: 'TOTY', pct: 0.9 }, { tier: 'ROTY', pct: 2 }, { tier: 'Challenger', pct: 2 }, { tier: 'Grandmaster', pct: 5 }, { tier: 'Master', pct: 8 }, { tier: 'Diamond', pct: 20 }, { tier: 'Platinum', pct: 61.999 }] },
     ];
 
-    const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','EWC','POTY','ROTY','TOTY','GPOTY','X']);
+    const SPECIAL_QUALS = new Set(['Champion','MVP','Finalist','MSI','FirstStand','EWC','POTY','ROTY','TOTY','GPOTY','X','Hall of Legends']);
+
+    // Award & mythic cards are drop-table exclusive — they must never fall out of a generic tier pool.
+    const POOL_EXCLUDED = [...AWARD_TIERS, ...MYTHIC_TIERS];
+
+    // Per-pack bulk quantity (pack id -> 1..$bulkOpenMax). Absent means 1.
+    let packQty = {};
+
+    function qtyOf(packId, max) {
+        return Math.max(1, Math.min(max, packQty[packId] || 1));
+    }
+
+    function setQty(packId, n) {
+        packQty = { ...packQty, [packId]: Math.max(1, Math.min(get(bulkOpenMax), n)) };
+    }
+
+    // Hall of Legends sits at 0.001% — a raw width would be an invisible sliver.
+    function dropBarWidth(pct) {
+        return Math.max(pct, 0.7);
+    }
+
+    // The preview modal buys whatever quantity is selected on that pack's card.
+    $: previewQty = previewPack ? Math.max(1, Math.min($bulkOpenMax, packQty[previewPack.id] || 1)) : 1;
 
     // Free packs earned from Roster Building Challenges, resolved to their Store pack.
     $: freePackList = Object.entries($freePacks)
@@ -142,14 +164,27 @@
         return pack.cost;
     }
 
-    function buyPack(pack, free = false) {
+    function buyPack(pack, free = false, qty = 1) {
         if (get(isClubFull)) { showToast('Club is full! Sell cards or upgrade Clubhouse in Skills to make room.', 'error'); return; }
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
+
+        // Free packs always open exactly one — bulk applies to purchases only.
+        let packs = free ? 1 : qtyOf(pack.id, get(bulkOpenMax));
+
+        // Clamp the batch to what the club can hold. A single pack is allowed to spill over the
+        // cap by up to count-1 cards, so a bulk open gets the same tolerance and no more.
+        const room = get(clubCapacity) - get(club).length;
+        const roomPacks = Math.max(1, Math.ceil(room / pack.count));
+        if (packs > roomPacks) {
+            packs = roomPacks;
+            showToast(`Not enough club space — opening ${packs} pack${packs > 1 ? 's' : ''}.`, 'info');
+        }
+
         if (free) {
             if ((get(freePacks)[pack.id] || 0) <= 0) { showToast('No free packs of that type.', 'error'); return; }
         } else {
-            const cost = getPackCost(pack);
+            const cost = getPackCost(pack) * packs;
             if (get(blueEssence) < cost) { showToast('Not enough BE.', 'error'); return; }
             blueEssence.update(v => v - cost);
         }
@@ -159,31 +194,35 @@
         const ev = free ? null : (EVENTS[pack.id] && Date.now() < EVENTS[pack.id].end ? EVENTS[pack.id] : null);
         const drops = ev ? ev.drops() : pack.drops;
         let pity = ev ? parseInt(localStorage.getItem(ev.pityKey) || '0') : 0;
-        let gotGuaranteed = false;
 
-        for (let i = 0; i < pack.count; i++) {
-            let tier;
-            if (ev && !gotGuaranteed && pity >= ev.pity - 1) {
-                tier = ev.tier;
-                gotGuaranteed = true;
-            } else {
-                tier = rollFromDrops(drops);
+        for (let p = 0; p < packs; p++) {
+            // Reset per pack so the event guarantee fires once per pack, exactly as if the
+            // player had clicked buy `packs` times in a row.
+            let gotGuaranteed = false;
+            for (let i = 0; i < pack.count; i++) {
+                let tier;
+                if (ev && !gotGuaranteed && pity >= ev.pity - 1) {
+                    tier = ev.tier;
+                    gotGuaranteed = true;
+                } else {
+                    tier = rollFromDrops(drops);
+                }
+                if (ev) {
+                    if (tier === ev.tier) { pity = 0; gotGuaranteed = true; } else { pity++; }
+                }
+                let pool;
+                if (SPECIAL_QUALS.has(tier)) {
+                    pool = db.filter(p2 => p2.quality === tier);
+                } else {
+                    pool = db.filter(p2 => p2.quality === tier && !POOL_EXCLUDED.includes(p2.quality));
+                }
+                if (pool.length === 0) pool = db.filter(p2 => p2.quality === 'Bronze' || p2.quality === 'Silver');
+                const pick = pool[Math.floor(Math.random() * pool.length)];
+                const inst = { ...pick, uniqueId: makeUniqueId('pack_') };
+                if (Math.random() < sigChance) { inst.signature = true; inst.locked = true; }
+                if (Math.random() < holoChance) { inst.holographic = true; inst.locked = true; }
+                pulled.push(inst);
             }
-            if (ev) {
-                if (tier === ev.tier) { pity = 0; gotGuaranteed = true; } else { pity++; }
-            }
-            let pool;
-            if (SPECIAL_QUALS.has(tier)) {
-                pool = db.filter(p => p.quality === tier);
-            } else {
-                pool = db.filter(p => p.quality === tier && !['POTY','ROTY','TOTY','GPOTY','X'].includes(p.quality));
-            }
-            if (pool.length === 0) pool = db.filter(p => p.quality === 'Bronze' || p.quality === 'Silver');
-            const pick = pool[Math.floor(Math.random() * pool.length)];
-            const inst = { ...pick, uniqueId: makeUniqueId('pack_') };
-            if (Math.random() < sigChance) { inst.signature = true; inst.locked = true; }
-            if (Math.random() < holoChance) { inst.holographic = true; inst.locked = true; }
-            pulled.push(inst);
         }
         if (ev) {
             localStorage.setItem(ev.pityKey, String(pity));
@@ -217,15 +256,20 @@
                 signaturesPulled: (s.signaturesPulled || 0) + sigsPulled,
             }));
         }
-        trackStats.update(s => ({ ...s, packs: (s.packs || 0) + 1 }));
-        grantXP(50);
-        grantBPXP(30);
+        trackStats.update(s => ({ ...s, packs: (s.packs || 0) + packs }));
+        grantXP(50 * packs);
+        grantBPXP(30 * packs);
         playSound(sigsPulled > 0 ? 'rare' : holosPulled > 0 ? 'rare' : 'pack');
         pulledCards = pulled;
-        pullTitle = free ? `Free ${pack.name} Pack Opened!` : `${pack.name} Pack Opened!`;
+        pullTitle = free ? `Free ${pack.name} Pack Opened!`
+            : packs > 1 ? `${packs}x ${pack.name} Packs Opened!`
+            : `${pack.name} Pack Opened!`;
         showPulls = true;
         revealedCount = 0;
-        pulled.forEach((_, i) => { setTimeout(() => { revealedCount = i + 1; }, 400 + i * 450); });
+        // Shrink the per-card delay as the batch grows so a 25-card open still finishes in
+        // about the same ~2.2s a single pack takes today, one card at a time.
+        const step = Math.min(450, Math.round(1800 / Math.max(1, pulled.length - 1)));
+        pulled.forEach((_, i) => { setTimeout(() => { revealedCount = i + 1; }, 400 + i * step); });
     }
 
     function buyStarterPack() {
@@ -386,21 +430,31 @@
         {#each allPacks as pack}
             {@const effectiveCost = getPackCost(pack)}
             {@const isDiscounted = effectiveCost < pack.cost}
+            {@const qty = Math.max(1, Math.min($bulkOpenMax, packQty[pack.id] || 1))}
+            {@const best = pack.drops[0]}
+            {@const bestMythic = MYTHIC_TIERS.includes(best.tier)}
             <div class="pack" style="background: {pack.bg}; border-color: {pack.borderColor};">
                 <div class="pack-foil"></div>
                 <div class="pack-content">
-                    <div class="pack-badge" style="color: {pack.color}; border-color: {pack.borderColor};">{pack.count} CARDS</div>
+                    <div class="pack-badge" style="color: {pack.color}; border-color: {pack.borderColor};">{pack.count * qty} CARDS</div>
                     <div class="pack-title">{pack.name}</div>
                     <div class="pack-sub">{pack.sub}</div>
-                    <div class="pack-best" style="color: {pack.color};">Best: {pack.drops[0].tier} ({pack.drops[0].pct}%)</div>
+                    <div class="pack-best" class:pack-best-mythic={bestMythic} style="color: {bestMythic ? TIER_COLORS[best.tier] : pack.color}; --tier: {TIER_COLORS[best.tier]};">Best: {best.tier} ({best.pct}%)</div>
                 </div>
+                {#if $bulkOpenMax > 1}
+                    <div class="pack-qty">
+                        <button class="pq-step" on:click={() => setQty(pack.id, qty - 1)} disabled={qty <= 1} aria-label="Fewer packs">−</button>
+                        <span class="pq-val" style="color: {pack.color};">{qty}× pack</span>
+                        <button class="pq-step" on:click={() => setQty(pack.id, qty + 1)} disabled={qty >= $bulkOpenMax} aria-label="More packs">+</button>
+                    </div>
+                {/if}
                 <div class="pack-buttons">
-                    <button class="pack-btn pack-buy" style="border-color: {pack.borderColor};" on:click={() => buyPack(pack)}>
+                    <button class="pack-btn pack-buy" style="border-color: {pack.borderColor};" on:click={() => buyPack(pack, false, qty)}>
                         {#if isDiscounted}
-                            <span class="pack-old-price">💎 {pack.cost.toLocaleString()}</span>
-                            <span class="pack-new-price">💎 {effectiveCost.toLocaleString()} BE</span>
+                            <span class="pack-old-price">💎 {(pack.cost * qty).toLocaleString()}</span>
+                            <span class="pack-new-price">💎 {(effectiveCost * qty).toLocaleString()} BE</span>
                         {:else}
-                            💎 {pack.cost.toLocaleString()} BE
+                            💎 {(pack.cost * qty).toLocaleString()} BE
                         {/if}
                     </button>
                     <button class="pack-btn pack-preview-btn" style="border-color: {pack.borderColor}; color: {pack.color};" on:click={() => previewPack = pack}>Preview</button>
@@ -421,9 +475,10 @@
             <div class="pv-section">Drop Rates</div>
             <div class="pv-drops">
                 {#each previewPack.drops as d}
-                    <div class="pv-drop">
-                        <span class="pvd-tier">{d.tier}</span>
-                        <div class="pvd-bar"><div class="pvd-fill" style="width: {d.pct}%; background: {previewPack.color};"></div></div>
+                    {@const mythic = MYTHIC_TIERS.includes(d.tier)}
+                    <div class="pv-drop" class:pvd-mythic={mythic} style="--tier: {TIER_COLORS[d.tier]};">
+                        <span class="pvd-tier" style={mythic ? `color: ${TIER_COLORS[d.tier]};` : ''}>{d.tier}</span>
+                        <div class="pvd-bar"><div class="pvd-fill" style="width: {dropBarWidth(d.pct)}%; background: {mythic ? TIER_COLORS[d.tier] : previewPack.color};"></div></div>
                         <span class="pvd-pct">{d.pct}%</span>
                     </div>
                 {/each}
@@ -440,8 +495,8 @@
                 <div class="pv-scout">+{scoutBonus.toFixed(2)}% bonus to all drop rolls</div>
             {/if}
 
-            <button class="pv-buy" style="background: {previewPack.color};" on:click={() => { buyPack(previewPack); previewPack = null; }}>
-                Buy Pack · 💎 {previewPack.cost.toLocaleString()} BE
+            <button class="pv-buy" style="background: {previewPack.color};" on:click={() => { buyPack(previewPack, false, previewQty); previewPack = null; }}>
+                Buy {previewQty > 1 ? `${previewQty}× Packs` : 'Pack'} · 💎 {(previewPack.cost * previewQty).toLocaleString()} BE
             </button>
         </div>
     </div>
@@ -631,7 +686,28 @@
     .pack-old-price { text-decoration: line-through; color: #475569; font-size: 9px; margin-right: 4px; }
     .pack-new-price { color: #34d399; font-weight: 900; }
     .pack-preview-btn { flex: 0 0 auto; background: transparent !important; font-size: 11px !important; }
-    .pack-best { font-size: 10px; margin-top: 12px; font-weight: 700; }
+    .pack-best { font-size: 10px; margin-top: 12px; font-weight: 700; text-align: center; }
+    /* Mythic headline drop (Hall of Legends) — the rarest line in the Store, lit up. */
+    .pack-best-mythic {
+        font-weight: 900; letter-spacing: 0.4px;
+        text-shadow: 0 0 12px color-mix(in srgb, var(--tier, #ff0033) 60%, transparent);
+    }
+
+    /* Bulk Opening quantity stepper — only rendered when the skill is above level 0. */
+    .pack-qty {
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+        margin: 0 14px 10px; position: relative; z-index: 1;
+    }
+    .pq-step {
+        width: 26px; height: 26px; flex-shrink: 0;
+        border-radius: 8px; background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.08);
+        color: #cbd5e1; font-size: 15px; font-weight: 900; line-height: 1;
+        cursor: pointer; transition: all 0.12s;
+    }
+    .pq-step:hover:not(:disabled) { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.14); }
+    .pq-step:disabled { opacity: 0.25; cursor: default; }
+    .pq-val { font-size: 11px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; min-width: 60px; text-align: center; }
 
     /* Preview modal */
     .pv-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; padding: 16px; }
@@ -648,10 +724,14 @@
     .pv-section { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; margin-bottom: 10px; margin-top: 16px; }
     .pv-drops { display: flex; flex-direction: column; gap: 6px; }
     .pv-drop { display: flex; align-items: center; gap: 8px; }
-    .pvd-tier { font-size: 12px; font-weight: 800; color: #e2e8f0; width: 80px; }
+    /* Widened so "Hall of Legends" and its "0.001%" fit without clipping. */
+    .pvd-tier { font-size: 12px; font-weight: 800; color: #e2e8f0; width: 96px; flex-shrink: 0; }
     .pvd-bar { flex: 1; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
     .pvd-fill { height: 100%; border-radius: 4px; }
-    .pvd-pct { font-size: 12px; font-weight: 900; color: #94a3b8; width: 36px; text-align: right; }
+    .pvd-pct { font-size: 12px; font-weight: 900; color: #94a3b8; width: 48px; flex-shrink: 0; text-align: right; }
+    .pvd-mythic .pvd-tier { font-weight: 900; text-shadow: 0 0 10px color-mix(in srgb, var(--tier, #ff0033) 55%, transparent); }
+    .pvd-mythic .pvd-pct { color: #fbbf24; }
+    .pvd-mythic .pvd-fill { box-shadow: 0 0 8px var(--tier, #ff0033); }
     .pv-specials { display: flex; flex-direction: column; gap: 4px; }
     .pv-spec { display: flex; justify-content: space-between; font-size: 12px; padding: 6px 0; }
     .pvs-label { color: #64748b; } .pvs-val { color: #e2e8f0; font-weight: 800; }

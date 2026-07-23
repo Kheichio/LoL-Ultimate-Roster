@@ -16,7 +16,7 @@ export const showcasePicks = writable([]);
 export const managerXP = writable(0);
 export const managerLevel = writable(1);
 export const skillPoints = writable(0);
-export const skills = writable({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, stamina: 0, mentorship: 0, trading: 0, bench: 0, wealth: 0, clubhouse: 0 });
+export const skills = writable({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, stamina: 0, mentorship: 0, trading: 0, bench: 0, wealth: 0, clubhouse: 0, bulk: 0 });
 
 // === Tracking ===
 export const trackStats = writable({
@@ -24,6 +24,10 @@ export const trackStats = writable({
     cafeWins: 0, regionalSplitWon: 0, firstStandWon: 0, msiWon: 0, worldsWon: 0,
     losses: 0, draftModesPlayed: 0, draftModesWon: 0, upgradesPerformed: 0,
     splitsCompleted: 0, holographicPulled: 0, signaturesPulled: 0,
+    // Written by Tower/RBC/Trade. Declared here so quests can read them before the
+    // first run of each mode — the whole object is persisted as lur_stats, and
+    // initGame merges saved values over these defaults.
+    towerHighestFloor: 0, rbcCompleted: 0, tradesDone: 0,
 });
 
 // === Systems ===
@@ -73,6 +77,8 @@ export function logMatch(entry) {
 
 // === Derived ===
 export const clubCapacity = derived(skills, $s => 100 + ($s.clubhouse || 0) * 50);
+// Bulk Opening skill — how many packs of one type can be opened in a single click.
+export const bulkOpenMax = derived(skills, $s => 1 + ($s.bulk || 0));
 export const isClubFull = derived([club, clubCapacity], ([$c, $cap]) => $c.length >= $cap);
 export const weightedTrophies = derived(trackStats, $ts =>
     (($ts.worldsWon || 0) * 6) + (($ts.msiWon || 0) * 4) + (($ts.firstStandWon || 0) * 2) +
@@ -136,7 +142,7 @@ export function prestigeManager() {
     managerLevel.set(1);
     managerXP.set(0);
     skillPoints.set(0);
-    skills.set({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, stamina: 0, mentorship: 0, trading: 0, bench: 0, wealth: 0, clubhouse: 0 });
+    skills.set({ scouting: 0, tactics: 0, transfer: 0, conditioning: 0, stamina: 0, mentorship: 0, trading: 0, bench: 0, wealth: 0, clubhouse: 0, bulk: 0 });
     return true;
 }
 

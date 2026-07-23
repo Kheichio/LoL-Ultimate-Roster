@@ -3,16 +3,30 @@
     import { club, squad, academy, blueEssence, showcasePicks, saveGame, clubCapacity, skills, grantBE } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { inspectingCard, openConfirmModal } from '../../stores/ui.js';
-    import { getSellValue, getEffectiveRating, TIER_ORDER, LEGACY_TIERS, TIER_COLORS } from '../../utils/cards.js';
+    import { getSellValue, getEffectiveRating, getEra, TIER_ORDER, ALL_SPECIAL, TIER_COLORS } from '../../utils/cards.js';
     import { get } from 'svelte/store';
 
     let search = '';
     let tierFilter = 'ALL';
     let roleFilter = 'ALL';
+    let eraFilter = 'ALL';
     let sortBy = 'rating';
 
-    const tierOptions = ['ALL', 'Favourites', 'Holographic', 'Signature', ...TIER_ORDER, ...LEGACY_TIERS];
+    // ALL_SPECIAL, not just legacy — award and Hall of Legends cards must be filterable too.
+    const tierOptions = ['ALL', 'Favourites', 'Holographic', 'Signature', ...TIER_ORDER, ...ALL_SPECIAL];
+    // Specials rank above every base tier, so the Tier sort must not score them as -1.
+    const TIER_RANK = [...TIER_ORDER, ...ALL_SPECIAL];
     const roleOptions = ['ALL', 'TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];
+    const ERA_OPTIONS = [
+        { value: 1, label: 'Era 1 (2013 & earlier)' },
+        { value: 2, label: 'Era 2 (2014-2016)' },
+        { value: 3, label: 'Era 3 (2017-2019)' },
+        { value: 4, label: 'Era 4 (2020-2022)' },
+        { value: 5, label: 'Era 5 (2023-2025)' },
+        { value: 6, label: 'Era 6 (2026+)' },
+    ];
+    // Only offer eras the vault can actually produce, so the dropdown never shows dead options.
+    $: eraOptions = ERA_OPTIONS.filter(e => $club.some(c => getEra(c.year) === e.value));
     const sortOptions = [
         { value: 'rating', label: 'Rating' },
         { value: 'name', label: 'Name' },
@@ -25,17 +39,18 @@
         let cards = [...$club];
         if (search) {
             const q = search.toLowerCase();
-            cards = cards.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q));
+            cards = cards.filter(c => c.name.toLowerCase().includes(q) || c.team.toLowerCase().includes(q) || String(c.year || '').includes(q));
         }
         if (tierFilter === 'Favourites') cards = cards.filter(c => c.favorite);
         else if (tierFilter === 'Holographic') cards = cards.filter(c => c.holographic);
         else if (tierFilter === 'Signature') cards = cards.filter(c => c.signature);
         else if (tierFilter !== 'ALL') cards = cards.filter(c => c.quality === tierFilter);
         if (roleFilter !== 'ALL') cards = cards.filter(c => c.role === roleFilter);
+        if (eraFilter !== 'ALL') cards = cards.filter(c => getEra(c.year) === eraFilter);
 
         if (sortBy === 'rating') cards.sort((a, b) => b.rating - a.rating);
         else if (sortBy === 'name') cards.sort((a, b) => a.name.localeCompare(b.name));
-        else if (sortBy === 'quality') cards.sort((a, b) => TIER_ORDER.indexOf(b.quality) - TIER_ORDER.indexOf(a.quality));
+        else if (sortBy === 'quality') cards.sort((a, b) => TIER_RANK.indexOf(b.quality) - TIER_RANK.indexOf(a.quality));
         else if (sortBy === 'team') cards.sort((a, b) => a.team.localeCompare(b.team));
         else if (sortBy === 'favorites') cards.sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
 
@@ -221,7 +236,7 @@
 
     <!-- Filters -->
     <div class="filter-bar">
-        <input type="text" bind:value={search} placeholder="Search player or team..." class="input filter-search">
+        <input type="text" bind:value={search} placeholder="Search player, team or year..." class="input filter-search">
         <select bind:value={tierFilter} class="input filter-select">
             {#each tierOptions as t}
                 <option value={t}>{t === 'ALL' ? 'All Tiers' : t}</option>
@@ -230,6 +245,12 @@
         <select bind:value={roleFilter} class="input filter-select">
             {#each roleOptions as r}
                 <option value={r}>{r === 'ALL' ? 'All Roles' : r}</option>
+            {/each}
+        </select>
+        <select bind:value={eraFilter} class="input filter-select">
+            <option value="ALL">All Eras</option>
+            {#each eraOptions as e}
+                <option value={e.value}>{e.label}</option>
             {/each}
         </select>
         <select bind:value={sortBy} class="input filter-select">

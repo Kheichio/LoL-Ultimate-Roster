@@ -1,7 +1,7 @@
 // Shared pack-rolling helpers. Used by the RBC reward packs and the Trade market so
 // the "roll N random cards from a weighted tier table" logic lives in ONE place.
 // Rolled instances are never holographic/signature — those are pull-time flags only.
-import { makeUniqueId, ALL_SPECIAL } from './cards.js';
+import { makeUniqueId, ALL_SPECIAL, MYTHIC_TIERS } from './cards.js';
 
 // Weighted pick of a tier name from a drops array: [{ tier, pct }, ...].
 export function rollTier(drops) {
@@ -12,10 +12,11 @@ export function rollTier(drops) {
 }
 
 // Build the card pool for a tier. The pseudo-tier 'SPECIAL' matches ANY legacy/award
-// card (Champion, MVP, Finalist, MSI, FirstStand, EWC, POTY, ...).
+// card (Champion, MVP, Finalist, MSI, FirstStand, EWC, POTY, ...) but NEVER a mythic
+// tier — those are Awards Vault exclusives and must not drop from packs or trades.
 export function poolForTier(db, tier, { includeCoach = true } = {}) {
     let pool;
-    if (tier === 'SPECIAL') pool = db.filter(p => ALL_SPECIAL.includes(p.quality));
+    if (tier === 'SPECIAL') pool = db.filter(p => ALL_SPECIAL.includes(p.quality) && !MYTHIC_TIERS.includes(p.quality));
     else pool = db.filter(p => p.quality === tier);
     if (!includeCoach) pool = pool.filter(p => p.role !== 'COACH');
     return pool;

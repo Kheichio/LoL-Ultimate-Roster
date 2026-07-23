@@ -1,114 +1,11 @@
 <script>
-    import { blueEssence, trackStats, club, squad, saveGame, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed as achievementsClaimedStore, grantBE } from '../../stores/game.js';
+    import { blueEssence, trackStats, club, squad, academy, rbcState, battlePass, prestige, collectionRegistry, saveGame, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, questsRepeatableCounts, achievementsClaimed as achievementsClaimedStore, grantBE } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
+    import { HALL_OF_LEGENDS } from '../../utils/cards.js';
+    import { todayKey, claimedToday } from '../../utils/rbc.js';
+    import { milestoneQuests, repeatableQuests, achievements, LINEUP_ROLES, lineupAvg } from '../../utils/quests.js';
     import { get } from 'svelte/store';
-
-    // Quest definitions
-    const milestoneQuests = [
-        // Collection
-        { id: 'mq1', cat: 'collection', desc: 'Open 5 Card Packs', target: 5, stat: 'packs', reward: 500 },
-        { id: 'mq2', cat: 'collection', desc: 'Open 25 Card Packs', target: 25, stat: 'packs', reward: 2000 },
-        { id: 'mq3', cat: 'collection', desc: 'Open 100 Card Packs', target: 100, stat: 'packs', reward: 5000 },
-        { id: 'mq9', cat: 'collection', desc: 'Open 250 Card Packs', target: 250, stat: 'packs', reward: 10000 },
-        { id: 'mq4', cat: 'collection', desc: 'Pull a Holographic Card', target: 1, stat: 'holographicPulled', reward: 2000 },
-        { id: 'mq5', cat: 'collection', desc: 'Pull 5 Holographic Cards', target: 5, stat: 'holographicPulled', reward: 5000 },
-        { id: 'mq8', cat: 'collection', desc: 'Pull 10 Holographic Cards', target: 10, stat: 'holographicPulled', reward: 8000 },
-        { id: 'mq6', cat: 'collection', desc: 'Pull a Signature Card', target: 1, stat: 'signaturesPulled', reward: 3000 },
-        { id: 'mq7', cat: 'collection', desc: 'Pull 5 Signature Cards', target: 5, stat: 'signaturesPulled', reward: 8000 },
-        { id: 'mq60', cat: 'collection', desc: 'Open 500 Card Packs', target: 500, stat: 'packs', reward: 20000 },
-        { id: 'mq61', cat: 'collection', desc: 'Pull 25 Holographic Cards', target: 25, stat: 'holographicPulled', reward: 15000 },
-        { id: 'mq62', cat: 'collection', desc: 'Pull 10 Signature Cards', target: 10, stat: 'signaturesPulled', reward: 15000 },
-        // Economy
-        { id: 'mq10', cat: 'economy', desc: 'Sell 10 Cards', target: 10, stat: 'soldCount', reward: 400 },
-        { id: 'mq11', cat: 'economy', desc: 'Sell 50 Cards', target: 50, stat: 'soldCount', reward: 1500 },
-        { id: 'mq12', cat: 'economy', desc: 'Sell 200 Cards', target: 200, stat: 'soldCount', reward: 4000 },
-        { id: 'mq13', cat: 'economy', desc: 'Sell 500 Cards', target: 500, stat: 'soldCount', reward: 8000 },
-        { id: 'mq63', cat: 'economy', desc: 'Perform 10 Upgrades', target: 10, stat: 'upgradesPerformed', reward: 3000 },
-        { id: 'mq64', cat: 'economy', desc: 'Perform 50 Upgrades', target: 50, stat: 'upgradesPerformed', reward: 10000 },
-        // Competitive
-        { id: 'mq20', cat: 'competitive', desc: 'Win a Tournament', target: 1, stat: 'tournamentsWon', reward: 800 },
-        { id: 'mq21', cat: 'competitive', desc: 'Win 5 Tournaments', target: 5, stat: 'tournamentsWon', reward: 3000 },
-        { id: 'mq22', cat: 'competitive', desc: 'Win 25 Tournaments', target: 25, stat: 'tournamentsWon', reward: 8000 },
-        { id: 'mq50', cat: 'competitive', desc: 'Win 100 Tournaments', target: 100, stat: 'tournamentsWon', reward: 20000 },
-        { id: 'mq23', cat: 'competitive', desc: 'Win a Gaming Cafe', target: 1, stat: 'cafeWins', reward: 500 },
-        { id: 'mq24', cat: 'competitive', desc: 'Win 10 Gaming Cafes', target: 10, stat: 'cafeWins', reward: 3000 },
-        { id: 'mq25', cat: 'competitive', desc: 'Win 50 Gaming Cafes', target: 50, stat: 'cafeWins', reward: 6000 },
-        { id: 'mq26', cat: 'competitive', desc: 'Win a Regional Trophy', target: 1, stat: 'regionalSplitWon', reward: 1000 },
-        { id: 'mq27', cat: 'competitive', desc: 'Win 5 Regional Trophies', target: 5, stat: 'regionalSplitWon', reward: 4000 },
-        { id: 'mq51', cat: 'competitive', desc: 'Win 25 Regional Trophies', target: 25, stat: 'regionalSplitWon', reward: 10000 },
-        { id: 'mq28', cat: 'competitive', desc: 'Win a First Stand', target: 1, stat: 'firstStandWon', reward: 2000 },
-        { id: 'mq29', cat: 'competitive', desc: 'Win 5 First Stands', target: 5, stat: 'firstStandWon', reward: 6000 },
-        { id: 'mq35', cat: 'competitive', desc: 'Win an MSI', target: 1, stat: 'msiWon', reward: 3000 },
-        { id: 'mq36', cat: 'competitive', desc: 'Win 3 MSIs', target: 3, stat: 'msiWon', reward: 8000 },
-        { id: 'mq37', cat: 'competitive', desc: 'Win a World Championship', target: 1, stat: 'worldsWon', reward: 5000 },
-        { id: 'mq38', cat: 'competitive', desc: 'Win 3 World Championships', target: 3, stat: 'worldsWon', reward: 12000 },
-        { id: 'mq65', cat: 'competitive', desc: 'Win a Draft Mode', target: 1, stat: 'draftModesWon', reward: 1500 },
-        { id: 'mq66', cat: 'competitive', desc: 'Win 5 Draft Modes', target: 5, stat: 'draftModesWon', reward: 5000 },
-        { id: 'mq67', cat: 'competitive', desc: 'Win 25 Draft Modes', target: 25, stat: 'draftModesWon', reward: 12000 },
-        { id: 'mq68', cat: 'competitive', desc: 'Play 10 Draft Modes', target: 10, stat: 'draftModesPlayed', reward: 3000 },
-        { id: 'mq69', cat: 'competitive', desc: 'Play 50 Draft Modes', target: 50, stat: 'draftModesPlayed', reward: 10000 },
-        { id: 'mq70', cat: 'competitive', desc: 'Win 10 First Stands', target: 10, stat: 'firstStandWon', reward: 12000 },
-        { id: 'mq71', cat: 'competitive', desc: 'Win 5 MSIs', target: 5, stat: 'msiWon', reward: 15000 },
-        { id: 'mq72', cat: 'competitive', desc: 'Win 5 World Championships', target: 5, stat: 'worldsWon', reward: 25000 },
-        { id: 'mq73', cat: 'competitive', desc: 'Win 100 Gaming Cafes', target: 100, stat: 'cafeWins', reward: 12000 },
-        // Progression
-        { id: 'mq30', cat: 'progression', desc: 'Complete a Season Split', target: 1, stat: 'splitsCompleted', reward: 2000 },
-        { id: 'mq31', cat: 'progression', desc: 'Complete 5 Season Splits', target: 5, stat: 'splitsCompleted', reward: 5000 },
-        { id: 'mq32', cat: 'progression', desc: 'Complete 25 Season Splits', target: 25, stat: 'splitsCompleted', reward: 12000 },
-        { id: 'mq39', cat: 'progression', desc: 'Complete 50 Season Splits', target: 50, stat: 'splitsCompleted', reward: 20000 },
-        { id: 'mq33', cat: 'progression', desc: 'Complete a Golden Road', target: 1, stat: 'goldenRoads', reward: 5000 },
-        { id: 'mq34', cat: 'progression', desc: 'Complete 5 Golden Roads', target: 5, stat: 'goldenRoads', reward: 15000 },
-        { id: 'mq40', cat: 'progression', desc: 'Complete 10 Golden Roads', target: 10, stat: 'goldenRoads', reward: 25000 },
-        { id: 'mq41', cat: 'progression', desc: 'Reach Tower Floor 10', target: 10, stat: 'towerHighestFloor', reward: 2000 },
-        { id: 'mq42', cat: 'progression', desc: 'Reach Tower Floor 25', target: 25, stat: 'towerHighestFloor', reward: 5000 },
-        { id: 'mq43', cat: 'progression', desc: 'Reach Tower Floor 50', target: 50, stat: 'towerHighestFloor', reward: 10000 },
-        { id: 'mq44', cat: 'progression', desc: 'Reach Tower Floor 100', target: 100, stat: 'towerHighestFloor', reward: 20000 },
-        { id: 'mq74', cat: 'progression', desc: 'Reach Tower Floor 200', target: 200, stat: 'towerHighestFloor', reward: 40000 },
-        { id: 'mq75', cat: 'progression', desc: 'Complete 100 Season Splits', target: 100, stat: 'splitsCompleted', reward: 35000 },
-        { id: 'mq76', cat: 'progression', desc: 'Complete 25 Golden Roads', target: 25, stat: 'goldenRoads', reward: 40000 },
-    ];
-
-    const repeatableQuests = [
-        { id: 'rq1', desc: 'Open 3 Packs', target: 3, stat: 'packs', reward: 300 },
-        { id: 'rq6', desc: 'Open 5 Packs', target: 5, stat: 'packs', reward: 500 },
-        { id: 'rq2', desc: 'Win 3 Tournaments', target: 3, stat: 'tournamentsWon', reward: 500 },
-        { id: 'rq4', desc: 'Win 5 Gaming Cafes', target: 5, stat: 'cafeWins', reward: 600 },
-        { id: 'rq3', desc: 'Sell 5 Cards', target: 5, stat: 'soldCount', reward: 200 },
-        { id: 'rq7', desc: 'Sell 10 Cards', target: 10, stat: 'soldCount', reward: 300 },
-        { id: 'rq5', desc: 'Complete 2 Season Splits', target: 2, stat: 'splitsCompleted', reward: 800 },
-        { id: 'rq8', desc: 'Win 2 Draft Modes', target: 2, stat: 'draftModesWon', reward: 700 },
-        { id: 'rq9', desc: 'Win 10 Tournaments', target: 10, stat: 'tournamentsWon', reward: 1200 },
-        { id: 'rq10', desc: 'Perform 5 Upgrades', target: 5, stat: 'upgradesPerformed', reward: 500 },
-    ];
-
-    const achievements = [
-        { id: 'a1', desc: 'Field a Squad Averaging 80+ Rating', type: 'squadAvg', target: 80, reward: 1500 },
-        { id: 'a2', desc: 'Field a Squad Averaging 90+ Rating', type: 'squadAvg', target: 90, reward: 3000 },
-        { id: 'a3', desc: 'Field a Squad Averaging 95+ Rating', type: 'squadAvg', target: 95, reward: 6000 },
-        { id: 'a4', desc: 'Own 50 Cards', type: 'clubSize', target: 50, reward: 1000 },
-        { id: 'a5', desc: 'Own 200 Cards', type: 'clubSize', target: 200, reward: 4000 },
-        { id: 'a6', desc: 'Own 500 Cards', type: 'clubSize', target: 500, reward: 8000 },
-        { id: 'a7', desc: 'Earn 50 Trophy Points', type: 'trophies', target: 50, reward: 5000 },
-        { id: 'a8', desc: 'Earn 200 Trophy Points', type: 'trophies', target: 200, reward: 15000 },
-        { id: 'a14', desc: 'Earn 500 Trophy Points', type: 'trophies', target: 500, reward: 20000 },
-        { id: 'a15', desc: 'Earn 1000 Trophy Points', type: 'trophies', target: 1000, reward: 50000 },
-        { id: 'a9', desc: 'Own 10 Signature Cards', type: 'sigCards', target: 10, reward: 8000 },
-        { id: 'a10', desc: 'Own 25 Holographic Cards', type: 'holoCards', target: 25, reward: 6000 },
-        { id: 'a11', desc: 'Reach Manager Level 10', type: 'managerLvl', target: 10, reward: 3000 },
-        { id: 'a12', desc: 'Reach Manager Level 25', type: 'managerLvl', target: 25, reward: 8000 },
-        { id: 'a13', desc: 'Reach Manager Level 50', type: 'managerLvl', target: 50, reward: 15000 },
-        { id: 'a16', desc: 'Reach Tower Floor 50', type: 'towerBest', target: 50, reward: 10000 },
-        { id: 'a17', desc: 'Reach Tower Floor 100', type: 'towerBest', target: 100, reward: 25000 },
-        { id: 'a18', desc: 'Own 1000 Cards', type: 'clubSize', target: 1000, reward: 15000 },
-        { id: 'a19', desc: 'Field a Squad Averaging 98+ Rating', type: 'squadAvg', target: 98, reward: 12000 },
-        { id: 'a20', desc: 'Reach Manager Level 100', type: 'managerLvl', target: 100, reward: 30000 },
-        { id: 'a21', desc: 'Reach Tower Floor 200', type: 'towerBest', target: 200, reward: 50000 },
-        { id: 'a22', desc: 'Own 5 Signature Cards', type: 'sigCards', target: 5, reward: 5000 },
-        { id: 'a23', desc: 'Own 50 Holographic Cards', type: 'holoCards', target: 50, reward: 12000 },
-        { id: 'a24', desc: 'Win 10 Draft Modes', type: 'draftWins', target: 10, reward: 8000 },
-        { id: 'a25', desc: 'Win 50 Draft Modes', type: 'draftWins', target: 50, reward: 20000 },
-    ];
 
     $: claimed = $questsClaimed;
     $: repeatableBaselines = $questsRepeatableBaselines;
@@ -120,21 +17,33 @@
         const base = repeatableBaselines[q.id] || 0;
         return Math.max(0, getProgress(q.stat) - base);
     }
+
     function getAchievementProgress(a) {
         try {
-            if (a.type === 'squadAvg') {
-                const starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
-                return starters.length > 0 ? Math.round(starters.reduce((s, c) => s + (c.rating || 0), 0) / starters.length) : 0;
-            }
+            if (a.type === 'squadAvg') return lineupAvg($squad);
+            if (a.type === 'academySize') return LINEUP_ROLES.filter(r => $academy[r]).length;
+            if (a.type === 'academyAvg') return lineupAvg($academy);
             if (a.type === 'clubSize') return ($club || []).length;
+            if (a.type === 'discovered') return Object.keys($collectionRegistry || {}).length;
             if (a.type === 'trophies') return $weightedTrophies || 0;
             if (a.type === 'sigCards') return ($club || []).filter(c => c && c.signature).length;
             if (a.type === 'holoCards') return ($club || []).filter(c => c && c.holographic).length;
+            if (a.type === 'holCards') return ($club || []).filter(c => c && c.quality === HALL_OF_LEGENDS).length;
+            if (a.type === 'be') return $blueEssence || 0;
             if (a.type === 'managerLvl') return $managerLevel || 1;
+            if (a.type === 'prestige') return $prestige || 0;
+            if (a.type === 'bpTier') return $battlePass.tier || 0;
             if (a.type === 'towerBest') return $trackStats.towerHighestFloor || 0;
             if (a.type === 'draftWins') return $trackStats.draftModesWon || 0;
+            // Daily RBCs — only today's clears count, so this resets with the challenges.
+            if (a.type === 'rbcToday') return Object.keys(claimedToday($rbcState, todayKey(Date.now()))).length;
         } catch(e) { return 0; }
         return 0;
+    }
+
+    // Compact label so six-figure targets (Blue Essence) still fit the progress column.
+    function fmtProgress(n) {
+        return n >= 10000 ? `${Math.floor(n / 1000)}k` : String(n);
     }
 
     function claimMilestone(q) {
@@ -175,36 +84,56 @@
 
     let activeSubTab = 'milestones';
 
+    // One category list drives all three sub-tabs, so a quest, a contract and an
+    // achievement about the same system always sit under the same heading, in the
+    // same order. `color` keys into CAT_COLORS below.
     const questCategories = [
-        { id: 'collection', label: '📦 Collection', color: 'blue',
-          textColor: 'text-blue-400', barColor: 'bg-blue-500',
-          doneRow: 'border-blue-700/40 bg-blue-950/20',
-          claimBtn: 'bg-blue-500 hover:bg-blue-400 text-slate-900' },
-        { id: 'economy', label: '💰 Economy', color: 'emerald',
-          textColor: 'text-emerald-400', barColor: 'bg-emerald-500',
-          doneRow: 'border-emerald-700/40 bg-emerald-950/20',
-          claimBtn: 'bg-emerald-500 hover:bg-emerald-400 text-slate-900' },
-        { id: 'competitive', label: '⚔️ Competitive', color: 'amber',
-          textColor: 'text-amber-400', barColor: 'bg-amber-500',
-          doneRow: 'border-amber-700/40 bg-amber-950/20',
-          claimBtn: 'bg-amber-500 hover:bg-amber-400 text-slate-900' },
-        { id: 'progression', label: '🏆 Progression', color: 'purple',
-          textColor: 'text-purple-400', barColor: 'bg-purple-500',
-          doneRow: 'border-purple-700/40 bg-purple-950/20',
-          claimBtn: 'bg-purple-500 hover:bg-purple-400 text-slate-900' },
+        { id: 'collection',  label: '📦 Collection',  color: 'blue' },
+        { id: 'squad',       label: '🛡️ Squad',       color: 'sky' },
+        { id: 'economy',     label: '💰 Economy',     color: 'emerald' },
+        { id: 'competitive', label: '⚔️ Competitive', color: 'amber' },
+        { id: 'challenges',  label: '🧩 Challenges',  color: 'rose' },
+        { id: 'progression', label: '🏆 Progression', color: 'purple' },
     ];
 
-    $: milestoneByCat = (() => {
-        const map = {};
-        questCategories.forEach(c => { map[c.id] = milestoneQuests.filter(q => q.cat === c.id); });
-        return map;
-    })();
+    const CAT_COLORS = {
+        blue:    { text: '#60a5fa', bar: '#3b82f6', doneBorder: 'rgba(29,78,216,0.4)',  doneBg: 'rgba(23,37,84,0.2)',  btnBg: '#3b82f6', btnHover: '#60a5fa' },
+        sky:     { text: '#38bdf8', bar: '#0ea5e9', doneBorder: 'rgba(3,105,161,0.4)',  doneBg: 'rgba(8,47,73,0.2)',   btnBg: '#0ea5e9', btnHover: '#38bdf8' },
+        emerald: { text: '#34d399', bar: '#10b981', doneBorder: 'rgba(4,120,87,0.4)',   doneBg: 'rgba(2,44,34,0.2)',   btnBg: '#10b981', btnHover: '#34d399' },
+        amber:   { text: '#fbbf24', bar: '#f59e0b', doneBorder: 'rgba(180,83,9,0.4)',   doneBg: 'rgba(69,26,3,0.2)',   btnBg: '#f59e0b', btnHover: '#fbbf24' },
+        rose:    { text: '#fb7185', bar: '#f43f5e', doneBorder: 'rgba(190,18,60,0.4)',  doneBg: 'rgba(76,5,25,0.2)',   btnBg: '#f43f5e', btnHover: '#fb7185' },
+        purple:  { text: '#c084fc', bar: '#a855f7', doneBorder: 'rgba(126,34,206,0.4)', doneBg: 'rgba(59,7,100,0.2)',  btnBg: '#a855f7', btnHover: '#c084fc' },
+    };
+
+    // Categories a list actually uses — an empty section would render as "0/0 COMPLETE".
+    function catsFor(list) {
+        return questCategories.filter(c => list.some(q => q.cat === c.id));
+    }
+    const milestoneCats = catsFor(milestoneQuests);
+    const contractCats = catsFor(repeatableQuests);
+    const achievementCats = catsFor(achievements);
+
+    const milestoneByCat = {};
+    milestoneCats.forEach(c => { milestoneByCat[c.id] = milestoneQuests.filter(q => q.cat === c.id); });
+    const contractsByCat = {};
+    contractCats.forEach(c => { contractsByCat[c.id] = repeatableQuests.filter(q => q.cat === c.id); });
+    const achievementsByCat = {};
+    achievementCats.forEach(c => { achievementsByCat[c.id] = achievements.filter(a => a.cat === c.id); });
 
     $: catCompletion = (() => {
         const map = {};
-        questCategories.forEach(c => {
+        milestoneCats.forEach(c => {
             const quests = milestoneByCat[c.id];
             map[c.id] = { done: quests.filter(q => claimed[q.id]).length, total: quests.length };
+        });
+        return map;
+    })();
+
+    $: achCompletion = (() => {
+        const map = {};
+        achievementCats.forEach(c => {
+            const list = achievementsByCat[c.id];
+            map[c.id] = { done: list.filter(a => achievementsClaimed[a.id]).length, total: list.length };
         });
         return map;
     })();
@@ -247,16 +176,11 @@
     <!-- MILESTONES -->
     {#if activeSubTab === 'milestones'}
         <div class="section-list">
-            {#each questCategories as cat}
+            {#each milestoneCats as cat}
                 {@const quests = milestoneByCat[cat.id]}
                 {@const comp = catCompletion[cat.id]}
                 {@const allDone = comp.done === comp.total}
-                {@const colors = {
-                    blue:    { text: '#60a5fa', bar: '#3b82f6', doneBorder: 'rgba(29,78,216,0.4)',  doneBg: 'rgba(23,37,84,0.2)',  btnBg: '#3b82f6', btnHover: '#60a5fa' },
-                    emerald: { text: '#34d399', bar: '#10b981', doneBorder: 'rgba(4,120,87,0.4)',   doneBg: 'rgba(2,44,34,0.2)',   btnBg: '#10b981', btnHover: '#34d399' },
-                    amber:   { text: '#fbbf24', bar: '#f59e0b', doneBorder: 'rgba(180,83,9,0.4)',   doneBg: 'rgba(69,26,3,0.2)',   btnBg: '#f59e0b', btnHover: '#fbbf24' },
-                    purple:  { text: '#c084fc', bar: '#a855f7', doneBorder: 'rgba(126,34,206,0.4)', doneBg: 'rgba(59,7,100,0.2)',  btnBg: '#a855f7', btnHover: '#c084fc' },
-                }[cat.color]}
+                {@const colors = CAT_COLORS[cat.color]}
                 <div class="cat-panel">
                     <!-- Category header -->
                     <button
@@ -313,81 +237,101 @@
 
     <!-- CONTRACTS -->
     {:else if activeSubTab === 'contracts'}
-        <div class="section-list contracts">
+        <div class="section-list">
             <p class="section-hint">Repeatable quests — progress resets after each claim. Infinite completions.</p>
-            {#each repeatableQuests as q}
-                {@const progress = getRepeatableProgress(q)}
-                {@const claimable = getRepeatableClaimCount(q)}
-                {@const claimed = repeatableCounts[q.id] || 0}
-                {@const progressInCycle = progress - (claimable * q.target)}
-                <div
-                    class="quest-row"
-                    style="
-                        {claimable > 0 ? 'border-color: rgba(14,116,144,0.4); background: rgba(8,51,68,0.2);' :
-                         'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
-                    "
-                >
-                    <div class="quest-info">
-                        <div class="quest-desc" style="color: #e2e8f0;">
-                            {q.desc}
-                            {#if claimed > 0}
-                                <span style="color: #06b6d4; margin-left: 4px;">×{claimed}</span>
-                            {/if}
-                        </div>
-                        <div class="progress-track">
-                            <div class="progress-fill" style="width: {claimable > 0 ? 100 : Math.min(100, (progressInCycle / q.target) * 100)}%; background: #06b6d4;"></div>
-                        </div>
+            {#each contractCats as cat}
+                {@const colors = CAT_COLORS[cat.color]}
+                <div class="group">
+                    <div class="group-head" style="color: {colors.text}">{cat.label}</div>
+                    <div class="group-body">
+                        {#each contractsByCat[cat.id] as q}
+                            {@const progress = getRepeatableProgress(q)}
+                            {@const claimable = getRepeatableClaimCount(q)}
+                            {@const claimed = repeatableCounts[q.id] || 0}
+                            {@const progressInCycle = progress - (claimable * q.target)}
+                            <div
+                                class="quest-row"
+                                style="
+                                    {claimable > 0 ? 'border-color: rgba(14,116,144,0.4); background: rgba(8,51,68,0.2);' :
+                                     'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
+                                "
+                            >
+                                <div class="quest-info">
+                                    <div class="quest-desc" style="color: #e2e8f0;">
+                                        {q.desc}
+                                        {#if claimed > 0}
+                                            <span style="color: #06b6d4; margin-left: 4px;">×{claimed}</span>
+                                        {/if}
+                                    </div>
+                                    <div class="progress-track">
+                                        <div class="progress-fill" style="width: {claimable > 0 ? 100 : Math.min(100, (progressInCycle / q.target) * 100)}%; background: #06b6d4;"></div>
+                                    </div>
+                                </div>
+                                {#if claimable > 0}
+                                    <button
+                                        class="claim-btn"
+                                        style="background: #06b6d4; color: #0f172a;"
+                                        on:mouseenter={(e) => e.currentTarget.style.background = '#22d3ee'}
+                                        on:mouseleave={(e) => e.currentTarget.style.background = '#06b6d4'}
+                                        on:click={() => claimRepeatable(q)}
+                                    >Claim ×{claimable} · {q.reward * claimable} BE</button>
+                                {:else}
+                                    <span class="progress-label">{progressInCycle}/{q.target}</span>
+                                {/if}
+                            </div>
+                        {/each}
                     </div>
-                    {#if claimable > 0}
-                        <button
-                            class="claim-btn"
-                            style="background: #06b6d4; color: #0f172a;"
-                            on:mouseenter={(e) => e.currentTarget.style.background = '#22d3ee'}
-                            on:mouseleave={(e) => e.currentTarget.style.background = '#06b6d4'}
-                            on:click={() => claimRepeatable(q)}
-                        >Claim ×{claimable} · {q.reward * claimable} BE</button>
-                    {:else}
-                        <span class="progress-label">{progressInCycle}/{q.target}</span>
-                    {/if}
                 </div>
             {/each}
         </div>
 
     <!-- ACHIEVEMENTS -->
     {:else if activeSubTab === 'achievements'}
-        <div class="section-list contracts">
+        <div class="section-list">
             <p class="section-hint">Live state checks — progress updates based on your current squad, club, and stats.</p>
-            {#each achievements as a}
-                {@const progress = getAchievementProgress(a)}
-                {@const isDone = progress >= a.target}
-                {@const isClaimed = achievementsClaimed[a.id]}
-                <div
-                    class="quest-row"
-                    style="
-                        {isClaimed ? 'border-color: rgba(30,41,59,0.6); background: rgba(15,23,42,0.3); opacity: 0.4;' :
-                         isDone ? 'border-color: rgba(109,40,217,0.4); background: rgba(46,16,101,0.2);' :
-                         'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
-                    "
-                >
-                    <div class="quest-info">
-                        <div class="quest-desc" style="{isClaimed ? 'color: #475569; text-decoration: line-through;' : 'color: #e2e8f0;'}">{a.desc}</div>
-                        <div class="progress-track">
-                            <div class="progress-fill" style="width: {Math.min(100, (progress / a.target) * 100)}%; background: #8b5cf6;"></div>
-                        </div>
+            {#each achievementCats as cat}
+                {@const colors = CAT_COLORS[cat.color]}
+                {@const comp = achCompletion[cat.id]}
+                <div class="group">
+                    <div class="group-head" style="color: {colors.text}">
+                        {cat.label}
+                        <span class="group-count">{comp.done}/{comp.total}</span>
                     </div>
-                    {#if isClaimed}
-                        <span class="claimed-label">Claimed</span>
-                    {:else if isDone}
-                        <button
-                            class="claim-btn"
-                            style="background: #8b5cf6; color: #fff;"
-                            on:mouseenter={(e) => e.currentTarget.style.background = '#a78bfa'}
-                            on:mouseleave={(e) => e.currentTarget.style.background = '#8b5cf6'}
-                            on:click={() => claimAchievement(a)}
-                        >Claim {a.reward} BE</button>
-                    {:else}
-                        <span class="progress-label">{Math.min(progress, a.target)}/{a.target}</span>
-                    {/if}
+                    <div class="group-body">
+                        {#each achievementsByCat[cat.id] as a}
+                            {@const progress = getAchievementProgress(a)}
+                            {@const isDone = progress >= a.target}
+                            {@const isClaimed = achievementsClaimed[a.id]}
+                            <div
+                                class="quest-row"
+                                style="
+                                    {isClaimed ? 'border-color: rgba(30,41,59,0.6); background: rgba(15,23,42,0.3); opacity: 0.4;' :
+                                     isDone ? 'border-color: rgba(109,40,217,0.4); background: rgba(46,16,101,0.2);' :
+                                     'border-color: rgba(51,65,85,0.4); background: rgba(30,41,59,0.4);'}
+                                "
+                            >
+                                <div class="quest-info">
+                                    <div class="quest-desc" style="{isClaimed ? 'color: #475569; text-decoration: line-through;' : 'color: #e2e8f0;'}">{a.desc}</div>
+                                    <div class="progress-track">
+                                        <div class="progress-fill" style="width: {Math.min(100, (progress / a.target) * 100)}%; background: #8b5cf6;"></div>
+                                    </div>
+                                </div>
+                                {#if isClaimed}
+                                    <span class="claimed-label">Claimed</span>
+                                {:else if isDone}
+                                    <button
+                                        class="claim-btn"
+                                        style="background: #8b5cf6; color: #fff;"
+                                        on:mouseenter={(e) => e.currentTarget.style.background = '#a78bfa'}
+                                        on:mouseleave={(e) => e.currentTarget.style.background = '#8b5cf6'}
+                                        on:click={() => claimAchievement(a)}
+                                    >Claim {a.reward} BE</button>
+                                {:else}
+                                    <span class="progress-label">{fmtProgress(Math.min(progress, a.target))}/{fmtProgress(a.target)}</span>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
                 </div>
             {/each}
         </div>
@@ -476,14 +420,42 @@
         gap: 16px;
     }
 
-    .section-list.contracts {
-        gap: 8px;
-    }
-
     .section-hint {
         font-size: 10px;
         color: #64748b;
         margin-bottom: 4px;
+    }
+
+    /* Category group — the flat Contracts / Achievements lists use the same headings
+       as the Milestones panels, minus the collapsible chrome. */
+    .group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .group-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+    }
+
+    .group-count {
+        font-size: 10px;
+        font-family: monospace;
+        color: #64748b;
+        letter-spacing: 0;
+        text-transform: none;
+    }
+
+    .group-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
     }
 
     /* Category panel */
@@ -601,7 +573,7 @@
         font-size: 10px;
         font-family: monospace;
         color: #64748b;
-        width: 60px;
+        min-width: 60px;
         text-align: right;
     }
 

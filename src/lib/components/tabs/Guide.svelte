@@ -11,6 +11,7 @@
         { r: 'LCP', years: ['2015','2016','2024','2025','2026'],                                   note: 'No 2011–2014, No 2017' },
     ];
     const specialData = [
+        { type: 'Hall of Legends',  quality: 'Hall of Legends', qc: 'halloflegends', pack: 'Awards Vault', years: '2024, 2025',                  teams: 'Faker / T1 (2024) · Uzi / RNG (2025)' },
         { type: 'Worlds Champion', quality: 'Champion', qc: 'champion', pack: 'Champion Pack',    years: '2011 – 2025 (every year)', teams: 'FNC · TPA · SKT ×5 · SSW · SSG · IG · FPX · DK · EDG · DRX · T1 ×3' },
         { type: 'Finals MVP',      quality: 'MVP',      qc: 'mvp',      pack: 'MVP Pack',         years: '2011 – 2025 (every year)', teams: 'One card per year — same winning team' },
         { type: 'Worlds Finalist', quality: 'Finalist', qc: 'finalist', pack: 'First Stand+',    years: '2015, 2016, 2023, 2024, 2025', teams: 'KOO · SSG · WBG · BLG · KT' },
@@ -29,7 +30,8 @@
             { q: 'How do I save my progress?', a: 'Local progress saves automatically to your browser. Sign in with an account to save to the cloud and sync across devices. Auto-save runs every 10 minutes when signed in.' },
         ]},
         { id: 'cards', title: '🃏 Cards & Tiers', content: [
-            { q: 'Card Tiers (lowest to highest)', a: 'Bronze → Silver → Gold → Platinum → Diamond → Master → Grandmaster → Challenger. Special tiers: Champion, MVP, Finalist, MSI, FirstStand, EWC, POTY, ROTY, TOTY, GPOTY, X.' },
+            { q: 'Card Tiers (lowest to highest)', a: 'Bronze → Silver → Gold → Platinum → Diamond → Master → Grandmaster → Challenger. Special tiers: Champion, MVP, Finalist, MSI, FirstStand, EWC, POTY, ROTY, TOTY, GPOTY, X. Above all of them sits Hall of Legends — the mythic tier.' },
+            { q: 'Hall of Legends (mythic)', a: 'The rarest and most prestigious tier in the game — and the smallest: it mirrors Riot\'s real Hall of Legends, so it holds exactly two cards, Faker (T1, 2024 inaugural inductee) and Uzi (RNG, 2025). Every Hall of Legends card is statistically perfect — 100 rating with 100 in all six stats. They only ever drop from the Awards Vault pack at 0.001% per card, sell for 1,000 BE (the highest in the game). They are NOT chemistry wildcards — unlike Champion/MSI/EWC cards they count as their own region, era and team, so a squad built around several of them loses chemistry.' },
             { q: 'Card Stats', a: 'Each card has 6 stats: MEC (Mechanics), TMF (Teamfight), FRM (Form), CMP (Composure), MAP (Macro), LDR (Leadership). These determine combat performance.' },
             { q: 'Ratings & Stats (1.4.0)', a: 'A card\'s overall rating lines up with its six stats — the two scale together, so a strong stat line means a high rating. Elite 98–100 stats only appear on elite-rated (97+) cards, and coaches are rated on everything except Mechanics.' },
             { q: 'Card Looks (1.4.0)', a: 'Several tiers were redesigned: EWC is a brushed gold-and-emerald "Trophy Forge" frame, Champion an imperial purple-and-gold "coronation", and Team of the Year an all-star platinum chrome. Diamond cards switched to dark text so they no longer look like coach cards, and the Grandmaster red is softer on the eyes.' },
@@ -38,14 +40,15 @@
             { q: 'Locking & Favouriting', a: 'Lock cards to prevent accidental selling or trading. Favourite cards to sort them to the top of your club. Both can be done from the Club tab or Card Detail view.' },
         ]},
         { id: 'store', title: '📦 Store & Packs', content: [
-            { q: 'Pack Types', a: 'Standard (100 BE) — up to Gold. Premium (600 BE) — up to Diamond. Elite (1,000 BE) — up to Master. First Stand (3,000 BE) — up to FirstStand. EWC (4,000 BE) — up to EWC (Esports World Cup winners). MSI (5,000 BE) — up to MSI. Champion (6,000 BE) — up to Champion. MVP (8,000 BE) — up to MVP. Awards Vault (12,000 BE) — POTY/TOTY/ROTY cards. Rarest pack in the game (0.25% POTY chance).' },
-            { q: 'Drop Rates', a: 'Each pack has different drop percentages. Click "Preview" on any pack to see exact rates. Top-tier cards in special packs have 0.5% drop chance. Signature is always 0.1%, Holographic is always 1%.' },
+            { q: 'Pack Types', a: 'Standard (100 BE) — up to Gold. Premium (600 BE) — up to Diamond. Elite (1,000 BE) — up to Master. First Stand (3,000 BE) — up to FirstStand. EWC (4,000 BE) — up to EWC (Esports World Cup winners). MSI (5,000 BE) — up to MSI. Champion (6,000 BE) — up to Champion. MVP (8,000 BE) — up to MVP. Awards Vault (12,000 BE) — POTY/TOTY/ROTY cards, and the only place Hall of Legends cards can drop. Rarest pack in the game (0.001% Hall of Legends, 0.1% POTY).' },
+            { q: 'Drop Rates', a: 'Each pack has different drop percentages. Click "Preview" on any pack to see exact rates. Top-tier cards in special packs have 0.5% drop chance. Signature is always 0.1%, Holographic is always 1%. The single rarest drop is Hall of Legends — 0.001% per card slot, Awards Vault only, and every one is a perfect 100 rating with 100 in all six stats.' },
             { q: 'Scouting Skill', a: 'The Scouting Network skill improves your pack luck by +0.25% per level. Check the preview modal to see your current bonus.' },
+            { q: 'Bulk Opening Skill', a: 'Buy and open several packs in one go. Each of the 4 levels adds +1 pack to a bulk open, so at max you can open 5 packs at once from the Store.' },
         ]},
         { id: 'rbc', title: '🧩 Roster Building Challenges (RBCs)', content: [
             { q: 'What are RBCs?', a: 'Roster Building Challenges live in the RBCs tab (between Academy and Season). Each is a daily puzzle: submit a themed set of 5 players from your Club and the cards are consumed in exchange for 5 free packs, which then appear in a "Free Packs" section at the top of the Store for you to open for free — no Blue Essence required.' },
             { q: 'How do rewards scale?', a: 'The more a challenge asks you to invest, the better the packs you earn. Requirements and rewards climb together from 5 free Premium packs all the way up to 5 free EWC packs.' },
-            { q: 'Daily challenge list', a: '• Warm-Up (Difficulty 1) — any 5 players, avg rating 78+ → Premium pack ×5\n• Regional Pride (2) — 5 players from the same region, avg 84+ → Elite pack ×5\n• Era Dynasty (3) — 5 players from the same era, avg 87+ → First Stand pack ×5\n• Hometown Heroes (4) — 5 players from one team, avg 88+ → MSI pack ×5\n• Hall of Legends (5) — 5 players avg 90+ including 2+ Legacy/Award cards → EWC pack ×5' },
+            { q: 'Daily challenge list', a: '• Warm-Up (Difficulty 1) — any 5 players, avg rating 78+ → Premium pack ×5\n• Regional Pride (2) — 5 players from the same region, avg 84+ → Elite pack ×5\n• Era Dynasty (3) — 5 players from the same era, avg 87+ → First Stand pack ×5\n• Hometown Heroes (4) — 5 players from one team, avg 88+ → MSI pack ×5\n• Legendary Five (5) — 5 players avg 90+ including 2+ Legacy/Award/Hall of Legends cards → EWC pack ×5' },
             { q: 'What can I submit?', a: 'Any Club players except those in your active Squad or Academy. Locked, holographic and signature cards are protected and cannot be used, so you never lose your best cards by accident. Submitted players are permanently consumed — feed in spares and duplicates.' },
             { q: 'When do they reset?', a: 'Each challenge can be completed once per day. All challenges reset at local midnight; a live countdown at the top of the tab shows how long until the next reset.' },
         ]},
@@ -70,7 +73,7 @@
             { q: 'MSI (Win First Stand or Regional)', a: '7 rounds, elite competition. Win: 5,000 BE, 2nd: 2,000 BE. Winning unlocks Worlds.' },
             { q: 'World Championship (Win Regional or MSI)', a: '7 rounds, the ultimate challenge. Win: 10,000 BE, 2nd: 4,000 BE.' },
             { q: 'Golden Road (Complete 1 Split)', a: 'Win Regional → First Stand → MSI → Worlds in sequence without losing ANY match. Fail once and it\'s over. The final Worlds stage is capped at 120 total power (1.4.0) so a fully-built squad can realistically close out the gauntlet. Reward: 25,000 BE.' },
-            { q: 'Salary Cap Mode (Always available)', a: 'Build a squad from your own club within a 50,000 CAP budget. Card value = (Rating - 60) × 500. Forces strategic choices — you can\'t just use your best players. 5 elite rounds. Win: 8,000 BE.' },
+            { q: 'Salary Cap Mode (Always available)', a: 'Build a squad from 15 random club cards within an 85,000 CAP budget. Prices are banded by rating, from 4,000 (below 85) up to 32,000 (99+); a flex pick (wrong role) costs 25% less but takes −10% stats in the match. Forces strategic choices — you can\'t just use your best players. There is no coach slot in this mode — five players only. 5 elite rounds. Win: 8,000 BE.' },
             { q: 'Rival Challenge (Requires cloud save)', a: 'Browse the leaderboard and challenge another manager\'s saved squad. Fight their actual squad in a 3-match series. Win: 3,000 BE. Requires Firebase sign-in.' },
         ]},
         { id: 'season', title: '📅 Season Splits', content: [
@@ -82,7 +85,7 @@
         ]},
         { id: 'progression', title: '⭐ Progression', content: [
             { q: 'Manager Level & XP', a: 'Earn XP from packs (+50), wins (+200), and trades (+25). Each level grants 1 Skill Point. XP needed per level = Level × 500.' },
-            { q: 'Skill Tree', a: 'Scouting (pack odds), Tactics (combat boost +1/level), Transfer (sell value), Conditioning (chemistry), Stamina (split cooldown -10s/level), Mentorship (XP gain +10%/level), Trade Mastery (trade slots/discounts), Bench Management (mid-split swaps), Club Capacity (+50 cards/level), Wealth Management (+10% BE from rewards/level).' },
+            { q: 'Skill Tree', a: 'Scouting (pack odds), Tactics (combat boost +1/level), Transfer (sell value), Conditioning (chemistry), Stamina (split cooldown -10s/level), Mentorship (XP gain +10%/level), Trade Mastery (trade slots/discounts), Bench Management (mid-split swaps), Club Capacity (+50 cards/level), Wealth Management (+10% BE from rewards/level), Bulk Opening (+1 pack per bulk open, max 4 — buy and open up to 5 Store packs at once).' },
             { q: 'Prestige System', a: 'Reach Manager Level 100 and choose to Prestige. This resets your XP, Level, and all Skills to 0 — but you keep all cards, BE, trophies, and trackStats. Each Prestige earns a ⭐ badge in the header. Milestone card unlocked at Prestige 1.' },
             { q: 'Career Milestone Cards', a: 'Special cosmetic cards auto-generated when you hit career milestones: First Worlds win, First MSI win, Golden Road, Tower Floor 100, 100 Packs Opened, 10 Splits, Prestige 1. Shown on your Home page.' },
             { q: 'Manager Titles', a: 'Scout (0 TP) → Manager (10) → Director (30) → GM (75) → Executive (150) → President (250) → Hall of Fame (400) → Legend (600) → Immortal (1,000). Earn Trophy Points from tournament wins.' },
@@ -193,7 +196,7 @@
                                 </div>
 
                                 <h4 class="cov-head" style="margin-top:24px">Special & Tournament Cards</h4>
-                                <p class="cov-sub">All special cards are in the "Legacy" region — they bypass era and region chemistry as wildcards.</p>
+                                <p class="cov-sub">Legacy tiers (Champion, MVP, Finalist, MSI, FirstStand, EWC) sit in the "Legacy" region and bypass era and region chemistry as wildcards. Award and Hall of Legends cards do not.</p>
                                 <div class="cov-scroll">
                                     <table class="cov-table">
                                         <thead>
@@ -298,6 +301,8 @@
         font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px;
         white-space: nowrap;
     }
+    /* Mythic — red/gold on black, the only tier that gets a gradient */
+    .cov-q-halloflegends { background: linear-gradient(135deg, #0a0a0a 0%, rgba(255,0,51,0.35) 100%); color: #f5c542; border: 1px solid rgba(255,0,51,0.55); }
     .cov-q-champion  { background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
     .cov-q-mvp       { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid rgba(249,115,22,0.3); }
     .cov-q-finalist  { background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.3); }

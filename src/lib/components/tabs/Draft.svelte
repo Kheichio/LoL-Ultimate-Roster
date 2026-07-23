@@ -4,14 +4,26 @@
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
-    import { getDB, LEGACY_TIERS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
+    import { getDB, LEGACY_TIERS, HALL_OF_LEGENDS, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
     import { get } from 'svelte/store';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
     const FLEX_PENALTY = 10;
     const MIN_CARDS = 15;
     const BANS = 5;
+    const POOL_SIZE = 15;
+    // Balance intent: the CPU fields a squad +2 to +5 overall above the five the player
+    // will realistically field — hard enough to lose to, never hopeless. The edge is
+    // derived from the player's own pool so it scales with them instead of being a fixed
+    // rating. Bounded ABOVE by CPU_EDGE_MAX and CPU_RATING_CEILING so a weak club can
+    // never be handed a perfect roster to fight; bounded BELOW by the player's pool
+    // average so the CPU is never a free win. Do not widen either bound without re-testing.
+    const CPU_EDGE_MIN = 2;
+    const CPU_EDGE_MAX = 5;
+    const CPU_RATING_CEILING = 97;
+    const CPU_DECOY_DROP = 3;   // how far under its anchor a role's backup may sit
 
+    // phase: lobby → ban_player → reveal → build → match → result
     let phase = 'lobby';
     let myPool = [];
     let cpuPool = [];
@@ -34,7 +46,9 @@
         { id: 'earlygame', label: 'Early Game', stat: 'frm', icon: '📈', desc: 'Aggressive early tempo' },
     ];
 
-    $: canStart = $club.length >= MIN_CARDS;
+    // Coaches never enter the draft pool, so they must not count towards the entry gate either —
+    // otherwise the pool can end up smaller than the 5 bans plus 5 squad slots a run needs.
+    $: canStart = $club.filter(c => c.role !== 'COACH').length >= MIN_CARDS;
 
     function getCardStat(card, stat, role) {
         const base = (card.stats[stat] || 0);
@@ -42,18 +56,91 @@
         return isNatural ? base : Math.max(0, base - FLEX_PENALTY);
     }
 
+    // sort() with a random comparator is not a uniform shuffle — Fisher-Yates is
+    function shuffle(list) {
+        const out = [...list];
+        for (let i = out.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [out[i], out[j]] = [out[j], out[i]];
+        }
+        return out;
+    }
+
+    function avgRating(cards) {
+        if (cards.length === 0) return 0;
+        return cards.reduce((s, c) => s + c.rating, 0) / cards.length;
+    }
+
+    // What the player will realistically field: the CPU bans off the top of the pool, so
+    // the starting five is the best cards sitting below the ban line. doCpuBans() skips
+    // roughly a third of its candidates, so ~4 of the top cards actually vanish — using
+    // the full BANS count here measured about a rating point too pessimistic.
+    function projectedSquadRating(pool) {
+        const sorted = [...pool].sort((a, b) => b.rating - a.rating);
+        const offset = Math.min(BANS - 1, Math.max(0, sorted.length - ROLES.length));
+        const five = sorted.slice(offset, offset + ROLES.length);
+        return avgRating(five.length > 0 ? five : sorted);
+    }
+
+    function pickNearest(list, rating) {
+        const near = [...list].sort((a, b) => Math.abs(a.rating - rating) - Math.abs(b.rating - rating)).slice(0, 5);
+        return near[Math.floor(Math.random() * near.length)];
+    }
+
+    function buildCpuPool(pool) {
+        const db = getDB();
+        if (!db) return [];
+        // Hall of Legends is meant to be near-unobtainable — the CPU never gets handed one
+        const candidates = db.filter(c => c.role !== 'COACH' && c.quality !== HALL_OF_LEGENDS);
+        const edge = CPU_EDGE_MIN + Math.random() * (CPU_EDGE_MAX - CPU_EDGE_MIN);
+        // Floor applied last so the CPU can never land under the player's pool average
+        const target = Math.max(avgRating(pool), Math.min(projectedSquadRating(pool) + edge, CPU_RATING_CEILING));
+
+        // One anchor per role, spread ±2 around the target (the spread sums to zero, so
+        // the CPU's five still average out on target while feeling varied). Two weaker
+        // decoys per role so the player's bans genuinely hurt instead of being cosmetic —
+        // and because every decoy sits below its anchor, the anchors are a hard cap on
+        // how strong the CPU squad can ever be.
+        const spread = shuffle([-2, -1, 0, 1, 2]);
+        const used = new Set();
+        const out = [];
+        ROLES.forEach((role, i) => {
+            const rolePool = candidates.filter(c => c.role === role);
+            if (rolePool.length === 0) return;
+            const anchor = pickNearest(rolePool, target + spread[i]);
+            used.add(anchor.id);
+            out.push(anchor);
+            // Decoys never exceed their anchor, so the anchors stay the ceiling
+            const rest = rolePool.filter(c => !used.has(c.id) && c.rating <= anchor.rating);
+            const close = rest.filter(c => c.rating >= anchor.rating - CPU_DECOY_DROP);
+            let added = 0;
+            for (const d of shuffle(close.length >= 2 ? close : rest)) {
+                if (added >= 2) break;
+                if (used.has(d.id)) continue;
+                used.add(d.id);
+                out.push(d);
+                added++;
+            }
+        });
+        return shuffle(out).slice(0, POOL_SIZE);
+    }
+
     function startDraft() {
         if (!canStart) { showToast(`Need at least ${MIN_CARDS} cards in your club.`, 'error'); return; }
-        const cl = get(club);
-        const shuffled = [...cl].filter(c => c.role !== 'COACH').sort(() => Math.random() - 0.5);
-        myPool = shuffled.slice(0, 15);
+        // Pure uniform draw — no role quotas, no tier floors, no coverage guarantees.
+        // Five mids and no support is a legal pool; flex picks exist to cover it.
+        const seen = new Set();
+        const eligible = get(club).filter(c => {
+            if (c.role === 'COACH') return false;
+            if (c.uniqueId && seen.has(c.uniqueId)) return false;
+            seen.add(c.uniqueId);
+            return true;
+        });
+        if (eligible.length === 0) { showToast('No draftable cards in your club.', 'error'); return; }
+        myPool = shuffle(eligible).slice(0, POOL_SIZE);
 
-        const db = getDB();
-        if (!db) return;
-        const avgRating = Math.round(myPool.reduce((s, c) => s + c.rating, 0) / myPool.length);
-        const cpuCandidates = db.filter(c => c.role !== 'COACH' && Math.abs(c.rating - avgRating) <= 8);
-        const cpuShuffled = [...cpuCandidates].sort(() => Math.random() - 0.5);
-        cpuPool = cpuShuffled.slice(0, 15);
+        cpuPool = buildCpuPool(myPool);
+        if (cpuPool.length === 0) return;
 
         myBans = new Set();
         cpuBans = new Set();
@@ -62,6 +149,7 @@
         playerScore = 0;
         cpuScore = 0;
         matchLog = [];
+        assigningRole = null;
         draftResult = null;
         phase = 'ban_player';
     }
@@ -71,7 +159,7 @@
         myBans = new Set([...myBans, card.id]);
         if (myBans.size >= BANS) {
             doCpuBans();
-            phase = 'build';
+            phase = 'reveal';
         }
     }
 
@@ -95,6 +183,8 @@
     }
 
     $: myAvailable = myPool.filter(c => !cpuBans.has(c.uniqueId));
+    // Retained so the reveal screen can show exactly what the CPU took away
+    $: myBanned = myPool.filter(c => cpuBans.has(c.uniqueId));
     $: cpuAvailable = cpuPool.filter(c => !myBans.has(c.id));
     $: myAssigned = new Set(Object.values(mySquad).filter(Boolean).map(c => c.uniqueId));
     $: myUnassigned = myAvailable.filter(c => !myAssigned.has(c.uniqueId)).sort((a, b) => {
@@ -218,8 +308,9 @@
     {#if phase === 'lobby'}
         <div class="draft-lobby">
             <h2 class="draft-title">Draft Mode</h2>
-            <p class="draft-desc">15 random cards from your club. Ban 5 of their cards, they ban 5 of yours. Build a squad and battle — best of 5.</p>
+            <p class="draft-desc">{POOL_SIZE} random cards from your club. Ban 5 of their cards, they ban 5 of yours. Build a squad and battle — best of 5.</p>
             <div class="draft-rules">
+                <div class="rule"><span class="rule-icon">🎲</span> Pure random draw — no role or tier guarantees</div>
                 <div class="rule"><span class="rule-icon">📋</span> Minimum {MIN_CARDS} cards in club required</div>
                 <div class="rule"><span class="rule-icon">🚫</span> {BANS} bans per side</div>
                 <div class="rule"><span class="rule-icon">🔄</span> All cards flexable — non-natural role gets -{FLEX_PENALTY} to all stats</div>
@@ -250,6 +341,50 @@
             </div>
         </div>
 
+    {:else if phase === 'reveal'}
+        <div class="reveal-phase">
+            <h2 class="phase-title reveal-title">Draft Pool Revealed</h2>
+            <p class="phase-desc">This is what you drew and what the CPU took off you. Everything on the left is yours to build with.</p>
+            <div class="reveal-counts">
+                <span class="rc-ok">{myAvailable.length} available</span>
+                <span class="rc-sep">/</span>
+                <span class="rc-ban">{myBanned.length} banned</span>
+            </div>
+
+            <div class="reveal-cols">
+                <div class="reveal-col">
+                    <div class="reveal-head reveal-head-ok">✓ Your Pool — {myAvailable.length}</div>
+                    {#if myAvailable.length === 0}
+                        <div class="reveal-empty">Nothing left.</div>
+                    {:else}
+                        <div class="reveal-grid">
+                            {#each myAvailable as card (card.uniqueId)}
+                                <Card {card} mini={true} />
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+
+                <div class="reveal-col">
+                    <div class="reveal-head reveal-head-ban">🚫 Banned by CPU — {myBanned.length}</div>
+                    {#if myBanned.length === 0}
+                        <div class="reveal-empty">Nothing banned.</div>
+                    {:else}
+                        <div class="reveal-grid">
+                            {#each myBanned as card (card.uniqueId)}
+                                <div class="reveal-banned">
+                                    <Card {card} mini={true} onclick={() => {}} />
+                                    <div class="reveal-ban-overlay">BANNED</div>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+            </div>
+
+            <button class="draft-start reveal-go" on:click={() => phase = 'build'}>Build Squad</button>
+        </div>
+
     {:else if phase === 'build'}
         <div class="build-phase">
             <h2 class="phase-title build-title">Build Your Squad</h2>
@@ -258,7 +393,7 @@
             <!-- Banned cards display -->
             <div class="banned-bar">
                 <span class="banned-label">Your Banned Cards:</span>
-                {#each myPool.filter(c => cpuBans.has(c.uniqueId)) as card}
+                {#each myBanned as card (card.uniqueId)}
                     <span class="banned-name">{card.name} ({card.rating})</span>
                 {/each}
             </div>
@@ -432,9 +567,10 @@
     .draft-warn { color: #f87171; font-size: 12px; margin-bottom: 16px; }
 
     /* Ban Phase */
-    .ban-phase, .build-phase, .match-phase { padding: 8px 0; }
+    .ban-phase, .reveal-phase, .build-phase, .match-phase { padding: 8px 0; }
     .phase-title { font-size: 20px; font-weight: 900; margin-bottom: 6px; }
     .ban-title { color: #f87171; }
+    .reveal-title { color: #c084fc; }
     .build-title { color: #34d399; }
     .phase-desc { font-size: 12px; color: #64748b; margin-bottom: 16px; }
     .ban-grid, .pick-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -442,6 +578,22 @@
     .ban-card:hover { border-color: rgba(239,68,68,0.4); }
     .ban-card-banned { opacity: 0.3; pointer-events: none; }
     .ban-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(127,29,29,0.6); border-radius: 12px; color: #fca5a5; font-size: 14px; font-weight: 900; letter-spacing: 2px; }
+
+    /* Reveal Phase */
+    .reveal-counts { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+    .rc-ok { color: #34d399; } .rc-ban { color: #f87171; } .rc-sep { color: #334155; }
+    .reveal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .reveal-cols { grid-template-columns: 1fr; } }
+    .reveal-col { padding: 12px; border-radius: 14px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
+    .reveal-head { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; text-align: center; padding: 6px 10px; border-radius: 8px; margin-bottom: 10px; }
+    .reveal-head-ok { color: #34d399; background: rgba(16,185,129,0.08); }
+    .reveal-head-ban { color: #f87171; background: rgba(239,68,68,0.08); }
+    .reveal-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .reveal-empty { text-align: center; font-size: 11px; color: #334155; padding: 24px 0; }
+    /* Banned group is dimmed + red-tinted so the two lists never read as the same thing */
+    .reveal-banned { position: relative; border-radius: 12px; pointer-events: none; filter: grayscale(0.8); opacity: 0.45; }
+    .reveal-ban-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(127,29,29,0.55); border-radius: 12px; color: #fca5a5; font-size: 13px; font-weight: 900; letter-spacing: 2px; }
+    .reveal-go { display: block; margin: 0 auto; }
 
     /* Build Phase */
     .banned-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 16px; padding: 10px 14px; border-radius: 10px; background: rgba(127,29,29,0.1); border: 1px solid rgba(239,68,68,0.15); }
