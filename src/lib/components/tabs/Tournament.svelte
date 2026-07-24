@@ -434,14 +434,22 @@
         const grStageBonus = activeMode === 'goldenroad' ? goldenRoadStage * 5 : 0;
         let totalAvg = rawAvg + roundBonus + grStageBonus;
         // Golden Road world final: the last Worlds stage used to reach ~140+ total power, which is
-        // effectively unbeatable since a maxed squad tops out around 120. Cap that final stage at
-        // 120 total power (the winnable peak) and ramp the 4 matches up to it, so the world final
-        // is a fair 120 ceiling instead of an impossible wall. Enemy card stats are already fair
-        // (~98 raw), so only the inflated headline power needs adjusting down to match.
+        // effectively unbeatable since a maxed squad tops out around 120. Keep the gauntlet winnable
+        // but give its climax some variance — the FINAL game's headline power is randomised between
+        // 115 (a beatable peak) and 130 (a genuine wall), so some runs end on a breather and others
+        // on a nail-biter, and the difficulty scales differently each attempt. The lead-up Worlds
+        // games ramp up toward the low end of that band. Enemy card stats are already fair (~98 raw),
+        // so only the inflated headline power needs adjusting down to match.
         if (activeMode === 'goldenroad' && mode === 'worlds') {
-            const WORLD_FINAL_CAP = 120;
-            const ramp = 114 + Math.round((WORLD_FINAL_CAP - 114) * (roundIdx / Math.max(1, m.rounds - 1)));
-            totalAvg = Math.min(totalAvg, ramp);
+            const grRounds = GOLDEN_STAGES[goldenRoadStage]?.rounds || m.rounds;
+            const isFinalGame = roundIdx >= grRounds - 1;
+            if (isFinalGame) {
+                const finalPower = 115 + Math.floor(Math.random() * 16); // 115–130 inclusive
+                totalAvg = Math.min(totalAvg, finalPower);
+            } else {
+                const ramp = 110 + Math.round((118 - 110) * (roundIdx / Math.max(1, grRounds - 1)));
+                totalAvg = Math.min(totalAvg, ramp);
+            }
         }
         const names = ['Iron Wolves','Silver Fangs','Bronze Legion','Rookie Squad','Cafe Regulars','Local Heroes','Storm Dragons','Crystal Bears','Dark Knights','Solar Flare','Frost Giants','Thunder Hawks','Crimson Vipers','Neon Tigers','Iron Phoenix'];
         return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: totalAvg };

@@ -7,6 +7,19 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.5.1',
+        title: 'Updates Hub, Global Search & Fixes',
+        summary: 'A dedicated Updates page, a search-everything Archive tab, a critical season-split crash fix, and a randomised Golden Road final.',
+        details: [
+            'NEW — Updates page: a dedicated, in-depth changelog (the tab you\'re reading now). The Home "Latest Updates" island is now a short preview whose heading and rows link straight here.',
+            'NEW — Home Game Guide island: a one-tap shortcut into the full guide, sitting next to the trimmed updates preview so the Home page stays compact instead of stretching down the screen.',
+            'NEW — Archive Global Search: a "🔍 Global Search" tab that searches across EVERY card type at once (name, team, year, tier or region), plus a browsable overview of all card types showing your completion for each.',
+            'FIXED (critical) — Season Splits no longer freeze on a blank page for veteran managers. At high split numbers (roughly split 25+, and guaranteed by split 50) the opponent generator could demand more BOSS teams than there were slots to place them and loop forever, locking up the whole site. Boss counts are now clamped to the available slots and the generator is guard-railed so it can never hang again.',
+            'GOLDEN ROAD — the world final now scales to a random 115–130 total power instead of a flat cap, so the climax is sometimes a breather and sometimes a genuine wall. A ramp bug that quietly held the final below its intended ceiling was fixed at the same time.',
+            'GUIDE — refreshed to document Global Search, the new Updates tab, and the randomised Golden Road final.',
+        ],
+    },
+    {
         ver: 'Beta 1.4.0',
         title: 'Summer Splits 2018–2020',
         summary: '637 new Summer Split cards (2018–2020), redesigned EWC / Champion / Team of the Year cards, and a league-wide stat rebalance.',

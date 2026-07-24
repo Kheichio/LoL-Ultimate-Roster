@@ -238,10 +238,17 @@
                 <div class="panel-label purple">Coming Soon</div>
                 <div class="cs-list">
                     <div class="cs-item">
-                        <span class="cs-icon">📊</span>
+                        <span class="cs-icon">🏆</span>
                         <div>
-                            <div class="cs-name">Player Form System</div>
-                            <div class="cs-desc">Cards go on hot/cold streaks based on recent match results.</div>
+                            <div class="cs-name">Retro Cup</div>
+                            <div class="cs-desc">An era- and region-locked tournament — build a themed squad from a single era or region and face rosters drawn from the same pool.</div>
+                        </div>
+                    </div>
+                    <div class="cs-item">
+                        <span class="cs-icon">🃏</span>
+                        <div>
+                            <div class="cs-name">2021–2023 Rosters</div>
+                            <div class="cs-desc">Regular-season player cards for 2021, 2022 and 2023, filling the gap between the 2020 Summer Splits and the 2024+ rosters.</div>
                         </div>
                     </div>
                 </div>
