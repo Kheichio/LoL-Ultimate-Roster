@@ -264,12 +264,24 @@
         const yr = Math.floor((splitNum - 1) / 4);
         const hardMin = Math.min(yr, 4);
         const hardMax = Math.min(1 + yr * 2, 8);
-        const bossMin = Math.max(0, yr - 1);
-        const bossMax = Math.min(Math.floor(yr / 2), 3);
+        // BOSS games live in the back third of the split (games 6-10 → slots 6-9),
+        // so there are only ~4 slots to place them in. The boss count MUST be clamped
+        // to that capacity: at high split numbers (e.g. split 50, yr 12) the old
+        // bossMin = yr - 1 far exceeded bossMax, which (a) made randRange receive
+        // min > max and return an inflated count, and (b) asked the fill loop below to
+        // place more bosses than there are slots — an infinite loop that froze the whole
+        // page for veteran players. Clamp both ends and cap the loop with an attempt limit.
+        const bossSlotStart = Math.max(5, GAMES_PER_SPLIT - 4); // 6
+        const bossSlotEnd = GAMES_PER_SPLIT - 1;                // 9
+        const bossSlotCapacity = bossSlotEnd - bossSlotStart + 1; // 4
+        const bossMax = Math.min(Math.floor(yr / 2), 3, bossSlotCapacity);
+        const bossMin = Math.min(Math.max(0, yr - 1), bossMax); // never above bossMax
         const impossibleCount = yr <= 1 ? 0 : randRange(bossMin, bossMax);
         const impossibleSlots = new Set();
-        while (impossibleSlots.size < impossibleCount) {
-            impossibleSlots.add(randRange(Math.max(5, GAMES_PER_SPLIT - 4), GAMES_PER_SPLIT - 1));
+        let bossAttempts = 0;
+        while (impossibleSlots.size < impossibleCount && bossAttempts < 100) {
+            impossibleSlots.add(randRange(bossSlotStart, bossSlotEnd));
+            bossAttempts++;
         }
 
         const availableHardSlots = GAMES_PER_SPLIT - 3 - impossibleSlots.size;

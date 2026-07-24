@@ -15,6 +15,7 @@
     import Trade from '../tabs/Trade.svelte';
     import Rewards from '../tabs/Rewards.svelte';
     import Guide from '../tabs/Guide.svelte';
+    import Updates from '../tabs/Updates.svelte';
     import Friends from '../tabs/Friends.svelte';
     import Tower from '../tabs/Tower.svelte';
     import Draft from '../tabs/Draft.svelte';
@@ -58,6 +59,8 @@
         <Rewards />
     {:else if tab === 'guide'}
         <Guide />
+    {:else if tab === 'updates'}
+        <Updates />
     {:else if tab === 'friends'}
         <Friends />
     {:else if tab === 'tower'}

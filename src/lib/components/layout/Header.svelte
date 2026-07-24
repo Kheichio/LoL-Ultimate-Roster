@@ -135,6 +135,7 @@
     const subTabs = [
         { id: 'welcome', label: 'Welcome' },
         { id: 'guide', label: 'Guide' },
+        { id: 'updates', label: 'Updates' },
         { id: 'trade', label: 'Trade' },
     ];
 

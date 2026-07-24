@@ -3,13 +3,51 @@
     import { collectionRegistry, archiveRewards, blueEssence, battlePass, saveGame, grantXP } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
-    import { getDB, getEra, TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, ALL_SPECIAL } from '../../utils/cards.js';
+    import { getDB, getEra, TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, ALL_SPECIAL, HALL_OF_LEGENDS, TIER_COLORS } from '../../utils/cards.js';
 
     let activeCategory = 'regular';
     let activeRegion = 'LCK';
     let search = '';
     let eraFilter = 'ALL';
     let sortBy = 'team';
+
+    // ── Global Search ──────────────────────────────────────────────
+    // Every card quality in the game, in display order (regular tiers, then legacy,
+    // award and mythic special tiers). getDB() rewrites regular cards' quality via
+    // ratingToQuality(), so grouping the whole DB by `quality` yields exactly these.
+    const TYPE_ORDER = [...TIER_ORDER, ...ALL_SPECIAL];
+    const TYPE_META = {
+        Bronze: { icon: '🥉', label: 'Bronze' },
+        Silver: { icon: '⚪', label: 'Silver' },
+        Gold: { icon: '🟡', label: 'Gold' },
+        Platinum: { icon: '🟢', label: 'Platinum' },
+        Diamond: { icon: '🔷', label: 'Diamond' },
+        Master: { icon: '🟣', label: 'Master' },
+        Grandmaster: { icon: '🔴', label: 'Grandmaster' },
+        Challenger: { icon: '🏅', label: 'Challenger' },
+        Champion: { icon: '🏆', label: 'Worlds Champion' },
+        MVP: { icon: '✨', label: 'Finals MVP' },
+        Finalist: { icon: '🥈', label: 'Worlds Finalist' },
+        MSI: { icon: '🌊', label: 'MSI Champion' },
+        FirstStand: { icon: '🟠', label: 'First Stand' },
+        EWC: { icon: '🥇', label: 'EWC Champion' },
+        POTY: { icon: '🌟', label: 'Player of the Year' },
+        ROTY: { icon: '🌱', label: 'Rookie of the Year' },
+        TOTY: { icon: '👑', label: 'Team of the Year' },
+        GPOTY: { icon: '🌍', label: 'Global POTY' },
+        X: { icon: '✕', label: 'Community Pick' },
+        [HALL_OF_LEGENDS]: { icon: '🔥', label: 'Hall of Legends' },
+    };
+    const ROLE_OPTIONS = ['ALL', 'TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];
+
+    let globalSearch = '';
+    let globalRole = 'ALL';
+    let globalType = 'ALL';
+
+    function clearGlobal() { globalSearch = ''; globalRole = 'ALL'; globalType = 'ALL'; }
+    function typeLabel(q) { return TYPE_META[q]?.label || q; }
+    function typeIcon(q) { return TYPE_META[q]?.icon || '🃏'; }
+    function typeColor(q) { return TIER_COLORS[q] || '#94a3b8'; }
 
     const ERA_OPTIONS = [
         { value: 1, label: 'Era 1 (2013 & earlier)' },
@@ -128,6 +166,7 @@
     }
 
     const categories = [
+        { id: 'search', label: '🔍 Global Search', color: '#f1f5f9', bg: 'rgba(100,116,139,0.25)', border: 'rgba(148,163,184,0.55)' },
         { id: 'regular', label: '⚔️ Regular Season', color: '#93c5fd', bg: 'rgba(37,99,235,0.2)', border: 'rgba(59,130,246,0.5)' },
         { id: 'firststand', label: '🟠 First Stand', color: '#fdba74', bg: 'rgba(234,88,12,0.2)', border: 'rgba(249,115,22,0.5)' },
         { id: 'msi', label: '🌊 MSI', color: '#5eead4', bg: 'rgba(13,148,136,0.2)', border: 'rgba(20,184,166,0.5)' },
@@ -155,6 +194,45 @@
     qualityToCat = Object.fromEntries(Object.entries(catToQuality).map(([k, v]) => [v, k]));
 
     $: db = getDB() || [];
+
+    // Global search — spans the entire card database, grouped by type.
+    $: globalOwned = db.filter(c => $collectionRegistry[c.id]).length;
+    $: globalTotal = db.length;
+    $: typeStats = (() => {
+        const stats = {};
+        for (const c of db) {
+            if (!stats[c.quality]) stats[c.quality] = { total: 0, owned: 0 };
+            stats[c.quality].total++;
+            if ($collectionRegistry[c.id]) stats[c.quality].owned++;
+        }
+        return stats;
+    })();
+    $: typesPresent = TYPE_ORDER.filter(q => (typeStats[q]?.total || 0) > 0);
+    $: globalActive = globalSearch.trim() !== '' || globalRole !== 'ALL' || globalType !== 'ALL';
+    $: globalResults = (() => {
+        if (!globalActive) return null;
+        const q = globalSearch.trim().toLowerCase();
+        let pool = db;
+        if (globalType !== 'ALL') pool = pool.filter(c => c.quality === globalType);
+        if (globalRole !== 'ALL') pool = pool.filter(c => c.role === globalRole);
+        if (q) pool = pool.filter(c =>
+            c.name.toLowerCase().includes(q) ||
+            c.team.toLowerCase().includes(q) ||
+            String(c.year || '').includes(q) ||
+            (c.quality || '').toLowerCase().includes(q) ||
+            (c.region || '').toLowerCase().includes(q) ||
+            typeLabel(c.quality).toLowerCase().includes(q)
+        );
+        const groups = {};
+        for (const c of pool) (groups[c.quality] = groups[c.quality] || []).push(c);
+        return TYPE_ORDER.filter(t => groups[t]).map(t => ({
+            type: t,
+            cards: groups[t].sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.year || 0) - (a.year || 0)),
+            owned: groups[t].filter(c => $collectionRegistry[c.id]).length,
+        }));
+    })();
+    $: globalResultCount = globalResults ? globalResults.reduce((s, g) => s + g.cards.length, 0) : 0;
+
     // Everything in the current category/region, before the browsing filters — the era dropdown
     // offers only the eras this pool actually contains.
     $: categoryPool = (() => {
@@ -251,7 +329,11 @@
     <div class="archive-header">
         <div>
             <h2 class="archive-title">Archive</h2>
-            <p class="archive-subtitle">{ownedCards}/{totalCards} collected ({completionPct}%)</p>
+            {#if activeCategory === 'search'}
+                <p class="archive-subtitle">{globalOwned}/{globalTotal} collected across all types ({globalTotal > 0 ? Math.round((globalOwned / globalTotal) * 100) : 0}%)</p>
+            {:else}
+                <p class="archive-subtitle">{ownedCards}/{totalCards} collected ({completionPct}%)</p>
+            {/if}
         </div>
     </div>
 
@@ -269,6 +351,61 @@
             </button>
         {/each}
     </div>
+
+    {#if activeCategory === 'search'}
+        <!-- ── Global Search: across every card type ── -->
+        <div class="gs-controls">
+            <input type="text" bind:value={globalSearch} placeholder="Search every card — name, team, year, tier or region..." class="input gs-search">
+            <select bind:value={globalRole} class="input gs-role">
+                {#each ROLE_OPTIONS as r}<option value={r}>{r === 'ALL' ? 'All Roles' : r}</option>{/each}
+            </select>
+        </div>
+
+        {#if globalActive}
+            <div class="gs-filterbar">
+                <span class="gs-filter-count">
+                    {globalResultCount} card{globalResultCount === 1 ? '' : 's'}
+                    {globalType !== 'ALL' ? ` · ${typeLabel(globalType)}` : ''}{globalRole !== 'ALL' ? ` · ${globalRole}` : ''}
+                </span>
+                <button class="gs-clear" on:click={clearGlobal}>Clear ✕</button>
+            </div>
+        {/if}
+
+        {#if !globalActive}
+            <p class="gs-hint">Browse every card type in the game below, or search across all of them at once. Click a type to see all of its cards.</p>
+            <div class="gs-type-grid">
+                {#each typesPresent as t}
+                    {@const s = typeStats[t]}
+                    {@const pct = s.total > 0 ? Math.round((s.owned / s.total) * 100) : 0}
+                    <button class="gs-type-card" style="border-color: {typeColor(t)}55;" on:click={() => globalType = t}>
+                        <span class="gs-type-icon">{typeIcon(t)}</span>
+                        <span class="gs-type-label" style="color: {typeColor(t)};">{typeLabel(t)}</span>
+                        <span class="gs-type-count">{s.owned}/{s.total}</span>
+                        <div class="gs-type-bar"><div class="gs-type-fill" style="width: {pct}%; background: {typeColor(t)};"></div></div>
+                    </button>
+                {/each}
+            </div>
+        {:else if globalResults && globalResults.length > 0}
+            <div class="gs-results">
+                {#each globalResults as grp (grp.type)}
+                    <div class="gs-type-section">
+                        <div class="gs-type-header" style="border-left-color: {typeColor(grp.type)};">
+                            <span class="gs-type-h-icon">{typeIcon(grp.type)}</span>
+                            <span class="gs-type-h-label" style="color: {typeColor(grp.type)};">{typeLabel(grp.type)}</span>
+                            <span class="gs-type-h-count">{grp.owned}/{grp.cards.length} owned</span>
+                        </div>
+                        <div class="card-grid">
+                            {#each grp.cards as card (card.id)}
+                                <Card {card} mini={true} showOwned={true} owned={!!$collectionRegistry[card.id]} />
+                            {/each}
+                        </div>
+                    </div>
+                {/each}
+            </div>
+        {:else}
+            <div class="empty-state"><p>No cards match your search.</p></div>
+        {/if}
+    {:else}
 
     <!-- Region tabs (regular only) -->
     {#if activeCategory === 'regular'}
@@ -377,6 +514,7 @@
                 </div>
             {/each}
         </div>
+    {/if}
     {/if}
 </section>
 
@@ -649,4 +787,52 @@
         gap: 10px;
         justify-items: center;
     }
+
+    /* ── Global Search ── */
+    .gs-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; align-items: center; }
+    .gs-search { flex: 1; min-width: 180px; padding: 10px 14px; font-size: 13px; }
+    .gs-role { padding: 10px 12px; font-size: 12px; font-weight: 700; }
+
+    .gs-filterbar {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 8px 14px; margin-bottom: 16px; border-radius: 10px;
+        background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(71, 85, 105, 0.25);
+    }
+    .gs-filter-count { font-size: 12px; font-weight: 700; color: #cbd5e1; }
+    .gs-clear {
+        padding: 5px 12px; border-radius: 8px; font-size: 10px; font-weight: 900;
+        text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;
+        background: rgba(51, 65, 85, 0.6); border: 1px solid rgba(71, 85, 105, 0.4); color: #94a3b8;
+        transition: all 0.12s; white-space: nowrap;
+    }
+    .gs-clear:hover { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #f87171; }
+
+    .gs-hint { font-size: 12px; color: #64748b; margin-bottom: 16px; line-height: 1.5; }
+
+    .gs-type-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
+    }
+    .gs-type-card {
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        padding: 16px 12px; border-radius: 12px; cursor: pointer;
+        background: rgba(12, 16, 28, 0.5); border: 1px solid rgba(51, 65, 85, 0.25);
+        transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+    }
+    .gs-type-card:hover { transform: translateY(-2px); background: rgba(30, 41, 59, 0.5); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3); }
+    .gs-type-icon { font-size: 24px; }
+    .gs-type-label { font-size: 12px; font-weight: 900; text-align: center; line-height: 1.2; }
+    .gs-type-count { font-size: 11px; font-weight: 700; color: #64748b; font-family: monospace; }
+    .gs-type-bar { width: 100%; height: 5px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+    .gs-type-fill { height: 100%; border-radius: 4px; transition: width 0.4s; min-width: 2px; }
+
+    .gs-results { display: flex; flex-direction: column; gap: 20px; }
+    .gs-type-section { display: flex; flex-direction: column; gap: 12px; }
+    .gs-type-header {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 14px; border-left: 3px solid #475569; border-radius: 6px;
+        background: rgba(30, 41, 59, 0.35);
+    }
+    .gs-type-h-icon { font-size: 18px; }
+    .gs-type-h-label { font-size: 14px; font-weight: 900; }
+    .gs-type-h-count { font-size: 11px; font-weight: 700; color: #64748b; font-family: monospace; margin-left: auto; }
 </style>

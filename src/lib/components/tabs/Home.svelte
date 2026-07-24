@@ -5,6 +5,9 @@
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { TIER_ORDER, ALL_SPECIAL, getEffectiveRating } from '../../utils/cards.js';
+    import { recentUpdates } from '../../utils/updates.js';
+
+    const recentUpds = recentUpdates(3);
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
@@ -137,15 +140,6 @@
         return ALL_SPECIAL.map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0);
     })();
 
-    const updates = [
-        { ver: 'Beta 1.4.0', text: 'Summer Splits & a fresh coat of paint — 637 new cards: full LCK, LPL & LEC Summer Split rosters (main teams + head coaches) for 2018, 2019 and 2020, each rated to that split\'s real performance (Uzi \'18, the DAMWON \'20 Worlds core, and the G2/FPX \'19 super-teams on top). Redesigned EWC (gold-emerald "Trophy Forge"), Champion (imperial purple-gold) and Team of the Year (all-star chrome) cards; Diamond cards now use dark text and Grandmaster red is softer. The Bench picker adds role filters and sort-by-any-stat and shows every eligible card. Golden Road\'s world final is now a fair 120-power cap, plus a league-wide stat pass so every card\'s rating lines up with its stats.' },
-        { ver: 'Beta 1.3.4', text: 'Transfer Market — the Trade tab now shows exactly which player you\'re signing (no more mystery). A randomised board of 6 real listings refreshes every 15 minutes; each can be signed once per rotation. Cost (spare cards + Blue Essence) scales with the player\'s tier, from Gold all the way up to Challenger and Legacy/Award cards.' },
-        { ver: 'Beta 1.3.0', text: 'RBCs & EWC — Roster Building Challenges: a new daily mode (tab between Academy and Season) where you submit themed 5-card sets for free reward packs (Premium → EWC). EWC champion cards (T1 2024, Gen.G 2025, DK 2026) + EWC Store pack. Trade Market reworked into expensive, fully-random Master+ Mystery Trades. Friends moved next to Ranking; Home career stats reordered & recoloured.' },
-        { ver: '1.2', text: 'Academy auto-farming team, Club quick-sell + sell duplicates, MSI 2026 champions (HLE), public leaderboard, Challenger no longer craftable, softer bronze cards' },
-        { ver: '1.1.2', text: 'League Awards cards (POTY/TOTY/ROTY 2024+2025), Salary Cap Mode, Rival Challenge, Prestige System, Milestone Cards' },
-        { ver: '1.1.1.2', text: '55 quests, 25 achievements, Draft Mode fixes, pity counter fix, ON card buff' },
-        { ver: '1.1.0', text: 'Draft Mode, MSI 2026 Event, Wealth skill, Conditioning fix, dynamic milestones' },
-    ];
 </script>
 
 <section class="home" style="--team-rgb: {teamRgb}; --team-color: {$teamIdentity.color || '#3b82f6'};">
@@ -253,17 +247,25 @@
                 </div>
             </div>
 
+            <!-- Guide -->
+            <div class="panel" style="padding: 16px;">
+                <button class="panel-label panel-label-link green" on:click={() => switchTab('guide')}>Game Guide →</button>
+                <p class="island-blurb">New here? The guide covers cards & tiers, chemistry, every game mode, packs and progression.</p>
+                <button class="panel-link" on:click={() => switchTab('guide')}>Read the guide →</button>
+            </div>
+
             <!-- Updates -->
             <div class="panel" style="padding: 16px;">
-                <div class="panel-label cyan">Latest Updates</div>
+                <button class="panel-label panel-label-link cyan" on:click={() => switchTab('updates')}>Latest Updates →</button>
                 <div class="update-list">
-                    {#each updates as note}
-                        <div class="update-row">
+                    {#each recentUpds as note}
+                        <button class="update-row" on:click={() => switchTab('updates')}>
                             <span class="update-ver">{note.ver}</span>
-                            <span class="update-text">{note.text}</span>
-                        </div>
+                            <span class="update-text"><strong class="update-headline">{note.title}</strong> — {note.summary}</span>
+                        </button>
                     {/each}
                 </div>
+                <button class="panel-link" on:click={() => switchTab('updates')}>View all updates →</button>
             </div>
         </div>
 
@@ -686,15 +688,35 @@
     .bp-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
     .bp-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); border-radius: 4px; transition: width 0.5s; }
 
+    /* Clickable panel heading (acts as a link to a full page) */
+    .panel-label-link {
+        background: none; border: none; cursor: pointer;
+        display: inline-flex; align-items: center; text-align: left;
+        padding: 0; transition: opacity 0.12s, filter 0.12s;
+    }
+    .panel-label-link:hover { filter: brightness(1.25); }
+    .panel-label.green { color: #34d399; }
+
+    .island-blurb { font-size: 11px; color: #64748b; line-height: 1.5; margin-bottom: 10px; }
+
     /* Updates */
-    .update-list { display: flex; flex-direction: column; gap: 6px; }
-    .update-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+    .update-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    .update-row {
+        display: flex; align-items: baseline; gap: 8px; font-size: 11px;
+        width: 100%; text-align: left; background: none; border: none;
+        padding: 4px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer;
+        transition: background 0.12s;
+    }
+    .update-row:hover { background: rgba(6, 182, 212, 0.06); }
     .update-ver {
         flex-shrink: 0; font-size: 9px; font-weight: 900; color: #06b6d4;
         background: rgba(6, 182, 212, 0.08); padding: 2px 8px; border-radius: 6px;
         border: 1px solid rgba(6, 182, 212, 0.1);
     }
     .update-text { color: #475569; line-height: 1.4; }
+    .update-headline { color: #94a3b8; font-weight: 800; }
+    .update-row:hover .update-text { color: #64748b; }
+    .update-row:hover .update-headline { color: #cbd5e1; }
 
     /* Career */
     .career-list { display: flex; flex-direction: column; gap: 5px; }
