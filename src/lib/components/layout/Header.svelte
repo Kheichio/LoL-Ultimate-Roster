@@ -209,8 +209,11 @@
                     </button>
                 {/each}
 
+                <!-- One word, spaced with letter-spacing rather than literal spaces — with
+                     spaces in the text the button could break onto two lines ("P L A" / "Y")
+                     when the nav row got squeezed. -->
                 <button class="play" class:play-on={$activeTab === 'tournament'} on:click={() => navTo('tournament')}>
-                    P L A Y
+                    PLAY
                 </button>
 
                 {#each rightTabs as t}
@@ -330,7 +333,7 @@
         padding: 7px 16px; border-radius: 8px;
         font-size: 13px; font-weight: 700; color: #4a5568;
         background: transparent; border: 1px solid transparent;
-        cursor: pointer; transition: all 0.12s ease; white-space: nowrap;
+        cursor: pointer; transition: all 0.12s ease; white-space: nowrap; flex-shrink: 0;
     }
     .nt:hover { color: #a0aec0; background: rgba(51,65,85,0.25); }
     .nt-on {
@@ -354,7 +357,8 @@
     /* PLAY */
     .play {
         position: relative; margin: 0 10px;
-        padding: 8px 28px; border-radius: 100px;
+        white-space: nowrap; flex-shrink: 0;
+        padding: 8px 26px; border-radius: 100px;
         background: linear-gradient(135deg, #4338ca 0%, #6366f1 40%, #4f46e5 100%);
         background-size: 200% 200%; animation: pg 3s ease infinite;
         border: 2px solid rgba(129,140,248,0.35);
@@ -420,10 +424,25 @@
     }
     @media (max-width: 1400px) {
         .nt { padding: 6px 7px; font-size: 11.5px; }
-        .play { margin: 0 4px; padding: 7px 15px; letter-spacing: 2px; font-size: 11px; }
+        .play { margin: 0 4px; padding: 7px 15px; letter-spacing: 3px; font-size: 11px; }
         .team-icon { font-size: 20px; }
         .team-chip { padding: 4px 10px 4px 5px; }
         .acct { padding: 8px 12px; }
+    }
+    @media (max-width: 1250px) {
+        .hdr-inner { padding: 0 8px; }
+        .nt { padding: 6px 5px; font-size: 11px; }
+        .play { margin: 0 3px; padding: 7px 12px; letter-spacing: 2px; font-size: 10.5px; }
+        .team-text { max-width: 96px; }
+        .team-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    }
+    /* Even fully tightened the nav row needs ~1150px. The global .mobile-only breakpoint is
+       768px, which left 769-1150px showing a desktop nav that physically didn't fit and
+       printed over the team chip. Hand the header to the drawer early instead — it already
+       lists every tab, PLAY included. */
+    @media (max-width: 1150px) {
+        .hdr-center { display: none !important; }
+        .mob-toggle { display: flex !important; }
     }
 
     /* MOBILE */
