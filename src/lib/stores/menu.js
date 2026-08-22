@@ -35,6 +35,18 @@ export const GAMEMODES = [
     },
 ];
 
+// "More games by us" — other Studio8Heads titles, linked from the main menu.
+// Add another entry here and the section grows on its own.
+export const MORE_GAMES = [
+    {
+        id: 'gacha-survivors',
+        name: 'Gacha Survivors',
+        blurb: 'A roguelike survivors run with gacha pulls between waves.',
+        href: 'https://gacha-suvivors.vercel.app',
+        host: 'gacha-suvivors.vercel.app',
+    },
+];
+
 // Shown on the Ultimate Career preview screen.
 export const CAREER_PILLARS = [
     { key: 'create', name: 'Create Your Player', desc: 'Handle, role, region and playstyle. You start as an unranked academy prospect nobody has heard of.' },

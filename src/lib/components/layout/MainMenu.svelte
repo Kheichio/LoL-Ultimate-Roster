@@ -1,6 +1,6 @@
 <script>
     import { onDestroy } from 'svelte';
-    import { menuScreen, selectedMode, GAMEMODES, CAREER_PILLARS, openMenu } from '../../stores/menu.js';
+    import { menuScreen, selectedMode, GAMEMODES, CAREER_PILLARS, MORE_GAMES, openMenu } from '../../stores/menu.js';
     import { showAuthPanel } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { playSound } from '../../utils/sound.js';
@@ -173,6 +173,34 @@
                     </button>
                 {/each}
             </div>
+
+            <!-- Other Studio8Heads titles. Deliberately quieter than the gamemode
+                 buttons so it never competes with the primary choice. -->
+            <section class="more">
+                <p class="more-h"><span>More games by us</span></p>
+                <div class="more-list">
+                    {#each MORE_GAMES as g (g.id)}
+                        <a class="game" href={g.href} target="_blank" rel="noopener noreferrer">
+                            <span class="game-ico" aria-hidden="true">
+                                <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                                    <circle cx="16" cy="16" r="10.5" />
+                                    <path d="M5.5 16h21" />
+                                    <circle cx="16" cy="16" r="2.7" fill="currentColor" stroke="none" />
+                                </svg>
+                            </span>
+                            <span class="game-txt">
+                                <span class="game-name">{g.name}</span>
+                                <span class="game-blurb">{g.blurb}</span>
+                            </span>
+                            <span class="game-host">{g.host}</span>
+                            <svg class="game-ext" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M6 3.5h6.5V10" /><path d="M12.5 3.5 4 12" />
+                            </svg>
+                        </a>
+                    {/each}
+                </div>
+            </section>
 
             <p class="foot-note">
                 {#if $currentUser}
@@ -467,6 +495,83 @@
     .mode-arrow :global(svg) { width: 16px; height: 16px; }
     .mode:hover .mode-arrow { color: var(--accent); transform: translateX(3px); }
     .mode-soon .mode-desc { color: #4c5c76; }
+
+    /* ═══════════ MORE GAMES ═══════════ */
+    .more { width: 100%; margin-bottom: 26px; }
+    .more-h {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 9.5px;
+        font-weight: 500;
+        letter-spacing: 2.6px;
+        text-transform: uppercase;
+        color: #43536d;
+    }
+    /* hairlines either side of the label */
+    .more-h::before, .more-h::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: rgba(51, 65, 85, 0.35);
+    }
+    .more-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .game {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        padding: 13px 16px;
+        border-radius: 12px;
+        text-decoration: none;
+        text-align: left;
+        background: rgba(15, 23, 42, 0.34);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .game:hover {
+        background: rgba(20, 30, 51, 0.5);
+        border-color: rgba(34, 211, 238, 0.35);
+    }
+    .game-ico {
+        flex-shrink: 0;
+        width: 32px; height: 32px;
+        display: grid; place-items: center;
+        border-radius: 9px;
+        color: #22d3ee;
+        background: rgba(34, 211, 238, 0.07);
+        border: 1px solid rgba(34, 211, 238, 0.16);
+    }
+    .game-ico :global(svg) { width: 17px; height: 17px; }
+    .game-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .game-name {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: #cbd5e1;
+    }
+    .game-blurb { font-size: 11px; line-height: 1.5; color: #4e5f7a; }
+    .game-host {
+        margin-left: auto;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 9.5px;
+        color: #3a4a63;
+        white-space: nowrap;
+    }
+    .game-ext {
+        flex-shrink: 0;
+        width: 13px; height: 13px;
+        color: #3f5069;
+        transition: color 0.16s ease, transform 0.16s ease;
+    }
+    .game:hover .game-ext { color: #22d3ee; transform: translate(2px, -2px); }
+    .game:hover .game-name { color: #e2e8f0; }
+
+    @media (max-width: 620px) {
+        .game-host { display: none; }
+    }
 
     .foot-note { font-size: 11.5px; color: #3f5069; }
     .foot-note strong { color: #7d93b8; font-weight: 700; }
