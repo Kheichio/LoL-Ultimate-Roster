@@ -1,6 +1,7 @@
 <script>
     import { blueEssence, teamIdentity, skillPoints, dailyLogin, battlePass, collectionRegistry, archiveRewards, trackStats, club, squad, weightedTrophies, managerLevel, questsClaimed, questsRepeatableBaselines, achievementsClaimed, prestige, skills, academy, rbcState } from '../../stores/game.js';
     import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
+    import { openMenu } from '../../stores/menu.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
     import { friendRequestCount } from '../../stores/friends.js';
@@ -234,6 +235,10 @@
             {#if $prestige > 0}
                 <div class="prestige-chip" title="Prestige {$prestige}">{'⭐'.repeat(Math.min($prestige, 5))} P{$prestige}</div>
             {/if}
+            <button class="menu-btn" title="Back to Main Menu" aria-label="Back to Main Menu" on:click={() => { mobileOpen = false; openMenu(); }}>
+                <span class="menu-btn-icon">⌂</span>
+                <span class="acct-label desktop-only">Menu</span>
+            </button>
             <button class="acct" on:click={() => showAuthPanel.set(true)}>
                 <span class="acct-icon">👤</span>
                 <span class="acct-label desktop-only">{$currentUser ? $currentUser.displayName || 'Account' : 'Sign In'}</span>
@@ -392,6 +397,34 @@
     .acct:hover { background: rgba(67,56,202,0.16); border-color: rgba(99,102,241,0.25); }
     .acct-icon { font-size: 13px; }
     .acct-label { font-size: 11px; }
+    .menu-btn {
+        display: flex; align-items: center; gap: 6px;
+        padding: 8px 14px; border-radius: 10px;
+        font-size: 11px; font-weight: 700;
+        color: #cbb27a; background: rgba(245,185,66,0.06);
+        border: 1px solid rgba(245,185,66,0.14);
+        cursor: pointer; transition: all 0.12s ease;
+    }
+    .menu-btn:hover { background: rgba(245,185,66,0.14); border-color: rgba(245,185,66,0.3); color: #f5cd7d; }
+    .menu-btn-icon { font-size: 14px; line-height: 1; }
+
+    /* Row 1 packs 14 nav tabs plus PLAY — about 1340px at full size. Below ~1700px that
+       overflowed .hdr-center and rendered *on top of* the team chip and the account buttons.
+       Tighten the spacing in steps so the row shrinks to fit instead of colliding. */
+    @media (max-width: 1700px) {
+        .hdr-inner { padding: 0 12px; }
+        .nt { padding: 7px 10px; font-size: 12px; }
+        .play { margin: 0 6px; padding: 8px 20px; letter-spacing: 3px; }
+        .menu-btn .acct-label { display: none; }   /* icon-only, reclaims ~40px */
+        .menu-btn { padding: 8px 11px; }
+    }
+    @media (max-width: 1400px) {
+        .nt { padding: 6px 7px; font-size: 11.5px; }
+        .play { margin: 0 4px; padding: 7px 15px; letter-spacing: 2px; font-size: 11px; }
+        .team-icon { font-size: 20px; }
+        .team-chip { padding: 4px 10px 4px 5px; }
+        .acct { padding: 8px 12px; }
+    }
 
     /* MOBILE */
     .mob-toggle {

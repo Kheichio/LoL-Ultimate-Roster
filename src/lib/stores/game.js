@@ -4,7 +4,10 @@ import { getDB, getCardById } from '../utils/cards.js';
 import { validateCard, clampNum, signSave, verifySave, BOUNDS } from '../utils/anticheat.js';
 
 // === Core Game State ===
-export const blueEssence = writable(1000);
+// Starting Blue Essence. Deliberately tight — exactly one Standard pack (100 BE) on top of
+// the free Starter Pack, so a new manager can't buy their way to a good squad immediately.
+export const STARTING_BE = 100;
+export const blueEssence = writable(STARTING_BE);
 export const club = writable([]);
 export const squad = writable({ COACH: null, TOP: null, JNG: null, MID: null, ADC: null, SUP: null });
 export const bench = writable([null, null, null]);
@@ -289,7 +292,7 @@ export function initGame() {
     }
 
     // Blue Essence — hard cap prevents economic exploits
-    if (rawBE !== null) blueEssence.set(clampNum(rawBE, BOUNDS.be.min, BOUNDS.be.max, 1000));
+    if (rawBE !== null) blueEssence.set(clampNum(rawBE, BOUNDS.be.min, BOUNDS.be.max, STARTING_BE));
 
     // Club / squad / bench — strip any card not in the database
     if (rawClub) club.set(sanitiseCards(rawClub));

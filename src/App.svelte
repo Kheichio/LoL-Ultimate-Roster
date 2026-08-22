@@ -2,10 +2,12 @@
     import Header from './lib/components/layout/Header.svelte';
     import TabContent from './lib/components/layout/TabContent.svelte';
     import ToastContainer from './lib/components/layout/ToastContainer.svelte';
+    import MainMenu from './lib/components/layout/MainMenu.svelte';
     import ConfirmModal from './lib/components/modals/ConfirmModal.svelte';
     import CardInspectModal from './lib/components/modals/CardInspectModal.svelte';
     import AuthPanel from './lib/components/modals/AuthPanel.svelte';
     import { activeTab } from './lib/stores/ui.js';
+    import { menuScreen } from './lib/stores/menu.js';
     import { initGame, saveGame, squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks, checkMilestoneCards, skills } from './lib/stores/game.js';
     import { currentUser, cloudSave } from './lib/stores/auth.js';
     import { getEffectiveRating, LEGACY_TIERS, getEra } from './lib/utils/cards.js';
@@ -88,19 +90,27 @@
     onDestroy(() => clearInterval(autoSaveInterval));
 </script>
 
-<div class="app-shell">
+<!-- The game shell stays mounted behind the main menu (rather than being torn down and
+     rebuilt) so returning to the menu mid-session never loses in-progress tab state. -->
+<div class="app-shell" class:shell-hidden={$menuScreen !== 'game'}>
     <Header />
     <main>
         <TabContent tab={$activeTab} />
     </main>
 </div>
 
+{#if $menuScreen !== 'game'}
+    <MainMenu />
+{/if}
+
 <ToastContainer />
 <ConfirmModal />
 <CardInspectModal />
 <AuthPanel />
 
-<div class="version-badge">Beta 1.5.1 Public Build</div>
+{#if $menuScreen === 'game'}
+    <div class="version-badge">Beta 1.6.0 Public Build</div>
+{/if}
 
 <style>
     .version-badge {
@@ -120,6 +130,7 @@
         display: flex;
         flex-direction: column;
     }
+    .shell-hidden { display: none; }
     main {
         flex: 1;
         padding: 20px 24px;

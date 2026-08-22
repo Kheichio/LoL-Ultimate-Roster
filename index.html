@@ -11,10 +11,78 @@
     <meta name="theme-color" content="#0a0e1a">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Marck+Script&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Marck+Script&family=Quicksand:wght@500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- CRITICAL BOOT STYLES ------------------------------------------------
+         global.css is imported by main.js, so it only lands after the JS bundle
+         has downloaded and executed. Without these rules the browser painted a
+         white page with the unstyled footer text on it for the first few hundred
+         milliseconds. Everything here is duplicated (intentionally) from
+         global.css so the very first paint is already correct. -->
+    <style>
+        html { background: #060911; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #060911;
+            color: #c8d6e5;
+            font-family: 'Quicksand', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+        }
+        #app { flex: 1 0 auto; display: flex; flex-direction: column; }
+        .site-footer { flex-shrink: 0; text-align: center; padding: 18px 16px 24px; }
+
+        /* Boot splash — replaced by the Svelte app on mount (see src/main.js). */
+        #boot {
+            flex: 1 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 22px;
+            min-height: 60vh;
+        }
+        #boot .boot-mark { width: 46px; height: 46px; color: #3b82f6; opacity: 0.9; }
+        #boot .boot-bar {
+            width: 148px; height: 2px; border-radius: 2px;
+            background: rgba(148, 163, 184, 0.14);
+            overflow: hidden;
+        }
+        #boot .boot-bar i {
+            display: block; width: 40%; height: 100%; border-radius: 2px;
+            background: #3b82f6;
+            animation: bootSlide 1.15s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+        }
+        @keyframes bootSlide {
+            0%   { transform: translateX(-110%); }
+            100% { transform: translateX(360%); }
+        }
+        /* The footer is real content, but it should not be the only thing on screen
+           while the bundle loads — reveal it once the app has mounted. */
+        body:not(.app-ready) .site-footer { visibility: hidden; }
+        @media (prefers-reduced-motion: reduce) {
+            #boot .boot-bar i { animation: none; width: 100%; }
+        }
+    </style>
 </head>
 <body>
-    <div id="app"></div>
+    <div id="app">
+        <div id="boot">
+            <svg class="boot-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <path d="M18 3h28l15 15v28a15 15 0 0 1-15 15H18A15 15 0 0 1 3 46V18A15 15 0 0 1 18 3Z"
+                      stroke="currentColor" stroke-width="3" opacity="0.45"/>
+                <rect x="13" y="34" width="6" height="14" rx="3" fill="currentColor" opacity="0.5"/>
+                <rect x="21" y="26" width="6" height="22" rx="3" fill="currentColor" opacity="0.7"/>
+                <rect x="29" y="18" width="6" height="30" rx="3" fill="currentColor"/>
+                <rect x="37" y="26" width="6" height="22" rx="3" fill="currentColor" opacity="0.7"/>
+                <rect x="45" y="34" width="6" height="14" rx="3" fill="currentColor" opacity="0.5"/>
+            </svg>
+            <div class="boot-bar"><i></i></div>
+        </div>
+    </div>
     <footer class="site-footer">
         In collaboration with <a href="https://sisl.pl/" target="_blank" rel="noopener">SISL</a>
         <p class="legal-disclaimer">LoL Ultimate Roster is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.</p>
@@ -32,7 +100,7 @@
         window.fbAuth = firebase.auth();
         window.fbDb = firebase.firestore();
     </script>
-    <script src="/database.js?v=140"></script>
+    <script src="/database.js?v=160"></script>
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>

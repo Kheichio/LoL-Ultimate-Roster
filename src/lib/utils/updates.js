@@ -7,6 +7,22 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.6.0',
+        title: 'Main Menu, Summer Splits 2021–2023 & a Tighter Start',
+        summary: '666 new cards filling the 2021–2023 gap, a brand-new main menu with gamemode select and a loading screen, and a much tighter starting economy.',
+        details: [
+            'NEW CARDS — 666 of them: complete LCK, LPL and LEC Summer Split rosters for 2021, 2022 and 2023 (main teams + head coaches, no academies). This closes the gap that ran from the 2020 Summer rosters all the way to 2024. Every player is rated to that season\'s real performance, so the era\'s defining runs land where they should — EDG\'s 2021 Worlds title, DAMWON KIA at their peak, DRX\'s 2022 Cinderella run, JDG\'s 2023 near-Golden-Road, and T1\'s 2023 world championship. Regions: LCK / LPL / LEC.',
+            'NEW — Main Menu: a proper front door that opens before the game every time, with a new "UR" brand mark, a modernist wordmark, a login shortcut, and two gamemodes to pick from. Selecting one plays a loading screen with rotating gameplay tips. A "⌂ Menu" button in the header takes you back at any time.',
+            'NEW — Ultimate Career (in development): play as the PLAYER, not the manager. Create a pro from nothing — handle, role, region and playstyle — grind out of the academy, beat your own teammates to the starting seat, and chase a Hall of Legends career. The menu entry is live; the mode itself is not playable yet.',
+            'FIXED — the site no longer flashes a white page with loose footer text while loading. The dark theme and a small loading mark now paint on the very first frame, before the app bundle arrives.',
+            'FOOTER — the "In collaboration with SISL" credit and the Riot Games disclaimer now appear at the bottom of every screen, including the main menu and the Ultimate Career page.',
+            'HEADER — the top navigation no longer overlaps the team chip and account buttons on narrower desktop windows (anything under about 1600px wide).',
+            'ECONOMY — starting Blue Essence lowered from 1,000 to 100. New managers still get the free Starter Pack, but a good squad now has to be earned through the Gaming Cafe rather than bought on the first click.',
+            'FIXED — five 2026 BNK FEARX cards (Clear, Raptor, VicLa, Diable, Kellin) shared card IDs with five Flyquest cards, so owning one would silently turn it into the Flyquest player on reload. The BFX cards now have their own IDs and are collectable properly.',
+            'GUIDE — the Card Coverage table now shows 2021–2023 as covered for all three major regions.',
+        ],
+    },
+    {
         ver: 'Beta 1.5.1',
         title: 'Updates Hub, Global Search & Fixes',
         summary: 'A dedicated Updates page, a search-everything Archive tab, a critical season-split crash fix, and a randomised Golden Road final.',
