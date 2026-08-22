@@ -41,9 +41,10 @@ export const MORE_GAMES = [
     {
         id: 'gacha-survivors',
         name: 'Gacha Survivors',
-        blurb: 'A roguelike survivors run with gacha pulls between waves.',
+        blurb: 'An anime-inspired roguelike survivors game with gacha pulls for characters.',
+        // The deployed host has a typo in it ("suvivors"). It's the URL that actually
+        // resolves, so it stays exactly as-is — it just isn't shown anywhere in the UI.
         href: 'https://gacha-suvivors.vercel.app',
-        host: 'gacha-suvivors.vercel.app',
     },
 ];
 

@@ -192,7 +192,7 @@
                                 <span class="game-name">{g.name}</span>
                                 <span class="game-blurb">{g.blurb}</span>
                             </span>
-                            <span class="game-host">{g.host}</span>
+                            <span class="game-play">Play</span>
                             <svg class="game-ext" viewBox="0 0 16 16" fill="none" stroke="currentColor"
                                  stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M6 3.5h6.5V10" /><path d="M12.5 3.5 4 12" />
@@ -553,13 +553,18 @@
         color: #cbd5e1;
     }
     .game-blurb { font-size: 11px; line-height: 1.5; color: #4e5f7a; }
-    .game-host {
+    .game-play {
         margin-left: auto;
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 9.5px;
-        color: #3a4a63;
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 1.6px;
+        text-transform: uppercase;
+        color: #45596f;
         white-space: nowrap;
+        transition: color 0.16s ease;
     }
+    .game:hover .game-play { color: #22d3ee; }
     .game-ext {
         flex-shrink: 0;
         width: 13px; height: 13px;
@@ -570,7 +575,7 @@
     .game:hover .game-name { color: #e2e8f0; }
 
     @media (max-width: 620px) {
-        .game-host { display: none; }
+        .game-play { display: none; }
     }
 
     .foot-note { font-size: 11.5px; color: #3f5069; }
