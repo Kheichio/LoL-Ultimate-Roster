@@ -58,6 +58,8 @@ body {
     border-bottom: 1px solid rgba(100, 116, 139, 0.35);
 }
 .site-footer a:hover { color: #3b82f6; border-bottom-color: #3b82f6; }
+.site-credit strong { color: #64748b; font-weight: 800; }
+.credit-sep { margin: 0 9px; color: #334155; }
 .legal-disclaimer {
     max-width: 720px;
     margin: 12px auto 0;
