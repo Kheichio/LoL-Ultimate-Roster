@@ -21,9 +21,13 @@
     //  reveal auto-advance on the explanation (ms) - skippable
     //  expo   demand curve. Higher = the same raw play scores lower.
     const CFG = {
-        1: { reps: 10, limit: 9000, reveal: 2200, expo: 0.90, name: 'Basic Drill' },
-        2: { reps: 11, limit: 7500, reveal: 1900, expo: 1.22, name: 'Advanced' },
-        3: { reps: 12, limit: 6000, reveal: 1700, expo: 1.55, name: 'Elite' },
+        // read = the brief and the game state are shown ALONE first, with no
+        //        calls to choose between and no decision clock running. These
+        //        scenarios carry four lines of state each; reading them was
+        //        eating most of the old decision window. Skippable with Space.
+        1: { reps: 8,  read: 6000, limit: 11000, reveal: 2200, expo: 0.90, name: 'Basic Drill' },
+        2: { reps: 9,  read: 5000, limit: 9000,  reveal: 1900, expo: 1.22, name: 'Advanced' },
+        3: { reps: 10, read: 4200, limit: 7000,  reveal: 1700, expo: 1.55, name: 'Elite' },
     };
 
     $: dlvl = Math.max(1, Math.min(3, Math.round(Number(difficulty)) || 1));
@@ -325,7 +329,10 @@
 
     // -- Round state -----------------------------------------------------
     let stage = 'intro';        // intro | playing | result
-    let step = 'ask';           // ask | reveal
+    let step = 'read';          // read | ask | reveal
+    let readRemain = 1;
+    let readStart = 0;
+    let readMs = 6000;
     let deck = [];
     let idx = 0;
     let cur = null;             // { s, opts }
@@ -377,7 +384,15 @@
     // -- Loop ------------------------------------------------------------
     function tickFrame(now) {
         raf = null;
-        if (stage !== 'playing' || step !== 'ask') return;
+        if (stage !== 'playing') return;
+        if (step === 'read') {
+            const l = 1 - (now - readStart) / readMs;
+            readRemain = l > 0 ? l : 0;
+            if (readRemain <= 0) { beginAnswer(); return; }
+            raf = requestAnimationFrame(tickFrame);
+            return;
+        }
+        if (step !== 'ask') return;
         const elapsed = now - askStart;
         const left = 1 - elapsed / limitMs;
         remain = left > 0 ? left : 0;
@@ -389,6 +404,7 @@
         const c = CFG[dlvl];
         reps = Math.min(c.reps, SCENARIOS.length);
         limitMs = c.limit;
+        readMs = c.read;
         revealMs = c.reveal;
         expo = c.expo;
         deck = shuffle(SCENARIOS).slice(0, reps);
@@ -406,10 +422,23 @@
         const s = deck[idx];
         cur = { s, opts: shuffle(s.options) };
         picked = -1;
+        step = 'read';
+        remain = 1;
+        readRemain = 1;
+        readStart = performance.now();
+        lockUntil = readStart + 280;   // swallows the keypress that skipped the reveal
+        stopRaf();
+        raf = requestAnimationFrame(tickFrame);
+    }
+
+    // The decision clock starts here, not when the scenario appeared. Reading
+    // the state is no longer part of the time you are judged on.
+    function beginAnswer() {
+        if (stage !== 'playing' || step !== 'read') return;
         step = 'ask';
         remain = 1;
         askStart = performance.now();
-        lockUntil = askStart + 280;   // swallows the keypress that skipped the reveal
+        lockUntil = askStart + 220;
         stopRaf();
         raf = requestAnimationFrame(tickFrame);
     }
@@ -515,6 +544,13 @@
             return;
         }
         if (stage !== 'playing') return;
+        if (step === 'read') {
+            if (e.key === ' ' || e.code === 'Space' || e.key === 'Enter') {
+                e.preventDefault();
+                beginAnswer();
+            }
+            return;
+        }
         if (step === 'ask') {
             const n = '1234'.indexOf(e.key);
             if (n >= 0) { e.preventDefault(); choose(n); }
@@ -636,16 +672,20 @@
             </div>
 
             <div class="bar-wrap" role="progressbar" aria-label="Time left to make the call"
-                 aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(remain * 100)}>
-                <div class="bar {barTone}" class:frozen={step === 'reveal'} style="width:{remain * 100}%"></div>
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((step === 'read' ? readRemain : remain) * 100)}>
+                <div
+                    class="bar {step === 'read' ? 'reading' : barTone}"
+                    class:frozen={step === 'reveal'}
+                    style="width:{(step === 'read' ? readRemain : remain) * 100}%"
+                ></div>
             </div>
 
             <div class="scen">
                 <div class="scen-top">
                     <span class="clock">{cur.s.clock}</span>
                     <span class="phase">{cur.s.phase}</span>
-                    <span class="secs" class:low={remain <= 0.25 && step === 'ask'}>
-                        {step === 'ask' ? secsLeft.toFixed(1) + 's' : '--'}
+                    <span class="secs" class:low={remain <= 0.25 && step === 'ask'} class:reading={step === 'read'}>
+                        {step === 'ask' ? secsLeft.toFixed(1) + 's' : (step === 'read' ? 'reading' : '--')}
                     </span>
                 </div>
                 <p class="brief">{cur.s.brief}</p>
@@ -656,22 +696,38 @@
                 </div>
             </div>
 
-            <div class="opts">
-                {#each cur.opts as o, i}
-                    <button
-                        class={optClass(o, i, step, picked)}
-                        on:click={() => choose(i)}
-                        disabled={step === 'reveal'}
-                        aria-label={'Call ' + (i + 1) + ': ' + o.text}
-                    >
-                        <span class="okey">{i + 1}</span>
-                        <span class="otext">{o.text}</span>
-                        {#if step === 'reveal'}
-                            <span class="obadge">{o.tag}</span>
-                        {/if}
+            {#if step === 'read'}
+                <!-- Read phase: the state above is all there is. No calls to
+                     skim, and the decision clock has not started. -->
+                <div class="readbox">
+                    <p class="read-lbl">Read the state</p>
+                    <button class="read-go" type="button" on:click={beginAnswer}>
+                        Show Calls
+                        <span class="read-kbd">Space</span>
                     </button>
-                {/each}
-            </div>
+                    <p class="read-note">
+                        Calls appear in {Math.max(1, Math.ceil((readRemain * readMs) / 1000))}s.
+                        Your decision clock starts then.
+                    </p>
+                </div>
+            {:else}
+                <div class="opts">
+                    {#each cur.opts as o, i}
+                        <button
+                            class={optClass(o, i, step, picked)}
+                            on:click={() => choose(i)}
+                            disabled={step === 'reveal'}
+                            aria-label={'Call ' + (i + 1) + ': ' + o.text}
+                        >
+                            <span class="okey">{i + 1}</span>
+                            <span class="otext">{o.text}</span>
+                            {#if step === 'reveal'}
+                                <span class="obadge">{o.tag}</span>
+                            {/if}
+                        </button>
+                    {/each}
+                </div>
+            {/if}
 
             {#if step === 'reveal'}
                 <div class="reveal" aria-live="polite">
@@ -863,6 +919,8 @@
     .bar.warn { background: #f59e0b; }
     .bar.bad { background: #ef4444; }
     .bar.frozen { opacity: 0.25; }
+    /* Neutral grey while reading, so the bar never reads as time pressure. */
+    .bar.reading { background: #475569; }
 
     /* -- Scenario -- */
     .scen {
@@ -878,6 +936,7 @@
     .phase { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.3px; color: #64748b; }
     .secs { margin-left: auto; font-size: 12px; font-weight: 900; color: #64748b; font-variant-numeric: tabular-nums; }
     .secs.low { color: #f87171; }
+    .secs.reading { font-size: 9px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; color: #475569; }
     .cc:not(.rm) .secs.low { animation: ccBlink 0.9s ease-in-out infinite; }
     @keyframes ccBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
@@ -890,6 +949,38 @@
     }
 
     /* -- Options -- */
+    /* ---- read phase ---- sized to roughly match the call list so revealing
+       the options does not shift the whole pane. */
+    .readbox {
+        min-height: 176px;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px;
+        padding: 20px 16px; border-radius: 14px;
+        background: rgba(12, 16, 28, 0.4);
+        border: 1px dashed rgba(71, 85, 105, 0.32);
+    }
+    .read-lbl {
+        font-size: 9px; font-weight: 900; letter-spacing: 2px;
+        text-transform: uppercase; color: #475569;
+    }
+    .read-go {
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 11px 22px; border-radius: 12px;
+        border: 1px solid rgba(100, 116, 139, 0.4);
+        background: rgba(51, 65, 85, 0.42);
+        color: #e2e8f0; font-family: inherit;
+        font-size: 12px; font-weight: 900;
+        letter-spacing: 1.1px; text-transform: uppercase; cursor: pointer;
+    }
+    .read-go:hover { background: rgba(71, 85, 105, 0.6); }
+    .read-go:focus-visible { outline: 2px solid #94a3b8; outline-offset: 2px; }
+    .read-kbd {
+        font-size: 9px; font-weight: 800; letter-spacing: 1px;
+        padding: 3px 8px; border-radius: 6px;
+        background: rgba(0, 0, 0, 0.28); color: rgba(226, 232, 240, 0.65);
+    }
+    .read-note { font-size: 10.5px; color: #475569; font-weight: 600; text-align: center; }
+
     .opts { display: flex; flex-direction: column; gap: 7px; }
     .opt {
         display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;

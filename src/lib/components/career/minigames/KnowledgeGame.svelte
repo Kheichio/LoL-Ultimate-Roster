@@ -237,10 +237,15 @@
     ];
 
     // -- Difficulty configuration --------------------------------------
+    // read = the question sits on screen ALONE, with no options and no answer
+    //        clock running. Skippable with Space or the Show Answers button,
+    //        so a fast reader is never held up and a slow one is never rushed.
+    // qms  = the answer window, which only starts once the options appear.
+    //        Reading time is no longer taken out of thinking time.
     const CONFIG = {
-        1: { n: 12, qms: 7000, fb: 950, session: 50000, name: 'Basic Drill' },
-        2: { n: 14, qms: 5500, fb: 820, session: 50000, name: 'Advanced' },
-        3: { n: 16, qms: 4000, fb: 700, session: 50000, name: 'Elite' },
+        1: { n: 10, read: 4500, qms: 8000, fb: 1000, session: 140000, name: 'Basic Drill' },
+        2: { n: 12, read: 3800, qms: 6500, fb: 900,  session: 140000, name: 'Advanced' },
+        3: { n: 14, read: 3200, qms: 5000, fb: 800,  session: 140000, name: 'Elite' },
     };
     $: diffLevel = Math.max(1, Math.min(3, Math.round(Number(difficulty) || 1)));
     $: cfg = CONFIG[diffLevel];
@@ -251,6 +256,9 @@
     let idx = 0;
     let picked = -1;
     let revealed = false;
+    let reading = false;          // question on screen, options still hidden
+    let readEnd = 0;
+    let readMs = 0;
 
     let correct = 0;
     let answeredWrong = 0;
@@ -342,6 +350,8 @@
         if (nowMs >= sessionEnd) { finish('time'); return; }
         if (revealed) {
             if (nowMs >= feedbackUntil) advance();
+        } else if (reading) {
+            if (nowMs >= readEnd) beginAnswer();
         } else if (nowMs >= qEnd) {
             resolve(-1, true);
         }
@@ -357,6 +367,7 @@
     function start() {
         planned = cfg.n;
         qMs = cfg.qms;
+        readMs = cfg.read;
         fbMs = cfg.fb;
         sessionMs = cfg.session;
 
@@ -379,14 +390,34 @@
 
         nowMs = clock();
         sessionEnd = nowMs + sessionMs;
-        qStart = nowMs;
-        qEnd = nowMs + qMs;
         phase = 'play';
+        beginRead();
         startLoop();
     }
 
+    // Every question opens on its own, with the options withheld. The answer
+    // clock does not start until beginAnswer(), so time spent reading is never
+    // charged against time spent thinking.
+    function beginRead() {
+        reading = true;
+        revealed = false;
+        picked = -1;
+        nowMs = clock();
+        readEnd = nowMs + readMs;
+        qStart = nowMs;
+        qEnd = nowMs + readMs + qMs;
+    }
+
+    function beginAnswer() {
+        if (phase !== 'play' || !reading) return;
+        reading = false;
+        nowMs = clock();
+        qStart = nowMs;
+        qEnd = nowMs + qMs;
+    }
+
     function resolve(optIdx, byTimeout) {
-        if (phase !== 'play' || revealed) return;
+        if (phase !== 'play' || revealed || reading) return;
         const q = qs[idx];
         if (!q) { finish('done'); return; }
         const t = clock();
@@ -427,11 +458,7 @@
         if (phase !== 'play') return;
         if (idx + 1 >= qs.length) { finish('done'); return; }
         idx += 1;
-        picked = -1;
-        revealed = false;
-        nowMs = clock();
-        qStart = nowMs;
-        qEnd = nowMs + qMs;
+        beginRead();
     }
 
     function skipFeedback() {
@@ -504,11 +531,12 @@
         else if (e.code && /^Numpad[1-4]$/.test(e.code)) n = Number(e.code.slice(6)) - 1;
 
         if (n >= 0) {
-            if (!revealed) { e.preventDefault(); resolve(n, false); }
+            if (!revealed && !reading) { e.preventDefault(); resolve(n, false); }
             return;
         }
         if (e.key === 'Enter' || e.key === ' ' || e.code === 'Space') {
-            if (revealed) { e.preventDefault(); skipFeedback(); }
+            if (reading) { e.preventDefault(); beginAnswer(); }
+            else if (revealed) { e.preventDefault(); skipFeedback(); }
         }
     }
 
@@ -536,13 +564,16 @@
     // -- Derived view state --------------------------------------------
     $: current = (phase === 'play' && qs[idx]) ? qs[idx] : null;
     $: currentCat = current ? (CAT_BY_ID[current.c] || CATS[0]) : CATS[0];
-    $: qPct = (phase === 'play' && !revealed && qMs > 0)
+    $: qPct = (phase === 'play' && !revealed && !reading && qMs > 0)
         ? Math.max(0, Math.min(1, (qEnd - nowMs) / qMs))
-        : (revealed ? 1 : 0);
+        : ((revealed || reading) ? 1 : 0);
+    $: readPct = (phase === 'play' && reading && readMs > 0)
+        ? Math.max(0, Math.min(1, (readEnd - nowMs) / readMs))
+        : 0;
     $: sessionLeft = phase === 'play' ? Math.max(0, sessionEnd - nowMs) : 0;
     $: sessionPct = (phase === 'play' && sessionMs > 0)
         ? Math.max(0, Math.min(1, sessionLeft / sessionMs)) : 0;
-    $: lowTime = phase === 'play' && !revealed && qPct <= 0.28;
+    $: lowTime = phase === 'play' && !revealed && !reading && qPct <= 0.28;
     $: accPct = planned > 0 ? Math.round((correct / planned) * 100) : 0;
     $: avgAnswer = answerTimes.length
         ? (answerTimes.reduce(function (s, v) { return s + v; }, 0) / answerTimes.length / 1000)
@@ -634,34 +665,49 @@
                 <div class="qbar" aria-hidden="true">
                     <div
                         class="qbar-fill"
-                        style="width:{qPct * 100}%; background:{revealed ? 'rgba(148,163,184,0.25)' : (lowTime ? '#ef4444' : ACCENT)}"
+                        style="width:{(reading ? readPct : qPct) * 100}%; background:{reading ? '#64748b' : (revealed ? 'rgba(148,163,184,0.25)' : (lowTime ? '#ef4444' : ACCENT))}"
                     ></div>
                 </div>
                 <div class="lowtxt" aria-hidden="true">{lowTime ? 'Out of time in a moment' : ''}</div>
 
-                <div class="opts">
-                    {#each current.opts as opt, i (i)}
-                        <button
-                            type="button"
-                            class="opt"
-                            class:right={revealed && opt.correct}
-                            class:wrong={revealed && picked === i && !opt.correct}
-                            class:fade={revealed && !opt.correct && picked !== i}
-                            class:shake={revealed && picked === i && !opt.correct && !reduceMotion}
-                            disabled={revealed}
-                            on:click={() => resolve(i, false)}
-                            aria-label={'Answer ' + (i + 1) + ': ' + opt.text}
-                        >
-                            <span class="key" aria-hidden="true">{i + 1}</span>
-                            <span class="otxt">{opt.text}</span>
-                            {#if revealed && opt.correct}<span class="tick" aria-hidden="true">OK</span>{/if}
-                            {#if revealed && picked === i && !opt.correct}<span class="cross" aria-hidden="true">X</span>{/if}
+                {#if reading}
+                    <!-- Read phase: the question stands alone. No options to
+                         skim ahead to, and no answer clock running yet. -->
+                    <div class="reading">
+                        <p class="read-lbl">Read the question</p>
+                        <button class="read-go" type="button" on:click={beginAnswer}>
+                            Show Answers
+                            <span class="read-kbd">Space</span>
                         </button>
-                    {/each}
-                </div>
+                        <p class="read-note">Answers appear in {Math.ceil((readEnd - nowMs) / 1000)}s &mdash; the clock starts then.</p>
+                    </div>
+                {:else}
+                    <div class="opts">
+                        {#each current.opts as opt, i (i)}
+                            <button
+                                type="button"
+                                class="opt"
+                                class:right={revealed && opt.correct}
+                                class:wrong={revealed && picked === i && !opt.correct}
+                                class:fade={revealed && !opt.correct && picked !== i}
+                                class:shake={revealed && picked === i && !opt.correct && !reduceMotion}
+                                disabled={revealed}
+                                on:click={() => resolve(i, false)}
+                                aria-label={'Answer ' + (i + 1) + ': ' + opt.text}
+                            >
+                                <span class="key" aria-hidden="true">{i + 1}</span>
+                                <span class="otxt">{opt.text}</span>
+                                {#if revealed && opt.correct}<span class="tick" aria-hidden="true">OK</span>{/if}
+                                {#if revealed && picked === i && !opt.correct}<span class="cross" aria-hidden="true">X</span>{/if}
+                            </button>
+                        {/each}
+                    </div>
+                {/if}
 
                 <div class="fb" aria-live="polite">
-                    {#if revealed}
+                    {#if reading}
+                        <div class="fb-hint">Take your time. Nothing is being timed yet.</div>
+                    {:else if revealed}
                         <div class="fb-in">
                             <span class="fb-tag" class:bad={picked < 0 || !current.opts[picked] || !current.opts[picked].correct}>
                                 {picked < 0 ? 'Out of time' : ((current.opts[picked] && current.opts[picked].correct) ? 'Correct' : 'Wrong')}
@@ -903,6 +949,41 @@
         font-size: 8.5px; font-weight: 900; letter-spacing: 1.5px; min-height: 12px;
         text-transform: uppercase; color: #f87171; text-align: right; padding-top: 2px;
     }
+
+    /* ---- read phase --------------------------------------------------
+       Occupies roughly the space the options will take, so revealing them
+       does not make the whole card jump. */
+    .reading {
+        margin-top: 6px;
+        min-height: 168px;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px;
+        border-radius: 14px;
+        background: rgba(12, 16, 28, 0.4);
+        border: 1px dashed rgba(71, 85, 105, 0.32);
+        padding: 18px 16px;
+    }
+    .read-lbl {
+        font-size: 9px; font-weight: 900; letter-spacing: 2px;
+        text-transform: uppercase; color: #475569;
+    }
+    .read-go {
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 11px 22px; border-radius: 12px;
+        border: 1px solid rgba(100, 116, 139, 0.4);
+        background: rgba(51, 65, 85, 0.42);
+        color: #e2e8f0; font-family: inherit;
+        font-size: 12px; font-weight: 900;
+        letter-spacing: 1.1px; text-transform: uppercase; cursor: pointer;
+    }
+    .read-go:hover { background: rgba(71, 85, 105, 0.6); }
+    .read-go:focus-visible { outline: 2px solid #94a3b8; outline-offset: 2px; }
+    .read-kbd {
+        font-size: 9px; font-weight: 800; letter-spacing: 1px;
+        padding: 3px 8px; border-radius: 6px;
+        background: rgba(0, 0, 0, 0.28); color: rgba(226, 232, 240, 0.65);
+    }
+    .read-note { font-size: 10.5px; color: #475569; font-weight: 600; }
 
     .opts { display: grid; gap: 7px; margin-top: 6px; }
     .opt {

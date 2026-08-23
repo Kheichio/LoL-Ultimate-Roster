@@ -25,9 +25,11 @@
     //  Worst case (every round timed out) stays under 50s; the reveal is padded
     //  so even an instant-answer run cannot drop below ~32s.
     const DIFFS = {
-        1: { rounds: 11, limit: 3000, reveal: 1000, minRound: 2900, name: 'Basic Drill' },
-        2: { rounds: 13, limit: 2700, reveal: 950,  minRound: 2500, name: 'Advanced' },
-        3: { rounds: 14, limit: 2200, reveal: 850,  minRound: 2250, name: 'Elite' },
+        // scan = board visible, targets locked, no clock. Skippable with Space.
+        //        The reaction window (limit) only opens once it ends.
+        1: { rounds: 9,  scan: 4000, limit: 3400, reveal: 1000, minRound: 2900, name: 'Basic Drill' },
+        2: { rounds: 10, scan: 3300, limit: 3000, reveal: 950,  minRound: 2500, name: 'Advanced' },
+        3: { rounds: 11, scan: 2700, limit: 2500, reveal: 850,  minRound: 2250, name: 'Elite' },
     };
     $: diff = DIFFS[difficulty] ? difficulty : 1;
     $: CFG = DIFFS[diff];
@@ -326,7 +328,7 @@
     //  RUNTIME STATE
     // ---------------------------------------------------------------
     let view = 'intro';             // intro | play | done
-    let phase = 'aim';              // aim | reveal
+    let phase = 'scan';             // scan | aim | reveal
     let board = null;
     let roundIndex = 0;
     let log = [];
@@ -367,7 +369,9 @@
         rafId = requestAnimationFrame(tick);
         clockNow = performance.now();
         if (view !== 'play') return;
-        if (phase === 'aim') {
+        if (phase === 'scan') {
+            if (clockNow >= phaseEnd) beginAim();
+        } else if (phase === 'aim') {
             if (clockNow >= phaseEnd) resolve(null, true);
         } else if (clockNow >= phaseEnd) {
             advance();
@@ -382,10 +386,22 @@
         startLoop();
     }
 
+    // The board goes up first with the targets locked and no clock running.
+    // Five champions with health, range and status effects is a lot to take in,
+    // and the drill is meant to test target PRIORITY, not reading speed - so
+    // reading happens before the reaction window opens.
     function beginRound() {
         board = makeRound(diff);
         picked = null;
         last = null;
+        phase = 'scan';
+        clockNow = performance.now();
+        roundStart = clockNow;
+        phaseEnd = clockNow + CFG.scan;
+    }
+
+    function beginAim() {
+        if (view !== 'play' || phase !== 'scan') return;
         phase = 'aim';
         roundStart = performance.now();
         clockNow = roundStart;
@@ -505,6 +521,10 @@
         }
         if (view === 'done') {
             if (k === 'Enter' && !onButton) { e.preventDefault(); handleFinish(); }
+            return;
+        }
+        if (phase === 'scan') {
+            if (k === ' ' || e.code === 'Space' || k === 'Enter') { e.preventDefault(); beginAim(); }
             return;
         }
         if (phase !== 'aim' || !board) return;
@@ -717,7 +737,19 @@
                 </button>
 
                 <div class="slot" aria-live="polite">
-                    {#if phase === 'aim'}
+                    {#if phase === 'scan'}
+                        <div class="scanbox">
+                            <span class="scan-lbl">Read the fight</span>
+                            <button class="scan-go" type="button" on:click={beginAim}>
+                                Go Live
+                                <span class="scan-kbd">Space</span>
+                            </button>
+                            <span class="scan-note">
+                                Targets unlock in {Math.max(1, Math.ceil(Math.max(0, phaseEnd - clockNow) / 1000))}s.
+                                Your reaction time is measured from then.
+                            </span>
+                        </div>
+                    {:else if phase === 'aim'}
                         <div class="hint">Pick the highest-value target you can actually kill. Keys <b>1-5</b>, or <b>0</b> to disengage.</div>
                     {:else if last}
                         <div class="reveal">
@@ -1003,6 +1035,36 @@
 
     /* ---------- reveal slot ---------- */
     .slot { min-height: 142px; margin-top: 10px; }
+    /* ---- scan phase: board readable, targets locked, no clock ---- */
+    .scanbox {
+        display: flex; align-items: center; justify-content: center;
+        gap: 14px; flex-wrap: wrap;
+        padding: 10px 14px; border-radius: 12px;
+        background: rgba(12, 16, 28, 0.4);
+        border: 1px dashed rgba(71, 85, 105, 0.32);
+    }
+    .scan-lbl {
+        font-size: 9px; font-weight: 900; letter-spacing: 2px;
+        text-transform: uppercase; color: #475569;
+    }
+    .scan-go {
+        display: inline-flex; align-items: center; gap: 9px;
+        padding: 9px 18px; border-radius: 11px;
+        border: 1px solid rgba(100, 116, 139, 0.4);
+        background: rgba(51, 65, 85, 0.42);
+        color: #e2e8f0; font-family: inherit;
+        font-size: 11.5px; font-weight: 900;
+        letter-spacing: 1.1px; text-transform: uppercase; cursor: pointer;
+    }
+    .scan-go:hover { background: rgba(71, 85, 105, 0.6); }
+    .scan-go:focus-visible { outline: 2px solid #94a3b8; outline-offset: 2px; }
+    .scan-kbd {
+        font-size: 9px; font-weight: 800; letter-spacing: 1px;
+        padding: 3px 8px; border-radius: 6px;
+        background: rgba(0, 0, 0, 0.28); color: rgba(226, 232, 240, 0.65);
+    }
+    .scan-note { font-size: 10.5px; color: #475569; font-weight: 600; text-align: center; }
+
     .hint {
         font-size: 11px; color: #64748b; text-align: center; padding: 14px 8px; line-height: 1.6;
     }

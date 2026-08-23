@@ -17,9 +17,13 @@
     // picks * cap is deliberately bounded: bank + picks * reveal is always
     // comfortably under 60s of wall clock even if the player never answers.
     const DIFFS = {
-        1: { picks: 11, bank: 46, cap: 11.0, name: 'Basic Drill',  blurb: 'Eleven picks, eleven seconds each.' },
-        2: { picks: 12, bank: 43, cap: 9.5,  name: 'Advanced',     blurb: 'Twelve picks, tighter clock, scouting noise.' },
-        3: { picks: 13, bank: 42, cap: 8.0,  name: 'Elite',        blurb: 'Thirteen picks, eight seconds, pro-level boards.' },
+    // `read` seconds show the board and the question with NO options and no
+    // clock running - neither the per-puzzle cap nor the shared bank ticks
+    // during it. The bank is therefore pure thinking time now, which is the
+    // whole point: reading a draft board is not the skill being measured.
+        1: { picks: 10, read: 4.0, bank: 42, cap: 11.0, name: 'Basic Drill', blurb: 'Ten boards, eleven seconds of thinking each.' },
+        2: { picks: 11, read: 3.4, bank: 40, cap: 9.5,  name: 'Advanced',    blurb: 'Eleven boards, tighter clock, scouting noise.' },
+        3: { picks: 12, read: 2.8, bank: 38, cap: 8.0,  name: 'Elite',       blurb: 'Twelve boards, eight seconds, pro-level drafts.' },
     };
     const REVEAL_MS = 900;
 
@@ -334,7 +338,9 @@
 
     // ---------- runtime state ---------------------------------------------
     let state = 'intro';           // intro | playing | result
-    let phase = 'ask';             // ask | reveal
+    let phase = 'read';            // read | ask | reveal
+    let readLeft = 0;
+    let readCap = 4;
     let round = [];
     let idx = 0;
     let results = [];
@@ -395,7 +401,13 @@
         if (!lastTs) { lastTs = ts; return; }
         const dt = Math.min(0.25, (ts - lastTs) / 1000);
         lastTs = ts;
-        if (state !== 'playing' || phase !== 'ask') return;
+        if (state !== 'playing') return;
+        if (phase === 'read') {
+            readLeft -= dt;
+            if (readLeft <= 0) { readLeft = 0; beginAnswer(); }
+            return;
+        }
+        if (phase !== 'ask') return;
         puzzleLeft -= dt;
         bankLeft -= dt;
         if (bankLeft <= 0) { bankLeft = 0; puzzleLeft = 0; record(-1, 0, true); return; }
@@ -407,6 +419,7 @@
         const c = DIFFS[dLevel];
         roundName = c.name;
         puzzleCap = c.cap;
+        readCap = c.read;
         bankMax = c.bank;
         bankLeft = c.bank;
         round = buildRound(c.picks, dLevel);
@@ -416,11 +429,20 @@
         bestStreak = 0;
         lastMark = '';
         finished = false;
-        phase = 'ask';
+        phase = 'read';
+        readLeft = readCap;
         puzzleLeft = Math.min(puzzleCap, bankLeft);
         state = 'playing';
         stopLoop();
         rafId = requestAnimationFrame(loop);
+    }
+
+    // Neither the puzzle cap nor the shared bank moves until this runs.
+    function beginAnswer() {
+        if (state !== 'playing' || phase !== 'read') return;
+        phase = 'ask';
+        puzzleLeft = Math.min(puzzleCap, bankLeft);
+        if (puzzleLeft <= 0) endRound();
     }
 
     function answer(i) {
@@ -462,7 +484,8 @@
             revealTimer = null;
             if (bankOut || idx + 1 >= round.length) { endRound(); return; }
             idx += 1;
-            phase = 'ask';
+            phase = 'read';
+            readLeft = readCap;
             puzzleLeft = Math.min(puzzleCap, bankLeft);
             if (puzzleLeft <= 0) endRound();
         }, REVEAL_MS);
@@ -546,6 +569,13 @@
 
     function onKey(e) {
         if (e.defaultPrevented) return;
+        if (state === 'playing' && phase === 'read') {
+            if (e.key === ' ' || e.code === 'Space' || e.key === 'Enter') {
+                e.preventDefault();
+                beginAnswer();
+            }
+            return;
+        }
         if (state === 'playing' && phase === 'ask') {
             if (e.key >= '1' && e.key <= '4') {
                 e.preventDefault();
@@ -649,24 +679,39 @@
 
                 {#if dLevel >= 2}<p class="chatter">{cur.chatter}</p>{/if}
 
-                <!-- Options stay enabled during the reveal so keyboard focus is not
-                     thrown back to the body between picks; answer() guards the input. -->
-                <div class="opts" class:locked={phase !== 'ask'} role="group" aria-label="Draft options">
-                    {#each cur.opts as opt, i}
-                        <button
-                            class="opt {optState(opt, i, phase, lastResult)}"
-                            on:click={() => answer(i)}
-                            aria-disabled={phase !== 'ask'}
-                            aria-label={'Option ' + (i + 1) + ': ' + opt.name + (opt.arch ? ', ' + opt.arch : '')}
-                        >
-                            <span class="okey">{i + 1}</span>
-                            <span class="obody">
-                                <span class="oname">{opt.name}</span>
-                                {#if opt.arch}<span class="oarch">{opt.arch}</span>{/if}
-                            </span>
+                {#if phase === 'read'}
+                    <!-- Read phase: board and question only. Neither the puzzle
+                         cap nor the shared bank is ticking. -->
+                    <div class="readbox">
+                        <p class="read-lbl">Read the board</p>
+                        <button class="read-go" type="button" on:click={beginAnswer}>
+                            Show Options
+                            <span class="read-kbd">Space</span>
                         </button>
-                    {/each}
-                </div>
+                        <p class="read-note">
+                            Options in {Math.max(1, Math.ceil(readLeft))}s. Your thinking clock starts then.
+                        </p>
+                    </div>
+                {:else}
+                    <!-- Options stay enabled during the reveal so keyboard focus is not
+                         thrown back to the body between picks; answer() guards the input. -->
+                    <div class="opts" class:locked={phase !== 'ask'} role="group" aria-label="Draft options">
+                        {#each cur.opts as opt, i}
+                            <button
+                                class="opt {optState(opt, i, phase, lastResult)}"
+                                on:click={() => answer(i)}
+                                aria-disabled={phase !== 'ask'}
+                                aria-label={'Option ' + (i + 1) + ': ' + opt.name + (opt.arch ? ', ' + opt.arch : '')}
+                            >
+                                <span class="okey">{i + 1}</span>
+                                <span class="obody">
+                                    <span class="oname">{opt.name}</span>
+                                    {#if opt.arch}<span class="oarch">{opt.arch}</span>{/if}
+                                </span>
+                            </button>
+                        {/each}
+                    </div>
+                {/if}
 
                 <div class="reveal" aria-live="polite">
                     {#if phase === 'reveal' && lastResult}
@@ -870,6 +915,38 @@
     }
     .prompt { margin-top: 12px; font-size: 14px; font-weight: 700; line-height: 1.45; color: #e2e8f0; }
     .chatter { margin-top: 5px; font-size: 10px; color: #3d4a5c; font-style: italic; }
+
+    /* ---- read phase ---- roughly the height of the 2x2 option grid, so the
+       board does not jump when the options arrive. */
+    .readbox {
+        margin-top: 13px; min-height: 132px;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 11px;
+        padding: 18px 16px; border-radius: 14px;
+        background: rgba(12, 16, 28, 0.4);
+        border: 1px dashed rgba(71, 85, 105, 0.32);
+    }
+    .read-lbl {
+        font-size: 9px; font-weight: 900; letter-spacing: 2px;
+        text-transform: uppercase; color: #475569;
+    }
+    .read-go {
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 11px 22px; border-radius: 12px;
+        border: 1px solid rgba(100, 116, 139, 0.4);
+        background: rgba(51, 65, 85, 0.42);
+        color: #e2e8f0; font-family: inherit;
+        font-size: 12px; font-weight: 900;
+        letter-spacing: 1.1px; text-transform: uppercase; cursor: pointer;
+    }
+    .read-go:hover { background: rgba(71, 85, 105, 0.6); }
+    .read-go:focus-visible { outline: 2px solid #94a3b8; outline-offset: 2px; }
+    .read-kbd {
+        font-size: 9px; font-weight: 800; letter-spacing: 1px;
+        padding: 3px 8px; border-radius: 6px;
+        background: rgba(0, 0, 0, 0.28); color: rgba(226, 232, 240, 0.65);
+    }
+    .read-note { font-size: 10.5px; color: #475569; font-weight: 600; text-align: center; }
 
     .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; }
     @media (max-width: 420px) { .opts { grid-template-columns: 1fr; } }
