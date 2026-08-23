@@ -3,6 +3,7 @@
     import TabContent from './lib/components/layout/TabContent.svelte';
     import ToastContainer from './lib/components/layout/ToastContainer.svelte';
     import MainMenu from './lib/components/layout/MainMenu.svelte';
+    import CareerShell from './lib/components/career/CareerShell.svelte';
     import ConfirmModal from './lib/components/modals/ConfirmModal.svelte';
     import CardInspectModal from './lib/components/modals/CardInspectModal.svelte';
     import AuthPanel from './lib/components/modals/AuthPanel.svelte';
@@ -99,7 +100,12 @@
     </main>
 </div>
 
-{#if $menuScreen !== 'game'}
+<!-- Ultimate Career is a separate shell, not a tab: it has its own header, its
+     own save file (lurc_*) and its own navigation, so it replaces the menu
+     entirely rather than sitting inside the roster game. -->
+{#if $menuScreen === 'career'}
+    <CareerShell />
+{:else if $menuScreen !== 'game'}
     <MainMenu />
 {/if}
 

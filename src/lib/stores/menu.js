@@ -7,8 +7,8 @@ import { writable } from 'svelte/store';
 //
 //   'menu'    → the main menu (title, login, gamemode buttons)
 //   'loading' → the gamemode loading screen animation
-//   'game'    → the running game (App renders the normal Header + TabContent shell)
-//   'career'  → Ultimate Career mode screen
+//   'game'    → Ultimate Roster (App renders the normal Header + TabContent shell)
+//   'career'  → Ultimate Career (App renders CareerShell instead)
 export const menuScreen = writable('menu');
 
 // 'roster' | 'career' | null — which gamemode the player picked.
@@ -31,7 +31,7 @@ export const GAMEMODES = [
         tagline: 'Create · Train · Ascend',
         desc: 'Create a pro player from nothing. Pick a role and a region, grind out of the academy, earn your starting spot, and chase a Hall of Legends career.',
         accent: '#8b5cf6',
-        available: false,
+        available: true,
     },
 ];
 

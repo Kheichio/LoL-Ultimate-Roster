@@ -1,6 +1,6 @@
 <script>
     import { onDestroy } from 'svelte';
-    import { menuScreen, selectedMode, GAMEMODES, CAREER_PILLARS, MORE_GAMES, openMenu } from '../../stores/menu.js';
+    import { menuScreen, selectedMode, GAMEMODES, MORE_GAMES, openMenu } from '../../stores/menu.js';
     import { showAuthPanel } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { playSound } from '../../utils/sound.js';
@@ -67,29 +67,18 @@
         raf = requestAnimationFrame(step);
     }
 
+    // Each gamemode hands off to its own shell: 'game' is the Ultimate Roster
+    // Header/TabContent shell, 'career' is CareerShell. Anything still marked
+    // unavailable falls back to the menu rather than dead-ending on a blank screen.
     function finish() {
         cleanup();
         progress = 100;
         handoff = setTimeout(() => {
             handoff = null;
-            if (loadingMode && loadingMode.available) {
-                playSound('win');
-                menuScreen.set('game');
-            } else {
-                menuScreen.set('career');
-            }
+            if (!loadingMode || !loadingMode.available) { openMenu(); return; }
+            playSound('win');
+            menuScreen.set(loadingMode.id === 'career' ? 'career' : 'game');
         }, REDUCED ? 0 : 300);
-    }
-
-    function backToMenu() {
-        cleanup();
-        playSound('click');
-        openMenu();
-    }
-
-    function playRoster() {
-        const roster = GAMEMODES.find(m => m.id === 'roster');
-        if (roster) pickMode(roster);
     }
 </script>
 
@@ -236,34 +225,6 @@
             </div>
         </div>
 
-    {:else if $menuScreen === 'career'}
-        <!-- ══════════════ ULTIMATE CAREER ══════════════ -->
-        <div class="stage stage-career">
-            <span class="chip chip-lg">Ultimate Career — In Development</span>
-            <h2 class="career-h">Play as the player.</h2>
-            <p class="career-lede">
-                Ultimate Career drops the clipboard. You create a single pro — your handle, your role,
-                your region — and live their whole career from an unknown academy prospect to a name
-                on the Worlds trophy. Same card database, played from the inside.
-            </p>
-
-            <ol class="pillars">
-                {#each CAREER_PILLARS as p, i}
-                    <li class="pillar">
-                        <span class="pillar-n">{String(i + 1).padStart(2, '0')}</span>
-                        <span class="pillar-b">
-                            <span class="pillar-name">{p.name}</span>
-                            <span class="pillar-desc">{p.desc}</span>
-                        </span>
-                    </li>
-                {/each}
-            </ol>
-
-            <div class="career-actions">
-                <button class="btn-quiet" on:click={backToMenu}>Back to Menu</button>
-                <button class="btn-solid" on:click={playRoster}>Play Ultimate Roster</button>
-            </div>
-        </div>
     {/if}
 </section>
 
@@ -681,95 +642,10 @@
         vertical-align: 1px;
     }
 
-    /* ═══════════ CAREER ═══════════ */
-    .stage-career { max-width: 720px; }
-    .chip-lg {
-        font-size: 9px;
-        letter-spacing: 1.6px;
-        padding: 5px 12px;
-        color: #a78bfa;
-        background: rgba(139, 92, 246, 0.08);
-        border-color: rgba(139, 92, 246, 0.25);
-        margin-bottom: 22px;
-    }
-    .career-h {
-        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
-        font-size: clamp(28px, 4.4vw, 40px);
-        font-weight: 700;
-        letter-spacing: -0.025em;
-        color: #e8eefb;
-        margin: 0 0 16px;
-    }
-    .career-lede {
-        font-size: 13px;
-        line-height: 1.85;
-        color: #5b6d8a;
-        max-width: 560px;
-        margin: 0 auto 38px;
-    }
-    .pillars {
-        list-style: none;
-        width: 100%;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 1px;
-        background: rgba(51, 65, 85, 0.3);
-        border: 1px solid rgba(51, 65, 85, 0.3);
-        border-radius: 16px;
-        overflow: hidden;
-        margin: 0 0 38px;
-        text-align: left;
-    }
-    .pillar {
-        display: flex;
-        gap: 14px;
-        padding: 22px 20px;
-        background: rgba(12, 18, 33, 0.85);
-    }
-    .pillar-n {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 10px;
-        font-weight: 700;
-        color: #a78bfa;
-        opacity: 0.7;
-        padding-top: 2px;
-    }
-    .pillar-b { display: flex; flex-direction: column; gap: 6px; }
-    .pillar-name {
-        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
-        font-size: 13px;
-        font-weight: 600;
-        color: #cbd5e1;
-    }
-    .pillar-desc { font-size: 11.5px; line-height: 1.65; color: #55677f; }
-
-    .career-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-    .btn-quiet, .btn-solid {
-        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
-        font-size: 12.5px;
-        font-weight: 600;
-        letter-spacing: 0.2px;
-        padding: 12px 24px;
-        border-radius: 11px;
-        cursor: pointer;
-    }
-    .btn-quiet {
-        color: #94a3b8;
-        background: rgba(15, 23, 42, 0.5);
-        border: 1px solid rgba(51, 65, 85, 0.45);
-    }
-    .btn-quiet:hover { color: #e2e8f0; border-color: rgba(71, 85, 105, 0.7); }
-    .btn-solid {
-        color: #fff;
-        background: #2563eb;
-        border: 1px solid #3b82f6;
-    }
-    .btn-solid:hover { background: #3b82f6; }
-
     /* ═══════════ RESPONSIVE ═══════════ */
     @media (max-width: 760px) {
         .menu { padding: 0 16px; }
-        .modes, .pillars { grid-template-columns: 1fr; }
+        .modes { grid-template-columns: 1fr; }
         .mark { width: 52px; height: 52px; margin-bottom: 20px; }
         .tagline { margin-bottom: 32px; }
         .stage { padding: 28px 0 40px; }
