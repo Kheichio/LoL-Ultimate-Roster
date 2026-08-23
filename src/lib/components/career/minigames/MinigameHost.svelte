@@ -56,6 +56,24 @@
         '[tabindex]:not([tabindex="-1"])',
     ].join(',');
 
+    // The overlay has to be positioned against the VIEWPORT, but career screens
+    // render inside CareerShell's .cscreen, which runs a transform animation
+    // with fill-mode:both. A filling transform animation makes an element a
+    // containing block for its fixed-position descendants, so `position: fixed`
+    // would resolve against that screen rather than the window - the drill then
+    // renders partly off-screen and, for the map drill, is unplayable because
+    // icons flash for as little as 350ms. Re-parenting to <body> removes the
+    // entire class of problem regardless of what any ancestor ever does.
+    function portal(node) {
+        if (typeof document === 'undefined') return {};
+        document.body.appendChild(node);
+        return {
+            destroy() {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            },
+        };
+    }
+
     let overlay = null;
     let panel = null;
     let prevFocus = null;
@@ -221,6 +239,7 @@
 
 <div
     class="mh-over"
+    use:portal
     bind:this={overlay}
     role="dialog"
     aria-modal="true"
@@ -288,12 +307,17 @@
         inset: 0;
         z-index: 120;
         display: flex;
-        align-items: center;
         justify-content: center;
         padding: 14px;
+        /* Last-resort escape hatch: if a drill's content still cannot fit the
+           capped panel, the overlay itself scrolls rather than clipping. */
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
     .mh-bg {
-        position: absolute;
+        /* Fixed, not absolute: when the overlay scrolls, an absolute backdrop
+           would scroll away with it and leave the page showing through. */
+        position: fixed;
         inset: 0;
         background: rgba(3, 6, 15, 0.82);
         -webkit-backdrop-filter: blur(9px);
@@ -305,6 +329,11 @@
         width: 100%;
         max-width: 900px;
         max-height: 92vh;
+        /* `margin: auto` rather than `align-items: center` on the parent: an
+           overflowing flex item that is centre-aligned has its top clipped and
+           becomes unreachable by scrolling. Auto margins centre it without
+           that failure mode. */
+        margin: auto;
         display: flex;
         flex-direction: column;
         background: linear-gradient(170deg, #0d1224 0%, #0a0f1c 100%);
@@ -469,5 +498,15 @@
         .mh-attr, .mh-sep { display: none; }
         .mh-tier { display: none; }
         .mh-body { padding: 10px; }
+    }
+
+    /* On phones the address bar makes 100vh taller than what is actually
+       visible, so the bottom of a drill sits under browser chrome. dvh tracks
+       the visible viewport instead. */
+    @supports (height: 100dvh) {
+        .mh-panel { max-height: 92dvh; }
+        @media (max-width: 560px) {
+            .mh-panel { max-height: 100dvh; height: 100dvh; }
+        }
     }
 </style>

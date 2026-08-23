@@ -921,7 +921,15 @@
 
     /* -- map --------------------------------------------------------- */
     .map-wrap {
-        position: relative; width: 100%; max-width: 430px; margin: 0 auto;
+        position: relative; width: 100%; margin: 0 auto;
+        /* The square has to fit on screen IN ITS ENTIRETY. Icons flash for as
+           little as 350ms, so a map that needs scrolling is a map you cannot
+           play - and a partly-clipped map silently makes the drill unfair
+           rather than merely awkward. 340px is the chrome above and below it
+           (host header and padding, HUD, prompt, answer row, clock); the 190px
+           floor keeps it usable in a very short window, where the panel's own
+           scroll takes over. */
+        max-width: min(430px, max(190px, calc(100vh - 340px)));
         aspect-ratio: 1 / 1; border-radius: 14px; overflow: hidden;
         border: 1px solid rgba(51, 65, 85, 0.4);
         background: #070b14; touch-action: none; user-select: none;
@@ -929,6 +937,11 @@
     }
     .map-wrap.live { cursor: crosshair; border-color: rgba(16, 185, 129, 0.4); }
     .map-wrap:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+    /* Same cap against the *visible* viewport on phones, where 100vh hides
+       part of the page behind the address bar. */
+    @supports (height: 100dvh) {
+        .map-wrap { max-width: min(430px, max(190px, calc(100dvh - 340px))); }
+    }
     /* aspect-ratio fallback for older engines */
     @supports not (aspect-ratio: 1 / 1) {
         .map-wrap { height: 0; padding-bottom: 100%; }
