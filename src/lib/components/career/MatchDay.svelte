@@ -451,6 +451,14 @@
           color: meterColor(m.personal, PER_MAX), foot: "Your own line, before the team's" },
     ].map(r => ({ ...r, pct: Math.min(100, (Math.abs(r.value) / r.max) * 100) })) : [];
     $: timeline = m ? normList(m.timeline) : [];
+    // Champion select for this game. Older in-progress saves have no `draft`
+    // on their match object, so this stays null and the strip is simply absent.
+    $: draft = (m && m.draft && m.draft.outcome) ? m.draft : null;
+    $: draftLabel = draft
+        ? (draft.outcome === 'signature' ? (draft.champion || 'Signature pick')
+            : draft.outcome === 'pocket' ? 'Pocket pick'
+            : 'Off-script')
+        : '';
     $: evPhase = currentEvent ? (GAME_PHASES[currentEvent.phase] || GAME_PHASES.mid) : GAME_PHASES.mid;
 
     $: ratingBadge = finalResult && Number.isFinite(Number(finalResult.rating))
@@ -535,6 +543,14 @@
                     <span class="ctx-label">{m.label}</span>
                 {/if}
             </div>
+
+            {#if draft}
+                <div class="draft draft-{draft.outcome}">
+                    <span class="dr-tag">Draft</span>
+                    <span class="dr-pick">{draftLabel}</span>
+                    <span class="dr-line">{draft.line}</span>
+                </div>
+            {/if}
 
             <!-- Meters -->
             <div class="meters">
@@ -909,6 +925,30 @@
     .ctx-phase { color: var(--ph); }
     .ctx-label { color: #4a5b76; letter-spacing: 0.4px; text-transform: none; font-weight: 700; }
     .ctx-dot { color: #23304a; }
+
+    /* Champion select, one line, colour-coded by how it went. Green means the
+       comfort bonus is live this game; red means you are on something you do
+       not know and every decision is fractionally harder. */
+    .draft {
+        display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+        gap: 8px; margin: 10px auto 0; max-width: 560px;
+        padding: 7px 12px; border-radius: 10px;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        border-left: 2px solid var(--dr);
+    }
+    .draft-signature { --dr: rgba(74, 222, 128, 0.75); }
+    .draft-pocket    { --dr: rgba(245, 158, 11, 0.75); }
+    .draft-offscript { --dr: rgba(239, 68, 68, 0.75); }
+    .dr-tag {
+        font-size: 8.5px; font-weight: 900; letter-spacing: 1.3px; text-transform: uppercase;
+        color: #3f5069; flex: 0 0 auto;
+    }
+    .dr-pick { font-size: 11px; font-weight: 800; color: var(--dr); flex: 0 0 auto; }
+    .dr-line { font-size: 11px; line-height: 1.45; color: #7b8ca8; min-width: 0; }
+    @media (max-width: 560px) {
+        .draft { flex-direction: column; align-items: flex-start; text-align: left; }
+    }
 
     .meters { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 20px; align-items: start; margin-top: 14px; }
     .meter { min-width: 0; }

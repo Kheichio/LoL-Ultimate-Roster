@@ -528,6 +528,11 @@ const stats = {
     matchesPlayedManually: 0,
     matchesSimmed: 0,
     benchedGames: 0,
+    // Champion select, rolled once per game by match.js rollDraft(). Counted
+    // here because a draft that silently stops rolling reads as `signature`
+    // everywhere and hands out double the comfort bonus with nothing to show
+    // for it - no crash, no visible symptom, just a quietly easier game.
+    draft: { signature: 0, pocket: 0, offscript: 0, missing: 0 },
     awardsGranted: 0,
     milestonesGranted: 0,
     legacyEnd: 0,
@@ -626,10 +631,19 @@ function playFixtureManually(f) {
         return;
     }
 
+    // A benched player never drafts, so those games are simply not counted.
+    function noteDraft(mm) {
+        if (!mm || mm.playerPlays === false) return;
+        const o = mm.draft && mm.draft.outcome;
+        if (o === 'signature' || o === 'pocket' || o === 'offscript') stats.draft[o]++;
+        else stats.draft.missing++;
+    }
+
     let m = m0;
     ST.matchState.set(m);
     if (m.playerPlays === false) stats.benchedGames++;
     noteAppearance(hadClub, m.playerPlays !== false);
+    noteDraft(m);
 
     let guard = 0;
     while (guard++ < 30) {
@@ -666,6 +680,7 @@ function playFixtureManually(f) {
 
         const fg = step('match.finishGame', () => M.finishGame(cur(), m), null);
         if (!fg || !fg.match) break;
+        if (!fg.match.done) noteDraft(fg.match);
         if (fg.game) {
             if (!isNum(fg.game.rating)) {
                 fail('crash', 'src/lib/career/match.js', 'finishGame produced a non-numeric game rating',
@@ -1354,6 +1369,37 @@ console.log('---- SURFACE COVERAGE ------------------------------------');
 console.log(`  matches played by hand : ${stats.matchesPlayedManually}`);
 console.log(`  matches simulated      : ${stats.matchesSimmed}`);
 console.log(`  benched appearances    : ${stats.benchedGames}`);
+{
+    const d = stats.draft;
+    const total = d.signature + d.pocket + d.offscript + d.missing;
+    const share = (n) => total ? ((n / total) * 100).toFixed(1) + '%' : '-';
+    console.log(`  champion select        : ${d.signature} signature (${share(d.signature)}) / `
+        + `${d.pocket} pocket (${share(d.pocket)}) / ${d.offscript} off-script (${share(d.offscript)})`);
+    if (!total) {
+        fail('wrong', 'src/lib/career/match.js', 'no champion select was ever rolled',
+            'buildMatch/finishGame produced no draft on any hand-played game',
+            'rollDraft() must set match.draft for every game the player actually plays.');
+    } else if (d.missing) {
+        fail('wrong', 'src/lib/career/match.js', 'a played game had no draft outcome',
+            `${d.missing} of ${total} games had match.draft missing or unrecognised`,
+            'A missing draft silently reads as "signature" in successChance and doubles the comfort bonus.');
+    } else {
+        // All three outcomes must actually occur, or one branch of the feature
+        // is dead and nobody would notice.
+        for (const k of ['signature', 'pocket', 'offscript']) {
+            if (!d[k]) {
+                fail('wrong', 'src/lib/career/match.js', `champion select never produced "${k}"`,
+                    `over ${total} games: ${JSON.stringify(d)}`,
+                    'Check the probability split in rollDraft() - one outcome is unreachable.');
+            }
+        }
+        if (d.signature < total * 0.30) {
+            fail('wrong', 'src/lib/career/match.js', 'players almost never get their signature champion',
+                `${share(d.signature)} of ${total} games`,
+                'DRAFT_SIGNATURE_BASE is too low - the signature pick should be the common case.');
+        }
+    }
+}
 console.log(`  unsigned games/benched : ${stats.unsignedGames} / ${stats.unsignedBench}`);
 console.log(`  signed games/benched   : ${stats.signedGames} / ${stats.signedBench}`);
 console.log(`  offers seen / accepted : ${stats.offersSeen} / ${stats.offersAccepted}`);

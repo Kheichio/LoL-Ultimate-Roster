@@ -603,6 +603,12 @@
                                     <button class="quiet" on:click={() => (champSearch = '')}>Clear search</button>
                                 </div>
                             {:else}
+                                <!-- Scrolls internally so the search box and the
+                                     hover read-out stay pinned. A role can carry
+                                     50+ champions across a dozen archetypes, and
+                                     without this the step is a 2000px page where
+                                     you cannot see what you are hovering. -->
+                                <div class="champscroll">
                                 {#each champGroups as g}
                                     <div class="cgroup">
                                         <div class="label">{g.name}</div>
@@ -626,6 +632,7 @@
                                         </div>
                                     </div>
                                 {/each}
+                                </div>
                             {/if}
 
                         <!-- ---------- 7 - HANDLE ---------- -->
@@ -1011,6 +1018,22 @@
     .cd-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 14px; font-weight: 700; color: #e8eefb; }
     .cd-arch { font-size: 9px; font-weight: 900; letter-spacing: 1.3px; text-transform: uppercase; color: #56688a; }
     .cwrap { display: flex; flex-wrap: wrap; gap: 8px; }
+    .champscroll {
+        max-height: min(46vh, 460px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-right: 6px;
+        margin-top: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        /* The fade tells you there is more below without adding chrome. */
+        -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent 100%);
+        mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent 100%);
+    }
+    .champscroll::-webkit-scrollbar { width: 7px; }
+    .champscroll::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); border-radius: 4px; }
+    .champscroll::-webkit-scrollbar-track { background: transparent; }
     .cchip { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; padding: 9px 12px; border-radius: 11px; cursor: pointer; font-family: inherit; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(51, 65, 85, 0.34); transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease; }
     .cchip:hover { transform: translateY(-1px); border-color: rgba(167, 139, 250, 0.4); background: rgba(30, 41, 59, 0.6); }
     .cchip.sel { border-color: rgba(167, 139, 250, 0.65); background: rgba(139, 92, 246, 0.12); box-shadow: 0 6px 20px rgba(139, 92, 246, 0.16); }

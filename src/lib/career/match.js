@@ -132,9 +132,30 @@ const PERSONAL_FAIL_SCALE = 0.60;
 const FORM_SWING = 0.12;        // +/- 0.06 across the whole form range
 const COMPOSURE_SWING = 0.18;   // only while the team is behind
 const BIAS_SWING = 0.16;        // playing to your identity, or against it
-const COMFORT_BONUS = 0.06;     // signature champion, bonus only - never a penalty
+// Signature champion. This used to be a flat 0.06 that applied in every single
+// game, which made it the weakest term in the engine and something the player
+// never had a reason to think about. It is now drafted for (see rollDraft) and
+// worth twice as much on the games you actually get it, for roughly the same
+// average. Getting your pick through is a real event; losing it costs you.
+const COMFORT_BONUS = 0.12;
 const WHEN_MATCH = 0.09;        // the option that reads the game state correctly
 const WHEN_MISS = -0.07;        // ...and the price for the ones that do not
+
+// ---------------------------------------------------------------------------
+//  DRAFT
+//  Champion select, rolled once per GAME - so a Bo5 drafts five times and your
+//  signature pick getting banned in game three is a thing that happens to you.
+//  Three outcomes, and Champion Pool decides which side of the coin you land on
+//  when the pick does not come back to you. This is the only place `chp` has a
+//  mechanical job, which is why a one-trick is punished here and nowhere else.
+// ---------------------------------------------------------------------------
+const DRAFT_SIGNATURE_BASE = 0.62;   // your pick survives the ban phase
+const DRAFT_CHP_ON_SIGNATURE = 0.20; // breadth also makes you harder to target
+const DRAFT_POCKET_BASE = 0.68;      // of the games you lose it, how many have a real answer
+const DRAFT_CHP_ON_POCKET = 0.70;    // ...and breadth is most of that
+const DRAFT_TARGETING = 0.22;        // a top org scouts and bans what you are known for
+const POCKET_COMFORT = 0.45;         // a prepared second pick keeps some of the comfort
+const OFFSCRIPT_PENALTY = -0.035;    // playing something you do not really know
 
 // Game state thresholds the `when` markers are tested against.
 const AHEAD_AT = 8;
@@ -374,6 +395,77 @@ function drawQueue(role, usedIds) {
 }
 
 // ---------------------------------------------------------------------------
+//  DRAFT
+// ---------------------------------------------------------------------------
+const DRAFT_LINES = {
+    signature: [
+        'They left it open. You are on it.',
+        'Through the ban phase untouched.',
+        'Last pick, and it was still there.',
+        'They banned around it and gave it to you anyway.',
+    ],
+    pocket: [
+        'Banned. You had the second one ready.',
+        'Gone in the first rotation - you drafted the answer instead.',
+        'Targeted out. The backup is one you have actually played.',
+        'Taken. Not a problem, you prepared for that.',
+    ],
+    offscript: [
+        'Banned, and the backup went with it. You are on something you barely play.',
+        'Targeted out twice. This is a blind pick and everyone knows it.',
+        'Nothing you wanted survived. You are improvising on stage.',
+        'They read your whole pool. What is left is not really yours.',
+    ],
+};
+
+/**
+ * Champion select for one game. Returns what you ended up on and how much of
+ * the comfort bonus it is worth.
+ *
+ * The odds move on two things and nothing else: how broad your champion pool
+ * is, and how good the other team is at scouting you. A 20-CHP one-trick facing
+ * a top org is off-script roughly a third of the time; an 80-CHP player almost
+ * never is, because there is always another pick they can actually play.
+ */
+export function rollDraft(c, oppStrength) {
+    const state = st(c);
+    const p = (state && state.player) || {};
+    const champ = CHAMPION_BY_ID[p.champion] || null;
+
+    const chp = clamp(num(p.attrs && p.attrs.chp, 40), 1, 99);
+    const chpFactor = (chp - 50) / 100;                       // about -0.5 .. +0.5
+    const targeting = clamp((num(oppStrength, 55) - 55) / 45, 0, 1) * DRAFT_TARGETING;
+
+    const pSignature = clamp(
+        DRAFT_SIGNATURE_BASE + chpFactor * DRAFT_CHP_ON_SIGNATURE - targeting,
+        0.20, 0.88,
+    );
+    const pocketShare = clamp(DRAFT_POCKET_BASE + chpFactor * DRAFT_CHP_ON_POCKET, 0.15, 0.92);
+
+    const r = Math.random();
+    let outcome;
+    if (r < pSignature) outcome = 'signature';
+    else if (r < pSignature + (1 - pSignature) * pocketShare) outcome = 'pocket';
+    else outcome = 'offscript';
+
+    return {
+        outcome,
+        // The name is only ever shown, never read back for maths.
+        champion: outcome === 'signature' && champ ? champ.name : null,
+        line: pick(DRAFT_LINES[outcome]),
+    };
+}
+
+/** How much of the comfort bonus this game's draft is worth. Old saves have no
+ *  `draft` on their in-progress match, so they keep the previous behaviour. */
+function draftComfort(match) {
+    const o = match && match.draft && match.draft.outcome;
+    if (o === 'pocket') return POCKET_COMFORT;
+    if (o === 'offscript') return 0;
+    return 1;
+}
+
+// ---------------------------------------------------------------------------
 //  BUILD
 // ---------------------------------------------------------------------------
 /**
@@ -433,6 +525,9 @@ export function buildMatch(c, opts = {}) {
         queue: drawn.queue,
         usedIds: drawn.usedIds,
         eventIndex: 0,
+
+        // Champion select for game one. Re-rolled every game in finishGame().
+        draft: plays ? rollDraft(state, teamStrength(oppTeam, year)) : null,
 
         timeline: [],
         gameLog: [],
@@ -505,13 +600,19 @@ export function successChance(c, match, option, event) {
         chance += fit * BIAS_SWING;
     }
 
-    // Comfort pick. The signature champion makes the plays it was built for
-    // easier and never makes anything harder.
-    const champ = CHAMPION_BY_ID[p.champion];
-    const arche = champ ? ARCHETYPE_BIAS[champ.archetype] : null;
-    if (arche && option.bias) {
-        const comfort = Math.max(0, 1 - 2 * biasDistance(arche, option.bias));
-        chance += comfort * COMFORT_BONUS;
+    // Comfort pick. On the games the draft actually gave you your champion,
+    // the plays it was built for get easier. On the games you were banned out
+    // of your whole pool, you are on something you do not know and it costs.
+    const scale = draftComfort(match);
+    if (scale > 0) {
+        const champ = CHAMPION_BY_ID[p.champion];
+        const arche = champ ? ARCHETYPE_BIAS[champ.archetype] : null;
+        if (arche && option.bias) {
+            const comfort = Math.max(0, 1 - 2 * biasDistance(arche, option.bias));
+            chance += comfort * COMFORT_BONUS * scale;
+        }
+    } else {
+        chance += OFFSCRIPT_PENALTY;
     }
 
     // The map read. Nothing in the option text says which one this is.
@@ -738,6 +839,9 @@ export function finishGame(c, match) {
             queue: drawn.queue,
             usedIds: drawn.usedIds,
             eventIndex: 0,
+            // Every game drafts again. Losing your pick in game three of a Bo5
+            // is the whole reason this is rolled per game and not per series.
+            draft: match.playerPlays ? rollDraft(state, match.oppStrength) : null,
         };
     }
 

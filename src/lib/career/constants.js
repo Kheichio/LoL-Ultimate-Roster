@@ -290,14 +290,14 @@ export const PLAYSTYLE_BY_ID = Object.values(PLAYSTYLES).flat()
 //  it. `roles` gates which champs appear for the role you chose.
 // ─────────────────────────────────────────────────────────────────────────
 export const CHAMPIONS = [
-    // ── TOP ──
+    // -- TOP ---------------------------------------------------------------
     { id: 'aatrox',   name: 'Aatrox',    roles: ['TOP'], archetype: 'Juggernaut', mods: { tmf: 3, mec: 2, cmp: -1 } },
     { id: 'camille',  name: 'Camille',   roles: ['TOP'], archetype: 'Diver',      mods: { mec: 4, map: 2, tmf: -2 } },
     { id: 'darius',   name: 'Darius',    roles: ['TOP'], archetype: 'Juggernaut', mods: { lne: 4, mec: 1, map: -2 } },
     { id: 'fiora',    name: 'Fiora',     roles: ['TOP'], archetype: 'Duelist',    mods: { mec: 5, lne: 1, tmf: -3 } },
     { id: 'gnar',     name: 'Gnar',      roles: ['TOP'], archetype: 'Skirmisher', mods: { tmf: 3, knw: 2, cmp: -1 } },
     { id: 'jax',      name: 'Jax',       roles: ['TOP'], archetype: 'Duelist',    mods: { mec: 3, lne: 2, ldr: -1 } },
-    { id: 'ksante',   name: 'K’Sante', roles: ['TOP'], archetype: 'Warden',  mods: { tmf: 4, cmp: 2, mec: -2 } },
+    { id: 'ksante',   name: 'K\u2019Sante', roles: ['TOP'], archetype: 'Warden',  mods: { tmf: 4, cmp: 2, mec: -2 } },
     { id: 'malphite', name: 'Malphite',  roles: ['TOP'], archetype: 'Vanguard',   mods: { tmf: 4, cmp: 3, mec: -4 } },
     { id: 'ornn',     name: 'Ornn',      roles: ['TOP'], archetype: 'Vanguard',   mods: { tmf: 4, knw: 2, lne: -2 } },
     { id: 'renekton', name: 'Renekton',  roles: ['TOP'], archetype: 'Diver',      mods: { lne: 5, mec: 1, cmp: -2 } },
@@ -306,7 +306,7 @@ export const CHAMPIONS = [
     { id: 'gwen',     name: 'Gwen',      roles: ['TOP'], archetype: 'Skirmisher', mods: { mec: 3, chp: 2, lne: -1 } },
     { id: 'rumble',   name: 'Rumble',    roles: ['TOP', 'MID'], archetype: 'Battlemage', mods: { tmf: 4, knw: 2, mec: -1 } },
 
-    // ── JUNGLE ──
+    // -- JUNGLE ------------------------------------------------------------
     { id: 'leesin',   name: 'Lee Sin',   roles: ['JNG'], archetype: 'Diver',      mods: { mec: 5, ldr: 1, cmp: -2 } },
     { id: 'viego',    name: 'Viego',     roles: ['JNG'], archetype: 'Skirmisher', mods: { mec: 4, tmf: 2, knw: -2 } },
     { id: 'jarvan',   name: 'Jarvan IV', roles: ['JNG'], archetype: 'Diver',      mods: { tmf: 4, ldr: 2, mec: -1 } },
@@ -315,12 +315,12 @@ export const CHAMPIONS = [
     { id: 'vi',       name: 'Vi',        roles: ['JNG'], archetype: 'Diver',      mods: { tmf: 3, mec: 2, map: -1 } },
     { id: 'xinzhao',  name: 'Xin Zhao',  roles: ['JNG'], archetype: 'Diver',      mods: { mec: 2, tmf: 3, knw: -1 } },
     { id: 'graves',   name: 'Graves',    roles: ['JNG'], archetype: 'Specialist', mods: { mec: 4, knw: 2, ldr: -2 } },
-    { id: 'maokai',   name: 'Maokai',    roles: ['JNG'], archetype: 'Vanguard',   mods: { map: 4, tmf: 2, mec: -3 } },
+    { id: 'maokai',   name: 'Maokai',    roles: ['JNG', 'SUP'], archetype: 'Vanguard', mods: { map: 4, tmf: 2, mec: -3 } },
     { id: 'kindred',  name: 'Kindred',   roles: ['JNG'], archetype: 'Marksman',   mods: { knw: 4, map: 2, cmp: -2 } },
     { id: 'elise',    name: 'Elise',     roles: ['JNG'], archetype: 'Assassin',   mods: { mec: 4, map: 2, cmp: -2 } },
     { id: 'wukong',   name: 'Wukong',    roles: ['JNG', 'TOP'], archetype: 'Diver', mods: { tmf: 4, mec: 1, knw: -1 } },
 
-    // ── MID ──
+    // -- MID ---------------------------------------------------------------
     { id: 'ahri',     name: 'Ahri',      roles: ['MID'], archetype: 'Mage',       mods: { map: 3, cmp: 2, lne: -1 } },
     { id: 'azir',     name: 'Azir',      roles: ['MID'], archetype: 'Mage',       mods: { mec: 5, tmf: 2, cmp: -3 } },
     { id: 'orianna',  name: 'Orianna',   roles: ['MID'], archetype: 'Mage',       mods: { tmf: 5, knw: 2, lne: -2 } },
@@ -331,12 +331,12 @@ export const CHAMPIONS = [
     { id: 'viktor',   name: 'Viktor',    roles: ['MID'], archetype: 'Mage',       mods: { knw: 4, tmf: 2, mec: -1 } },
     { id: 'zed',      name: 'Zed',       roles: ['MID'], archetype: 'Assassin',   mods: { mec: 5, lne: 1, tmf: -3 } },
     { id: 'corki',    name: 'Corki',     roles: ['MID'], archetype: 'Marksman',   mods: { knw: 3, tmf: 2, mec: -1 } },
-    { id: 'taliyah',  name: 'Taliyah',   roles: ['MID'], archetype: 'Mage',       mods: { map: 4, ldr: 2, lne: -2 } },
+    { id: 'taliyah',  name: 'Taliyah',   roles: ['MID', 'JNG'], archetype: 'Mage',    mods: { map: 4, ldr: 2, lne: -2 } },
     { id: 'akali',    name: 'Akali',     roles: ['MID'], archetype: 'Assassin',   mods: { mec: 5, cmp: -2, knw: -1 } },
 
-    // ── ADC ──
+    // -- ADC ---------------------------------------------------------------
     { id: 'jinx',     name: 'Jinx',      roles: ['ADC'], archetype: 'Hypercarry', mods: { tmf: 4, mec: 2, lne: -2 } },
-    { id: 'kaisa',    name: 'Kai’Sa', roles: ['ADC'], archetype: 'Hypercarry', mods: { mec: 4, tmf: 2, cmp: -1 } },
+    { id: 'kaisa',    name: 'Kai\u2019Sa', roles: ['ADC'], archetype: 'Hypercarry', mods: { mec: 4, tmf: 2, cmp: -1 } },
     { id: 'aphelios', name: 'Aphelios',  roles: ['ADC'], archetype: 'Specialist', mods: { knw: 5, tmf: 2, cmp: -2 } },
     { id: 'ezreal',   name: 'Ezreal',    roles: ['ADC'], archetype: 'Poke',       mods: { cmp: 4, mec: 2, tmf: -2 } },
     { id: 'caitlyn',  name: 'Caitlyn',   roles: ['ADC'], archetype: 'Lane Bully', mods: { lne: 5, knw: 1, tmf: -2 } },
@@ -348,7 +348,7 @@ export const CHAMPIONS = [
     { id: 'draven',   name: 'Draven',    roles: ['ADC'], archetype: 'Lane Bully', mods: { mec: 5, lne: 3, cmp: -4 } },
     { id: 'jhin',     name: 'Jhin',      roles: ['ADC'], archetype: 'Specialist', mods: { cmp: 3, knw: 3, mec: -2 } },
 
-    // ── SUPPORT ──
+    // -- SUPPORT -----------------------------------------------------------
     { id: 'thresh',   name: 'Thresh',    roles: ['SUP'], archetype: 'Catcher',    mods: { mec: 4, tmf: 2, cmp: -1 } },
     { id: 'nautilus', name: 'Nautilus',  roles: ['SUP'], archetype: 'Vanguard',   mods: { tmf: 4, lne: 2, map: -1 } },
     { id: 'lulu',     name: 'Lulu',      roles: ['SUP'], archetype: 'Enchanter',  mods: { cmp: 4, tmf: 2, lne: -2 } },
@@ -361,6 +361,136 @@ export const CHAMPIONS = [
     { id: 'braum',    name: 'Braum',     roles: ['SUP'], archetype: 'Warden',     mods: { cmp: 4, tmf: 2, mec: -2 } },
     { id: 'pyke',     name: 'Pyke',      roles: ['SUP'], archetype: 'Assassin',   mods: { mec: 5, map: 2, cmp: -3 } },
     { id: 'milio',    name: 'Milio',     roles: ['SUP'], archetype: 'Enchanter',  mods: { cmp: 4, knw: 2, mec: -3 } },
+
+    // =====================================================================
+    //  The rest of the roster. Same rules: 2-3 mods, positives summing 5-8,
+    //  at least one cost, net +1 to +5, and an archetype that exists in
+    //  match.js's ARCHETYPE_BIAS table. tools/championCheck.mjs enforces all
+    //  of it - an archetype typo does not crash, it just silently deletes
+    //  that champion's comfort-pick bonus forever.
+    // =====================================================================
+
+    // -- TOP ---------------------------------------------------------------
+    { id: 'ambessa',       name: 'Ambessa',           roles: ['TOP'],                 archetype: 'Skirmisher',   mods: { mec: 5, tmf: 2, cmp: -3 } },
+    { id: 'aurora',        name: 'Aurora',            roles: ['TOP', 'MID'],          archetype: 'Mage',         mods: { mec: 3, tmf: 3, lne: -2 } },
+    { id: 'chogath',       name: 'Cho\u2019Gath',     roles: ['TOP'],                 archetype: 'Battlemage',   mods: { knw: 4, tmf: 2, mec: -2 } },
+    { id: 'drmundo',       name: 'Dr. Mundo',         roles: ['TOP', 'JNG'],          archetype: 'Juggernaut',   mods: { cmp: 4, tmf: 2, mec: -3 } },
+    { id: 'gangplank',     name: 'Gangplank',         roles: ['TOP'],                 archetype: 'Specialist',   mods: { mec: 5, knw: 2, cmp: -3 } },
+    { id: 'garen',         name: 'Garen',             roles: ['TOP'],                 archetype: 'Juggernaut',   mods: { lne: 4, cmp: 2, mec: -3 } },
+    { id: 'heimerdinger',  name: 'Heimerdinger',      roles: ['TOP', 'MID'],          archetype: 'Specialist',   mods: { knw: 4, lne: 3, map: -3 } },
+    { id: 'illaoi',        name: 'Illaoi',            roles: ['TOP'],                 archetype: 'Juggernaut',   mods: { lne: 5, cmp: 2, map: -3 } },
+    { id: 'irelia',        name: 'Irelia',            roles: ['TOP', 'MID'],          archetype: 'Skirmisher',   mods: { mec: 5, lne: 2, cmp: -3 } },
+    { id: 'jayce',         name: 'Jayce',             roles: ['TOP', 'MID'],          archetype: 'Poke',         mods: { lne: 4, mec: 2, tmf: -3 } },
+    { id: 'kayle',         name: 'Kayle',             roles: ['TOP'],                 archetype: 'Hypercarry',   mods: { tmf: 3, cmp: 3, lne: -4 } },
+    { id: 'kennen',        name: 'Kennen',            roles: ['TOP'],                 archetype: 'Mage',         mods: { tmf: 5, lne: 2, mec: -2 } },
+    { id: 'kled',          name: 'Kled',              roles: ['TOP'],                 archetype: 'Skirmisher',   mods: { lne: 4, mec: 2, map: -2 } },
+    { id: 'mordekaiser',   name: 'Mordekaiser',       roles: ['TOP'],                 archetype: 'Juggernaut',   mods: { lne: 3, tmf: 3, map: -2 } },
+    { id: 'nasus',         name: 'Nasus',             roles: ['TOP'],                 archetype: 'Juggernaut',   mods: { cmp: 4, knw: 2, lne: -3 } },
+    { id: 'olaf',          name: 'Olaf',              roles: ['TOP', 'JNG'],          archetype: 'Juggernaut',   mods: { lne: 4, cmp: 2, map: -3 } },
+    { id: 'pantheon',      name: 'Pantheon',          roles: ['TOP', 'MID', 'SUP'],   archetype: 'Lane Bully',   mods: { lne: 5, map: 2, tmf: -3 } },
+    { id: 'poppy',         name: 'Poppy',             roles: ['TOP', 'JNG', 'SUP'],   archetype: 'Warden',       mods: { tmf: 3, knw: 3, lne: -2 } },
+    { id: 'quinn',         name: 'Quinn',             roles: ['TOP'],                 archetype: 'Marksman',     mods: { map: 5, lne: 2, tmf: -3 } },
+    { id: 'shen',          name: 'Shen',              roles: ['TOP'],                 archetype: 'Warden',       mods: { map: 5, ldr: 2, lne: -3 } },
+    { id: 'singed',        name: 'Singed',            roles: ['TOP'],                 archetype: 'Specialist',   mods: { map: 4, cmp: 3, mec: -3 } },
+    { id: 'sion',          name: 'Sion',              roles: ['TOP'],                 archetype: 'Vanguard',     mods: { map: 4, tmf: 3, mec: -3 } },
+    { id: 'skarner',       name: 'Skarner',           roles: ['TOP', 'JNG'],          archetype: 'Vanguard',     mods: { tmf: 5, cmp: 2, mec: -3 } },
+    { id: 'teemo',         name: 'Teemo',             roles: ['TOP'],                 archetype: 'Specialist',   mods: { map: 3, knw: 3, tmf: -3 } },
+    { id: 'trundle',       name: 'Trundle',           roles: ['TOP', 'JNG'],          archetype: 'Juggernaut',   mods: { lne: 4, ldr: 2, tmf: -2 } },
+    { id: 'tryndamere',    name: 'Tryndamere',        roles: ['TOP'],                 archetype: 'Duelist',      mods: { map: 4, cmp: 2, tmf: -3 } },
+    { id: 'urgot',         name: 'Urgot',             roles: ['TOP'],                 archetype: 'Juggernaut',   mods: { lne: 4, knw: 2, map: -2 } },
+    { id: 'volibear',      name: 'Volibear',          roles: ['TOP', 'JNG'],          archetype: 'Juggernaut',   mods: { tmf: 4, lne: 2, mec: -3 } },
+    { id: 'yone',          name: 'Yone',              roles: ['TOP', 'MID'],          archetype: 'Skirmisher',   mods: { mec: 4, tmf: 2, cmp: -2 } },
+    { id: 'yorick',        name: 'Yorick',            roles: ['TOP'],                 archetype: 'Duelist',      mods: { map: 4, lne: 2, tmf: -3 } },
+    { id: 'zaahen',        name: 'Zaahen',            roles: ['TOP', 'JNG'],          archetype: 'Skirmisher',   mods: { mec: 4, tmf: 3, map: -2 } },
+
+    // -- JUNGLE ------------------------------------------------------------
+    { id: 'amumu',         name: 'Amumu',             roles: ['JNG', 'SUP'],          archetype: 'Vanguard',     mods: { tmf: 5, cmp: 2, mec: -3 } },
+    { id: 'belveth',       name: 'Bel\u2019Veth',     roles: ['JNG'],                 archetype: 'Skirmisher',   mods: { mec: 5, knw: 2, cmp: -3 } },
+    { id: 'briar',         name: 'Briar',             roles: ['JNG'],                 archetype: 'Diver',        mods: { tmf: 4, mec: 2, cmp: -3 } },
+    { id: 'diana',         name: 'Diana',             roles: ['JNG', 'MID'],          archetype: 'Diver',        mods: { tmf: 4, mec: 2, cmp: -2 } },
+    { id: 'ekko',          name: 'Ekko',              roles: ['JNG', 'MID'],          archetype: 'Assassin',     mods: { mec: 5, map: 2, cmp: -3 } },
+    { id: 'evelynn',       name: 'Evelynn',           roles: ['JNG'],                 archetype: 'Assassin',     mods: { map: 5, mec: 2, tmf: -2 } },
+    { id: 'fiddlesticks',  name: 'Fiddlesticks',      roles: ['JNG'],                 archetype: 'Specialist',   mods: { map: 4, tmf: 3, mec: -3 } },
+    { id: 'gragas',        name: 'Gragas',            roles: ['JNG', 'TOP', 'SUP'],   archetype: 'Vanguard',     mods: { tmf: 4, mec: 3, map: -2 } },
+    { id: 'hecarim',       name: 'Hecarim',           roles: ['JNG'],                 archetype: 'Diver',        mods: { tmf: 4, map: 2, cmp: -2 } },
+    { id: 'ivern',         name: 'Ivern',             roles: ['JNG'],                 archetype: 'Enchanter',    mods: { map: 4, tmf: 2, mec: -2 } },
+    { id: 'karthus',       name: 'Karthus',           roles: ['JNG'],                 archetype: 'Specialist',   mods: { knw: 4, map: 2, mec: -2 } },
+    { id: 'kayn',          name: 'Kayn',              roles: ['JNG'],                 archetype: 'Skirmisher',   mods: { mec: 4, chp: 2, cmp: -2 } },
+    { id: 'khazix',        name: 'Kha\u2019Zix',      roles: ['JNG'],                 archetype: 'Assassin',     mods: { mec: 3, map: 3, tmf: -3 } },
+    { id: 'lillia',        name: 'Lillia',            roles: ['JNG'],                 archetype: 'Skirmisher',   mods: { mec: 3, tmf: 3, cmp: -2 } },
+    { id: 'masteryi',      name: 'Master Yi',         roles: ['JNG'],                 archetype: 'Skirmisher',   mods: { tmf: 4, cmp: 2, chp: -3 } },
+    { id: 'nocturne',      name: 'Nocturne',          roles: ['JNG'],                 archetype: 'Diver',        mods: { tmf: 4, knw: 2, mec: -2 } },
+    { id: 'nunu',          name: 'Nunu & Willump',    roles: ['JNG'],                 archetype: 'Vanguard',     mods: { map: 4, knw: 2, mec: -2 } },
+    { id: 'rammus',        name: 'Rammus',            roles: ['JNG'],                 archetype: 'Vanguard',     mods: { tmf: 4, knw: 2, mec: -3 } },
+    { id: 'reksai',        name: 'Rek\u2019Sai',      roles: ['JNG'],                 archetype: 'Diver',        mods: { map: 4, mec: 3, tmf: -3 } },
+    { id: 'rengar',        name: 'Rengar',            roles: ['JNG', 'TOP'],          archetype: 'Assassin',     mods: { mec: 4, map: 2, tmf: -3 } },
+    { id: 'shaco',         name: 'Shaco',             roles: ['JNG'],                 archetype: 'Assassin',     mods: { mec: 4, map: 3, tmf: -3 } },
+    { id: 'shyvana',       name: 'Shyvana',           roles: ['JNG'],                 archetype: 'Diver',        mods: { tmf: 3, knw: 3, map: -2 } },
+    { id: 'udyr',          name: 'Udyr',              roles: ['JNG', 'TOP'],          archetype: 'Juggernaut',   mods: { mec: 3, lne: 3, map: -2 } },
+    { id: 'warwick',       name: 'Warwick',           roles: ['JNG', 'TOP'],          archetype: 'Diver',        mods: { lne: 3, cmp: 2, mec: -2 } },
+    { id: 'zac',           name: 'Zac',               roles: ['JNG', 'TOP'],          archetype: 'Vanguard',     mods: { tmf: 4, map: 2, mec: -3 } },
+
+    // -- MID ---------------------------------------------------------------
+    { id: 'akshan',        name: 'Akshan',            roles: ['MID', 'TOP'],          archetype: 'Marksman',     mods: { mec: 4, map: 2, tmf: -2 } },
+    { id: 'anivia',        name: 'Anivia',            roles: ['MID'],                 archetype: 'Mage',         mods: { tmf: 4, knw: 2, lne: -2 } },
+    { id: 'annie',         name: 'Annie',             roles: ['MID', 'SUP'],          archetype: 'Mage',         mods: { tmf: 4, lne: 3, mec: -4 } },
+    { id: 'aurelionsol',   name: 'Aurelion Sol',      roles: ['MID'],                 archetype: 'Battlemage',   mods: { tmf: 3, knw: 3, lne: -2 } },
+    { id: 'cassiopeia',    name: 'Cassiopeia',        roles: ['MID'],                 archetype: 'Battlemage',   mods: { mec: 4, tmf: 2, map: -2 } },
+    { id: 'fizz',          name: 'Fizz',              roles: ['MID'],                 archetype: 'Assassin',     mods: { mec: 5, tmf: -3 } },
+    { id: 'galio',         name: 'Galio',             roles: ['MID', 'SUP'],          archetype: 'Vanguard',     mods: { map: 3, tmf: 3, lne: -2 } },
+    { id: 'hwei',          name: 'Hwei',              roles: ['MID', 'SUP'],          archetype: 'Mage',         mods: { knw: 4, mec: 2, lne: -2 } },
+    { id: 'kassadin',      name: 'Kassadin',          roles: ['MID'],                 archetype: 'Assassin',     mods: { cmp: 4, tmf: 2, lne: -3 } },
+    { id: 'katarina',      name: 'Katarina',          roles: ['MID'],                 archetype: 'Assassin',     mods: { mec: 5, chp: 2, cmp: -3 } },
+    { id: 'lissandra',     name: 'Lissandra',         roles: ['MID'],                 archetype: 'Mage',         mods: { tmf: 4, cmp: 2, mec: -3 } },
+    { id: 'locke',         name: 'Locke',             roles: ['MID'],                 archetype: 'Assassin',     mods: { mec: 4, knw: 3, tmf: -3 } },
+    { id: 'lux',           name: 'Lux',               roles: ['MID', 'SUP'],          archetype: 'Mage',         mods: { lne: 3, tmf: 3, mec: -2 } },
+    { id: 'malzahar',      name: 'Malzahar',          roles: ['MID'],                 archetype: 'Mage',         mods: { lne: 4, cmp: 2, mec: -3 } },
+    { id: 'mel',           name: 'Mel',               roles: ['MID', 'SUP'],          archetype: 'Mage',         mods: { knw: 4, tmf: 2, mec: -2 } },
+    { id: 'naafiri',       name: 'Naafiri',           roles: ['MID', 'JNG'],          archetype: 'Assassin',     mods: { cmp: 4, map: 2, mec: -3 } },
+    { id: 'neeko',         name: 'Neeko',             roles: ['MID', 'SUP'],          archetype: 'Mage',         mods: { map: 3, tmf: 3, lne: -2 } },
+    { id: 'qiyana',        name: 'Qiyana',            roles: ['MID', 'JNG'],          archetype: 'Assassin',     mods: { mec: 5, tmf: 2, cmp: -3 } },
+    { id: 'ryze',          name: 'Ryze',              roles: ['MID', 'TOP'],          archetype: 'Battlemage',   mods: { mec: 4, map: 2, lne: -2 } },
+    { id: 'swain',         name: 'Swain',             roles: ['MID', 'SUP', 'ADC'],   archetype: 'Battlemage',   mods: { tmf: 5, knw: 1, mec: -2 } },
+    { id: 'talon',         name: 'Talon',             roles: ['MID', 'JNG'],          archetype: 'Assassin',     mods: { map: 4, mec: 2, tmf: -3 } },
+    { id: 'twistedfate',   name: 'Twisted Fate',      roles: ['MID'],                 archetype: 'Specialist',   mods: { map: 5, ldr: 2, mec: -3 } },
+    { id: 'veigar',        name: 'Veigar',            roles: ['MID'],                 archetype: 'Mage',         mods: { knw: 4, tmf: 2, lne: -2 } },
+    { id: 'velkoz',        name: 'Vel\u2019Koz',      roles: ['MID', 'SUP'],          archetype: 'Poke',         mods: { mec: 4, lne: 2, map: -2 } },
+    { id: 'vex',           name: 'Vex',               roles: ['MID'],                 archetype: 'Mage',         mods: { tmf: 4, map: 2, mec: -2 } },
+    { id: 'vladimir',      name: 'Vladimir',          roles: ['MID', 'TOP'],          archetype: 'Battlemage',   mods: { tmf: 4, cmp: 2, lne: -3 } },
+    { id: 'xerath',        name: 'Xerath',            roles: ['MID', 'SUP'],          archetype: 'Poke',         mods: { mec: 4, knw: 2, map: -2 } },
+    { id: 'ziggs',         name: 'Ziggs',             roles: ['MID', 'ADC'],          archetype: 'Poke',         mods: { lne: 3, knw: 3, mec: -2 } },
+    { id: 'zoe',           name: 'Zoe',               roles: ['MID'],                 archetype: 'Mage',         mods: { mec: 5, knw: 2, cmp: -3 } },
+
+    // -- ADC ---------------------------------------------------------------
+    { id: 'kalista',       name: 'Kalista',           roles: ['ADC'],                 archetype: 'Lane Bully',   mods: { mec: 4, lne: 3, cmp: -2 } },
+    { id: 'kogmaw',        name: 'Kog\u2019Maw',      roles: ['ADC'],                 archetype: 'Hypercarry',   mods: { tmf: 4, cmp: 2, map: -3 } },
+    { id: 'missfortune',   name: 'Miss Fortune',      roles: ['ADC'],                 archetype: 'Lane Bully',   mods: { lne: 4, tmf: 3, mec: -3 } },
+    { id: 'nilah',         name: 'Nilah',             roles: ['ADC'],                 archetype: 'Specialist',   mods: { mec: 3, tmf: 3, chp: -2 } },
+    { id: 'samira',        name: 'Samira',            roles: ['ADC'],                 archetype: 'Skirmisher',   mods: { mec: 5, tmf: 2, cmp: -3 } },
+    { id: 'sivir',         name: 'Sivir',             roles: ['ADC'],                 archetype: 'Utility',      mods: { tmf: 3, knw: 2, mec: -2 } },
+    { id: 'smolder',       name: 'Smolder',           roles: ['ADC', 'MID'],          archetype: 'Hypercarry',   mods: { cmp: 3, knw: 3, lne: -2 } },
+    { id: 'tristana',      name: 'Tristana',          roles: ['ADC', 'MID'],          archetype: 'Hypercarry',   mods: { lne: 4, mec: 2, tmf: -2 } },
+    { id: 'twitch',        name: 'Twitch',            roles: ['ADC'],                 archetype: 'Hypercarry',   mods: { map: 4, tmf: 2, lne: -3 } },
+    { id: 'vayne',         name: 'Vayne',             roles: ['ADC', 'TOP'],          archetype: 'Hypercarry',   mods: { mec: 5, cmp: 2, lne: -3 } },
+    { id: 'yunara',        name: 'Yunara',            roles: ['ADC'],                 archetype: 'Hypercarry',   mods: { mec: 3, tmf: 3, lne: -3 } },
+
+    // -- SUPPORT -----------------------------------------------------------
+    { id: 'alistar',       name: 'Alistar',           roles: ['SUP'],                 archetype: 'Vanguard',     mods: { mec: 2, tmf: 4, knw: -2 } },
+    { id: 'blitzcrank',    name: 'Blitzcrank',        roles: ['SUP'],                 archetype: 'Catcher',      mods: { mec: 5, map: 2, tmf: -3 } },
+    { id: 'brand',         name: 'Brand',             roles: ['SUP', 'MID'],          archetype: 'Battlemage',   mods: { tmf: 5, knw: 2, mec: -3 } },
+    { id: 'janna',         name: 'Janna',             roles: ['SUP'],                 archetype: 'Enchanter',    mods: { tmf: 4, cmp: 3, lne: -3 } },
+    { id: 'morgana',       name: 'Morgana',           roles: ['SUP'],                 archetype: 'Catcher',      mods: { mec: 4, knw: 3, lne: -2 } },
+    { id: 'rell',          name: 'Rell',              roles: ['SUP'],                 archetype: 'Vanguard',     mods: { tmf: 5, ldr: 2, mec: -2 } },
+    { id: 'senna',         name: 'Senna',             roles: ['SUP', 'ADC'],          archetype: 'Utility',      mods: { map: 4, tmf: 2, lne: -2 } },
+    { id: 'seraphine',     name: 'Seraphine',         roles: ['SUP', 'MID'],          archetype: 'Enchanter',    mods: { tmf: 4, lne: 2, mec: -3 } },
+    { id: 'sona',          name: 'Sona',              roles: ['SUP'],                 archetype: 'Enchanter',    mods: { tmf: 5, lne: -3, mec: -1 } },
+    { id: 'soraka',        name: 'Soraka',            roles: ['SUP'],                 archetype: 'Enchanter',    mods: { cmp: 4, knw: 3, mec: -3 } },
+    { id: 'tahmkench',     name: 'Tahm Kench',        roles: ['SUP', 'TOP'],          archetype: 'Warden',       mods: { tmf: 4, cmp: 2, lne: -2 } },
+    { id: 'taric',         name: 'Taric',             roles: ['SUP'],                 archetype: 'Warden',       mods: { tmf: 4, knw: 3, lne: -2 } },
+    { id: 'yuumi',         name: 'Yuumi',             roles: ['SUP'],                 archetype: 'Enchanter',    mods: { tmf: 5, mec: -3, map: -1 } },
+    { id: 'zilean',        name: 'Zilean',            roles: ['SUP', 'MID'],          archetype: 'Enchanter',    mods: { tmf: 4, ldr: 2, mec: -2 } },
+    { id: 'zyra',          name: 'Zyra',              roles: ['SUP', 'JNG'],          archetype: 'Catcher',      mods: { tmf: 4, lne: 2, map: -2 } },
+
 ];
 
 export const CHAMPION_BY_ID = CHAMPIONS.reduce((m, c) => { m[c.id] = c; return m; }, {});

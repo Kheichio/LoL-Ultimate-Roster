@@ -44,13 +44,16 @@ two splits, playoffs, MSI and Worlds, until retirement and a legacy score.
 
 ```
 src/lib/career/
-  constants.js    — 8 attributes, 5 roles + OVR weights, 5 regions, 20 playstyles, 62 champions,
+  constants.js    — 8 attributes, 5 roles + OVR weights, 5 regions, 20 playstyles, 173 champions,
                     both start paths, 40-week calendar, activities, rank ladder, 90 clubs
   ratings.js      — OVR maths, potential ceilings, gain curve, age curve, wages, market value
   teams.js        — rosters pulled from the card DB, team strength, schedules, standings
   training.js     — 24 drills; converts a minigame score into permanent attribute growth
   matchEvents.js  — 75 in-game decision events (15 per role), data only
-  match.js        — match engine: decisions resolve against attributes; ~1/3 of the result
+  match.js        — match engine: decisions resolve against attributes; ~1/3 of the result.
+                    Champion select (`rollDraft`) is rolled once per GAME, not per series:
+                    signature / pocket / off-script, weighted by CHP and by how strong the
+                    opponent is. It is the only place CHP does anything mechanical.
   economy.js      — gear, consumables, lifestyle, legacy perks, sponsors, the shop
   contracts.js    — scouting, offers, negotiation, transfers, role changes, promotion
   awards.js       — awards, milestones, legacy score, retirement
@@ -72,6 +75,12 @@ points short of its potential. Round at display time only.
 - `node tools/careerRender.mjs` — Vite SSR-renders all 20 career components against 31 game
   states (unsigned rookie, null bracket, retired, damaged save). The only check that exercises
   the Svelte templates.
+- `node tools/championCheck.mjs` — validates the 173-champion signature list in `constants.js`
+  (`--list` prints the pool per role). Catches the three ways that data fails *silently*: an
+  archetype outside `match.js`'s `ARCHETYPE_BIAS` table (the comfort-pick bonus never fires), a
+  `mods` key outside `ATTR_KEYS` (the shim does nothing), and a removed or renamed id (career
+  saves store `player.champion` as a bare string, so every save that picked it is orphaned). Also
+  enforces the mod balance envelope and reports the comfort-bonus spread across archetypes.
 - `node tools/waveSim.mjs` — calibration gate for the LNE laning drill (WaveControlGame). Sweeps
   press-error profiles against the crash-value ladder and asserts that the optimal stack size still
   moves with skill (or the drill's only decision has a lookup answer), that a competent session
