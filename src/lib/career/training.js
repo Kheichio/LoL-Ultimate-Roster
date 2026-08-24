@@ -162,11 +162,11 @@ export const DRILLS = [
     drill('lne_1', 'lne', 1, 'Slow Push Repeats',
         'Build a wave, hold it, crash it on a timer. The most boring hour in professional League.',
         15, 0.60, 0, 0),
-    drill('lne_2', 'lne', 2, 'Trade Timing Lab',
-        'Two players, one lane, one rule: you may only trade on a cooldown the other one just used.',
+    drill('lne_2', 'lne', 2, 'Cannon Cadence',
+        'Three waves, then the cannon, then crash. Fourteen times, without looking at the clock.',
         24, 0.95, 55, 75),
-    drill('lne_3', 'lne', 3, 'Matchup Gauntlet',
-        'Eight counter-picks back to back. Win the lane in all eight or run the set again tomorrow.',
+    drill('lne_3', 'lne', 3, 'Crash Ladder',
+        'Five-wave pushes cashed on the cannon, sixteen waves straight. Drop one and the set restarts.',
         35, 1.45, 74, 480),
 
     // -- MAP AWARENESS (ward) ------------------------------------------------

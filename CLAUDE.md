@@ -72,6 +72,15 @@ points short of its potential. Round at display time only.
 - `node tools/careerRender.mjs` — Vite SSR-renders all 20 career components against 31 game
   states (unsigned rookie, null bracket, retired, damaged save). The only check that exercises
   the Svelte templates.
+- `node tools/waveSim.mjs` — calibration gate for the LNE laning drill (WaveControlGame). Sweeps
+  press-error profiles against the crash-value ladder and asserts that the optimal stack size still
+  moves with skill (or the drill's only decision has a lookup answer), that a competent session
+  still lands near 0.50 (`scoreFactor()`'s 1.0x reference) at every tier, that raw training gain
+  rises with drill tier, and that the crash band never overlaps the tower kill zone. Run it after
+  touching any constant in that component's CFG block. Two lessons are baked into it: the drill it
+  replaced shipped on an asserted calibration that was wrong by 5x, and this one's own first cut
+  ranked stack sizes by CS rather than by the score the player is paid, which hid a scoring term
+  that made capping out correct at every skill level. **Rank by score01, not by CS.**
 
 ## Migration Plan
 1. Copy database.js from v1 into src/data/

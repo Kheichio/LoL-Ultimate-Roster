@@ -1,16 +1,32 @@
 <script>
-    // ═══════════════════════════════════════════════════════════════════════
-    //  WAVE CONTROL - the LANING drill (attr 'lne')
-    // ═══════════════════════════════════════════════════════════════════════
-    //  The lane is a horizontal track. A wave marker drifts under pressure from
-    //  both sides. Each goal names a wave state (freeze / slow push / hard
-    //  shove / bounce) and you must hold the wave inside the goal band - in the
-    //  right POSITION and travelling at the right DRIFT - for a number of
-    //  seconds, using four cooldown-gated actions. Random lane events shove the
-    //  wave around while you do it.
+    // =====================================================================
+    //  SLOW PUSH REPEATS - the LANING drill (attr 'lne')
+    //  Self-contained. No store imports, no career imports, no assets.
     //
-    //  Self-contained: no store imports, no career imports, four props only.
-    // ═══════════════════════════════════════════════════════════════════════
+    //  A wave arrives on a metronome. Every beat you press one of two keys:
+    //  HOLD to last hit and let the push grow, or CRASH to slam the whole
+    //  push into their tower. A bigger push meets them further up the lane,
+    //  moves faster and gets a tighter band. Five waves is the cap; hold a
+    //  sixth and it crashes on its own and their tower keeps most of it.
+    //
+    //  The previous version of this drill asked you to steer the integral of
+    //  a laggy, noisy velocity into two simultaneous windows using four
+    //  cooldown-gated impulses, against a disturbance larger than the target
+    //  window. A bot that could see every future event scored 0.40 out of
+    //  1.0, and six of the eight goal transitions on Elite could not be
+    //  completed by an omniscient optimal player. Laning is a clock, so this
+    //  one is a clock: one input per beat, one window, and nothing random
+    //  after the cannon phase is printed on screen before the first press.
+    //
+    //  The press moment never moves - it is always MEET_T through the beat.
+    //  The band moves up the lane as the push grows; the moment does not.
+    //  That is the whole thing a player learns, and it is the one sentence
+    //  the coach says back to them at the end.
+    //
+    //  Calibration is asserted headlessly by tools/waveSim.mjs. Touch a
+    //  constant in CFG and run it, or this drill regresses the way the last
+    //  one did - silently, and only in the direction of "unplayable".
+    // =====================================================================
     import { onMount, onDestroy } from 'svelte';
 
     export let difficulty = 1;      // 1 Basic, 2 Advanced, 3 Elite
@@ -18,128 +34,163 @@
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
 
-    // ── tuning ────────────────────────────────────────────────────────────
-    const ROUND = 34;               // active seconds of play (gaps are paused)
-    const GAP_MS = 1000;            // between-goal read-out
-    const HELD_TARGET = 0.60;       // in-band share that counts as a full run
-    const PAR_GOALS = 5;
-    const VMAX = 0.18;              // drift meter half-range
+    // ASCII-only source is a repo rule (tools/careerRender.mjs) and PowerShell
+    // has corrupted literal glyphs in this project before. Escapes only.
+    const MINION = '\u25CF';       // held melee pip
+    const CANNON_PIP = '\u25C6';   // held cannon pip
+    const MID = '\u00b7';
+    const PM = '\u00b1';
 
-    const DIFF = {
-        1: { label: 'Basic Drill', drift: 1.00, band: 1.00, velTol: 1.00, evtMin: 3.6, evtMax: 5.2, deadline: 10.0, cd: 1.00, noise: 0.55 },
-        2: { label: 'Advanced',    drift: 1.34, band: 0.82, velTol: 0.86, evtMin: 2.9, evtMax: 4.2, deadline: 8.6,  cd: 1.10, noise: 0.90 },
-        3: { label: 'Elite',       drift: 1.70, band: 0.68, velTol: 0.72, evtMin: 2.2, evtMax: 3.3, deadline: 7.4,  cd: 1.22, noise: 1.25 },
+    // -- tuning ---------------------------------------------------------
+    //  Four knobs and nothing else: more waves, a faster beat, a narrower
+    //  window, a narrower core. CAP, the cannon cycle, the crash ladder and
+    //  the cannon bonus are identical at every tier, because a drill that
+    //  changes its rules when you pay more gold is a different drill, not a
+    //  harder one.
+    const CFG = {
+        1: { name: 'Basic Drill', beats: 12, beat: 2.60, hw1: 0.360, hwStep: 0.055, hwMin: 0.145, coreF: 0.38 },
+        2: { name: 'Advanced',    beats: 14, beat: 2.30, hw1: 0.325, hwStep: 0.045, hwMin: 0.145, coreF: 0.36 },
+        3: { name: 'Elite',       beats: 16, beat: 2.05, hw1: 0.295, hwStep: 0.042, hwMin: 0.125, coreF: 0.34 },
     };
 
-    // Goals run in the real lane cycle: freeze -> slow push -> crash -> bounce.
-    const GOALS = [
-        {
-            id: 'freeze', name: 'FREEZE', tag: 'Hold it just outside your tower',
-            center: 0.245, half: 0.095, vLo: -0.040, vHi: 0.040, need: 3.2,
-            hint: 'Zero drift. Last hit only, tank it back when it creeps out.',
-            win: 'Freeze held. Their laner walks up to nothing for three waves.',
-        },
-        {
-            id: 'slow', name: 'SLOW PUSH', tag: 'Build a big wave, creep it at them',
-            center: 0.455, half: 0.115, vLo: 0.012, vHi: 0.080, need: 3.0,
-            hint: 'Stay barely on the push. Thin the casters if it runs away.',
-            win: 'Slow push built. That wave is worth a dive.',
-        },
-        {
-            id: 'shove', name: 'HARD SHOVE', tag: 'Crash it into their tower and recall',
-            center: 0.865, half: 0.100, vLo: 0.005, vHi: 0.400, need: 2.0,
-            hint: 'Shove, ride the momentum, get out before it dies for nothing.',
-            win: 'Crashed and recalled. Free tempo, free item components.',
-        },
-        {
-            id: 'bounce', name: 'BOUNCE', tag: 'Let the crashed wave come back to you',
-            center: 0.615, half: 0.110, vLo: -0.090, vHi: -0.014, need: 2.6,
-            hint: 'The wave must be travelling back at you. Tank it, never shove.',
-            win: 'Bounce set. It comes back to your side every single time.',
-        },
+    const CAP          = 5;
+    const CANNON_EVERY = 3;
+    const WAVE_CS      = 6;
+    const CANNON_CS    = 7;
+    const CANNON_MULT  = 1.15;
+    // A one-wave "crash" is a shove: six minions walk into their tower on
+    // their own and it kills them. The ladder starts below 1 for exactly
+    // that reason and only pays above 1 from three waves up. It is flatter
+    // than it looks worth being - a steeper ladder makes capping out
+    // unconditionally correct and deletes the only decision in the game.
+    const CRASH_MULT   = [0.80, 0.94, 1.08, 1.20, 1.32];
+    const GRADE_CLEAN  = 0.80;
+    const KEEP_EARLY   = 0.55;
+    const KEEP_LATE    = 0.20;
+    const KEEP_SELF    = 0.25;
+    const HOLD_SLOPPY  = 0.50;
+    const HOLD_IDLE    = 0.35;
+
+    const MEET0        = 0.46;
+    const MEET_STEP    = 0.075;
+    const MEET_T       = 0.55;      // share of the beat at which the waves meet
+    const TOWER_X      = 0.86;
+    const WARMUP       = 2;
+    const READY_S      = 1.2;
+    const TAIL_S       = 1.4;
+
+    // Two terms, and deliberately not three. An earlier cut of this scored a
+    // third "craft" term on your single biggest crash against the biggest on
+    // the optimal plan, and it inverted the whole drill: a 5-stack plan banked
+    // 7.7% LESS CS than a 3-stack plan at competent hands and still scored 12%
+    // higher, because one huge crash was worth a third of the score on its own.
+    // Any term that rewards crash SIZE independently of CS makes capping out
+    // unconditionally correct and deletes the only decision in the game. The
+    // crash ladder already pays you for building; how much you banked is
+    // allowed to be the whole answer. Biggest crash is still shown on the
+    // result panel - as information, not as points.
+    const TEMPO_FLOOR  = 0.40;
+    const W_TEMPO      = 0.82;
+    const W_TOUCH      = 0.18;
+    const REGRET_MIN   = 6;         // CS. Below this the round was well played.
+
+    const LANE_STATE = [
+        'EVEN ' + MID + ' the bounce is back at mid',
+        'SLOW PUSH ' + MID + ' past mid',
+        'SLOW PUSH ' + MID + ' their half',
+        'BIG PUSH ' + MID + ' short of their tower',
+        'OVERGROWN ' + MID + ' it crashes on its own',
     ];
 
-    const ACTIONS = [
-        { key: '1', short: 'LAST HIT', name: 'Last Hit Only', desc: 'Holds position', cd: 2.6 },
-        { key: '2', short: 'TANK',     name: 'Tank the Wave', desc: 'Pulls it to you', cd: 3.0 },
-        { key: '3', short: 'SHOVE',    name: 'Shove',         desc: 'Pushes at them', cd: 3.0 },
-        { key: '4', short: 'THIN',     name: 'Thin Casters',  desc: 'Slows the drift', cd: 5.8 },
+    const CRASH_TAIL = [
+        'One wave. That is a shove, not a crash.',
+        'Two waves. Enough to make them choose.',
+        'Three waves and the cannon. They lose the wave or they lose the plate.',
+        'Four waves. That is a recall, a roam and a dragon.',
+        'Five waves. Nothing they do about that is good for them.',
     ];
 
-    const EVENTS = [
-        { t: 'Cannon minion joins your wave - it pushes.',      amb:  0.055, kick:  0.000 },
-        { t: 'Enemy laner shoves the wave back at you.',        amb: -0.075, kick: -0.030 },
-        { t: 'Your jungler pathes through and hits the wave.',  amb:  0.070, kick:  0.045 },
-        { t: 'Enemy recalls - nobody is holding it any more.',  amb:  0.060, kick:  0.000 },
-        { t: 'Enemy freezes on their side of the lane.',        amb: -0.055, kick:  0.000 },
-        { t: 'Their casters die first - the push stalls out.',  amb: -0.018, kick:  0.000 },
-        { t: 'Enemy cannon crashes - a big wave builds at you.',amb: -0.085, kick: -0.020 },
-        { t: 'Your support helps clear - it pushes out.',       amb:  0.065, kick:  0.030 },
-        { t: 'Enemy laner backs off on low HP.',                amb:  0.045, kick:  0.000 },
-        { t: 'Three waves meet in the middle. Chaos.',          amb: -0.070, kick:  0.035 },
-    ];
+    const DEFAULT_LEDE = 'Build a wave, hold it, crash it on a timer. The most boring hour in '
+        + 'professional League, and the one that decides who gets to leave lane first.';
 
-    // ── helpers ───────────────────────────────────────────────────────────
+    // -- helpers --------------------------------------------------------
     function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
     function clamp01(v) { return clamp(v, 0, 1); }
-    function rand(a, b) { return a + Math.random() * (b - a); }
+    /** Every numeric interpolation into an inline style goes through here.
+     *  careerRender.mjs fails the run on a NaN or an undefined inside a
+     *  style attribute, and that is the check that actually bites. */
+    function pct(v) { const n = Number(v); return (Number.isFinite(n) ? clamp01(n) : 0) * 100; }
+    function nowMs() {
+        if (typeof performance !== 'undefined' && performance && performance.now) return performance.now();
+        return Date.now();
+    }
+    function r0(n) { return Math.round(Number(n) || 0); }
 
-    // ── reactive config ───────────────────────────────────────────────────
+    // -- reactive config ------------------------------------------------
     $: dLevel = clamp(Math.round(Number(difficulty) || 1), 1, 3);
-    $: cfg = DIFF[dLevel];
+    $: C = CFG[dLevel];
+    $: title = (drill && drill.name) ? String(drill.name) : 'Slow Push Repeats';
+    $: lede = (drill && drill.desc) ? String(drill.desc) : DEFAULT_LEDE;
+    $: hwLo = Math.max(C.hwMin, C.hw1 - C.hwStep * (CAP - 1));
 
-    // ── run state ─────────────────────────────────────────────────────────
-    let state = 'INTRO';        // INTRO | PLAYING | RESULT
-    let phase = 'live';         // during PLAYING: live | gap
-    let pendingNext = false;
+    // -- run state ------------------------------------------------------
+    let view = 'intro';         // intro | play | result
+    let phase = 'ready';        // ready | live | locked | tail
+    let beatIdx = -WARMUP;      // -2, -1 warm-up; 0..beats-1 scored
+    let beatT = 0, readyT = 0, tailT = 0;
+    let beatK = 1;              // the push size this beat resolves at - fixed for the beat
 
-    let pos = 0.5, vel = 0;
-    let ambient = 0, ambTarget = 0, wander = 0;
-    let driftScale = 1, driftUntil = 0;
-    let holdUntil = 0, pushUntil = 0, pushForce = 0;
-    let cds = [0, 0, 0, 0];
+    let waves = [];
+    let csMax = 1, parCrash = 1;
+    let planBest = [], planPick = [];
 
-    let clock = 0, timeLeft = ROUND;
-    let goal = GOALS[0];
-    let band = { lo: 0, hi: 1, vLo: -1, vHi: 1 };
-    let need = 3, held = 0, goalDeadline = 0;
-    let cycleIdx = 0;
-    let inBand = false;
-
-    let goalsDone = 0, goalsFailed = 0, blowouts = 0;
-    let heldTotal = 0, bestHold = 0, curRun = 0;
+    let stack = 0, pushCS = 0, pushCan = false, segStart = 0;
+    let csBanked = 0, bestCrash = 0;
+    let perfects = 0, cleans = 0;
+    let earlies = 0, lates = 0, noCalls = 0, selfCrashes = 0, sloppyHolds = 0;
+    let crashCount = 0, crashesInWindow = 0, stackSum = 0;
     let streak = 0, bestStreak = 0;
+    let stranded = 0;
+    let events = [];
 
-    let evtText = 'Lane is quiet. For now.';
-    let readout = '', readoutGood = true;
-    let nextEventAt = 0;
-    let flash = '';             // '' | 'good' | 'bad'
-    let flashUntil = 0;
+    let markerX = 0, pressX = -1;
+    let previewCrash = 0, previewHold = 0;
+    let feedKind = '', feedLine = '';
+    let liveMsg = '';
+    let res = null;
+    let finished = false;
+    let burst = false;
+    // The result panel arrives on a timer, not on a keypress, and it lands
+    // (1 - MEET_T) * beat + TAIL_S after the last press - 2.57s on Basic,
+    // against a 2.60s beat. A player still keeping the rhythm would otherwise
+    // press Space 30ms in and skip the entire coach read-out.
+    let resultAt = 0;
+    let lastGameKeyMs = 0;
+    const RESULT_LOCK_MS = 900;
 
-    let score01 = 0, verdict = '', shareOut = 0;
+    let rafId = 0, burstTimer = null, lastT = 0, lastFrameMs = 0, destroyed = false;
+    let reduceMotion = false, mq = null;
 
-    // ── timers / listeners (all torn down in onDestroy) ───────────────────
-    let rafId = 0, gapTimer = null, flashTimer = null, lastTs = 0, destroyed = false;
-    let reduceMotion = false;
-    let mq = null;
-
+    // -- lifecycle ------------------------------------------------------
     function onMQ(e) { reduceMotion = !!e.matches; }
 
     onMount(() => {
-        if (typeof window !== 'undefined' && window.matchMedia) {
-            mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-            reduceMotion = !!mq.matches;
-            if (mq.addEventListener) mq.addEventListener('change', onMQ);
-            else if (mq.addListener) mq.addListener(onMQ);
+        if (typeof window === 'undefined') return;
+        if (window.matchMedia) {
+            try {
+                mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+                reduceMotion = !!mq.matches;
+                if (mq.addEventListener) mq.addEventListener('change', onMQ);
+                else if (mq.addListener) mq.addListener(onMQ);
+            } catch (e) { reduceMotion = false; }
         }
-        if (typeof window !== 'undefined') window.addEventListener('keydown', onKey);
+        window.addEventListener('keydown', onKey);
     });
 
     onDestroy(() => {
         destroyed = true;
         if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-        if (gapTimer) { clearTimeout(gapTimer); gapTimer = null; }
-        if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
+        if (burstTimer) { clearTimeout(burstTimer); burstTimer = null; }
         if (typeof window !== 'undefined') window.removeEventListener('keydown', onKey);
         if (mq) {
             if (mq.removeEventListener) mq.removeEventListener('change', onMQ);
@@ -148,285 +199,612 @@
         }
     });
 
-    // ── keyboard ──────────────────────────────────────────────────────────
-    function onKey(e) {
-        if (state !== 'PLAYING' || phase !== 'live') return;
-        if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
-        const i = ['1', '2', '3', '4'].indexOf(e.key);
-        if (i === -1) return;
-        e.preventDefault();
-        doAction(i);
+    // -- the round's waves, and the plan that scores it -----------------
+    function buildWaves(cfg, cannonPhase) {
+        const out = [];
+        for (let j = 0; j < cfg.beats; j++) {
+            const cannon = ((j + 1 + cannonPhase) % CANNON_EVERY) === 0;
+            out.push({ n: j + 1, cs: cannon ? CANNON_CS : WAVE_CS, cannon });
+        }
+        return out;
     }
 
-    // ── round lifecycle ───────────────────────────────────────────────────
+    function segValue(s, k) {
+        let sum = 0, can = false;
+        for (let i = s; i < s + k && i < waves.length; i++) {
+            sum += waves[i].cs;
+            can = can || waves[i].cannon;
+        }
+        return sum * CRASH_MULT[clamp(k, 1, CAP) - 1] * (can ? CANNON_MULT : 1);
+    }
+
+    /** The best possible round, by exhaustive segmentation into runs of
+     *  1..CAP. O(beats * CAP). Two jobs: `csMax` is the score denominator, so
+     *  a player who plays this plan with every press perfect banks exactly
+     *  csMax and scores exactly 1.0 by construction; and `best`/`pick` are
+     *  what the regret line reads, so the scorer and the explainer are the
+     *  same object. `parCrash` is display-only - it is the "par crash" figure
+     *  on the result panel and deliberately does NOT enter score01. Scoring
+     *  the biggest single crash is what made capping out correct at every
+     *  skill level in the first cut; do not wire it back in. */
+    function planDP() {
+        const n = waves.length;
+        const best = new Array(n + 1).fill(0);
+        const pick = new Array(n + 1).fill(1);
+        for (let b = n - 1; b >= 0; b--) {
+            let bv = -1, bk = 1;
+            for (let k = 1; k <= CAP && b + k <= n; k++) {
+                const v = segValue(b, k) + best[b + k];
+                if (v > bv) { bv = v; bk = k; }
+            }
+            best[b] = bv; pick[b] = bk;
+        }
+        let b = 0, par = 0;
+        while (b < n) {
+            const v = segValue(b, pick[b]);
+            if (v > par) par = v;
+            b += pick[b];
+        }
+        planBest = best;
+        planPick = pick;
+        csMax = best[0] || 1;
+        parCrash = par || 1;
+    }
+
+    // -- geometry (all fixed for the duration of one beat) --------------
+    $: meetX = MEET0 + MEET_STEP * (beatK - 1);
+    $: speedX = meetX / (MEET_T * C.beat);
+    $: hwS = Math.max(C.hwMin, C.hw1 - C.hwStep * (beatK - 1));
+    $: coreS = hwS * C.coreF;
+    $: bandHalf = hwS * speedX;
+    $: coreHalf = coreS * speedX;
+    $: bandLo = clamp01(meetX - bandHalf);
+    $: bandHi = clamp01(meetX + bandHalf);
+    $: coreLo = clamp01(meetX - coreHalf);
+    $: coreHi = clamp01(meetX + coreHalf);
+
+    $: scored = beatIdx >= 0 && beatIdx < waves.length;
+    $: curWave = scored ? waves[beatIdx] : { n: 0, cs: WAVE_CS, cannon: false };
+    $: beatsLeft = Math.max(0, C.beats - Math.max(0, beatIdx));
+    $: atCap = beatK >= CAP;
+    $: lastBeat = scored && beatIdx === C.beats - 1;
+    $: nextChips = waves.slice(Math.max(0, beatIdx + 1), Math.max(0, beatIdx + 1) + 4);
+    $: laneState = LANE_STATE[clamp(beatK, 1, CAP) - 1];
+    $: pips = buildPips(beatK, pushCan, curWave);
+
+    function buildPips(k, can, w) {
+        const out = [];
+        for (let i = 0; i < k - 1; i++) out.push(can && i === 0 ? CANNON_PIP : MINION);
+        out.push(w && w.cannon ? CANNON_PIP : MINION);
+        return out;
+    }
+
+    function crashValue(k, cs, can, w) {
+        const stackCS = cs + (w ? w.cs : 0);
+        const cannon = can || (w ? w.cannon : false);
+        return stackCS * CRASH_MULT[clamp(k, 1, CAP) - 1] * (cannon ? CANNON_MULT : 1);
+    }
+
+    // -- round lifecycle ------------------------------------------------
     function start() {
-        pos = 0.42; vel = 0.01;
-        ambient = 0; ambTarget = rand(-0.03, 0.03); wander = 0;
-        driftScale = 1; driftUntil = 0;
-        holdUntil = 0; pushUntil = 0; pushForce = 0;
-        cds = [0, 0, 0, 0];
-        clock = 0; timeLeft = ROUND;
-        held = 0; heldTotal = 0; bestHold = 0; curRun = 0;
-        goalsDone = 0; goalsFailed = 0; blowouts = 0;
-        streak = 0; bestStreak = 0;
-        inBand = false;
-        evtText = 'Minions inbound. Watch the drift meter.';
-        cycleIdx = Math.floor(Math.random() * GOALS.length);
-        setGoal(GOALS[cycleIdx]);
-        nextEventAt = rand(cfg.evtMin * 0.6, cfg.evtMax * 0.8);
-        readoutGood = true;
-        readout = 'First job: ' + goal.name + '. ' + goal.hint;
-        pendingNext = false;
-        phase = 'gap';
-        state = 'PLAYING';
-        lastTs = 0;
-        if (gapTimer) clearTimeout(gapTimer);
-        gapTimer = setTimeout(openGate, 1400);
-        if (rafId) cancelAnimationFrame(rafId);
-        rafId = requestAnimationFrame(frame);
-    }
+        waves = buildWaves(C, Math.floor(Math.random() * CANNON_EVERY));
+        planDP();
 
-    function openGate() {
-        gapTimer = null;
-        if (destroyed || state !== 'PLAYING') return;
-        if (timeLeft <= 0.01) { finishRound(); return; }
-        if (pendingNext) { advanceGoal(); pendingNext = false; }
-        phase = 'live';
-    }
-
-    function setGoal(g) {
-        goal = g;
-        const half = g.half * cfg.band;
-        const tol = cfg.velTol;
-        band = {
-            lo: clamp(g.center - half, 0.02, 0.98),
-            hi: clamp(g.center + half, 0.02, 0.98),
-            vLo: g.vLo * tol,
-            vHi: g.vHi * tol,
-        };
-        need = g.need * (1 + (dLevel - 1) * 0.06);
-        held = 0;
-        goalDeadline = clock + cfg.deadline;
-        nextEventAt = clock + rand(cfg.evtMin, cfg.evtMax);
-    }
-
-    function advanceGoal() {
-        const prev = cycleIdx;
-        let step = Math.random() < 0.25 ? 2 : 1;
-        cycleIdx = (cycleIdx + step) % GOALS.length;
-        if (cycleIdx === prev) cycleIdx = (cycleIdx + 1) % GOALS.length;
-        setGoal(GOALS[cycleIdx]);
-    }
-
-    function endGoal(ok, forced) {
-        if (ok) {
-            goalsDone++;
-            streak++;
-            if (streak > bestStreak) bestStreak = streak;
-            readoutGood = true;
-            readout = goal.win;
-            pulse('good');
-        } else {
-            goalsFailed++;
-            streak = 0;
-            readoutGood = false;
-            readout = forced || diagnose();
-            pulse('bad');
-        }
-        pendingNext = true;
-        phase = 'gap';
-        if (gapTimer) clearTimeout(gapTimer);
-        gapTimer = setTimeout(openGate, GAP_MS);
-    }
-
-    function pulse(kind) {
-        flash = kind;
-        if (flashTimer) clearTimeout(flashTimer);
-        flashTimer = setTimeout(() => { flashTimer = null; flash = ''; }, 420);
-    }
-
-    function diagnose() {
-        const above = pos > band.hi, below = pos < band.lo;
-        if (goal.id === 'freeze') {
-            if (above) return 'You shoved a freeze. The wave walked out of your control.';
-            if (below) return 'Tanked it too hard - the wave died on your own tower.';
-            return 'Close, but it never sat still. A freeze needs the drift at zero.';
-        }
-        if (goal.id === 'slow') {
-            if (vel > band.vHi) return 'That was not a slow push, that was a shove.';
-            if (vel < band.vLo) return 'The wave stalled. A slow push still has to be moving.';
-            if (above) return 'It got away from you before the wave was ever big.';
-            return 'You kept resetting it. The wave never got a chance to build.';
-        }
-        if (goal.id === 'shove') {
-            if (below) return 'You never got it to crash. They just froze it on you.';
-            return 'Overshoved - it died under their tower before you were in position.';
-        }
-        if (vel > 0) return 'You shoved into a bounce. The wave never came back.';
-        if (below) return 'The bounce ran all the way past you and into your tower.';
-        return 'It did not come back in time - you cleared the wave too early.';
-    }
-
-    function fireEvent() {
-        const e = EVENTS[Math.floor(Math.random() * EVENTS.length)];
-        ambTarget = e.amb * rand(0.8, 1.25);
-        if (e.kick) vel += e.kick * cfg.drift;
-        evtText = e.t;
-        nextEventAt = clock + rand(cfg.evtMin, cfg.evtMax);
-    }
-
-    // ── actions ───────────────────────────────────────────────────────────
-    function doAction(i) {
-        if (state !== 'PLAYING' || phase !== 'live') return;
-        if (cds[i] > 0) return;
-        cds[i] = ACTIONS[i].cd * cfg.cd;
-        cds = cds;
-        if (i === 0) {                       // LAST HIT ONLY - hold position
-            holdUntil = clock + 1.30;
-        } else if (i === 1) {                // TANK THE WAVE - pull toward you
-            vel -= 0.045;
-            pushForce = -0.115; pushUntil = clock + 1.05;
-        } else if (i === 2) {                // SHOVE - push toward them
-            vel += 0.045;
-            pushForce = 0.115; pushUntil = clock + 1.05;
-        } else {                             // THIN THE CASTERS - slow the drift
-            driftScale = 0.30; driftUntil = clock + 3.20;
+        stack = 0; pushCS = 0; pushCan = false; segStart = 0;
+        csBanked = 0; bestCrash = 0;
+        perfects = 0; cleans = 0;
+        earlies = 0; lates = 0; noCalls = 0; selfCrashes = 0; sloppyHolds = 0;
+        crashCount = 0; crashesInWindow = 0; stackSum = 0;
+        streak = 0; bestStreak = 0; stranded = 0;
+        events = [];
+        markerX = 0; pressX = -1; burst = false;
+        beatIdx = -WARMUP; beatT = 0; readyT = 0; tailT = 0;
+        beatK = 1;
+        openBeat();
+        feedKind = 'ready';
+        feedLine = 'Warm up. Two waves, nothing scored.';
+        liveMsg = 'Warm up. Press H when your wave meets theirs.';
+        res = null; finished = false;
+        phase = 'ready';
+        view = 'play';
+        lastT = 0; lastFrameMs = 0;
+        if (typeof requestAnimationFrame === 'function') {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(frame);
         }
     }
 
-    // ── simulation ────────────────────────────────────────────────────────
-    function frame(ts) {
+    /** Everything that is constant for the beat about to be played. The
+     *  button previews are snapshotted here rather than derived live, so a
+     *  resolution cannot make the numbers flicker to the next beat's values
+     *  while the player is still reading them. */
+    function openBeat() {
+        beatK = Math.min(CAP, stack + 1);
+        pressX = -1;
+        markerX = 0;
+        const w = (beatIdx >= 0 && beatIdx < waves.length) ? waves[beatIdx] : { cs: WAVE_CS, cannon: false };
+        previewCrash = crashValue(beatK, pushCS, pushCan, w);
+        const ni = beatIdx + 1;
+        const nw = (ni >= 0 && ni < waves.length) ? waves[ni] : null;
+        if (beatK >= CAP) previewHold = (pushCS + w.cs) * KEEP_SELF;
+        else if (nw) previewHold = crashValue(beatK + 1, pushCS + w.cs, pushCan || w.cannon, nw);
+        else previewHold = 0;
+    }
+
+    function frame(t) {
         if (destroyed) return;
         rafId = requestAnimationFrame(frame);
-        if (!lastTs) { lastTs = ts; return; }
-        let dt = (ts - lastTs) / 1000;
-        lastTs = ts;
+        if (view !== 'play') return;
+        lastFrameMs = nowMs();
+        if (!lastT) { lastT = t; return; }
+        let dt = (t - lastT) / 1000;
+        lastT = t;
         if (dt > 0.05) dt = 0.05;
         if (dt <= 0) return;
-        if (state !== 'PLAYING' || phase !== 'live') return;
         step(dt);
     }
 
     function step(dt) {
-        clock += dt;
-        timeLeft = Math.max(0, ROUND - clock);
-
-        for (let i = 0; i < 4; i++) if (cds[i] > 0) cds[i] = Math.max(0, cds[i] - dt);
-        cds = cds;
-
-        if (clock >= driftUntil) driftScale = 1;
-        const holding = clock < holdUntil;
-        const pushing = clock < pushUntil;
-
-        if (clock >= nextEventAt) fireEvent();
-
-        ambient += (ambTarget - ambient) * 2.2 * dt;
-        wander += (Math.random() - 0.5) * 0.10 * cfg.noise * dt;
-        wander *= Math.pow(0.55, dt);
-        wander = clamp(wander, -0.035, 0.035);
-
-        const amb = (ambient + wander) * cfg.drift * driftScale;
-        let force = amb;
-        if (pushing) force += pushForce;
-        if (holding) force -= amb * 0.95;
-
-        vel += (force - vel) * 3.4 * dt;
-        if (holding) vel *= Math.pow(0.10, dt);
-        pos += vel * dt;
-
-        if (pos <= 0.02) {
-            pos = 0.11; vel = 0.015; blowouts++;
-            endGoal(false, 'The wave crashed into your own tower. You lost the whole thing.');
+        if (phase === 'ready') {
+            readyT += dt;
+            if (readyT >= READY_S) { phase = 'live'; beatT = 0; }
             return;
         }
-        if (pos >= 0.98) {
-            pos = 0.89; vel = -0.015; blowouts++;
-            endGoal(false, 'It died under their tower for nothing. That is not a crash, that is a donation.');
+        if (phase === 'tail') {
+            tailT += dt;
+            if (tailT >= TAIL_S) endRound();
+            return;
+        }
+        beatT += dt;
+        markerX = Math.min(1, speedX * beatT);
+        if (beatT >= C.beat) {
+            if (phase === 'live') resolve(null, C.beat);
+            beatT -= C.beat;
+            if (!(beatT >= 0) || beatT > C.beat) beatT = 0;   // a tab-out cannot desync the metronome
+            advance();
+        }
+    }
+
+    function advance() {
+        beatIdx += 1;
+        if (beatIdx >= C.beats) {
+            stranded = stack;
+            phase = 'tail';
+            tailT = 0;
+            if (stranded > 0) {
+                feedKind = 'bad';
+                feedLine = 'The round ended with ' + stranded + ' wave' + (stranded === 1 ? '' : 's')
+                    + ' still on the lane. Nothing on the lane is banked.';
+                liveMsg = 'Round over. ' + stranded + ' waves left on the lane, unbanked.';
+            }
+            return;
+        }
+        openBeat();
+        phase = 'live';
+        if (beatIdx === -1) {
+            feedKind = 'ready';
+            feedLine = 'Now press SPACE to crash it.';
+            liveMsg = 'Warm up. Now press Space to crash it.';
+        } else if (beatIdx === 0) {
+            feedKind = 'ready';
+            feedLine = 'Warm-up over. Go.';
+            liveMsg = 'Warm up over. Wave one.';
+        } else if (beatK >= CAP) {
+            liveMsg = 'Five waves. Last chance, crash it.';
+        } else if (beatIdx === C.beats - 1) {
+            liveMsg = 'Last wave. Cash it.';
+        }
+    }
+
+    function gradeOf(k, delta) {
+        const a = Math.abs(delta);
+        const hw = Math.max(C.hwMin, C.hw1 - C.hwStep * (k - 1));
+        if (a <= hw * C.coreF) return 'perfect';
+        if (a <= hw) return 'clean';
+        return delta < 0 ? 'early' : 'late';
+    }
+
+    function feed(kind, line) { feedKind = kind; feedLine = line; }
+
+    function pulse() {
+        if (reduceMotion) return;
+        burst = true;
+        if (burstTimer) clearTimeout(burstTimer);
+        burstTimer = setTimeout(() => { burstTimer = null; burst = false; }, 380);
+    }
+
+    /**
+     * Resolve the current beat. `kind` is 'hold', 'crash' or null for a beat
+     * that ran out with no press. Everything a player can do lands here, and
+     * every branch banks something - there is no state that pays zero and no
+     * state in which playing worse banks more.
+     */
+    function resolve(kind, pressT) {
+        if (phase !== 'live') return;
+        phase = 'locked';
+
+        const warm = beatIdx < 0;
+        const w = warm ? { cs: WAVE_CS, cannon: false } : waves[beatIdx];
+        const k = beatK;
+        const target = MEET_T * C.beat;
+        let g = 'none', delta = 0;
+
+        if (kind) {
+            delta = pressT - target;
+            g = gradeOf(k, delta);
+            pressX = Math.min(1, speedX * pressT);
+        }
+
+        if (warm) {
+            if (beatIdx === -2) {
+                stack = 1; pushCS = w.cs; pushCan = false;
+                feed(kind === 'crash' ? 'bad' : 'good',
+                    kind === 'crash'
+                        ? 'That was the crash key. Hold first - the wave has to grow before it is worth cashing.'
+                        : 'Held. That wave is now part of your push.');
+            } else {
+                stack = 0; pushCS = 0; pushCan = false;
+                feed(kind === 'crash' ? 'good' : 'bad',
+                    kind === 'crash'
+                        ? 'Crashed. The lane bounces back to your side and you start again.'
+                        : 'That was the hold key. SPACE cashes the push into their tower.');
+            }
             return;
         }
 
-        inBand = pos >= band.lo && pos <= band.hi && vel >= band.vLo && vel <= band.vHi;
-        if (inBand) {
-            held += dt; heldTotal += dt; curRun += dt;
-            if (curRun > bestHold) bestHold = curRun;
+        const inWindow = g === 'perfect' || g === 'clean';
+        if (g === 'perfect') perfects++;
+        else if (g === 'clean') cleans++;
+        if (inWindow) { streak++; if (streak > bestStreak) bestStreak = streak; }
+        else streak = 0;
+
+        const stackCS = pushCS + w.cs;
+        const can = pushCan || w.cannon;
+
+        if (kind === 'crash') {
+            const M = CRASH_MULT[k - 1] * (can ? CANNON_MULT : 1);
+            let banked, line;
+            if (g === 'perfect') {
+                banked = stackCS * M;
+                line = 'Perfect crash. +' + r0(banked) + ' CS. ' + CRASH_TAIL[k - 1];
+            } else if (g === 'clean') {
+                banked = stackCS * M * GRADE_CLEAN;
+                line = 'Crashed. +' + r0(banked) + ' CS. ' + CRASH_TAIL[k - 1];
+            } else if (g === 'early') {
+                earlies++;
+                banked = stackCS * KEEP_EARLY;
+                line = 'You shoved before the waves met. It bounced straight back and you got scraps. +'
+                    + r0(banked) + ' CS.';
+            } else {
+                lates++;
+                banked = stackCS * KEEP_LATE;
+                line = (markerX >= TOWER_X
+                    ? 'Too slow. It died under their tower and you got almost nothing. +'
+                    : 'Too slow. Their laner walked up and took it off you. +') + r0(banked) + ' CS.';
+            }
+            if (inWindow) crashesInWindow++;
+            // `stackCS * M` is what this crash would have paid with a perfect
+            // press, so the difference is what the PRESS cost - as opposed to
+            // what the holds that built the push cost, which is a different
+            // mistake with a different coaching line.
+            bank(banked, k, g, delta, false, stackCS * M);
+            feed(inWindow ? 'good' : 'bad', line);
+            if (inWindow) pulse();
+            liveMsg = inWindow
+                ? 'Crashed ' + k + ' waves, ' + r0(banked) + ' CS. ' + CRASH_TAIL[k - 1]
+                : (g === 'early' ? 'Shoved early. Scraps.' : 'Too late. Their tower took it.');
+            return;
+        }
+
+        if (k >= CAP) {
+            // HOLD or no call at the cap. A five-wave slow push crashes on
+            // its own and their tower keeps three quarters of it.
+            selfCrashes++;
+            if (!kind) noCalls++;
+            const banked = stackCS * KEEP_SELF;
+            bank(banked, k, g, delta, true, stackCS * CRASH_MULT[k - 1] * (can ? CANNON_MULT : 1));
+            feed('bad', 'It got too big to hold. It crashed on its own and their tower ate most of it. +'
+                + r0(banked) + ' CS.');
+            liveMsg = 'It crashed on its own. ' + r0(banked) + ' CS.';
+            return;
+        }
+
+        if (kind === 'hold') {
+            if (beatIdx === C.beats - 1) {
+                // Holding the last wave strands the whole push. Say so now,
+                // rather than letting a green "nicely held" sit on screen for
+                // a beat and then silently binning the round's biggest asset.
+                pushCS += inWindow ? w.cs : w.cs * HOLD_SLOPPY;
+                if (!inWindow) { sloppyHolds++; if (g === 'early') earlies++; else lates++; }
+                pushCan = pushCan || w.cannon;
+                stack += 1;
+                feed('bad', 'That was the last wave. The push never got cashed and none of it counts.');
+                liveMsg = 'Held the last wave. The push is stranded.';
+                return;
+            }
+            if (inWindow) {
+                pushCS += w.cs;
+                feed('good', g === 'perfect'
+                    ? 'Last hit on the tick. The wave does not move an inch.'
+                    : 'Held. Their wave lives, yours grows.');
+            } else {
+                sloppyHolds++;
+                if (g === 'early') earlies++; else lates++;
+                pushCS += w.cs * HOLD_SLOPPY;
+                feed('bad', g === 'early'
+                    ? 'Early. You shoved into it at full strength and lost half of it.'
+                    : 'Late. Half the wave died before you touched it.');
+            }
         } else {
-            curRun = 0;
-            held = Math.max(0, held - dt * 0.55);
+            noCalls++;
+            pushCS += w.cs * HOLD_IDLE;
+            feed('bad', 'You never touched the wave. Most of it died to nobody.');
+            liveMsg = 'No call. Most of the wave died to nobody.';
+        }
+        pushCan = pushCan || w.cannon;
+        stack += 1;
+    }
+
+    function bank(amount, k, g, delta, isSelf, ifPerfect) {
+        csBanked += amount;
+        if (amount > bestCrash) bestCrash = amount;
+        crashCount++;
+        stackSum += k;
+        events.push({
+            beat: beatIdx, start: segStart, k, banked: amount, grade: g, delta,
+            self: !!isSelf,
+            // What the press cost, and what the build cost, kept apart. Rolling
+            // them together made the result screen blame a press it had just
+            // called perfect for CS that four sloppy holds had actually lost.
+            pressLoss: Math.max(0, ifPerfect - amount),
+            buildLoss: Math.max(0, segValue(segStart, k) - ifPerfect),
+        });
+        stack = 0; pushCS = 0; pushCan = false;
+        segStart = beatIdx + 1;
+    }
+
+    // -- input ----------------------------------------------------------
+    function subFrame() {
+        if (!lastFrameMs) return 0;
+        const d = (nowMs() - lastFrameMs) / 1000;
+        return (Number.isFinite(d) && d > 0) ? Math.min(0.05, d) : 0;
+    }
+
+    function press(kind) {
+        if (view !== 'play' || phase !== 'live') return;
+        resolve(kind, beatT + subFrame());
+    }
+
+    // Escape is swallowed by MinigameHost at window capture phase and is
+    // deliberately not bound here. Everything else is ours.
+    function onKey(e) {
+        if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+
+        // A focused button gets to be itself, in EVERY view. Hoisted above the
+        // view branches on purpose: when this test lived only in the play
+        // branch, Enter on the intro's Back button started the drill, and
+        // Enter on the host's close X on the result screen banked the session
+        // instead of discarding it. Same guard as FocusFireGame.
+        const onButton = !!(e.target && e.target.tagName === 'BUTTON');
+        const dismiss = e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar';
+
+        if (view === 'intro') {
+            if (e.key === 'Enter' && !onButton) { e.preventDefault(); start(); }
+            return;
+        }
+        if (view === 'result') {
+            // Scoped preventDefault: Tab and the arrow keys have to keep
+            // working, or a keyboard user cannot reach Finish or scroll the
+            // panel during the lock.
+            if (!dismiss || onButton) return;
+            e.preventDefault();
+            if (nowMs() - resultAt < RESULT_LOCK_MS) return;
+            // Still keeping the metronome? Then this press is muscle memory
+            // from the round, not a decision to leave. One beat of quiet is
+            // the difference, and every stray press pushes it back.
+            if (nowMs() - lastGameKeyMs < C.beat * 1250) return;
+            done();
+            return;
+        }
+        if (dismiss && onButton) return;
+
+        // preventDefault regardless of phase: a game key pressed during the
+        // locked tail of a beat must not scroll .mh-body or re-fire a focused
+        // button, even though it no longer resolves anything.
+        const k = e.key;
+        if (k === 'h' || k === 'H' || k === '1' || k === 'ArrowLeft') {
+            e.preventDefault();
+            lastGameKeyMs = nowMs();
+            press('hold');
+            return;
+        }
+        if (k === ' ' || k === 'Spacebar' || k === 'Enter' || k === '2' || k === 'ArrowRight') {
+            e.preventDefault();
+            lastGameKeyMs = nowMs();
+            press('crash');
+        }
+    }
+
+    // -- result ---------------------------------------------------------
+    function verdictFor(s) {
+        if (s >= 0.90) return 'Lane Dominant';
+        if (s >= 0.78) return 'Dictating Tempo';
+        if (s >= 0.62) return 'In Control';
+        if (s >= 0.45) return 'Even Lane';
+        if (s >= 0.28) return 'Losing Tempo';
+        return 'Perma-Shoved';
+    }
+
+    function verdictLine(v) {
+        if (v === 'Lane Dominant') return 'They did not get a wave they wanted all session.';
+        if (v === 'Dictating Tempo') return 'Every crash landed where you called it. That is a lane you can leave.';
+        if (v === 'In Control') return 'You built and you cashed. A couple got away from you.';
+        if (v === 'Even Lane') return 'You farmed. You did not dictate.';
+        if (v === 'Losing Tempo') return 'The wave decided where it went more often than you did.';
+        return 'You cleared on arrival and never built anything.';
+    }
+
+    /** Chosen from the failure mode, not from the score. First match wins. */
+    function coachLine(avgStack) {
+        if (noCalls >= 3) {
+            return 'You are watching the wave instead of the clock. The press is always at the same point in '
+                + 'the beat - the band moves up the lane, the moment does not.';
+        }
+        if (earlies > lates && earlies >= 3) {
+            return 'You are pressing before the waves meet. Shoving into a full wave bounces it straight back '
+                + 'at you. Wait for the clump.';
+        }
+        if (lates > earlies && lates >= 3) {
+            return 'You are late. Their tower is the last thing on the lane and it does not share.';
+        }
+        if (selfCrashes >= 2) {
+            return 'Two pushes got away from you. At five waves it crashes itself and their tower keeps three '
+                + 'quarters of it - cash at four and take the CS.';
+        }
+        if (crashCount > 0 && avgStack < 1.6) {
+            return 'You cleared every wave the moment it arrived. That is a safe lane and a poor one. Hold two '
+                + 'and crash on the cannon.';
+        }
+        if (avgStack > 4.2 && (earlies + lates) > C.beats * 0.25) {
+            return 'You are stacking further than your hands can cash. Four waves you land beats five you miss, '
+                + 'every time.';
+        }
+        if (sloppyHolds >= 4) {
+            return 'Your holds cost as much as your crashes. Half a wave lost on every build is a whole wave '
+                + 'lost every second crash.';
+        }
+        return 'That is the cycle: build it, crash it on the cannon, catch the bounce, build it again.';
+    }
+
+    /** Blame the decision or blame the hands, whichever actually cost more,
+     *  using the same DP that set the denominator. */
+    function regretLine() {
+        let plan = null, self = null, press = null, build = null;
+        for (const e of events) {
+            const s = e.start;
+            if (s < 0 || s >= waves.length || s + e.k > waves.length) continue;
+            const gap = (planBest[s] || 0) - (segValue(s, e.k) + (planBest[s + e.k] || 0));
+            if (gap > 0 && (!plan || gap > plan.gap)) plan = { gap, e, alt: planPick[s] || 1 };
+
+            if (e.self) {
+                // A push that crashed itself is neither a bad press nor a bad
+                // build, and it is the single most expensive thing that can
+                // happen in the drill. It gets its own sentence or it falls
+                // through to "no wasted call", which would be a lie.
+                if (e.pressLoss > 0 && (!self || e.pressLoss > self.loss)) self = { loss: e.pressLoss, e };
+                continue;
+            }
+            // Only a mistimed press is a press mistake. A perfect crash has a
+            // pressLoss of exactly 0 and can never be blamed here.
+            if (e.grade === 'early' || e.grade === 'late' || e.grade === 'clean') {
+                if (e.pressLoss > 0 && (!press || e.pressLoss > press.loss)) press = { loss: e.pressLoss, e };
+            }
+            if (e.buildLoss > 0 && (!build || e.buildLoss > build.loss)) build = { loss: e.buildLoss, e };
         }
 
-        if (held >= need) { endGoal(true); return; }
-        if (timeLeft <= 0) { finishRound(); return; }
-        if (clock >= goalDeadline) { endGoal(false); return; }
+        // Blame whichever actually cost the most, not whichever is checked
+        // first. Reporting a 7 CS press while a 14 CS build on the same push
+        // goes unmentioned is how the old version taught the wrong lesson.
+        const cand = [
+            plan && { loss: plan.gap, kind: 'plan', d: plan },
+            self && { loss: self.loss, kind: 'self', d: self },
+            press && { loss: press.loss, kind: 'press', d: press },
+            build && { loss: build.loss, kind: 'build', d: build },
+        ].filter(c => c && c.loss >= REGRET_MIN);
+        if (!cand.length) return 'No wasted call. The plan was right and the hands kept up.';
+
+        let top = cand[0];
+        for (const c of cand) if (c.loss > top.loss) top = c;
+        const e = top.d.e;
+
+        if (top.kind === 'plan') {
+            return 'Beat ' + (e.beat + 1) + ': you crashed ' + e.k + ' wave' + (e.k === 1 ? '' : 's')
+                + ' for ' + r0(e.banked) + ' CS. Crashing ' + top.d.alt + ' on beat '
+                + (e.start + top.d.alt) + ' was worth ' + r0(top.loss) + ' more across the rest of the lane.';
+        }
+        if (top.kind === 'self') {
+            return 'The push on beat ' + (e.beat + 1) + ' got to ' + e.k
+                + ' waves and crashed itself. Their tower kept ' + r0(top.loss)
+                + ' CS you had already built - cash at four and take it.';
+        }
+        if (top.kind === 'press') {
+            return 'Beat ' + (e.beat + 1) + ': a ' + e.k + '-wave crash, ' + Math.abs(e.delta).toFixed(2)
+                + 's ' + (e.delta < 0 ? 'early' : 'late') + '. That one press cost ' + r0(top.loss) + ' CS.';
+        }
+        return 'The push you cashed on beat ' + (e.beat + 1) + ' should have been worth '
+            + r0(top.loss) + ' CS more. You lost that building it, not crashing it - '
+            + 'a wave you last hit late is half a wave.';
     }
 
-    function finishRound() {
-        if (state !== 'PLAYING') return;
-        if (gapTimer) { clearTimeout(gapTimer); gapTimer = null; }
+    function endRound() {
+        if (view !== 'play') return;
         if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-        phase = 'gap';
 
-        // score01 = in-band share of the round, weighted by discrete goals hit
-        const share = clamp01(heldTotal / ROUND);
-        const norm = clamp01(share / HELD_TARGET);
-        const goalFactor = 0.74 + 0.26 * clamp01(goalsDone / PAR_GOALS);
-        let s = clamp01(norm * goalFactor) - blowouts * 0.02;
-        score01 = clamp(s, 0, 0.98);
-        shareOut = share;
+        const tempo = clamp01((csBanked / (csMax || 1) - TEMPO_FLOOR) / (1 - TEMPO_FLOOR));
+        const touch = clamp01((perfects + 0.55 * cleans) / C.beats);
+        const score = clamp01(Math.round((W_TEMPO * tempo + W_TOUCH * touch) * 1000) / 1000);
+        const avgStack = crashCount > 0 ? stackSum / crashCount : 0;
+        const label = verdictFor(score);
 
-        verdict = score01 >= 0.88 ? 'The lane belongs to you.'
-            : score01 >= 0.72 ? 'Strong wave control. You dictate the tempo.'
-            : score01 >= 0.55 ? 'Solid fundamentals, sloppy under pressure.'
-            : score01 >= 0.38 ? 'Loose. The wave is playing you, not the other way round.'
-            : 'You are not managing the wave. You are watching it.';
-
-        state = 'RESULT';
+        res = {
+            score, label,
+            line: verdictLine(label),
+            coach: coachLine(avgStack),
+            regret: regretLine(),
+            tempo, touch, avgStack,
+            csBanked: r0(csBanked),
+            csMax: r0(csMax),
+            bestCrash: r0(bestCrash),
+            parCrash: r0(parCrash),
+        };
+        liveMsg = 'Session over. ' + Math.round(score * 100) + ' out of 100. ' + label + '.';
+        resultAt = nowMs();
+        view = 'result';
     }
 
-    function finish() {
-        const attempts = goalsDone + goalsFailed;
-        const acc = attempts > 0 ? goalsDone / attempts : 0;
+    function done() {
+        if (finished || !res) return;
+        finished = true;
+        const detail = res.csBanked + ' CS ' + MID + ' ' + crashCount + ' crash'
+            + (crashCount === 1 ? '' : 'es') + ' ' + MID + ' biggest ' + res.bestCrash + ' ' + MID + ' '
+            + perfects + '/' + C.beats + ' on the beat';
         const meta = {
-            label: score01 >= 0.88 ? 'Lane Dominant'
-                : score01 >= 0.72 ? 'Wave Controller'
-                : score01 >= 0.55 ? 'Competent'
-                : score01 >= 0.38 ? 'Loose Laner' : 'Wave Ignorant',
-            accuracy: acc,
-            hits: goalsDone,
-            misses: goalsFailed,
+            label: res.label,
+            accuracy: Math.round(res.touch * 1000) / 1000,
+            hits: crashesInWindow,
+            misses: earlies + lates + selfCrashes,
             streak: bestStreak,
-            best: Math.round(bestHold * 10) / 10,
-            detail: goalsDone + '/' + attempts + ' wave goals, ' + Math.round(shareOut * 100)
-                + '% of the round in band, best hold ' + (Math.round(bestHold * 10) / 10) + 's'
-                + (blowouts > 0 ? ', ' + blowouts + ' blown wave' + (blowouts === 1 ? '' : 's') : ''),
-            inBandShare: shareOut,
-            blowouts,
+            best: bestStreak,
+            detail,
             difficulty: dLevel,
             game: 'wave',
             attr: 'lne',
+            biggestCrash: res.bestCrash,
+            csBanked: res.csBanked,
+            csMax: res.csMax,
+            avgStack: Math.round(res.avgStack * 10) / 10,
         };
-        if (typeof onComplete === 'function') onComplete(score01, meta);
+        // Last statement: Training.svelte tears this component down inside
+        // the callback, so nothing may touch component state after it.
+        if (typeof onComplete === 'function') onComplete(res.score, meta);
     }
 
-    function quit() { if (typeof onQuit === 'function') onQuit(); }
+    function back() { if (typeof onQuit === 'function') onQuit(); }
 
-    // ── derived display values ────────────────────────────────────────────
-    $: bandLeft = band.lo * 100;
-    $: bandWidth = Math.max(1, (band.hi - band.lo) * 100);
-    $: markerLeft = clamp01(pos) * 100;
-    $: heldPct = clamp01(need > 0 ? held / need : 0) * 100;
-    $: timePct = clamp01(timeLeft / ROUND) * 100;
-    $: vZoneLeft = clamp01((clamp(band.vLo, -VMAX, VMAX) + VMAX) / (2 * VMAX)) * 100;
-    $: vZoneRight = clamp01((clamp(band.vHi, -VMAX, VMAX) + VMAX) / (2 * VMAX)) * 100;
-    $: vZoneWidth = Math.max(2, vZoneRight - vZoneLeft);
-    $: vMark = clamp01((clamp(vel, -VMAX, VMAX) + VMAX) / (2 * VMAX)) * 100;
-    $: driftArrow = vel > 0.012 ? '>>' : (vel < -0.012 ? '<<' : '==');
-    $: velOk = vel >= band.vLo && vel <= band.vHi;
-    $: posOk = pos >= band.lo && pos <= band.hi;
-    $: title = (drill && drill.name) ? drill.name : 'Wave Control';
-    // Announced only when the goal or the read-out changes - never per frame,
-    // otherwise a screen reader would be read to sixty times a second.
-    $: liveMsg = state !== 'PLAYING' ? ''
-        : (phase === 'gap' ? readout : 'New goal: ' + goal.name + '. ' + goal.tag + '. ' + goal.hint);
+    // -- derived display ------------------------------------------------
+    $: laneLabel = 'Lane. ' + beatK + ' wave' + (beatK === 1 ? '' : 's') + ' in the push. '
+        + laneState.split(MID).join('-') + '. Crash band plus or minus ' + hwS.toFixed(2)
+        + ' seconds. ' + beatsLeft + ' waves left.';
+    $: holdAria = !scored
+        ? 'Hold the wave. Last hit only and add it to the push.'
+        : atCap
+            ? 'Hold the wave. At five waves it crashes on its own for about ' + r0(previewHold) + ' CS.'
+            : lastBeat
+                ? 'Hold the wave. This is the last wave, so holding strands the whole push and loses '
+                  + 'about ' + r0(previewCrash) + ' CS.'
+                : 'Hold the wave. Last hit only and add it to the push, worth about ' + r0(previewHold)
+                  + ' CS if you crash next beat.';
+    $: crashAria = 'Crash the push into their tower now for about ' + r0(previewCrash) + ' CS.';
 </script>
 
 <section class="wc" class:rm={reduceMotion}>
@@ -435,166 +813,164 @@
             <span class="wc-chip">LNE &middot; Laning</span>
             <h2 class="wc-title">{title}</h2>
         </div>
-        <span class="wc-diff">{cfg.label}</span>
+        <span class="wc-diff">{C.name}</span>
     </header>
 
-    <!-- ══ INTRO ══════════════════════════════════════════════════════════ -->
-    {#if state === 'INTRO'}
-        <div class="wc-panel wc-intro">
-            <p class="wc-lead">
-                {#if drill && drill.desc}{drill.desc}{:else}
-                    Wave management is the whole of laning. This drill trains the part nobody
-                    practises on purpose: reading which way the wave is going, deciding which
-                    state you actually want it in, and getting it there before the enemy laner,
-                    your jungler and a cannon minion all change their minds for you.
-                {/if}
-            </p>
+    <!-- == INTRO ====================================================== -->
+    {#if view === 'intro'}
+        <div class="wc-panel">
+            <p class="wc-lede">{lede}</p>
 
-            <div class="wc-how">
-                <div class="wc-lab">How to play</div>
-                <ol class="wc-steps">
-                    <li>The coach calls a wave state - <b>freeze</b>, <b>slow push</b>, <b>hard shove</b> or <b>bounce</b>.</li>
-                    <li>Get the wave inside the highlighted band <em>and</em> get the drift meter into its target zone.</li>
-                    <li>Hold both at once until the seconds-held bar fills. Slip out and it drains.</li>
-                    <li>Every action has a cooldown, so pick the right one - you cannot spam your way out.</li>
-                </ol>
+            <div class="wc-lab">How to play</div>
+            <ol class="wc-how">
+                <li>A wave arrives every beat. Your wave walks up the lane and meets theirs at the
+                    amber band. <b>Press when it gets there.</b></li>
+                <li><b>HOLD (H)</b> &mdash; last hit only. The wave joins your push and the push grows.</li>
+                <li><b>CRASH (SPACE)</b> &mdash; clear the lot. The whole push slams into their tower
+                    and banks as CS.</li>
+                <li>A bigger push meets them further up the lane, moves faster and gets a tighter band.
+                    One wave is a shove and pays under the odds. Three or more is a crash.</li>
+                <li>Five waves is as far as it goes. Hold a sixth and it crashes on its own and their
+                    tower keeps most of it.</li>
+                <li>Every third wave is a cannon and is worth more. The <b>NEXT</b> strip tells you
+                    which ones, before the first beat.</li>
+                <li>Cash before the lane runs out. Anything still on the lane after the last wave
+                    is <b>lost</b> &mdash; only what you crashed counts.</li>
+            </ol>
+
+            <div class="wc-chips">
+                <span class="wc-spec">{C.beats} waves</span>
+                <span class="wc-spec">{C.beat.toFixed(2)}s beat</span>
+                <span class="wc-spec">cannon every {CANNON_EVERY}</span>
+                <span class="wc-spec">band {PM}{C.hw1.toFixed(2)}s to {PM}{hwLo.toFixed(2)}s</span>
+                <span class="wc-spec">cap {CAP} waves</span>
             </div>
 
-            <div class="wc-keys">
-                {#each ACTIONS as a}
-                    <div class="wc-key">
-                        <span class="wc-kbd">{a.key}</span>
-                        <span class="wc-key-n">{a.name}</span>
-                        <span class="wc-key-d">{a.desc}</span>
-                    </div>
-                {/each}
-            </div>
+            <p class="wc-note">Two warm-up waves first, and they are not scored.</p>
 
-            <p class="wc-note">One round is about {ROUND} seconds of lane time. Mouse, touch or keys 1-4.</p>
-
-            <div class="wc-actions">
-                <button type="button" class="wc-btn wc-btn-ghost" aria-label="Back out of this drill without scoring" on:click={quit}>Back</button>
-                <button type="button" class="wc-btn wc-btn-go" aria-label="Start the Wave Control drill" on:click={start}>Start Drill</button>
+            <div class="wc-btns">
+                <button type="button" class="wc-btn wc-btn-ghost"
+                        aria-label="Back out of this drill without training" on:click={back}>Back</button>
+                <button type="button" class="wc-btn wc-btn-go"
+                        aria-label="Start the laning drill" on:click={start}>Start Drill</button>
             </div>
         </div>
 
-    <!-- ══ PLAYING ════════════════════════════════════════════════════════ -->
-    {:else if state === 'PLAYING'}
-        <div class="wc-panel wc-play" class:flash-good={flash === 'good'} class:flash-bad={flash === 'bad'}>
+    <!-- == PLAY ======================================================= -->
+    {:else if view === 'play'}
+        <div class="wc-panel wc-play" class:cap={atCap && scored} class:burst={burst}>
 
             <div class="wc-hud">
-                <div class="wc-hud-cell">
-                    <span class="wc-lab">Goals</span>
-                    <span class="wc-hud-v">{goalsDone}</span>
-                </div>
-                <div class="wc-hud-cell">
-                    <span class="wc-lab">Streak</span>
-                    <span class="wc-hud-v">{streak}</span>
-                </div>
-                <div class="wc-hud-cell wc-hud-time">
-                    <span class="wc-lab">Lane time</span>
-                    <span class="wc-hud-v">{Math.ceil(timeLeft)}s</span>
-                    <div class="wc-timebar"><div class="wc-timefill" style="width:{timePct}%"></div></div>
-                </div>
+                <div class="wc-cell"><span class="wc-hv">{r0(csBanked)}</span><span class="wc-lab">CS banked</span></div>
+                <div class="wc-cell"><span class="wc-hv">{r0(bestCrash)}</span><span class="wc-lab">Biggest</span></div>
+                <div class="wc-cell"><span class="wc-hv" class:hot={stack >= 3}>{stack}</span><span class="wc-lab">On the lane</span></div>
+                <div class="wc-cell"><span class="wc-hv">{perfects}</span><span class="wc-lab">On the beat</span></div>
+                <div class="wc-cell"><span class="wc-hv" class:warn={beatsLeft <= 1}>{beatsLeft}</span><span class="wc-lab">Waves left</span></div>
             </div>
 
-            {#if phase === 'gap'}
-                <div class="wc-readout" class:ok={readoutGood}>
-                    <span class="wc-lab">{readoutGood ? 'Goal complete' : 'Wave lost'}</span>
-                    <p>{readout}</p>
-                </div>
-            {:else}
-                <div class="wc-goal">
-                    <div class="wc-goal-top">
-                        <span class="wc-goal-name">{goal.name}</span>
-                        <span class="wc-goal-tag">{goal.tag}</span>
-                    </div>
-                    <div class="wc-holdbar" aria-hidden="true">
-                        <div class="wc-holdfill" class:live={inBand} style="width:{heldPct}%"></div>
-                    </div>
-                    <div class="wc-holdrow">
-                        <span class="wc-held">{held.toFixed(1)}s / {need.toFixed(1)}s held</span>
-                        <span class="wc-state" class:on={inBand}>{inBand ? 'IN BAND' : (posOk ? 'DRIFT WRONG' : 'OUT OF BAND')}</span>
-                    </div>
-                </div>
-            {/if}
-
-            <div class="wc-lane" role="img"
-                 aria-label="Lane track. Wave at {Math.round(pos * 100)} percent toward the enemy tower, goal band {Math.round(band.lo * 100)} to {Math.round(band.hi * 100)} percent.">
-                <div class="wc-towers">
-                    <span>Your tower</span>
-                    <span>Enemy tower</span>
-                </div>
-                <div class="wc-track" class:in={inBand}>
-                    <div class="wc-band" class:in={inBand} style="left:{bandLeft}%;width:{bandWidth}%"></div>
-                    <div class="wc-mid"></div>
-                    <div class="wc-marker" class:in={inBand} style="left:{markerLeft}%">
-                        <span class="wc-marker-dot"></span>
-                        <span class="wc-marker-dir">{driftArrow}</span>
-                    </div>
-                </div>
+            <div class="wc-laneline">
+                <span class="wc-lab">The lane</span>
+                <span class="wc-state" class:cap={atCap && scored}>
+                    {#if atCap && scored}LAST CHANCE &middot; CRASH IT{:else}{laneState}{/if}
+                </span>
             </div>
 
-            <div class="wc-drift">
-                <div class="wc-lab">Drift &middot; {vel > 0 ? 'toward them' : (vel < 0 ? 'toward you' : 'held')}</div>
-                <div class="wc-dtrack" role="img"
-                     aria-label="Drift meter. Current drift {velOk ? 'inside' : 'outside'} the target zone.">
-                    <div class="wc-dzone" class:in={velOk} style="left:{vZoneLeft}%;width:{vZoneWidth}%"></div>
-                    <div class="wc-dcenter"></div>
-                    <div class="wc-dmark" class:in={velOk} style="left:{vMark}%"></div>
+            <div class="wc-lane" role="img" aria-label={laneLabel}>
+                <div class="wc-tower wc-tower-you" aria-hidden="true"></div>
+                <div class="wc-tower wc-tower-them" style="left:{pct(TOWER_X)}%" aria-hidden="true"></div>
+                <div class="wc-band" style="left:{pct(bandLo)}%;width:{pct(bandHi - bandLo)}%" aria-hidden="true"></div>
+                <div class="wc-core" style="left:{pct(coreLo)}%;width:{pct(coreHi - coreLo)}%" aria-hidden="true"></div>
+                <div class="wc-clump" style="left:{pct(meetX)}%" aria-hidden="true"></div>
+                {#if pressX >= 0}
+                    <div class="wc-ghost" style="left:{pct(pressX)}%" aria-hidden="true"></div>
+                {/if}
+                <div class="wc-mark" class:dead={phase === 'locked'} style="left:{pct(markerX)}%" aria-hidden="true">
+                    <span class="wc-pips">{pips.join('')}</span>
                 </div>
-                <div class="wc-dends"><span>&lt;&lt; you</span><span>them &gt;&gt;</span></div>
+            </div>
+            <div class="wc-trackfoot" aria-hidden="true">
+                <span>your tower</span>
+                <span class="wc-bandw">crash band {PM}{hwS.toFixed(2)}s</span>
+                <span>their tower</span>
             </div>
 
-            <div class="wc-event"><span class="wc-ev-dot"></span>{evtText}</div>
+            <div class="wc-next">
+                <span class="wc-lab">Next</span>
+                {#each nextChips as w (w.n)}
+                    <span class="wc-nextchip" class:cannon={w.cannon}>{w.n}{#if w.cannon} cannon{/if}</span>
+                {/each}
+            </div>
+
+            <div class="wc-feed wc-feed-{feedKind}">{feedLine}</div>
 
             <div class="wc-acts">
-                {#each ACTIONS as a, i}
-                    <button
-                        type="button"
-                        class="wc-act"
-                        class:cooling={cds[i] > 0}
-                        disabled={phase !== 'live' || cds[i] > 0}
-                        aria-label="{a.name}. {a.desc}. Keyboard key {a.key}."
-                        on:click={() => doAction(i)}
-                    >
-                        <span class="wc-act-cd" style="width:{cds[i] > 0 ? clamp01(cds[i] / (a.cd * cfg.cd)) * 100 : 0}%"></span>
-                        <span class="wc-act-key">{a.key}</span>
-                        <span class="wc-act-n">{a.short}</span>
-                        <span class="wc-act-d">{cds[i] > 0 ? cds[i].toFixed(1) + 's' : a.desc}</span>
-                    </button>
-                {/each}
+                <!-- pointerdown for the mouse (no click delay), and a click
+                     handler that only fires for e.detail === 0, which is how a
+                     keyboard-synthesised click identifies itself. Without the
+                     second one these buttons cannot be operated by keyboard.
+
+                     aria-disabled rather than disabled, deliberately: the lock
+                     flips at every beat boundary, and disabling the focused
+                     element makes the browser blur it to <body>, which silently
+                     broke the keyboard path after exactly one beat and dropped
+                     the player onto the host's close button on the next Tab.
+                     press() already refuses anything outside phase 'live'. -->
+                <button type="button" class="wc-act hold" class:off={phase !== 'live'}
+                        aria-disabled={phase !== 'live'}
+                        aria-label={holdAria}
+                        on:pointerdown|preventDefault={() => press('hold')}
+                        on:click={(e) => { if (e.detail === 0) press('hold'); }}>
+                    <span class="wc-act-k">H</span>
+                    <span class="wc-act-n">{#if atCap && scored}HOLD &middot; it crashes itself{:else}HOLD{/if}</span>
+                    <span class="wc-act-d">last hit, build the push</span>
+                    <span class="wc-act-v" class:danger={scored && (atCap || lastBeat)}>
+                        {#if !scored}warm-up
+                        {:else if atCap}self-crash {r0(previewHold)} CS
+                        {:else if lastBeat}strands {r0(previewCrash)} CS
+                        {:else}builds to {r0(previewHold)} CS{/if}
+                    </span>
+                </button>
+                <button type="button" class="wc-act crash" class:off={phase !== 'live'}
+                        aria-disabled={phase !== 'live'}
+                        aria-label={crashAria}
+                        on:pointerdown|preventDefault={() => press('crash')}
+                        on:click={(e) => { if (e.detail === 0) press('crash'); }}>
+                    <span class="wc-act-k">SPACE</span>
+                    <span class="wc-act-n">CRASH</span>
+                    <span class="wc-act-d">cash the push into their tower</span>
+                    <span class="wc-act-v">
+                        {#if !scored}warm-up{:else}crash now {r0(previewCrash)} CS{/if}
+                    </span>
+                </button>
             </div>
         </div>
 
-    <!-- ══ RESULT ═════════════════════════════════════════════════════════ -->
+    <!-- == RESULT ===================================================== -->
     {:else}
         <div class="wc-panel wc-result">
             <div class="wc-lab">Session score</div>
-            <div class="wc-score">{Math.round(score01 * 100)}</div>
-            <div class="wc-verdict">{verdict}</div>
+            <div class="wc-score">{Math.round(res.score * 100)}</div>
+            <div class="wc-verdict">{res.label}</div>
+            <p class="wc-vline">{res.line}</p>
 
             <div class="wc-grid">
-                <div class="wc-cell"><span class="wc-cv">{goalsDone}</span><span class="wc-cl">Goals hit</span></div>
-                <div class="wc-cell"><span class="wc-cv">{goalsFailed}</span><span class="wc-cl">Waves lost</span></div>
-                <div class="wc-cell"><span class="wc-cv">{Math.round(shareOut * 100)}%</span><span class="wc-cl">Time in band</span></div>
-                <div class="wc-cell"><span class="wc-cv">{bestStreak}</span><span class="wc-cl">Best streak</span></div>
-                <div class="wc-cell"><span class="wc-cv">{bestHold.toFixed(1)}s</span><span class="wc-cl">Longest hold</span></div>
-                <div class="wc-cell"><span class="wc-cv">{blowouts}</span><span class="wc-cl">Blown waves</span></div>
+                <div class="wc-gcell"><span class="wc-cv">{res.csBanked}</span><span class="wc-cl">CS banked</span></div>
+                <div class="wc-gcell"><span class="wc-cv">{res.csMax}</span><span class="wc-cl">Par</span></div>
+                <div class="wc-gcell"><span class="wc-cv">{res.bestCrash}</span><span class="wc-cl">Biggest crash</span></div>
+                <div class="wc-gcell"><span class="wc-cv">{res.parCrash}</span><span class="wc-cl">Par crash</span></div>
+                <div class="wc-gcell"><span class="wc-cv">{perfects}/{C.beats}</span><span class="wc-cl">On the beat</span></div>
+                <div class="wc-gcell"><span class="wc-cv">{res.avgStack.toFixed(1)}</span><span class="wc-cl">Avg stack</span></div>
             </div>
 
-            <p class="wc-note">
-                Score is the share of the round you kept the wave in the called band, weighted by
-                how many wave goals you actually finished.
-            </p>
+            <p class="wc-regret">{res.regret}</p>
+            <p class="wc-coach">{res.coach}</p>
 
-            <div class="wc-actions">
-                <button type="button" class="wc-btn wc-btn-go wc-wide" aria-label="Finish the session and bank the score" on:click={finish}>Finish Session</button>
-            </div>
+            <button type="button" class="wc-btn wc-btn-go wc-done"
+                    aria-label="Finish the session and bank the result" on:click={done}>Finish Session</button>
         </div>
     {/if}
 
-    <p class="wc-live" aria-live="polite">{liveMsg}</p>
+    <p class="wc-live" aria-live="polite" aria-atomic="true">{liveMsg}</p>
 </section>
 
 <style>
@@ -607,7 +983,7 @@
         font-family: inherit;
     }
 
-    /* ── head ───────────────────────────────────────────────────────────── */
+    /* -- head -------------------------------------------------------- */
     .wc-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
     .wc-head-l { min-width: 0; }
     .wc-chip {
@@ -631,33 +1007,27 @@
     }
     .wc-lab { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; display: block; }
 
-    /* ── intro ──────────────────────────────────────────────────────────── */
-    .wc-lead { font-size: 13px; line-height: 1.65; color: #94a3b8; margin-bottom: 18px; }
-    .wc-how { margin-bottom: 16px; }
-    .wc-steps { margin: 8px 0 0; padding-left: 18px; }
-    .wc-steps li { font-size: 12px; line-height: 1.6; color: #94a3b8; margin-bottom: 4px; }
-    .wc-steps b { color: #fbbf24; font-weight: 800; }
-    .wc-steps em { color: #cbd5e1; font-style: normal; font-weight: 800; }
-
-    .wc-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
-    @media (max-width: 520px) { .wc-keys { grid-template-columns: 1fr; } }
-    .wc-key {
-        display: grid; grid-template-columns: 24px 1fr; grid-template-rows: auto auto;
-        column-gap: 9px; align-items: center;
-        background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.3);
-        border-radius: 12px; padding: 9px 11px;
+    /* -- intro ------------------------------------------------------- */
+    .wc-lede { font-size: 13px; line-height: 1.65; color: #94a3b8; margin-bottom: 18px; }
+    .wc-how { list-style: none; margin: 9px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .wc-how li {
+        font-size: 12px; line-height: 1.6; color: #94a3b8;
+        padding: 9px 12px; border-radius: 11px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(51, 65, 85, 0.28);
+        border-left: 2px solid rgba(245, 158, 11, 0.5);
     }
-    .wc-kbd {
-        grid-row: 1 / span 2; width: 24px; height: 24px; border-radius: 7px;
-        background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3);
-        color: #fbbf24; font-size: 11px; font-weight: 900;
-        display: flex; align-items: center; justify-content: center;
-    }
-    .wc-key-n { font-size: 11px; font-weight: 900; color: #e2e8f0; letter-spacing: 0.3px; }
-    .wc-key-d { font-size: 10px; color: #64748b; }
-    .wc-note { font-size: 10px; color: #475569; line-height: 1.6; margin-top: 10px; }
+    .wc-how b { color: #fbbf24; font-weight: 800; }
 
-    .wc-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+    .wc-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+    .wc-spec {
+        font-size: 9px; font-weight: 800; letter-spacing: 0.9px; text-transform: uppercase;
+        color: #64748b; background: rgba(15, 23, 42, 0.55);
+        border: 1px solid rgba(51, 65, 85, 0.35); border-radius: 999px; padding: 4px 10px;
+    }
+    .wc-note { font-size: 10px; color: #475569; line-height: 1.6; margin-top: 12px; }
+
+    .wc-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
     .wc-btn {
         padding: 11px 22px; border-radius: 12px; font-size: 12px; font-weight: 900;
         text-transform: uppercase; letter-spacing: 1px; cursor: pointer; border: none;
@@ -667,147 +1037,160 @@
     .wc-btn-ghost:hover { background: rgba(71, 85, 105, 0.6); color: #e2e8f0; }
     .wc-btn-go { background: linear-gradient(135deg, #d97706, #f59e0b); color: #1c1917; box-shadow: 0 4px 14px rgba(245, 158, 11, 0.22); }
     .wc-btn-go:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(245, 158, 11, 0.42); }
-    .wc-wide { flex: 1; min-width: 200px; }
-    .wc-btn:focus-visible, .wc-act:focus-visible {
-        outline: 2px solid var(--acc); outline-offset: 2px;
-    }
+    .wc-btn:focus-visible, .wc-act:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
 
-    /* ── play ───────────────────────────────────────────────────────────── */
+    /* -- play -------------------------------------------------------- */
     .wc-play { transition: border-color .2s ease, background .2s ease; }
-    .wc-play.flash-good { border-color: rgba(34, 197, 94, 0.55); background: rgba(12, 26, 20, 0.55); }
-    .wc-play.flash-bad { border-color: rgba(239, 68, 68, 0.55); background: rgba(28, 14, 16, 0.55); }
+    .wc-play.cap { border-color: rgba(239, 68, 68, 0.5); }
+    .wc-play.burst { border-color: rgba(74, 222, 128, 0.55); background: rgba(12, 26, 20, 0.5); }
 
-    .wc-hud { display: grid; grid-template-columns: auto auto 1fr; gap: 14px; align-items: end; margin-bottom: 14px; }
-    .wc-hud-v { font-size: 20px; font-weight: 900; color: #e2e8f0; line-height: 1.1; display: block; margin-top: 2px; }
-    .wc-hud-time { text-align: right; }
-    .wc-timebar { height: 5px; border-radius: 99px; background: rgba(15, 23, 42, 0.8); overflow: hidden; margin-top: 6px; }
-    .wc-timefill { height: 100%; background: linear-gradient(90deg, #b45309, #fbbf24); border-radius: 99px; }
+    .wc-hud { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 14px; }
+    .wc-cell { min-width: 0; }
+    .wc-hv { display: block; font-size: 20px; font-weight: 900; color: #e2e8f0; line-height: 1.1; margin-bottom: 2px; }
+    .wc-hv.hot { color: var(--acc); }
+    .wc-hv.warn { color: #f87171; }
 
-    .wc-goal, .wc-readout {
-        background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(51, 65, 85, 0.3);
-        border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; min-height: 92px;
-    }
-    .wc-goal-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-    .wc-goal-name { font-size: 15px; font-weight: 900; letter-spacing: 1.5px; color: var(--acc); }
-    .wc-goal-tag { font-size: 11px; color: #94a3b8; }
-    .wc-holdbar { height: 9px; border-radius: 99px; background: rgba(2, 6, 16, 0.8); overflow: hidden; border: 1px solid rgba(51, 65, 85, 0.3); }
-    .wc-holdfill { height: 100%; background: rgba(100, 116, 139, 0.6); border-radius: 99px; transition: background .12s ease; }
-    .wc-holdfill.live { background: linear-gradient(90deg, #d97706, #fbbf24); }
-    .wc-holdrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; }
-    .wc-held { font-size: 10px; font-weight: 800; color: #64748b; }
-    .wc-state { font-size: 9px; font-weight: 900; letter-spacing: 1.2px; color: #64748b; }
-    .wc-state.on { color: #4ade80; }
+    .wc-laneline { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+    .wc-state { font-size: 10px; font-weight: 800; letter-spacing: 0.6px; color: #94a3b8; text-align: right; }
+    .wc-state.cap { color: #f87171; font-weight: 900; letter-spacing: 1.2px; }
 
-    .wc-readout { border-color: rgba(239, 68, 68, 0.28); }
-    .wc-readout.ok { border-color: rgba(34, 197, 94, 0.28); }
-    .wc-readout p { font-size: 13px; line-height: 1.55; color: #cbd5e1; margin-top: 7px; }
-
-    /* lane */
-    .wc-lane { margin-bottom: 14px; }
-    .wc-towers { display: flex; justify-content: space-between; font-size: 9px; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; color: #334155; margin-bottom: 6px; }
-    .wc-track {
-        position: relative; height: 54px; border-radius: 14px;
-        background: linear-gradient(180deg, rgba(2, 6, 16, 0.85), rgba(10, 15, 28, 0.85));
+    .wc-lane {
+        position: relative; height: clamp(52px, 9vh, 74px); border-radius: 14px;
+        background: linear-gradient(180deg, rgba(2, 6, 16, 0.9), rgba(10, 15, 28, 0.9));
         border: 1px solid rgba(51, 65, 85, 0.35); overflow: hidden;
-        transition: border-color .15s ease;
     }
-    .wc-track.in { border-color: rgba(74, 222, 128, 0.45); }
+    .wc-tower { position: absolute; top: 0; bottom: 0; width: 6%; background: rgba(71, 85, 105, 0.2); }
+    .wc-tower-you { left: 0; border-right: 1px solid rgba(71, 85, 105, 0.45); }
+    .wc-tower-them {
+        right: 0; width: auto; background: rgba(239, 68, 68, 0.13);
+        border-left: 1px solid rgba(239, 68, 68, 0.45);
+    }
     .wc-band {
-        position: absolute; top: 0; bottom: 0;
-        background: rgba(245, 158, 11, 0.13);
-        border-left: 2px solid rgba(245, 158, 11, 0.55);
-        border-right: 2px solid rgba(245, 158, 11, 0.55);
-        transition: background .15s ease, border-color .15s ease;
+        position: absolute; top: 0; bottom: 0; min-width: 22px;
+        background: rgba(245, 158, 11, 0.14);
+        border-left: 2px solid rgba(245, 158, 11, 0.6);
+        border-right: 2px solid rgba(245, 158, 11, 0.6);
     }
-    .wc-band.in { background: rgba(34, 197, 94, 0.16); border-left-color: rgba(74, 222, 128, 0.75); border-right-color: rgba(74, 222, 128, 0.75); }
-    .wc-mid { position: absolute; left: 50%; top: 8px; bottom: 8px; width: 1px; background: rgba(51, 65, 85, 0.5); }
-    .wc-marker {
-        position: absolute; top: 0; bottom: 0; width: 0;
-        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    .wc-core { position: absolute; top: 0; bottom: 0; min-width: 8px; background: rgba(245, 158, 11, 0.3); }
+    .wc-clump {
+        position: absolute; top: 50%; width: 10px; height: 10px; margin-top: -5px;
+        transform: translateX(-50%); border-radius: 2px;
+        background: #64748b; box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.18);
     }
-    .wc-marker-dot {
-        width: 14px; height: 14px; border-radius: 50%;
-        background: #e2e8f0; box-shadow: 0 0 0 3px rgba(226, 232, 240, 0.14);
-        transform: translateX(-50%);
+    .wc-ghost { position: absolute; top: 4px; bottom: 4px; width: 2px; background: rgba(226, 232, 240, 0.75); transform: translateX(-50%); }
+    .wc-mark {
+        position: absolute; top: 50%; transform: translate(-50%, -50%);
+        display: flex; align-items: center; justify-content: center;
+        padding: 3px 6px; border-radius: 8px; white-space: nowrap;
+        background: rgba(226, 232, 240, 0.95); color: #0b1120;
+        transition: background .12s ease, color .12s ease;
     }
-    .wc-marker.in .wc-marker-dot { background: #4ade80; box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.2); }
-    .wc-marker-dir { font-size: 9px; font-weight: 900; color: #64748b; letter-spacing: 1px; transform: translateX(-50%); white-space: nowrap; }
+    .wc-mark.dead { background: rgba(100, 116, 139, 0.6); color: #cbd5e1; }
+    .wc-pips { font-size: 11px; letter-spacing: 1px; line-height: 1; font-weight: 900; }
 
-    /* drift meter */
-    .wc-drift { margin-bottom: 12px; }
-    .wc-dtrack {
-        position: relative; height: 16px; border-radius: 8px; margin-top: 6px;
-        background: rgba(2, 6, 16, 0.8); border: 1px solid rgba(51, 65, 85, 0.35); overflow: hidden;
+    .wc-trackfoot {
+        display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; margin-bottom: 12px;
+        font-size: 9px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #334155;
     }
-    .wc-dzone { position: absolute; top: 0; bottom: 0; background: rgba(245, 158, 11, 0.18); border-left: 1px solid rgba(245, 158, 11, 0.5); border-right: 1px solid rgba(245, 158, 11, 0.5); }
-    .wc-dzone.in { background: rgba(34, 197, 94, 0.22); border-left-color: rgba(74, 222, 128, 0.7); border-right-color: rgba(74, 222, 128, 0.7); }
-    .wc-dcenter { position: absolute; left: 50%; top: 2px; bottom: 2px; width: 1px; background: rgba(71, 85, 105, 0.6); }
-    .wc-dmark { position: absolute; top: 1px; bottom: 1px; width: 3px; border-radius: 2px; background: #e2e8f0; transform: translateX(-50%); }
-    .wc-dmark.in { background: #4ade80; }
-    .wc-dends { display: flex; justify-content: space-between; font-size: 9px; font-weight: 800; color: #334155; margin-top: 4px; }
+    .wc-bandw { color: var(--acc); }
 
-    .wc-event {
-        display: flex; align-items: center; gap: 8px;
-        font-size: 11px; color: #94a3b8; line-height: 1.4;
+    .wc-next { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 12px; }
+    .wc-next .wc-lab { display: inline-block; }
+    .wc-nextchip {
+        font-size: 9px; font-weight: 800; letter-spacing: 0.7px; text-transform: uppercase;
+        color: #64748b; background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.35); border-radius: 999px; padding: 3px 9px;
+    }
+    .wc-nextchip.cannon { color: #fbbf24; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
+
+    .wc-feed {
+        font-size: 12px; line-height: 1.5; color: #94a3b8; min-height: 38px;
         background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(51, 65, 85, 0.25);
-        border-radius: 10px; padding: 8px 11px; margin-bottom: 14px; min-height: 34px;
+        border-left: 2px solid rgba(71, 85, 105, 0.5);
+        border-radius: 10px; padding: 9px 12px; margin-bottom: 14px;
     }
-    .wc-ev-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--acc); flex: 0 0 auto; }
+    .wc-feed-good { border-left-color: rgba(74, 222, 128, 0.7); color: #cbd5e1; }
+    .wc-feed-bad { border-left-color: rgba(239, 68, 68, 0.7); color: #cbd5e1; }
+    .wc-feed-ready { border-left-color: rgba(245, 158, 11, 0.7); }
 
-    /* actions */
-    .wc-acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    @media (max-width: 560px) { .wc-acts { grid-template-columns: 1fr 1fr; } }
+    .wc-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .wc-act {
-        position: relative; overflow: hidden;
-        display: grid; grid-template-columns: 20px 1fr; grid-template-rows: auto auto;
-        column-gap: 8px; row-gap: 1px; align-items: center; text-align: left;
+        position: relative; display: grid;
+        grid-template-columns: auto 1fr; grid-template-rows: auto auto auto;
+        column-gap: 9px; row-gap: 2px; align-items: center; text-align: left;
         background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(245, 158, 11, 0.22);
-        border-radius: 12px; padding: 10px 11px; cursor: pointer; font-family: inherit;
+        border-radius: 12px; padding: 11px 12px; cursor: pointer; font-family: inherit;
+        min-height: 56px;
         transition: background .12s ease, border-color .12s ease, transform .12s ease;
     }
-    .wc-act:hover:not(:disabled) { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.5); transform: translateY(-1px); }
-    .wc-act:disabled { cursor: not-allowed; border-color: rgba(51, 65, 85, 0.35); }
-    .wc-act.cooling { opacity: 0.72; }
-    .wc-act-cd { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(51, 65, 85, 0.42); pointer-events: none; }
-    .wc-act-key {
-        grid-row: 1 / span 2; position: relative; z-index: 1;
-        width: 20px; height: 20px; border-radius: 6px;
+    .wc-act:hover:not(.off) { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.5); transform: translateY(-1px); }
+    .wc-act.off { cursor: default; opacity: 0.6; border-color: rgba(51, 65, 85, 0.35); }
+    .wc-act-k {
+        grid-row: 1 / span 3; align-self: center;
+        padding: 4px 7px; border-radius: 7px;
         background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.3);
-        color: #fbbf24; font-size: 10px; font-weight: 900;
-        display: flex; align-items: center; justify-content: center;
+        color: #fbbf24; font-size: 10px; font-weight: 900; letter-spacing: 0.5px;
     }
-    .wc-act-n { position: relative; z-index: 1; font-size: 10px; font-weight: 900; letter-spacing: 0.8px; color: #e2e8f0; }
-    .wc-act-d { position: relative; z-index: 1; font-size: 9px; color: #64748b; font-weight: 700; }
+    .wc-act-n { font-size: 11px; font-weight: 900; letter-spacing: 0.9px; color: #e2e8f0; }
+    .wc-act-d { font-size: 9px; color: #64748b; font-weight: 700; }
+    .wc-act-v { font-size: 10px; font-weight: 900; letter-spacing: 0.4px; color: var(--acc); text-transform: uppercase; }
+    .wc-act.crash .wc-act-v { color: #fbbf24; }
+    .wc-act-v.danger { color: #f87171; }
 
-    /* ── result ─────────────────────────────────────────────────────────── */
+    /* -- result ------------------------------------------------------ */
     .wc-result { text-align: center; }
-    .wc-score { font-size: 56px; font-weight: 900; color: var(--acc); line-height: 1; margin: 6px 0 8px; }
-    .wc-verdict { font-size: 13px; color: #cbd5e1; margin-bottom: 18px; line-height: 1.5; }
+    .wc-score { font-size: 56px; font-weight: 900; color: var(--acc); line-height: 1; margin: 6px 0 6px; }
+    .wc-verdict { font-size: 14px; font-weight: 900; letter-spacing: 1.4px; text-transform: uppercase; color: #e2e8f0; }
+    .wc-vline { font-size: 12.5px; color: #94a3b8; margin: 7px 0 16px; line-height: 1.55; }
+
     .wc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-    @media (max-width: 460px) { .wc-grid { grid-template-columns: 1fr 1fr; } }
-    .wc-cell { background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.25); border-radius: 12px; padding: 12px 8px; }
+    .wc-gcell { background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.25); border-radius: 12px; padding: 11px 8px; }
     .wc-cv { display: block; font-size: 18px; font-weight: 900; color: #e2e8f0; }
     .wc-cl { display: block; font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #475569; margin-top: 3px; }
 
-    /* ── a11y live region (visually hidden) ─────────────────────────────── */
+    .wc-regret {
+        font-size: 12px; line-height: 1.6; color: #cbd5e1; text-align: left;
+        background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.25);
+        border-left: 2px solid rgba(245, 158, 11, 0.6);
+        border-radius: 10px; padding: 10px 12px; margin-top: 14px;
+    }
+    .wc-coach { font-size: 12px; line-height: 1.65; color: #94a3b8; text-align: left; margin-top: 12px; }
+    .wc-done { width: 100%; margin-top: 18px; }
+
+    /* -- a11y live region (visually hidden) -------------------------- */
     .wc-live {
         position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
         overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
     }
 
-    /* ── reduced motion: no transforms, no pulsing, colour cues only ────── */
+    /* -- small screens ----------------------------------------------- */
+    @media (max-width: 620px) {
+        .wc-hud { grid-template-columns: repeat(3, 1fr); gap: 10px 8px; }
+        .wc-hv { font-size: 17px; }
+        .wc-act-d { display: none; }
+        .wc-act { grid-template-rows: auto auto; }
+        .wc-act-k { grid-row: 1 / span 2; }
+    }
+    @media (max-width: 460px) {
+        .wc-panel { padding: 14px; }
+        .wc-acts { grid-template-columns: 1fr; }
+        .wc-grid { grid-template-columns: 1fr 1fr; }
+        .wc-title { font-size: 18px; }
+        .wc-score { font-size: 46px; }
+        .wc-laneline { flex-direction: column; align-items: flex-start; gap: 2px; }
+        .wc-state { text-align: left; }
+    }
+
+    /* -- reduced motion: the marker still moves, because it is the
+          information. Everything decorative stops. ------------------- */
     .wc.rm .wc-btn-go:hover,
-    .wc.rm .wc-act:hover:not(:disabled) { transform: none; }
+    .wc.rm .wc-act:hover:not(.off) { transform: none; }
     .wc.rm .wc-play,
-    .wc.rm .wc-track,
-    .wc.rm .wc-band,
-    .wc.rm .wc-holdfill,
+    .wc.rm .wc-mark,
     .wc.rm .wc-btn,
     .wc.rm .wc-act { transition: none; }
-    .wc.rm .wc-marker-dot { box-shadow: none; border: 2px solid #0f172a; }
-    .wc.rm .wc-marker.in .wc-marker-dot { box-shadow: none; }
     @media (prefers-reduced-motion: reduce) {
-        .wc-btn-go:hover, .wc-act:hover:not(:disabled) { transform: none; }
-        .wc-play, .wc-track, .wc-band, .wc-holdfill, .wc-btn, .wc-act { transition: none; }
+        .wc-btn-go:hover, .wc-act:hover:not(.off) { transform: none; }
+        .wc-play, .wc-mark, .wc-btn, .wc-act { transition: none; }
     }
 </style>
