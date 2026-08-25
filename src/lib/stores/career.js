@@ -16,7 +16,7 @@ import {
     CAREER_SAVE_VERSION, ATTR_KEYS, ATTR_MIN, ATTR_MAX, DEFAULT_START_YEAR,
     WEEKS_PER_YEAR, ENERGY_MAX, HEALTH_MAX, FORM_MAX, MORALE_MAX, phaseForWeek,
     teamById, PATH_BY_ID, REGION_BY_ID, ROLE_BY_ID, PLAYSTYLE_BY_ID, CHAMPION_BY_ID,
-    TRAIT_BY_ID, championsForStyle,
+    TRAIT_BY_ID, championsForStyle, PROFICIENCY_SIGNATURE_HEAD_START,
 } from '../career/constants.js';
 import {
     calcOVR, calcPotentialOVR, clamp, clampAttr, emptyAttrs, rollNewPlayer,
@@ -55,6 +55,13 @@ export function blankCareer() {
             // Environment soft cap override, written by the Self-Made perk. 0
             // means "use UNSIGNED_SOFT_CAP".
             softCap: 0,
+
+            // Champion proficiency: championId -> games played on it. Raw counts,
+            // not a derived mastery value, so the curve in constants.js can be
+            // retuned later without invalidating every save. The signature pick
+            // is seeded with a head start at creation - that is where the hours
+            // already went.
+            proficiency: {},
 
             form: 50,
             morale: 65,
@@ -293,6 +300,22 @@ function hydrate(raw) {
         : [];
     out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
 
+    // Proficiency is a plain id -> count map. A save can carry null, an array,
+    // counts for champions that no longer exist, or negative/NaN values, none of
+    // which the player spread at the top of this function would catch.
+    {
+        const raw = out.player.proficiency;
+        const clean = {};
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            for (const [id, v] of Object.entries(raw)) {
+                if (!CHAMPION_BY_ID[id]) continue;
+                const n = Math.floor(Number(v));
+                if (Number.isFinite(n) && n > 0) clean[id] = Math.min(n, 9999);
+            }
+        }
+        out.player.proficiency = clean;
+    }
+
     out.player.form   = clamp(out.player.form,   0, FORM_MAX);
     out.player.morale = clamp(out.player.morale, 0, MORALE_MAX);
     out.player.energy = clamp(out.player.energy, 0, ENERGY_MAX);
@@ -434,6 +457,9 @@ export function createCareer(cfg) {
         status: path.signed ? 'sub' : 'benched',
         contract,
         chemistry: 50,
+        // Your signature pick is the one you already have the hours on. Every
+        // other champion starts cold.
+        proficiency: champ ? { [champ.id]: PROFICIENCY_SIGNATURE_HEAD_START } : {},
     };
     c.money.gold = path.startGold;
     c.money.followers = path.startHype;
@@ -587,6 +613,32 @@ export function raisePotential(bonus) {
 export function setSoftCap(value) {
     const v = clamp(Math.round(Number(value) || 0), 0, ATTR_MAX);
     career.update(c => (c.player.softCap === v ? c : { ...c, player: { ...c.player, softCap: v } }));
+}
+
+/**
+ * Bank games played on a champion. Called once per game played, on whatever was
+ * actually picked in champion select — not on the signature pick, which is a
+ * preference rather than a record of what you have played.
+ */
+export function addProficiency(championId, games = 1) {
+    if (!CHAMPION_BY_ID[championId]) return 0;
+    const n = Math.max(1, Math.round(Number(games) || 1));
+    let total = 0;
+    career.update(c => {
+        const cur = c.player.proficiency || {};
+        total = Math.min(9999, (Number(cur[championId]) || 0) + n);
+        return {
+            ...c,
+            player: { ...c.player, proficiency: { ...cur, [championId]: total } },
+        };
+    });
+    return total;
+}
+
+/** Games played on one champion. */
+export function proficiencyGames(player, championId) {
+    const v = Number(player?.proficiency?.[championId]);
+    return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
 /** Give the player a trait. Idempotent — a trait is never granted twice. */

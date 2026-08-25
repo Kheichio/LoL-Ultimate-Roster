@@ -21,12 +21,17 @@
 import {
     ROLE_BY_ID, PLAYSTYLE_BY_ID, CHAMPION_BY_ID, REGION_BY_ID, CLUB_TIERS,
     PHASES, phaseForWeek, teamById, ARCHETYPE_BIAS, biasDistance,
+    championsForRole, championsForStyle, championMatchup, matchupLabel,
+    proficiency01, proficiencyBand,
 } from './constants.js';
 import {
     clamp, randInt, pick, bell, calcOVR, statusInfo, fmtKDA,
 } from './ratings.js';
 import { teamStrength, teamStrengthWithPlayer, teammatesOf } from './teams.js';
-import { career, addNews, grantGold, grantFollowers, adjustCondition, logWeek, saveCareer } from '../stores/career.js';
+import {
+    career, addNews, grantGold, grantFollowers, adjustCondition, logWeek, saveCareer,
+    addProficiency,
+} from '../stores/career.js';
 import { gearAttrBonus, perkEffects } from './economy.js';
 import { getEffectiveRating } from '../utils/cards.js';
 import { showToast } from '../stores/toasts.js';
@@ -137,6 +142,32 @@ const DRAFT_CHP_ON_POCKET = 0.70;    // ...and breadth is most of that
 const DRAFT_TARGETING = 0.22;        // a top org scouts and bans what you are known for
 const POCKET_COMFORT = 0.45;         // a prepared second pick keeps some of the comfort
 const OFFSCRIPT_PENALTY = -0.035;    // playing something you do not really know
+
+/** Champions offered in champion select. Three is a choice; four is a menu. */
+export const DRAFT_OPTIONS = 3;
+
+// ---------------------------------------------------------------------------
+//  MATCHUP AND PROFICIENCY
+//  Two terms, and they are deliberately built to cancel out across a career.
+//
+//  MATCHUP is symmetric: championMatchup() runs -2.5..+2.5 and a good lane pays
+//  exactly what a bad one costs, so it adds variance and a real reason to think
+//  in champion select without making anyone better on average.
+//
+//  PROFICIENCY is a PENALTY THAT FADES, measured against a neutral point rather
+//  than from zero. Picking something cold costs you about 9%; mastering it
+//  removes that and pays a little over. If it were a pure bonus, every career
+//  would drift upward as it accumulated games - and careerSmoke fails a run
+//  outright once the mean match rating passes 7.6, which currently has about a
+//  tenth of a point of headroom.
+// ---------------------------------------------------------------------------
+const MATCHUP_STEP = 0.035;          // one counter step. A hard counter is +/-7%
+const PROFICIENCY_SWING = 0.14;
+const PROFICIENCY_NEUTRAL = 0.65;    // mastery at which proficiency stops costing
+/** How much mastery protects you from a losing lane. Applied to BAD matchups
+ *  only - knowing a champion inside out is what lets you survive a counter, but
+ *  it does not make a favourable lane any more favourable than it already is. */
+const PROFICIENCY_MATCHUP_DAMP = 0.60;
 
 // Game state thresholds the `when` markers are tested against.
 const AHEAD_AT = 8;
@@ -420,12 +451,113 @@ export function rollDraft(c, oppStrength) {
     else if (r < pSignature + (1 - pSignature) * pocketShare) outcome = 'pocket';
     else outcome = 'offscript';
 
+    // ---- who you are up against ------------------------------------------
+    // A stronger org scouts you and picks last, so it counters more often. The
+    // same `targeting` term that decides whether your signature survives the
+    // ban phase decides whether you get to answer their pick or guess at it.
+    const rolePool = championsForRole(p.role) || [];
+    const enemy = rolePool.length ? pick(rolePool) : null;
+    const counter = Math.random() >= clamp(0.55 - targeting, 0.20, 0.80);
+
+    // ---- what you may pick ------------------------------------------------
+    // CHP already decided whether your signature survived. It now decides what
+    // is IN the three, which keeps chp's one mechanical job intact while making
+    // it a choice rather than a roll.
+    const stylePool = championsForStyle(p.role, p.playstyle) || rolePool;
+    const bank = (stylePool.length >= DRAFT_OPTIONS ? stylePool : rolePool).slice();
+
+    const options = [];
+    const take = (ch) => {
+        if (ch && !options.some(o => o.id === ch.id)) options.push(ch);
+    };
+    if (outcome === 'signature') take(champ);
+    // Off-script means banned out of everything you actually play, so the three
+    // come from the whole role rather than from your style pool.
+    const source = outcome === 'offscript'
+        ? rolePool.filter(ch => !stylePool.some(s => s.id === ch.id))
+        : bank.filter(ch => !champ || ch.id !== champ.id);
+    const shuffled = (source.length ? source : rolePool).slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = t;
+    }
+    for (const ch of shuffled) {
+        if (options.length >= DRAFT_OPTIONS) break;
+        take(ch);
+    }
+    // Last resort so champion select can never be empty.
+    for (const ch of rolePool) {
+        if (options.length >= DRAFT_OPTIONS) break;
+        take(ch);
+    }
+
     return {
         outcome,
         // The name is only ever shown, never read back for maths.
         champion: outcome === 'signature' && champ ? champ.name : null,
         line: pick(DRAFT_LINES[outcome]),
+
+        // Champion select proper. `picked` stays null until the player chooses;
+        // the match engine refuses to resolve a decision before it is set.
+        options: options.map(ch => ch.id),
+        enemyId: enemy ? enemy.id : null,
+        counter,
+        picked: null,
     };
+}
+
+/** Has champion select been answered for the game in progress? */
+export function draftPending(match) {
+    const d = match && match.draft;
+    if (!d || !Array.isArray(d.options) || !d.options.length) return false;
+    return !d.picked;
+}
+
+/**
+ * Everything the champion select screen needs for one option, and everything
+ * resolveOption reads back later. Pure - it writes nothing.
+ */
+export function draftOption(c, match, championId) {
+    const state = st(c);
+    const p = (state && state.player) || {};
+    const mine = CHAMPION_BY_ID[championId] || null;
+    const d = (match && match.draft) || {};
+    const theirs = CHAMPION_BY_ID[d.enemyId] || null;
+
+    const games = num(p.proficiency && p.proficiency[championId], 0);
+    const prof = proficiency01(games);
+    // A blind pick cannot be scored against a lane you have not seen yet.
+    const matchup = (d.counter && mine && theirs) ? championMatchup(mine, theirs) : 0;
+
+    return {
+        id: championId,
+        champion: mine,
+        isSignature: !!(mine && p.champion === mine.id),
+        games,
+        proficiency: prof,
+        band: proficiencyBand(prof),
+        matchup,
+        matchupLabel: matchupLabel(matchup),
+        // What the two terms are worth on this pick, so the screen can show the
+        // real numbers rather than a vibe.
+        matchupSwing: matchupSwingFor(matchup, prof),
+        proficiencySwing: (prof - PROFICIENCY_NEUTRAL) * PROFICIENCY_SWING,
+    };
+}
+
+/** A losing lane hurts less the better you know the champion. A winning one is
+ *  not improved by it - mastery is protection, not amplification. */
+function matchupSwingFor(matchup, prof) {
+    const damp = matchup < 0 ? (1 - clamp(prof, 0, 1) * PROFICIENCY_MATCHUP_DAMP) : 1;
+    return matchup * MATCHUP_STEP * damp;
+}
+
+/** Commit champion select. Returns the updated match; the caller stores it. */
+export function chooseDraft(match, championId) {
+    if (!match || !match.draft) return match;
+    const opts = Array.isArray(match.draft.options) ? match.draft.options : [];
+    if (!opts.includes(championId)) return match;
+    return { ...match, draft: { ...match.draft, picked: championId } };
 }
 
 /** How much of the comfort bonus this game's draft is worth. Old saves have no
@@ -583,16 +715,32 @@ export function successChance(c, match, option, event) {
     // Comfort pick. On the games the draft actually gave you your champion,
     // the plays it was built for get easier. On the games you were banned out
     // of your whole pool, you are on something you do not know and it costs.
+    // The champion actually locked in, if champion select has been answered.
+    // Falls back to the signature pick so an in-progress save from before
+    // champion select existed keeps behaving exactly as it did.
+    const draft = (match && match.draft) || null;
+    const playing = CHAMPION_BY_ID[(draft && draft.picked) || p.champion] || null;
+
     const scale = draftComfort(match, state);
     if (scale > 0) {
-        const champ = CHAMPION_BY_ID[p.champion];
-        const arche = champ ? ARCHETYPE_BIAS[champ.archetype] : null;
+        const arche = playing ? ARCHETYPE_BIAS[playing.archetype] : null;
         if (arche && option.bias) {
             const comfort = Math.max(0, 1 - 2 * biasDistance(arche, option.bias));
             chance += comfort * COMFORT_BONUS * scale;
         }
     } else {
         chance += OFFSCRIPT_PENALTY;
+    }
+
+    // Lane matchup and how well you know the pick. Both only apply once a
+    // champion has actually been chosen.
+    if (playing && draft && draft.picked) {
+        const prof = proficiency01(num(p.proficiency && p.proficiency[playing.id], 0));
+        chance += (prof - PROFICIENCY_NEUTRAL) * PROFICIENCY_SWING;
+
+        // A blind pick is not scored against a lane you could not see.
+        const theirs = draft.counter ? CHAMPION_BY_ID[draft.enemyId] : null;
+        if (theirs) chance += matchupSwingFor(championMatchup(playing, theirs), prof);
     }
 
     // The map read. Nothing in the option text says which one this is.
@@ -790,6 +938,13 @@ export function finishGame(c, match) {
         rating: match.playerPlays === false ? 0 : gameRating(match.personal, kda, won),
         pentakills: pentakillRoll(match, kda, won),
     };
+
+    // Bank the game on whatever was actually locked in. Not on player.champion:
+    // the signature pick is a preference, proficiency is a record of what you
+    // have played. A benched game teaches you nothing.
+    if (match.playerPlays !== false && match.draft && match.draft.picked) {
+        addProficiency(match.draft.picked, 1);
+    }
 
     const seriesScore = [
         num(match.seriesScore && match.seriesScore[0], 0) + (won ? 1 : 0),

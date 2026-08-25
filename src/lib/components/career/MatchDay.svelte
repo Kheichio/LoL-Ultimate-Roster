@@ -22,7 +22,9 @@
     import {
         EVENTS_PER_GAME, nextEvent, resolveDecision, finishGame,
         isMatchOver, finishMatch, matchRatingLabel, headlineFor,
+        draftPending, draftOption, chooseDraft,
     } from '../../career/match.js';
+    import { CHAMPION_BY_ID } from '../../career/constants.js';
     import { completeMatch } from '../../career/engine.js';
 
     // -- tuning mirrors match.js' own clamps -----------------------------
@@ -180,6 +182,21 @@
         }
         if (decisionsThisGame >= EVENTS_PER_GAME * 3) { doFinishGame(); return; }
 
+        // Champion select comes before the first decision of every game. An
+        // in-progress save from before this existed has no options on its draft,
+        // so draftPending is false and the game runs exactly as it used to.
+        //
+        // Only stop here if the screen would actually have something to show. A
+        // draft whose ids no longer resolve would otherwise strand the player on
+        // an empty panel with no way out of the match.
+        if (draftPending(m)) {
+            const pickable = (m.draft.options || []).some(id => {
+                try { const v = draftOption(get(career), m, id); return !!(v && v.champion); }
+                catch (err) { return false; }
+            });
+            if (pickable) { stage = 'draft'; return; }
+        }
+
         let ev = null;
         try { ev = nextEvent(m); } catch (err) { ev = null; }
 
@@ -190,6 +207,28 @@
         lastOutcome = null;
         continueReady = false;
         stage = 'decision';
+    }
+
+    // -- champion select -------------------------------------------------
+    $: draftViews = (stage === 'draft' && m && m.draft && Array.isArray(m.draft.options))
+        ? m.draft.options
+            .map(id => { try { return draftOption($career, m, id); } catch (err) { return null; } })
+            .filter(v => v && v.champion)
+        : [];
+    $: enemyChamp = (m && m.draft && m.draft.enemyId) ? (CHAMPION_BY_ID[m.draft.enemyId] || null) : null;
+    $: isCounterPick = !!(m && m.draft && m.draft.counter);
+
+    function pickChampion(id) {
+        if (stage !== 'draft' || busy) return;
+        const cur = get(matchState);
+        if (!cur) return;
+        busy = true;
+        playSound('click');
+        try {
+            matchState.set(chooseDraft(cur, id));
+        } catch (err) { /* fall through - beginDecision will re-check */ }
+        busy = false;
+        beginDecision();
     }
 
     function choose(optionId) {
@@ -729,6 +768,60 @@
                         <button class="btn-secondary big-btn" on:click={primaryAction}>Watch it play out</button>
                     </div>
 
+                {:else if stage === 'draft'}
+                    <!-- Champion select. Three picks, one click, no confirm -
+                         this runs before every game and a Bo5 is five of them,
+                         so it cannot become a screen you have to read twice. -->
+                    <div class="cs">
+                        <div class="cs-head">
+                            <span class="cs-tag" class:cs-tag-counter={isCounterPick}>
+                                {isCounterPick ? 'Counter pick' : 'Blind pick'}
+                            </span>
+                            <span class="cs-sub">
+                                {#if isCounterPick && enemyChamp}
+                                    They locked {enemyChamp.name}. You pick last.
+                                {:else}
+                                    You pick first. You will not see theirs until it is too late to change.
+                                {/if}
+                            </span>
+                        </div>
+
+                        <div class="cs-grid">
+                            {#each draftViews as v (v.id)}
+                                {@const swing = v.matchupSwing + v.proficiencySwing}
+                                <button class="cs-opt" on:click={() => pickChampion(v.id)} disabled={busy}>
+                                    <span class="cs-top">
+                                        <span class="cs-name">{v.champion.name}</span>
+                                        {#if v.isSignature}<span class="cs-sig">Signature</span>{/if}
+                                    </span>
+                                    <span class="cs-arch">{v.champion.archetype}</span>
+
+                                    <span class="cs-row">
+                                        <span class="cs-lbl">Proficiency</span>
+                                        <span class="cs-val" style="color:{v.band.color}">{v.band.name}</span>
+                                    </span>
+                                    <span class="cs-bar" aria-hidden="true">
+                                        <span class="cs-fill" style="width:{Math.round(v.proficiency * 100)}%; background:{v.band.color}"></span>
+                                    </span>
+                                    <span class="cs-games">{v.games} {v.games === 1 ? 'game' : 'games'} played</span>
+
+                                    {#if isCounterPick && enemyChamp}
+                                        <span class="cs-row">
+                                            <span class="cs-lbl">Into {enemyChamp.name}</span>
+                                            <span class="cs-val cs-{v.matchupLabel.tone}">{v.matchupLabel.text}</span>
+                                        </span>
+                                    {/if}
+
+                                    <span class="cs-net" class:cs-good={swing > 0.005} class:cs-bad={swing < -0.005}>
+                                        {swing >= 0 ? '+' : ''}{(swing * 100).toFixed(1)}% on every call this game
+                                    </span>
+                                </button>
+                            {:else}
+                                <p class="cs-empty">Champion select produced nothing pickable. Playing your signature.</p>
+                            {/each}
+                        </div>
+                    </div>
+
                 {:else if stage === 'decision' && currentEvent}
                     <div class="dec">
                         <div class="dec-head">
@@ -991,6 +1084,58 @@
     .md-side { min-width: 0; position: sticky; top: 210px; max-height: calc(100vh - 240px); overflow-y: auto; }
 
     /* =========== DECISION =========== */
+    /* ---- champion select ---- */
+    .cs { animation: rise 0.3s ease both; }
+    .cs-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .cs-tag {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+        padding: 4px 10px; border-radius: 6px;
+        color: #94a3b8; background: rgba(51, 65, 85, 0.35); border: 1px solid rgba(71, 85, 105, 0.4);
+    }
+    .cs-tag-counter { color: #4ade80; background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3); }
+    .cs-sub { font-size: 12px; color: #5d6f8d; }
+
+    .cs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 11px; }
+    .cs-opt {
+        display: flex; flex-direction: column; gap: 5px; text-align: left;
+        font-family: inherit; padding: 15px 15px 13px; border-radius: 13px; cursor: pointer;
+        background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(51, 65, 85, 0.45);
+        transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+    }
+    .cs-opt:hover:not(:disabled) {
+        transform: translateY(-2px);
+        background: rgba(30, 41, 59, 0.6); border-color: rgba(139, 92, 246, 0.5);
+    }
+    .cs-opt:disabled { opacity: 0.55; cursor: default; }
+    .cs-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .cs-name {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 16px; font-weight: 700; color: #e8eefb;
+    }
+    .cs-sig {
+        font-size: 8px; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase;
+        padding: 2px 6px; border-radius: 4px;
+        color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .cs-arch { font-size: 10.5px; color: #4e5f7a; margin-bottom: 4px; }
+    .cs-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .cs-lbl { font-size: 10.5px; color: #56688a; }
+    .cs-val { font-size: 11px; font-weight: 700; color: #94a3b8; }
+    .cs-good { color: #4ade80; }
+    .cs-bad { color: #f87171; }
+    .cs-flat { color: #7d93b8; }
+    .cs-bar { height: 4px; border-radius: 99px; background: rgba(15, 23, 42, 0.85); overflow: hidden; }
+    .cs-fill { display: block; height: 100%; border-radius: 99px; }
+    .cs-games { font-size: 9.5px; color: #3f5069; }
+    .cs-net {
+        margin-top: 7px; padding-top: 8px; font-size: 10.5px; font-weight: 700;
+        color: #7d93b8; border-top: 1px solid rgba(51, 65, 85, 0.35);
+    }
+    .cs-net.cs-good { color: #4ade80; }
+    .cs-net.cs-bad { color: #f87171; }
+    .cs-empty { font-size: 12px; color: #5d6f8d; }
+
     .dec { animation: rise 0.3s ease both; }
     @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
     .dec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }

@@ -606,6 +606,7 @@ const stats = {
     // everywhere and hands out double the comfort bonus with nothing to show
     // for it - no crash, no visible symptom, just a quietly easier game.
     draft: { signature: 0, pocket: 0, offscript: 0, missing: 0 },
+    draftPicks: 0,
     awardsGranted: 0,
     milestonesGranted: 0,
     legacyEnd: 0,
@@ -724,6 +725,40 @@ function playFixtureManually(f) {
         if (over) break;
 
         if (m.playerPlays !== false) {
+            // Champion select, once per game, before any decision resolves. The
+            // harness picks at random from the three on offer - it is testing
+            // that the draft is answerable and that everything downstream reads
+            // the pick, not that the pick is a good one.
+            if (step('match.draftPending', () => M.draftPending(m), false)) {
+                const opts = (m.draft && Array.isArray(m.draft.options)) ? m.draft.options : [];
+                if (opts.length !== M.DRAFT_OPTIONS) {
+                    fail('wrong', 'src/lib/career/match.js', 'champion select did not offer the right number of picks',
+                        `${ctxLine()} -> ${opts.length} options, expected ${M.DRAFT_OPTIONS}`,
+                        'rollDraft tops the list up from the role pool; it must never come up short.');
+                }
+                for (const id of opts) {
+                    const view = step('match.draftOption', () => M.draftOption(cur(), m, id), null);
+                    if (!view || !view.champion) {
+                        fail('wrong', 'src/lib/career/match.js', 'a champion select option does not resolve',
+                            `${ctxLine()} -> "${id}"`, 'rollDraft must only ever offer real champion ids.',
+                            'draftopt|' + id);
+                    } else if (!isNum(view.matchupSwing) || !isNum(view.proficiencySwing)) {
+                        fail('wrong', 'src/lib/career/match.js', 'champion select produced a non-numeric swing',
+                            `${ctxLine()} -> ${id} ${JSON.stringify({ m: view.matchupSwing, p: view.proficiencySwing })}`,
+                            'championMatchup/proficiency01 must always resolve to a number.');
+                    }
+                }
+                if (opts.length) {
+                    m = step('match.chooseDraft', () => M.chooseDraft(m, rpick(opts)), m);
+                    ST.matchState.set(m);
+                    stats.draftPicks++;
+                    if (!m.draft || !m.draft.picked) {
+                        fail('crash', 'src/lib/career/match.js', 'chooseDraft did not record the pick',
+                            `${ctxLine()}`, 'Every decision after this reads match.draft.picked.');
+                    }
+                }
+            }
+
             let ev = step('match.nextEvent', () => M.nextEvent(m), null);
             let inner = 0;
             while (ev && inner++ < M.EVENTS_PER_GAME + 3) {
@@ -1100,6 +1135,8 @@ function runCareer(cfg, label) {
         label, cfg, retired, weeks,
         ovrByYear,
         traits: Array.isArray(end.player.traits) ? end.player.traits.slice() : [],
+        proficiency: (end.player.proficiency && typeof end.player.proficiency === 'object')
+            ? { ...end.player.proficiency } : {},
         breakthroughOVR: Number(end.flags && end.flags.breakthroughOVR) || 0,
         boughtCeilingOVR: Number(end.flags && end.flags.boughtCeilingOVR) || 0,
         endOVR: R.calcOVR(end.player.attrs, end.player.role),
@@ -1487,6 +1524,26 @@ console.log(`  offers seen / accepted : ${stats.offersSeen} / ${stats.offersAcce
 console.log(`  shop purchases         : ${stats.shopBuys}`);
 console.log(`  events / interviews    : ${stats.eventsApplied} / ${stats.interviewsApplied}`);
 console.log(`  role changes           : ${stats.roleChanges}`);
+// Champion select and what it taught the player. A run where nobody ever picks,
+// or where proficiency never accumulates, means the feature is wired but inert.
+{
+    const pools = results.map(r => Object.keys(r.proficiency || {}).length);
+    const best = results.map(r => Math.max(0, ...Object.values(r.proficiency || {})));
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    console.log(`  champion select picks  : ${stats.draftPicks}`);
+    console.log(`  champions played       : ${mean(pools).toFixed(1)} mean per career`
+        + `, most-played has ${mean(best).toFixed(0)} games`);
+    if (stats.draftPicks < 100) {
+        fail('wrong', 'src/lib/career/match.js', 'champion select barely fired',
+            `${stats.draftPicks} picks across the whole run`,
+            'Every played game should offer a draft; draftPending/rollDraft may have stopped producing options.');
+    }
+    if (mean(pools) < 2) {
+        fail('wrong', 'src/lib/career/match.js', 'careers only ever play one champion',
+            `mean pool ${mean(pools).toFixed(2)}`,
+            'rollDraft should be offering a varied three, and finishGame should bank each one played.');
+    }
+}
 // Traits and the two ceiling budgets. Not an assertion -- the invariants above
 // cover correctness. This is the balance readout: a run where every career is a
 // Legend, or where nobody ever earns a breakthrough, is a tuning problem the

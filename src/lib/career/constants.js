@@ -535,6 +535,160 @@ export const ARCHETYPE_BIAS = {
     Enchanter:  { aggression: 0.20, risk: 0.20, teamplay: 1.00 },
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+//  MATCHUPS
+//  Who beats who, by ARCHETYPE.
+//
+//  This is DESIGNED rock-paper-scissors, not scraped win rates. There is no
+//  real matchup data anywhere in this project and a 173x173 champion table
+//  would be thirty thousand cells of invented statistics, so the counters run
+//  on the seventeen archetypes the comfort bonus and the playstyle fit rule
+//  already use. Texture between two champions of the same archetype comes from
+//  their `mods` instead (see laneEdge below), so Fiora and Jax are not identical
+//  into the same lane.
+//
+//  Authored ONE DIRECTION ONLY. `beats` is the whole table; the losing side is
+//  generated from it, so the matrix cannot contradict itself and a pair listed
+//  in both directions is a hard error in tools/championCheck.mjs.
+//
+//    2 = a real counter. You are behind before the game starts.
+//    1 = an edge. Noticeable, not decisive.
+//
+//  If a genuine data source ever turns up, replace ARCHETYPE_COUNTERS and
+//  nothing else has to change.
+// ─────────────────────────────────────────────────────────────────────────
+const ARCHETYPE_COUNTERS = {
+    // Dive the squishy thing. Bounce off the tanky one.
+    Assassin:   { Mage: 2, Marksman: 2, Hypercarry: 2, Poke: 1, Enchanter: 1, Battlemage: 1 },
+    Diver:      { Marksman: 2, Enchanter: 1, Poke: 2, Hypercarry: 2, Mage: 1 },
+    // Sustained single-target damage. Beats things that cannot disengage.
+    Duelist:    { Juggernaut: 1, Marksman: 1, Specialist: 1 },
+    Skirmisher: { Juggernaut: 1, Marksman: 1, Catcher: 1 },
+    // Tanks eat divers and get shredded by sustained or percent damage.
+    Warden:     { Assassin: 2, Diver: 1, Duelist: 1, Catcher: 1, 'Lane Bully': 1 },
+    Vanguard:   { Assassin: 1, Marksman: 2, Enchanter: 2, Diver: 1 },
+    // Juggernaut is the classic "everyone kites you" archetype and its net is
+    // meant to be negative - but it beats the things that have to come to it.
+    Juggernaut: { Vanguard: 1, Warden: 1, Catcher: 1, Assassin: 1, Diver: 1, Specialist: 1 },
+    // Range and area damage against anything that has to walk at you.
+    Battlemage: { Juggernaut: 2, Warden: 1, Vanguard: 1, Catcher: 1 },
+    Mage:       { Juggernaut: 1, Vanguard: 1, Skirmisher: 1, Catcher: 1, 'Lane Bully': 1 },
+    // Poke beats melee. Skirmisher is here because it is otherwise uncounterable
+    // in the ADC pool, which has no Mage.
+    Poke:       { Juggernaut: 2, Vanguard: 2, Warden: 1, Catcher: 1, 'Lane Bully': 1, Skirmisher: 1 },
+    // Carries beat the durable things, given the time to do it.
+    Marksman:   { Warden: 2, Juggernaut: 1, Battlemage: 1 },
+    Hypercarry: { Warden: 2, Juggernaut: 2, Battlemage: 1 },
+    // Bot-lane and support-side identities.
+    'Lane Bully': { Hypercarry: 2, Enchanter: 1, Utility: 1, Specialist: 1 },
+    Catcher:    { Enchanter: 1, Hypercarry: 1, Utility: 1 },
+    Enchanter:  { Poke: 1, Duelist: 1 },
+    Utility:    { Poke: 1, Battlemage: 1 },
+    Specialist: { Warden: 1, Mage: 1 },
+};
+
+/** The full signed matrix, generated so it can never disagree with itself. */
+const _MATCHUP = (() => {
+    const m = {};
+    for (const a of Object.keys(ARCHETYPE_BIAS)) m[a] = {};
+    for (const [winner, losers] of Object.entries(ARCHETYPE_COUNTERS)) {
+        for (const [loser, weight] of Object.entries(losers)) {
+            if (!m[winner] || !m[loser]) continue;   // validated by championCheck
+            m[winner][loser] = weight;
+            m[loser][winner] = -weight;
+        }
+    }
+    return m;
+})();
+
+export { ARCHETYPE_COUNTERS };
+
+/** Signed archetype matchup: > 0 means `mine` is favoured. Range -2..2. */
+export function archetypeMatchup(mine, theirs) {
+    const row = _MATCHUP[mine];
+    if (!row || !theirs) return 0;
+    return Number(row[theirs]) || 0;
+}
+
+/**
+ * A small tie-breaker between two champions of the same archetype, from the
+ * attribute shims they already carry. A champion whose mods lean into laning
+ * and mechanics is a harder lane than one that leans into teamfighting, and
+ * that is real authored data rather than another invented number.
+ * Deliberately small: about a fifth of one counter step.
+ */
+export function laneEdge(mine, theirs) {
+    const lane = c => (c && c.mods ? (Number(c.mods.lne) || 0) + (Number(c.mods.mec) || 0) * 0.5 : 0);
+    // The lane values run -4 to +5.5, so at the 0.08 this started on the shim
+    // could swing 0.76 - three quarters of a full counter step, applied to every
+    // matchup in the game. Renekton (lne 5) came out very nearly uncounterable:
+    // a Warden is +1 into a Diver by the table and only +0.32 once his laning
+    // shim had been subtracted. A tie-breaker between two champions of the same
+    // archetype has to be worth a fraction of a counter, so it is clamped.
+    const raw = (lane(mine) - lane(theirs)) * 0.03;
+    return Math.max(-0.25, Math.min(0.25, raw));
+}
+
+/**
+ * The full matchup number for one champion against another, in counter-steps.
+ * 0 is even; positive favours `mine`. Nothing else in the game reads the
+ * archetype table directly - everything goes through here.
+ */
+export function championMatchup(mine, theirs) {
+    if (!mine || !theirs) return 0;
+    const base = archetypeMatchup(mine.archetype, theirs.archetype);
+    return Math.max(-2.5, Math.min(2.5, base + laneEdge(mine, theirs)));
+}
+
+/** Human label for a matchup number, for the champion select screen. */
+export function matchupLabel(n) {
+    const v = Number(n) || 0;
+    if (v >= 1.5) return { text: 'Hard counter', tone: 'good' };
+    if (v >= 0.5) return { text: 'Favoured', tone: 'good' };
+    if (v > -0.5) return { text: 'Even', tone: 'flat' };
+    if (v > -1.5) return { text: 'Losing lane', tone: 'bad' };
+    return { text: 'Hard counter against you', tone: 'bad' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  CHAMPION PROFICIENCY
+//  Games played on a champion, and what that is worth.
+//
+//  Proficiency is a PENALTY THAT FADES, not a bonus that accrues. Picking
+//  something you have barely played costs you; mastering it removes the cost
+//  and pays a little on top. That is deliberate on two counts. It is what makes
+//  the three-option champion select an actual decision - the good matchup you
+//  cannot play against the comfortable pick into a bad lane - and it keeps the
+//  whole feature close to net-zero, which matters because careerSmoke fails a
+//  run outright if the mean match rating drifts above 7.6.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Games on one champion to be considered fully proficient. */
+export const PROFICIENCY_GAMES = 40;
+/** Your signature pick is where the hours already went. */
+export const PROFICIENCY_SIGNATURE_HEAD_START = 18;
+
+/** 0..1 mastery from a raw game count, front-loaded: the first ten games teach
+ *  you far more than the fortieth does. */
+export function proficiency01(games) {
+    const g = Math.max(0, Number(games) || 0);
+    return Math.min(1, Math.sqrt(g / PROFICIENCY_GAMES));
+}
+
+export const PROFICIENCY_BANDS = [
+    { min: 0.85, name: 'Mastered',   color: '#eab308' },
+    { min: 0.60, name: 'Trusted',    color: '#22c55e' },
+    { min: 0.35, name: 'Practised',  color: '#3b82f6' },
+    { min: 0.12, name: 'Learning',   color: '#f59e0b' },
+    { min: 0,    name: 'Cold',       color: '#ef4444' },
+];
+
+export function proficiencyBand(p) {
+    const v = Math.max(0, Math.min(1, Number(p) || 0));
+    for (const b of PROFICIENCY_BANDS) if (v >= b.min) return b;
+    return PROFICIENCY_BANDS[PROFICIENCY_BANDS.length - 1];
+}
+
 /** Mean absolute distance between two {aggression, risk, teamplay} triples.
  *  The match engine scores every in-game decision with this same function. */
 export function biasDistance(a, b) {

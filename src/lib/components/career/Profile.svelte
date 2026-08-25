@@ -16,7 +16,7 @@
     import {
         ATTRS, ATTR_BY_KEY, ROLE_BY_ID, REGION_BY_ID, PLAYSTYLE_BY_ID,
         CHAMPION_BY_ID, PATH_BY_ID, teamById, RETIREMENT_AGE_MIN,
-        TRAIT_RARITIES, championFit,
+        TRAIT_RARITIES, championFit, proficiency01, proficiencyBand,
     } from '../../career/constants.js';
     import {
         ovrTier, ovrLabel, ageBand, growthFor, statusInfo, toCareerCard,
@@ -228,6 +228,28 @@
         showToast(res.msg, res.ok ? 'success' : 'error');
         if (res.ok) { switching = false; switchPick = ''; }
     }
+
+    // ---- champion proficiency -------------------------------------------
+    //  Every game played on a champion is banked against it. Most-played first;
+    //  the signature pick is flagged rather than pinned to the top, because
+    //  after a few seasons it is often no longer the one with the hours on it.
+    $: profRows = Object.entries(p.proficiency || {})
+        .map(([id, games]) => {
+            const ch = CHAMPION_BY_ID[id];
+            if (!ch) return null;
+            const n = Math.max(0, Math.round(Number(games) || 0));
+            const pr = proficiency01(n);
+            return {
+                id, champ: ch, games: n, prof: pr, band: proficiencyBand(pr),
+                isSignature: p.champion === id,
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.games - a.games || a.champ.name.localeCompare(b.champ.name));
+    $: profTotal = profRows.reduce((s, r) => s + r.games, 0);
+    $: profMastered = profRows.filter(r => r.prof >= 0.85).length;
+    let profAll = false;
+    $: profShown = profAll ? profRows : profRows.slice(0, 8);
 
     // ---- retirement ----------------------------------------------------
     $: gate = canRetire(c);
@@ -576,6 +598,50 @@
         {/if}
     </div>
 
+    <!-- ============ CHAMPION PROFICIENCY ============ -->
+    <div class="panel pad">
+        <div class="slab-row">
+            <div class="slab">Champion Proficiency</div>
+            {#if profRows.length > 8}
+                <button class="lnk" on:click={() => (profAll = !profAll)}>
+                    {profAll ? 'Show top 8' : `Show all ${profRows.length}`}
+                </button>
+            {/if}
+        </div>
+
+        {#if profRows.length}
+            <p class="note">
+                Every game you play on a champion is banked against it. A champion you barely know
+                costs you on every call; one you have mastered stops costing you and holds up in a
+                losing lane. {profTotal} {profTotal === 1 ? 'game' : 'games'} across
+                {profRows.length} {profRows.length === 1 ? 'champion' : 'champions'}{profMastered
+                    ? `, ${profMastered} mastered` : ''}.
+            </p>
+
+            <div class="prof">
+                {#each profShown as r (r.id)}
+                    <div class="pf-row" style="--k:{r.band.color}">
+                        <span class="pf-name">
+                            {r.champ.name}
+                            {#if r.isSignature}<span class="pf-sig">Signature</span>{/if}
+                        </span>
+                        <span class="pf-arch">{r.champ.archetype}</span>
+                        <span class="pf-bar" aria-hidden="true">
+                            <span class="pf-fill" style="width:{Math.round(r.prof * 100)}%"></span>
+                        </span>
+                        <span class="pf-band">{r.band.name}</span>
+                        <span class="pf-games">{r.games}</span>
+                    </div>
+                {/each}
+            </div>
+        {:else}
+            <p class="note">
+                Nothing played yet. Champion select offers you three picks before every game, and
+                every one you play is recorded here.
+            </p>
+        {/if}
+    </div>
+
     <!-- ============ CAREER TOTALS ============ -->
     <div class="panel pad">
         <div class="slab">Career Totals</div>
@@ -858,6 +924,46 @@
     .slab-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .slab-ct { font-size: 10px; font-weight: 700; letter-spacing: 0.4px; color: #4a5b76; margin-bottom: 12px; }
     .note { font-size: 11.5px; line-height: 1.6; color: #56688a; margin: 0 0 14px; }
+
+    /* ---- champion proficiency ---- */
+    .lnk {
+        font-family: inherit; font-size: 11px; font-weight: 700;
+        padding: 5px 11px; border-radius: 7px; cursor: pointer;
+        color: #7d93b8; background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(51, 65, 85, 0.4);
+        transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .lnk:hover { color: #cbd5e1; border-color: rgba(71, 85, 105, 0.7); }
+    .prof { display: flex; flex-direction: column; gap: 6px; }
+    .pf-row {
+        display: grid;
+        grid-template-columns: minmax(110px, 1.3fr) minmax(70px, 0.9fr) minmax(80px, 1.6fr) 74px 42px;
+        align-items: center; gap: 10px;
+        padding: 8px 12px; border-radius: 9px;
+        background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.32);
+    }
+    .pf-name {
+        display: flex; align-items: center; gap: 7px;
+        font-size: 13px; font-weight: 700; color: #cbd5e1;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pf-sig {
+        font-size: 8px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+        padding: 2px 5px; border-radius: 4px; flex-shrink: 0;
+        color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.28);
+    }
+    .pf-arch { font-size: 10.5px; color: #4e5f7a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pf-bar { height: 5px; border-radius: 99px; background: rgba(15, 23, 42, 0.85); overflow: hidden; }
+    .pf-fill { display: block; height: 100%; border-radius: 99px; background: var(--k); }
+    .pf-band { font-size: 10.5px; font-weight: 700; color: var(--k); text-align: right; }
+    .pf-games {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 12px; color: #56688a; text-align: right;
+    }
+    @media (max-width: 620px) {
+        .pf-row { grid-template-columns: 1fr 60px 40px; }
+        .pf-arch, .pf-bar { display: none; }
+    }
 
     /* ---- genetic traits ---- */
     .tr-strip { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }

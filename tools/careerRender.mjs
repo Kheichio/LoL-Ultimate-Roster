@@ -712,6 +712,11 @@ const SINGLE_ROT = [
     ['traits-is-null',           c => ({ ...c, player: { ...c.player, traits: null } })],
     ['traits-hold-a-dead-id',    c => ({ ...c, player: { ...c.player, traits: ['no_such_trait'] } })],
     ['playstyle-is-unknown',     c => ({ ...c, player: { ...c.player, playstyle: 'NOT_A_STYLE' } })],
+    // Proficiency is an id -> count map and the Profile screen renders a row per
+    // entry, so a dead id or the wrong type both reach the template.
+    ['proficiency-is-null',      c => ({ ...c, player: { ...c.player, proficiency: null } })],
+    ['proficiency-dead-id',      c => ({ ...c, player: { ...c.player, proficiency: { no_such_champ: 12 } } })],
+    ['proficiency-is-array',     c => ({ ...c, player: { ...c.player, proficiency: [1, 2, 3] } })],
 ];
 const SINGLE_STATES = [];
 for (const [label, fn] of SINGLE_ROT) {
@@ -790,6 +795,32 @@ function buildMatchStages() {
         const f2 = clone(fresh);
         f2.playerPlays = true;
         stages.push(['fresh', f2]);
+
+        // Champion select, which is what a fresh game actually opens on now.
+        // Three variants because the screen changes shape between them: a
+        // counter pick shows the enemy champion and a matchup verdict, a blind
+        // pick shows neither, and a draft carrying dead ids must not strand the
+        // player on an empty panel.
+        // buildMatch only rolls a draft when the player is actually in the
+        // lineup, and this fixture can come back benched - so the draft is
+        // rolled explicitly rather than relying on which way that fell.
+        if (!f2.draft || !Array.isArray(f2.draft.options)) {
+            f2.draft = safe('rollDraft', () => M.rollDraft(cur(), f2.oppStrength), null) || f2.draft;
+        }
+
+        if (f2.draft && Array.isArray(f2.draft.options)) {
+            const counter = clone(f2);
+            counter.draft = { ...counter.draft, counter: true, picked: null };
+            stages.push(['draft-counter', counter]);
+
+            const blind = clone(f2);
+            blind.draft = { ...blind.draft, counter: false, enemyId: null, picked: null };
+            stages.push(['draft-blind', blind]);
+
+            const rotten = clone(f2);
+            rotten.draft = { ...rotten.draft, options: ['no_such_champ', 'also_fake'], enemyId: 'ghost', picked: null };
+            stages.push(['draft-dead-ids', rotten]);
+        }
 
         // mid-game: two decisions resolved
         let m = clone(f2);

@@ -23,6 +23,7 @@ import {
     CHAMPIONS, CHAMPION_BY_ID, ATTR_KEYS, ROLES, championsForRole,
     ARCHETYPE_BIAS, PLAYSTYLES, championsForStyle, biasDistance,
     FIT_MAX, STYLE_POOL_MIN,
+    ARCHETYPE_COUNTERS, archetypeMatchup, championMatchup,
 } from '../src/lib/career/constants.js';
 import fs from 'node:fs';
 
@@ -258,6 +259,72 @@ for (const k of ATTR_KEYS) {
     const b = byAttr[k] || { plus: 0, minus: 0 };
     console.log('        ' + k + '  +' + String(b.plus).padStart(3) + '   -' + String(b.minus).padStart(3));
     if (b.plus === 0) warn('no champion grants ' + k);
+}
+
+// ----------------------------------------------------------- matchup table
+//  ARCHETYPE_COUNTERS is authored one direction only and the losing side is
+//  generated from it, so the matrix cannot contradict itself by construction -
+//  UNLESS a pair is listed in both directions, which silently overwrites one of
+//  them and leaves a counter that only works one way.
+console.log('');
+console.log('=== matchup table ==================================================');
+for (const [winner, losers] of Object.entries(ARCHETYPE_COUNTERS)) {
+    if (!ARCHETYPE_BIAS[winner]) err('ARCHETYPE_COUNTERS has a row for "' + winner + '", which is not an archetype');
+    for (const [loser, weight] of Object.entries(losers)) {
+        if (!ARCHETYPE_BIAS[loser]) {
+            err(winner + ' beats "' + loser + '", which is not an archetype');
+        }
+        if (winner === loser) err(winner + ' is listed as beating itself');
+        if (weight !== 1 && weight !== 2) err(winner + ' vs ' + loser + ': weight ' + weight + ' must be 1 or 2');
+        const reverse = ARCHETYPE_COUNTERS[loser];
+        if (reverse && reverse[winner] != null) {
+            err('contradiction: ' + winner + ' beats ' + loser + ' AND ' + loser + ' beats ' + winner
+                + ' - the table is authored one direction only');
+        }
+    }
+}
+
+// An archetype that beats everything, or loses to everything, is not a
+// matchup - it is a tier list.
+const rows = [];
+for (const a of Object.keys(ARCHETYPE_BIAS)) {
+    let good = 0, bad = 0, net = 0;
+    for (const b of Object.keys(ARCHETYPE_BIAS)) {
+        if (a === b) continue;
+        const v = archetypeMatchup(a, b);
+        if (v > 0) good++; else if (v < 0) bad++;
+        net += v;
+    }
+    rows.push({ a, good, bad, net });
+}
+rows.sort((x, y) => y.net - x.net);
+for (const r of rows) {
+    console.log('  ' + r.a.padEnd(12) + 'beats ' + String(r.good).padStart(2)
+        + '   loses to ' + String(r.bad).padStart(2) + '   net ' + (r.net >= 0 ? '+' : '') + r.net);
+    if (r.good && !r.bad) err(r.a + ' beats ' + r.good + ' archetypes and loses to none - that is a tier list, not a matchup');
+    if (r.bad && !r.good) err(r.a + ' loses to ' + r.bad + ' archetypes and beats none - nobody would ever pick it');
+    if (!r.good && !r.bad) warn(r.a + ' has no matchups at all - it is always even');
+}
+const spread = rows[0].net - rows[rows.length - 1].net;
+console.log('  net spread ' + spread + ' (' + rows[0].a + ' over ' + rows[rows.length - 1].a + ')');
+if (spread > 14) {
+    err('matchup net spread ' + spread + ' is too wide - the best archetype is favoured in far more '
+        + 'lanes than the worst, so champion select answers itself');
+}
+
+// The table has to survive real champion pools: within one role, a player must
+// always be able to find something that is not losing.
+for (const role of ROLES) {
+    const pool = championsForRole(role.id);
+    let worst = null;
+    for (const theirs of pool) {
+        const best = Math.max.apply(null, pool.map(mine => championMatchup(mine, theirs)));
+        if (worst === null || best < worst.best) worst = { theirs, best };
+    }
+    if (worst && worst.best < 0.5) {
+        err(role.id + ': against ' + worst.theirs.name + ' the best available answer is only '
+            + worst.best.toFixed(2) + ' - there is no counter-pick in the role');
+    }
 }
 
 // --------------------------------------------------- comfort-bonus fairness
