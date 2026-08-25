@@ -242,10 +242,27 @@
     //        so a fast reader is never held up and a slow one is never rushed.
     // qms  = the answer window, which only starts once the options appear.
     //        Reading time is no longer taken out of thinking time.
+    // fb   = how long the explanation stays up. Also skippable with Space.
+    //
+    // EVERY NUMBER HERE IS A MAXIMUM, NOT A TARGET. Answering advances
+    // immediately, so a player who knows the answer never waits: widening these
+    // windows costs a fast player nothing and is the only thing that makes the
+    // drill possible for everyone else.
+    //
+    // qms used to be 8000/6500/5000. Four options run to ninety characters
+    // each, so an Elite question was asking the player to read roughly sixty
+    // words AND decide inside five seconds -- about a third of the time it
+    // takes to read them. The score has no speed term at all (see finish():
+    // accuracy and streak only), so nothing was being measured by that clock
+    // except reading speed, which is not the attribute this drill trains.
+    //
+    // session is a backstop for someone who walks away mid-drill, not a pace.
+    // It must stay clear of n * (read + qms + fb) or a slow player is cut off
+    // early -- and unanswered questions count as wrong.
     const CONFIG = {
-        1: { n: 10, read: 4500, qms: 8000, fb: 1000, session: 140000, name: 'Basic Drill' },
-        2: { n: 12, read: 3800, qms: 6500, fb: 900,  session: 140000, name: 'Advanced' },
-        3: { n: 14, read: 3200, qms: 5000, fb: 800,  session: 140000, name: 'Elite' },
+        1: { n: 10, read: 6000, qms: 18000, fb: 2600, session: 300000, name: 'Basic Drill' },
+        2: { n: 12, read: 5200, qms: 15000, fb: 2300, session: 300000, name: 'Advanced' },
+        3: { n: 14, read: 4500, qms: 12000, fb: 2000, session: 300000, name: 'Elite' },
     };
     $: diffLevel = Math.max(1, Math.min(3, Math.round(Number(difficulty) || 1)));
     $: cfg = CONFIG[diffLevel];

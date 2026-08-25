@@ -14,16 +14,28 @@
     export let onQuit = null;
 
     // ---------- tuning ----------------------------------------------------
-    // picks * cap is deliberately bounded: bank + picks * reveal is always
-    // comfortably under 60s of wall clock even if the player never answers.
-    const DIFFS = {
     // `read` seconds show the board and the question with NO options and no
     // clock running - neither the per-puzzle cap nor the shared bank ticks
-    // during it. The bank is therefore pure thinking time now, which is the
-    // whole point: reading a draft board is not the skill being measured.
-        1: { picks: 10, read: 4.0, bank: 42, cap: 11.0, name: 'Basic Drill', blurb: 'Ten boards, eleven seconds of thinking each.' },
-        2: { picks: 11, read: 3.4, bank: 40, cap: 9.5,  name: 'Advanced',    blurb: 'Eleven boards, tighter clock, scouting noise.' },
-        3: { picks: 12, read: 2.8, bank: 38, cap: 8.0,  name: 'Elite',       blurb: 'Twelve boards, eight seconds, pro-level drafts.' },
+    // during it. The bank is therefore pure thinking time, which is the whole
+    // point: reading a draft board is not the skill being measured. The read
+    // phase is skippable with Space or the Show Options button.
+    //
+    // The BANK was the real crunch, not the cap. Thirty-eight seconds spread
+    // across twelve boards is a little over three seconds a board on average -
+    // the per-puzzle cap of eight was never reachable more than a couple of
+    // times before the bank ran dry and started auto-failing boards the player
+    // had not even been shown yet. The bank is now roughly double, and the cap
+    // is wide enough to actually spend it on a hard board.
+    //
+    // `par` is what keeps the score honest. The decisiveness weight below used
+    // to be measured against `cap`, so widening the cap would have paid
+    // everyone more for an identical pick. It is measured against par - which
+    // holds the OLD caps - so a four-second read is worth exactly what it was
+    // worth before, and the extra seconds buy an answer rather than a bonus.
+    const DIFFS = {
+        1: { picks: 10, read: 5.5, bank: 85, cap: 18.0, par: 11.0, name: 'Basic Drill', blurb: 'Ten boards and eighty-five seconds of thinking to spend on them.' },
+        2: { picks: 11, read: 4.8, bank: 80, cap: 16.0, par: 9.5,  name: 'Advanced',    blurb: 'Eleven boards, a tighter bank, scouting noise.' },
+        3: { picks: 12, read: 4.2, bank: 72, cap: 14.0, par: 8.0,  name: 'Elite',       blurb: 'Twelve boards, seventy-two seconds, pro-level drafts.' },
     };
     const REVEAL_MS = 900;
 
@@ -348,6 +360,12 @@
     let bankMax = 1;
     let puzzleLeft = 0;
     let puzzleCap = 10;
+    let puzzlePar = 10;
+    // What puzzleLeft was actually initialised to for THIS board. It is not
+    // always puzzleCap: a nearly-empty bank starts the board with less. Without
+    // it, `used` counts time the player never had, and a board opened on a thin
+    // bank is scored as though it had already been agonised over.
+    let puzzleStart = 0;
     let streak = 0;
     let bestStreak = 0;
     let lastMark = '';             // clean | half | miss | timeout
@@ -419,6 +437,7 @@
         const c = DIFFS[dLevel];
         roundName = c.name;
         puzzleCap = c.cap;
+        puzzlePar = Math.max(0.1, Number(c.par) || c.cap);
         readCap = c.read;
         bankMax = c.bank;
         bankLeft = c.bank;
@@ -432,6 +451,7 @@
         phase = 'read';
         readLeft = readCap;
         puzzleLeft = Math.min(puzzleCap, bankLeft);
+        puzzleStart = puzzleLeft;
         state = 'playing';
         stopLoop();
         rafId = requestAnimationFrame(loop);
@@ -442,6 +462,7 @@
         if (state !== 'playing' || phase !== 'read') return;
         phase = 'ask';
         puzzleLeft = Math.min(puzzleCap, bankLeft);
+        puzzleStart = puzzleLeft;
         if (puzzleLeft <= 0) endRound();
     }
 
@@ -458,8 +479,10 @@
         if (phase !== 'ask') return;
         const puzzle = round[idx];
         if (!puzzle) return;
-        const used = Math.max(0, puzzleCap - puzzleLeft);
-        const frac = Math.max(0, Math.min(1, puzzleLeft / puzzleCap));
+        const used = Math.max(0, puzzleStart - puzzleLeft);
+        // Against par, not against the cap. Widening the cap must not hand out a
+        // bigger decisiveness bonus for an identical pick.
+        const frac = Math.max(0, Math.min(1, 1 - used / puzzlePar));
         // Decisiveness weight: recognising the board instantly is the skill being
         // trained, so a correct-but-agonised pick keeps only 62% of its credit.
         const weight = 0.62 + 0.38 * frac;
@@ -487,6 +510,7 @@
             phase = 'read';
             readLeft = readCap;
             puzzleLeft = Math.min(puzzleCap, bankLeft);
+        puzzleStart = puzzleLeft;
             if (puzzleLeft <= 0) endRound();
         }, REVEAL_MS);
     }

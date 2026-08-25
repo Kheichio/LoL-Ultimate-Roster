@@ -18,6 +18,7 @@
     // -- Difficulty table ------------------------------------------------
     //  reps   scenarios in the round
     //  limit  per-scenario decision window (ms)
+    //  par    the time a decisive call is expected to take (ms) - see commit()
     //  reveal auto-advance on the explanation (ms) - skippable
     //  expo   demand curve. Higher = the same raw play scores lower.
     const CFG = {
@@ -25,9 +26,23 @@
         //        calls to choose between and no decision clock running. These
         //        scenarios carry four lines of state each; reading them was
         //        eating most of the old decision window. Skippable with Space.
-        1: { reps: 8,  read: 6000, limit: 11000, reveal: 2200, expo: 0.90, name: 'Basic Drill' },
-        2: { reps: 9,  read: 5000, limit: 9000,  reveal: 1900, expo: 1.22, name: 'Advanced' },
-        3: { reps: 10, read: 4200, limit: 7000,  reveal: 1700, expo: 1.55, name: 'Elite' },
+        //
+        // limit was 11000/9000/7000. Every scenario then puts three or four
+        // calls on screen at roughly 120 characters each, so an Elite rep was
+        // seven seconds to read about seventy words of tactical prose and pick
+        // between them. That is a reading-speed test wearing a shotcalling
+        // drill's clothes. All three windows are now long enough to actually
+        // read the options.
+        //
+        // par is what protects the score from that change. The speed term used
+        // to be measured against `limit`, so widening the window would have
+        // quietly paid everyone more for the same call. It is measured against
+        // par instead -- which holds the OLD limits -- so a five-second call is
+        // worth exactly what it was worth before, and the extra seconds buy a
+        // slow reader a real answer rather than a bonus.
+        1: { reps: 8,  read: 8000, limit: 20000, par: 11000, reveal: 3200, expo: 0.90, name: 'Basic Drill' },
+        2: { reps: 9,  read: 7000, limit: 17000, par: 9000,  reveal: 2800, expo: 1.22, name: 'Advanced' },
+        3: { reps: 10, read: 6000, limit: 14000, par: 7000,  reveal: 2400, expo: 1.55, name: 'Elite' },
     };
 
     $: dlvl = Math.max(1, Math.min(3, Math.round(Number(difficulty)) || 1));
@@ -346,6 +361,7 @@
 
     let reps = 10;
     let limitMs = 9000;
+    let parMs = 9000;
     let revealMs = 2400;
     let expo = 0.95;
 
@@ -404,6 +420,7 @@
         const c = CFG[dlvl];
         reps = Math.min(c.reps, SCENARIOS.length);
         limitMs = c.limit;
+        parMs = Math.max(1, Number(c.par) || c.limit);
         readMs = c.read;
         revealMs = c.reveal;
         expo = c.expo;
@@ -453,7 +470,9 @@
         stopRaf();
         const ms = Math.max(0, performance.now() - askStart);
         const credit = i >= 0 && cur ? cur.opts[i].credit : 0;
-        const frac = i >= 0 ? Math.max(0, Math.min(1, 1 - ms / limitMs)) : 0;
+        // Against par, not against the window. Widening the window must not
+        // hand out a bigger speed bonus for an identical call.
+        const frac = i >= 0 ? Math.max(0, Math.min(1, 1 - ms / parMs)) : 0;
         picked = i;
         remain = 0;
         results = results.concat([{
