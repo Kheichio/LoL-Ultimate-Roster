@@ -409,6 +409,64 @@ CAREER.flushCareer();
 ok('flushing a blank career into an empty slot is allowed');
 
 // ---------------------------------------------------------------------------
+section('career cloud backup round trip');
+// ---------------------------------------------------------------------------
+//  Career saves are local-only on disk and their only backup is the Firestore
+//  document. If export/import quietly drops a slot, the backup is a lie that is
+//  only discovered on the day somebody needs it.
+S.clearStorage();
+
+S.setActiveSlot('career', 1);
+CAREER.resetCareer();
+makeCareer('CloudOne', 'TOP');
+CAREER.flushCareer();
+
+S.setActiveSlot('career', 2);
+CAREER.resetCareer();
+makeCareer('CloudTwo', 'SUP');
+CAREER.flushCareer();
+
+// Slot 3 deliberately left empty.
+S.setActiveSlot('career', 1);
+
+// THE IMPORTANT ONE: export must read STORAGE, not the in-memory store. If it
+// read the store it would upload whatever happened to be loaded - and at the
+// main menu that is a blank career, which would push an empty backup over a
+// real one. Same class of mistake that destroyed local saves.
+CAREER.career.set(CAREER.blankCareer());
+const exported = CAREER.exportCareerSlots();
+
+eq('export found both used slots', Object.keys(exported).sort().join(','), '1,2',
+    'exportCareerSlots must read every slot from storage.');
+falsy('export skipped the empty slot', exported[3]);
+eq('slot 1 exported the right career', exported[1] && exported[1].player.handle, 'CloudOne');
+eq('slot 2 exported the right career', exported[2] && exported[2].player.handle, 'CloudTwo');
+truthy('export survived a blank in-memory store', !!exported[1],
+    'This is the guard: uploading the store instead of storage would back up nothing.');
+falsy('the transient match is not backed up', exported[1] && exported[1].pendingMatch);
+
+// A full round trip through JSON, exactly as Firestore stores it.
+const wire = JSON.parse(JSON.stringify(exported));
+S.clearStorage();
+falsy('local is empty before the restore', CAREER.hasCareerSave(1));
+
+const restored = CAREER.importCareerSlots(wire);
+eq('restore wrote both slots', restored.sort().join(','), '1,2');
+eq('slot 1 came back', CAREER.careerSlotSummary(1) && CAREER.careerSlotSummary(1).handle, 'CloudOne');
+eq('slot 2 came back', CAREER.careerSlotSummary(2) && CAREER.careerSlotSummary(2).handle, 'CloudTwo');
+eq('slot 2 kept its own role', CAREER.careerSlotSummary(2).role, 'SUP',
+    'Each slot must be restored to the slot it came from, not merged into one.');
+falsy('the empty slot stayed empty', CAREER.hasCareerSave(3));
+
+// A malformed or empty payload must never clear a real save.
+CAREER.importCareerSlots({ 1: null, 2: { created: false }, 3: 'nonsense' });
+truthy('a junk payload did not wipe slot 1', CAREER.hasCareerSave(1),
+    'importCareerSlots only writes entries that are a created career.');
+truthy('a junk payload did not wipe slot 2', CAREER.hasCareerSave(2));
+eq('nothing was written from junk', CAREER.importCareerSlots({ 1: { created: false } }).length, 0);
+eq('a null payload writes nothing', CAREER.importCareerSlots(null).length, 0);
+
+// ---------------------------------------------------------------------------
 section('flush before switch');
 // ---------------------------------------------------------------------------
 //  saveGame/saveCareer are debounced. Switching slot mid-debounce would land

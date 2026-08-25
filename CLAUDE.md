@@ -55,8 +55,25 @@ slots exist.
   `initGame()` that changes save.
 - Always flush before switching: both savers are debounced, and a write in flight lands in whichever
   slot is active when the timer fires.
-- Cloud sync (`stores/auth.js`) is one Firestore doc per user and tracks the **active roster slot
-  only**. Career saves are never uploaded at all.
+- Cloud sync (`stores/auth.js`) is one Firestore doc per user. The roster half tracks the **active
+  slot only**; the career half (`v: 3`, `careers` field) backs up **every career slot that holds a
+  save**, so careers transfer between devices. It lives in the same document deliberately — a
+  separate collection would need a Firestore rules change and the rules here are published by hand.
+- `exportCareerSlots()` / `importCareerSlots()` read and write **storage, never the store**. The
+  career store is `blankCareer()` until `CareerShell` mounts, so uploading it from the menu would
+  push an empty career over a real backup. Import refuses anything that is not a created career.
+- Sizes are measured, not assumed: a finished 12-year career is ~64kb and three slots ~162kb of a
+  1024kb document. `careerSmoke` reports this and fails if three slots would crowd out the roster
+  save.
+
+### Never persist a store that has not been loaded
+`saveCareer`/`flushCareer` refuse to write an uncreated career over a saved one, and `writeSave` in
+`game.js` refuses to write before `initGame()` has run. This is not defensive padding — the
+save-slot picker called `flushCareer()` from the main menu, before `initCareer()` had ever run, so
+opening the slot list and choosing your own career wrote a blank save over it and loaded the blank
+back. **It destroyed real player saves.** A blank store means "nothing is loaded", never "no save
+exists". Deliberate destruction still works: `resetCareer()` writes through `saveToStorage` directly.
+The regression lives in `slotCheck` and was verified to fail without the guard.
 
 ### Ultimate Career
 Create one pro and live their career: pick region, role, playstyle and signature champion, then

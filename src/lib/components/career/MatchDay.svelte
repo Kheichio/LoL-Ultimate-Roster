@@ -490,14 +490,26 @@
           color: meterColor(m.personal, PER_MAX), foot: "Your own line, before the team's" },
     ].map(r => ({ ...r, pct: Math.min(100, (Math.abs(r.value) / r.max) * 100) })) : [];
     $: timeline = m ? normList(m.timeline) : [];
-    // Champion select for this game. Older in-progress saves have no `draft`
-    // on their match object, so this stays null and the strip is simply absent.
-    $: draft = (m && m.draft && m.draft.outcome) ? m.draft : null;
-    $: draftLabel = draft
-        ? (draft.outcome === 'signature' ? (draft.champion || 'Signature pick')
-            : draft.outcome === 'pocket' ? 'Pocket pick'
-            : 'Off-script')
-        : '';
+    // The strip above the meters, showing what is actually locked in for this
+    // game. It used to report the old signature/pocket/off-script ROLL, which
+    // stopped being the interesting fact the moment champion select became a
+    // choice - the player already knows how the draft went, because they just
+    // made it. What they need on screen while deciding is the pick, how well
+    // they know it, and what it is up against.
+    //
+    // Only shown once champion select has been answered. A benched game has no
+    // draft, and a match already in progress from before champion select
+    // existed has no `picked`, so both correctly show nothing.
+    $: lockedIn = (() => {
+        if (!m || !m.draft || !m.draft.picked) return null;
+        let view = null;
+        try { view = draftOption($career, m, m.draft.picked); } catch (err) { view = null; }
+        if (!view || !view.champion) return null;
+        return {
+            ...view,
+            enemy: m.draft.counter ? (CHAMPION_BY_ID[m.draft.enemyId] || null) : null,
+        };
+    })();
     $: evPhase = currentEvent ? (GAME_PHASES[currentEvent.phase] || GAME_PHASES.mid) : GAME_PHASES.mid;
 
     $: ratingBadge = finalResult && Number.isFinite(Number(finalResult.rating))
@@ -583,11 +595,25 @@
                 {/if}
             </div>
 
-            {#if draft}
-                <div class="draft draft-{draft.outcome}">
-                    <span class="dr-tag">Draft</span>
-                    <span class="dr-pick">{draftLabel}</span>
-                    <span class="dr-line">{draft.line}</span>
+            {#if lockedIn}
+                <div class="draft" style="--dr:{lockedIn.band.color}">
+                    <span class="dr-tag">{lockedIn.isSignature ? 'Signature' : 'Locked in'}</span>
+                    <span class="dr-pick">{lockedIn.champion.name}</span>
+                    <span class="dr-meta">
+                        {lockedIn.champion.archetype}
+                        <span class="dr-dot">&#183;</span>
+                        <span style="color:{lockedIn.band.color}">{lockedIn.band.name}</span>
+                        <span class="dr-dot">&#183;</span>
+                        {lockedIn.games} {lockedIn.games === 1 ? 'game' : 'games'}
+                    </span>
+                    {#if lockedIn.enemy}
+                        <span class="dr-vs">
+                            into {lockedIn.enemy.name}
+                            <b class="dr-{lockedIn.matchupLabel.tone}">{lockedIn.matchupLabel.text}</b>
+                        </span>
+                    {:else}
+                        <span class="dr-vs dr-flat">Blind pick</span>
+                    {/if}
                 </div>
             {/if}
 
@@ -1030,17 +1056,24 @@
         border: 1px solid rgba(51, 65, 85, 0.3);
         border-left: 2px solid var(--dr);
     }
-    .draft-signature { --dr: rgba(74, 222, 128, 0.75); }
-    .draft-pocket    { --dr: rgba(245, 158, 11, 0.75); }
-    .draft-offscript { --dr: rgba(239, 68, 68, 0.75); }
     .dr-tag {
         font-size: 8.5px; font-weight: 900; letter-spacing: 1.3px; text-transform: uppercase;
         color: #3f5069; flex: 0 0 auto;
     }
-    .dr-pick { font-size: 11px; font-weight: 800; color: var(--dr); flex: 0 0 auto; }
-    .dr-line { font-size: 11px; line-height: 1.45; color: #7b8ca8; min-width: 0; }
+    .dr-pick { font-size: 12px; font-weight: 800; color: #e8eefb; flex: 0 0 auto; }
+    .dr-meta { font-size: 10.5px; color: #7b8ca8; min-width: 0; }
+    .dr-dot { color: #2c3a52; margin: 0 3px; }
+    .dr-vs {
+        font-size: 10.5px; color: #7b8ca8; margin-left: auto; flex: 0 0 auto;
+        padding-left: 10px; border-left: 1px solid rgba(51, 65, 85, 0.4);
+    }
+    .dr-vs b { font-weight: 800; margin-left: 5px; }
+    .dr-good { color: #4ade80; }
+    .dr-bad { color: #f87171; }
+    .dr-flat { color: #64748b; }
     @media (max-width: 560px) {
         .draft { flex-direction: column; align-items: flex-start; text-align: left; }
+        .dr-vs { margin-left: 0; padding-left: 0; border-left: none; }
     }
 
     .meters { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 20px; align-items: start; margin-top: 14px; }

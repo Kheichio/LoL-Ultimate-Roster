@@ -1,6 +1,9 @@
 <script>
     import { showAuthPanel, soundMuted, lightMode, toggleLightMode, openConfirmModal } from '../../stores/ui.js';
     import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad, resetPassword } from '../../stores/auth.js';
+    import { careerSlotCount } from '../../stores/career.js';
+    // Read from storage each time the panel opens. The career store is blank
+    // until CareerShell mounts, so counting it would report nothing at the menu.
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
     import { club, collectionRegistry, blueEssence, saveGame } from '../../stores/game.js';
@@ -8,6 +11,9 @@
     import { getDB, makeUniqueId } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { trapFocus } from '../../utils/a11y.js';
+
+    // Recomputed every time the panel opens, and after a cloud load changes it.
+    $: careerSlots = ($showAuthPanel || $authLoading) ? careerSlotCount() : 0;
 
     let view = 'signin'; // signin | register | settings
     let email = '';
@@ -157,8 +163,12 @@
                     </div>
 
                     <div class="cloud-note">
-                        Loads cards, squad, BE, stats, and progress from the old website too.
-                        <br>Your club has <strong>{$club.length}</strong> cards locally.
+                        Backs up your club <strong>and every Ultimate Career slot</strong>, so both
+                        transfer to any device you sign in on. Loads cards, squad, BE, stats and
+                        progress from the old website too.
+                        <br>Locally: <strong>{$club.length}</strong> cards and
+                        <strong>{careerSlots}</strong> career {careerSlots === 1 ? 'slot' : 'slots'}.
+                        <br><span class="cloud-warn">Loading replaces what is on this device.</span>
                     </div>
 
                     <button class="signout-btn" on:click={handleSignOut}>Sign Out</button>
@@ -367,6 +377,7 @@
         line-height: 1.5;
     }
     .cloud-note strong { color: #94a3b8; }
+    .cloud-warn { color: #f59e0b; }
 
     .signout-btn {
         width: 100%; padding: 10px;

@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { club, teamIdentity, snapshotState, applyState } from './game.js';
+import { exportCareerSlots, importCareerSlots, initCareer } from './career.js';
 import { showToast } from './toasts.js';
 
 export const currentUser = writable(null);
@@ -70,21 +71,50 @@ export async function cloudSave() {
 
     // v2 format — one JSON blob of the full store snapshot, so cloud always carries
     // exactly what local persists (no dropped stores) and stays in sync automatically.
+    //
+    // v3 adds `careers`: every Ultimate Career slot that holds a real save, keyed
+    // by slot number. It lives inside this same document on purpose — a separate
+    // collection would need a Firestore rules change, and the rules here are
+    // published by hand. Read straight from storage rather than from the career
+    // store, which is blank until CareerShell mounts.
+    const careers = exportCareerSlots();
+    const careerJson = JSON.stringify(careers);
     const data = {
-        v: 2,
+        v: 3,
         save: JSON.stringify(snapshotState()),
+        careers: careerJson,
+        careerSlots: Object.keys(careers).map(Number),
         savedAt: Date.now(),
         teamName: get(teamIdentity).name || 'My Team',
     };
 
+    // A Firestore document is capped at 1 MiB and the write simply fails at the
+    // limit, so say something useful rather than letting it throw a size error.
+    const bytes = data.save.length + careerJson.length;
+    if (bytes > CLOUD_BYTES_MAX) {
+        showToast(
+            `Save is too large to upload (${Math.round(bytes / 1024)}kb). Delete a career slot and try again.`,
+            'error',
+        );
+        authLoading.set(false);
+        return;
+    }
+
     try {
         await window.fbDb.collection('saves').doc(user.uid).set(data);
-        showToast('Saved to cloud!', 'success');
+        const n = data.careerSlots.length;
+        showToast(
+            n ? `Saved to cloud - club and ${n} career slot${n === 1 ? '' : 's'}.` : 'Saved to cloud!',
+            'success',
+        );
     } catch (e) {
         showToast('Cloud save failed: ' + e.message, 'error');
     }
     authLoading.set(false);
 }
+
+/** Firestore's hard limit is 1 MiB per document; stay clear of it. */
+const CLOUD_BYTES_MAX = 900 * 1024;
 
 export async function cloudLoad() {
     const user = get(currentUser);
@@ -124,12 +154,37 @@ export async function cloudLoad() {
             };
         }
 
-        if (!state) { showToast('No readable cloud save found.', 'info'); authLoading.set(false); return; }
+        // Career slots (v3). Restored independently of the roster save, because a
+        // document written by an older build has no `careers` field and that must
+        // not stop the club loading.
+        let careerSlots = [];
+        if (data.careers) {
+            let parsed = null;
+            try { parsed = JSON.parse(data.careers); } catch { parsed = null; }
+            careerSlots = importCareerSlots(parsed);
+            if (careerSlots.length) {
+                // Bring the in-memory career into line with what was just written,
+                // or the player would keep looking at the save it replaced.
+                initCareer();
+            }
+        }
+
+        if (!state && !careerSlots.length) {
+            showToast('No readable cloud save found.', 'info');
+            authLoading.set(false);
+            return;
+        }
 
         // Route through localStorage + initGame() so every card is validated/clamped
         // exactly like a local load — no unvalidated writes, no dropped stores.
-        applyState(state);
-        showToast(`Cloud data loaded! (${get(club).length} cards)`, 'success');
+        if (state) applyState(state);
+
+        const parts = [];
+        if (state) parts.push(`${get(club).length} cards`);
+        if (careerSlots.length) {
+            parts.push(`${careerSlots.length} career slot${careerSlots.length === 1 ? '' : 's'}`);
+        }
+        showToast(`Cloud data loaded! (${parts.join(', ')})`, 'success');
     } catch (e) {
         showToast('Cloud load failed: ' + e.message, 'error');
     }

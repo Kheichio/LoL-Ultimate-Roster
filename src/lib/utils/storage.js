@@ -163,6 +163,20 @@ export function removeFromStorage(key) {
     rawRemove(resolveKey(key));
 }
 
+/** Write one key into a specific slot without switching to it. Used by the
+ *  cloud restore, which puts every backed-up career slot back where it came
+ *  from rather than dropping them all into whichever slot happens to be open. */
+export function saveToSlot(key, value, slot) {
+    try {
+        localStorage.setItem(resolveKey(key, slot), JSON.stringify(value));
+    } catch (e) {
+        console.warn(`Failed to save ${key} to slot ${slot}:`, e);
+        return false;
+    }
+    if (familyOf(key)) rememberKey(key);
+    return true;
+}
+
 /** Read one key out of a specific slot without switching to it — used by the
  *  slot picker to preview what each save contains. */
 export function loadFromSlot(key, slot) {

@@ -11,7 +11,9 @@
 //  corrupt one another.
 
 import { writable, derived, get } from 'svelte/store';
-import { loadFromStorage, saveToStorage, loadFromSlot } from '../utils/storage.js';
+import {
+    loadFromStorage, saveToStorage, loadFromSlot, saveToSlot, SLOT_IDS,
+} from '../utils/storage.js';
 import {
     CAREER_SAVE_VERSION, ATTR_KEYS, ATTR_MIN, ATTR_MAX, DEFAULT_START_YEAR,
     WEEKS_PER_YEAR, ENERGY_MAX, HEALTH_MAX, FORM_MAX, MORALE_MAX, phaseForWeek,
@@ -252,6 +254,63 @@ export function flushCareer() {
     const c = get(career);
     if (!safeToPersist(c)) return;
     saveToStorage(SAVE_KEY, c);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  CLOUD BACKUP
+//  Career saves were local-only and had no backup of any kind, which made a
+//  single bad write terminal. These two functions are what makes them
+//  transferable between devices.
+//
+//  Both read and write STORAGE, never the in-memory store. That is not a style
+//  choice: the career store is blankCareer() until CareerShell mounts, so
+//  uploading it from anywhere else would push an empty career over a real cloud
+//  backup - the same mistake that destroyed local saves.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every career slot that holds a real save, keyed by slot number.
+ *
+ * Backed up WHOLE, including the full news feed. An earlier cut trimmed the
+ * feed to twenty entries to save room, but a finished twelve-year career
+ * measures 64kb and three slots come to 162kb of a 1024kb Firestore document
+ * (tools/careerSmoke.mjs reports and asserts this). There is no space pressure
+ * worth throwing away a player's career history for. `pendingMatch` is the only
+ * thing dropped, because a half-played match is transient by definition.
+ */
+export function exportCareerSlots() {
+    const out = {};
+    for (const slot of SLOT_IDS) {
+        const raw = loadFromSlot(SAVE_KEY, slot);
+        if (!raw || !raw.created) continue;
+        out[slot] = { ...raw, pendingMatch: null };
+    }
+    return out;
+}
+
+/**
+ * Restore backed-up career slots into local storage, each one back into the
+ * slot it came from. Returns the slot numbers actually written.
+ *
+ * Refuses to write anything that is not a created career, so a malformed or
+ * empty entry can never clear a local save.
+ */
+export function importCareerSlots(map) {
+    const written = [];
+    if (!map || typeof map !== 'object') return written;
+    for (const slot of SLOT_IDS) {
+        const incoming = map[slot] != null ? map[slot] : map[String(slot)];
+        if (!incoming || typeof incoming !== 'object' || !incoming.created) continue;
+        // Through hydrate() so a cloud save is validated and clamped exactly
+        // like a local one - no unvalidated writes.
+        if (saveToSlot(SAVE_KEY, hydrate(incoming), slot)) written.push(slot);
+    }
+    return written;
+}
+
+/** How many career slots currently hold a save. For the cloud UI. */
+export function careerSlotCount() {
+    return SLOT_IDS.filter(n => hasCareerSave(n)).length;
 }
 
 /** The logical save key. Save SLOTS are applied inside storage.js, so this is

@@ -1134,6 +1134,17 @@ function runCareer(cfg, label) {
     return {
         label, cfg, retired, weeks,
         ovrByYear,
+        // Career saves are backed up to Firestore, which hard-caps a document at
+        // 1 MiB and simply refuses the write at the limit. Three career slots
+        // plus the whole roster save share that budget, so the size of one
+        // finished career is a number worth watching rather than discovering.
+        saveBytes: (() => { try { return JSON.stringify(end).length; } catch (e) { return 0; } })(),
+        saveBytesTrimmed: (() => {
+            // Mirrors exportCareerSlots(): everything except the transient
+            // half-played match.
+            try { return JSON.stringify({ ...end, pendingMatch: null }).length; }
+            catch (e) { return 0; }
+        })(),
         traits: Array.isArray(end.player.traits) ? end.player.traits.slice() : [],
         proficiency: (end.player.proficiency && typeof end.player.proficiency === 'object')
             ? { ...end.player.proficiency } : {},
@@ -1524,6 +1535,22 @@ console.log(`  offers seen / accepted : ${stats.offersSeen} / ${stats.offersAcce
 console.log(`  shop purchases         : ${stats.shopBuys}`);
 console.log(`  events / interviews    : ${stats.eventsApplied} / ${stats.interviewsApplied}`);
 console.log(`  role changes           : ${stats.roleChanges}`);
+{
+    const kb = n => (n / 1024).toFixed(0) + 'kb';
+    const worst = Math.max(0, ...results.map(r => r.saveBytes || 0));
+    const worstTrim = Math.max(0, ...results.map(r => r.saveBytesTrimmed || 0));
+    console.log(`  career save size       : ${kb(worst)} worst, ${kb(worstTrim)} as backed up`
+        + `  (3 slots = ${kb(worstTrim * 3)} of a 1024kb Firestore document)`);
+    // The roster save shares that document, so three career slots must not eat
+    // the whole budget on their own.
+    if (worstTrim * 3 > 600 * 1024) {
+        fail('wrong', 'src/lib/stores/career.js',
+            'three career slots would not leave room for the roster save in one Firestore document',
+            `worst trimmed career ${kb(worstTrim)}, x3 = ${kb(worstTrim * 3)}`,
+            'Trim more in exportCareerSlots (CLOUD_NEWS_KEEP), or split careers into their own document.',
+            'cloudsize');
+    }
+}
 // Champion select and what it taught the player. A run where nobody ever picks,
 // or where proficiency never accumulates, means the feature is wired but inert.
 {
