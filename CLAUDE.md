@@ -122,6 +122,46 @@ One per career, rolled and revealed on the birthday named by the path's `revealA
 reveal is the whole design: a trait visible at creation is a trait players restart careers for.
 Trait ids are persisted like `player.champion`, so **never rename or delete one**.
 
+### Champion select
+Every game opens on a real choice: **three champions**, one click, no confirm. It runs before the
+first decision of every game and a Bo5 is five of them, so it can never become a screen you read
+twice. `rollDraft()` still owns it and CHP still decides the *shape* — a surviving signature puts
+your own pick among the three, being banned out fills them from outside your style pool — but the
+pick itself is now the player's (`draftPending` / `draftOption` / `chooseDraft`).
+
+**Counter or blind** is decided by opponent strength, off the same `targeting` term that decides
+whether your signature survives the ban phase: a stronger org scouts you, picks last and counters
+you more often. On a blind pick the matchup term is not scored at all — you cannot be graded against
+a lane you could not see.
+
+Two terms feed `successChance()`, and they are built to **cancel out across a career**:
+- **Matchup** is symmetric (`MATCHUP_STEP`), so a good lane pays exactly what a bad one costs.
+- **Proficiency** is a *penalty that fades*, measured against `PROFICIENCY_NEUTRAL` rather than from
+  zero: cold costs ~9%, mastery removes it and pays a little over. Mastery also damps a **losing**
+  matchup only (`PROFICIENCY_MATCHUP_DAMP`) — knowing a champion is what lets you survive a counter,
+  not what makes a good lane better.
+
+This is not decoration. A pure bonus on either would inflate every match rating, and `careerSmoke`
+fails a run outright above a 7.6 mean.
+
+`player.proficiency` is `{ championId: gamesPlayed }` — raw counts, so the curve in `constants.js`
+can be retuned without invalidating a save. Banked by `finishGame()` on **what was locked in**, not
+on `player.champion` (a preference, not a record). The signature pick starts with a head start.
+
+### Matchups
+`ARCHETYPE_COUNTERS` in `constants.js` is **designed rock-paper-scissors, not scraped win rates** —
+there is no real matchup data in this project and a 173x173 champion table would be thirty thousand
+invented numbers. It runs on the 17 archetypes the comfort bonus and the fit rule already use, with
+a small clamped tie-breaker from each champion's own `mods` (`laneEdge`) so two champions of one
+archetype are not identical into the same lane.
+
+**Authored one direction only.** `beats` is the whole table and the losing side is generated from
+it, so the matrix cannot contradict itself — a pair listed both ways is a hard error in
+`championCheck`, which also asserts no archetype only-wins or only-loses, bounds the net spread, and
+checks that **every role contains a real answer to every champion in it**. All four of those fired
+on the first draft of the table. If a genuine data source ever appears, replace
+`ARCHETYPE_COUNTERS` and nothing else changes.
+
 ### Signature champions are gated by playstyle
 `constants.championsForStyle(role, playstyle)` decides which champions you may main, derived from
 `biasDistance(playstyle.bias, ARCHETYPE_BIAS[archetype])` — the same comparison the match engine
@@ -146,6 +186,15 @@ playoff-shaped calendar week.
   `player.champion` stays legal for `player.playstyle`. Its coverage block prints the trait
   distribution and mean ceiling earned/bought — a run where every career is a Legend is a tuning
   problem no pass/fail line will catch.
+- `node tools/eventCheck.mjs` — the in-match decision pools (`matchEvents.js`). That file opens
+  with a page of authoring discipline that was, until this existed, enforced entirely by a comment:
+  3-or-4 options, a safest and a greedy play at least 0.12 of difficulty apart, safest averaging
+  0.29 early / 0.36 mid / 0.44 late and never above 0.58. It also pins two things that drift
+  silently — the **option bias distribution** (those triples ARE the comfort-pick bonus; see
+  `championCheck`) and the **decision economy** (mean difficulty and net reward-minus-risk). Softer
+  options raise every match rating, and `careerSmoke` fails outright above a 7.6 mean. `--list`
+  prints every event id by role and phase. It also reports **pool depth against a Bo5**: one game
+  draws `[early, early, mid, mid, late]`, so a series consumes 10/10/5 per role without repeats.
 - `node tools/slotCheck.mjs` — the save-slot system, which nothing else touches. Asserts the thing
   that would be catastrophic and silent: **slot 1 resolves to the bare key**, so every save that
   predates slots is still there. Also isolation both ways, device prefs staying global, scoped
