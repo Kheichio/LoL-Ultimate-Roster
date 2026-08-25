@@ -16,7 +16,7 @@
     import { get } from 'svelte/store';
 
     import {
-        career, careerScreen, careerOverlay,
+        career, careerScreen, careerOverlay, pushOverlay,
         currentTeam, currentPhase, soloRank,
         saveCareer, logWeek,
     } from '../../stores/career.js';
@@ -280,7 +280,7 @@
                 showToast('That fixture could not be simulated.', 'error');
             } else {
                 playSound(res.won ? 'win' : 'lose');
-                careerOverlay.set({ kind: 'result', payload: res });
+                pushOverlay('result', res);
                 saveCareer();
             }
         } catch (e) {
@@ -339,7 +339,9 @@
         const ev = Array.isArray(res.events)
             ? res.events[0]
             : (res.events || res.event || null);
-        if (ev) careerOverlay.set({ kind: 'event', payload: ev });
+        // pushOverlay, not set: rolling the week can already have raised a split
+        // awards panel or a trait reveal, and the weekly event lands last.
+        if (ev) pushOverlay('event', ev);
 
         if (res.yearRolled) showToast('A new competitive year begins.', 'info');
         else if (res.phaseChanged) showToast('New phase: ' + $currentPhase.name + '.', 'info');

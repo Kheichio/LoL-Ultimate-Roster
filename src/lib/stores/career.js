@@ -11,16 +11,17 @@
 //  corrupt one another.
 
 import { writable, derived, get } from 'svelte/store';
-import { loadFromStorage, saveToStorage } from '../utils/storage.js';
+import { loadFromStorage, saveToStorage, loadFromSlot } from '../utils/storage.js';
 import {
     CAREER_SAVE_VERSION, ATTR_KEYS, ATTR_MIN, ATTR_MAX, DEFAULT_START_YEAR,
     WEEKS_PER_YEAR, ENERGY_MAX, HEALTH_MAX, FORM_MAX, MORALE_MAX, phaseForWeek,
     teamById, PATH_BY_ID, REGION_BY_ID, ROLE_BY_ID, PLAYSTYLE_BY_ID, CHAMPION_BY_ID,
+    TRAIT_BY_ID, championsForStyle,
 } from '../career/constants.js';
 import {
     calcOVR, calcPotentialOVR, clamp, clampAttr, emptyAttrs, rollNewPlayer,
     gainCurve, attrCeiling, environmentCap, rankFromMMR, marketValueFor,
-    weeklySalaryFor, pick,
+    weeklySalaryFor, pick, traitsOf,
 } from '../career/ratings.js';
 import { teamsInRegion, clearTeamCaches } from '../career/teams.js';
 
@@ -45,6 +46,15 @@ export function blankCareer() {
             age: 13,
             attrs: emptyAttrs(30),
             potential: emptyAttrs(75),
+
+            // Genetic traits. Rolled and revealed on the birthday named by the
+            // path's revealAge, never at creation — see engine.revealTrait().
+            // Stored as bare ids, exactly like `champion`, so the ids in
+            // constants.TRAITS are permanent.
+            traits: [],
+            // Environment soft cap override, written by the Self-Made perk. 0
+            // means "use UNSIGNED_SOFT_CAP".
+            softCap: 0,
 
             form: 50,
             morale: 65,
@@ -133,6 +143,35 @@ export const matchState = writable(null);
  *  season summary). `{ kind, payload }` or null. */
 export const careerOverlay = writable(null);
 
+// One advance-week can produce several things worth interrupting the player for:
+// closing a split raises an awards or season panel, a year rollover can reveal a
+// genetic trait, and the weekly random event lands last of all. The overlay is a
+// single slot, so before this queue existed the last writer won and everything
+// before it was silently thrown away — split awards in particular almost never
+// reached the player.
+const _overlayQueue = [];
+
+/** Show an overlay now, or line it up behind whatever is already showing. */
+export function pushOverlay(kind, payload) {
+    if (!kind) return;
+    if (get(careerOverlay)) _overlayQueue.push({ kind, payload });
+    else careerOverlay.set({ kind, payload });
+}
+
+/** Advance to the next queued overlay. Returns false when nothing is waiting,
+ *  which is the signal to close. Transient by design: a queue that survived a
+ *  reload would re-interrupt the player about a week they already finished. */
+export function nextOverlay() {
+    const next = _overlayQueue.shift();
+    careerOverlay.set(next || null);
+    return !!next;
+}
+
+export function clearOverlays() {
+    _overlayQueue.length = 0;
+    careerOverlay.set(null);
+}
+
 // ── Derived views ────────────────────────────────────────────────────────
 export const player        = derived(career, $c => $c.player);
 export const careerOVR     = derived(career, $c => calcOVR($c.player.attrs, $c.player.role));
@@ -141,6 +180,7 @@ export const currentTeam   = derived(career, $c => ($c.player.clubId ? teamById(
 export const currentPhase  = derived(career, $c => phaseForWeek($c.time.week));
 export const soloRank      = derived(career, $c => rankFromMMR($c.soloq.mmr));
 export const hasCareer     = derived(career, $c => !!$c.created);
+export const careerTraits  = derived(career, $c => traitsOf($c.player));
 export const marketValue   = derived(career, $c => marketValueFor({
     ovr: calcOVR($c.player.attrs, $c.player.role),
     potentialOVR: calcPotentialOVR($c.player.potential, $c.player.role),
@@ -176,9 +216,37 @@ export function flushCareer() {
     saveToStorage(SAVE_KEY, get(career));
 }
 
-export function hasCareerSave() {
-    const raw = loadFromStorage(SAVE_KEY);
+/** The logical save key. Save SLOTS are applied inside storage.js, so this is
+ *  the same string for every slot — tools/careerRender.mjs asks for it rather
+ *  than hard-coding the literal, so a future rename cannot silently desync it. */
+export function careerSaveKey() {
+    return SAVE_KEY;
+}
+
+/** Whether a slot holds a real career. With no argument, the active slot. */
+export function hasCareerSave(slot) {
+    const raw = slot == null ? loadFromStorage(SAVE_KEY) : loadFromSlot(SAVE_KEY, slot);
     return !!(raw && raw.created);
+}
+
+/** Enough of a slot's career to draw a save-slot card, without switching to it. */
+export function careerSlotSummary(slot) {
+    const raw = loadFromSlot(SAVE_KEY, slot);
+    if (!raw || !raw.created || !raw.player) return null;
+    const p = raw.player;
+    const team = p.clubId ? teamById(p.clubId) : null;
+    return {
+        handle: String(p.handle || 'Rookie').slice(0, 16),
+        role: ROLE_BY_ID[p.role] ? p.role : 'MID',
+        region: p.region || 'LEC',
+        age: Math.max(0, Math.round(Number(p.age) || 0)),
+        ovr: calcOVR(p.attrs, p.role),
+        team: team ? team.name : (raw.flags && raw.flags.everSigned ? 'Free Agent' : 'Unsigned'),
+        year: Math.round(Number(raw.time?.year) || DEFAULT_START_YEAR),
+        week: Math.round(Number(raw.time?.week) || 1),
+        retired: !!(raw.flags && raw.flags.retired),
+        trophies: Array.isArray(raw.trophies) ? raw.trophies.length : 0,
+    };
 }
 
 /** Merge a loaded save over the blank shape so new fields added in later
@@ -216,6 +284,15 @@ function hydrate(raw) {
     out.player.attrs = fixAttrs(raw.player?.attrs, 30);
     out.player.potential = fixAttrs(raw.player?.potential, 75);
 
+    // Traits are bare ids. A save can carry null, a string, an object or an id
+    // from a trait that no longer exists — none of which the player spread at
+    // the top of this function would catch, and any of which would render as
+    // the literal text "undefined" on the Profile screen.
+    out.player.traits = Array.isArray(raw.player?.traits)
+        ? raw.player.traits.filter(t => typeof t === 'string' && TRAIT_BY_ID[t])
+        : [];
+    out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
+
     out.player.form   = clamp(out.player.form,   0, FORM_MAX);
     out.player.morale = clamp(out.player.morale, 0, MORALE_MAX);
     out.player.energy = clamp(out.player.energy, 0, ENERGY_MAX);
@@ -245,8 +322,14 @@ function hydrate(raw) {
 export function initCareer() {
     const raw = loadFromStorage(SAVE_KEY);
     const state = hydrate(raw);
+    clearTeamCaches();
     career.set(state);
     careerScreen.set(state.created ? 'hub' : 'create');
+    // Overlays are transient and belong to the save that raised them. Loading a
+    // save — including switching slot — must not inherit the last one's queue.
+    // matchState is deliberately NOT touched here: it is transient too, but
+    // initCareer also runs as a save round-trip check mid-session.
+    clearOverlays();
     return state;
 }
 
@@ -255,7 +338,7 @@ export function resetCareer() {
     career.set(blankCareer());
     careerScreen.set('create');
     matchState.set(null);
-    careerOverlay.set(null);
+    clearOverlays();
     saveToStorage(SAVE_KEY, get(career));
 }
 
@@ -271,7 +354,17 @@ export function createCareer(cfg) {
     const region = REGION_BY_ID[cfg.regionId] || REGION_BY_ID.LEC;
     const role = ROLE_BY_ID[cfg.roleId] || ROLE_BY_ID.MID;
     const style = PLAYSTYLE_BY_ID[cfg.playstyleId] || null;
-    const champ = CHAMPION_BY_ID[cfg.championId] || null;
+
+    // Your signature pick has to be a champion your playstyle would actually
+    // play — the comfort bonus in the match engine is scored on exactly that
+    // agreement. The creator only offers legal picks, so this is a backstop for
+    // anything that calls createCareer directly; it COERCES to the nearest legal
+    // champion rather than refusing, so a bad config still produces a career.
+    let champ = CHAMPION_BY_ID[cfg.championId] || null;
+    if (style && role) {
+        const legal = championsForStyle(role.id, style.id);
+        if (legal.length && !legal.some(c => c.id === (champ && champ.id))) champ = legal[0];
+    }
     const age = clamp(cfg.age ?? path.ages[0], path.ages[0], path.ages[path.ages.length - 1]);
 
     const { attrs, potential } = rollNewPlayer({
@@ -452,6 +545,61 @@ export function applyAttrGain(key, raw) {
         return { ...c, player: { ...p, attrs: { ...p.attrs, [key]: next } } };
     });
     return applied;
+}
+
+/**
+ * Raise the ceiling. `bonus` is a partial or full attribute map of points to ADD
+ * to potential; anything missing or non-positive is left alone.
+ *
+ * This is the only way potential ever goes up, and everything that raises the
+ * roof goes through it: a revealed genetic trait, the Evergreen perk, a
+ * breakthrough season, a performance camp. Potential is stored as integers
+ * (clampAttr rounds, and tools/careerSmoke.mjs asserts it stays inside 1..99),
+ * unlike attrs which are deliberately fractional.
+ *
+ * Returns the map of points actually applied, so callers can report the truth
+ * rather than what they asked for.
+ */
+export function raisePotential(bonus) {
+    const applied = {};
+    if (!bonus || typeof bonus !== 'object') return applied;
+    career.update(c => {
+        const pot = { ...c.player.potential };
+        let moved = false;
+        for (const k of ATTR_KEYS) {
+            const add = Number(bonus[k]);
+            if (!Number.isFinite(add) || add <= 0) continue;
+            const before = pot[k] || 0;
+            const after = clampAttr(before + add);
+            if (after > before) {
+                pot[k] = after;
+                applied[k] = after - before;
+                moved = true;
+            }
+        }
+        if (!moved) return c;
+        return { ...c, player: { ...c.player, potential: pot } };
+    });
+    return applied;
+}
+
+/** Raise the environment soft cap an unsigned player runs into. */
+export function setSoftCap(value) {
+    const v = clamp(Math.round(Number(value) || 0), 0, ATTR_MAX);
+    career.update(c => (c.player.softCap === v ? c : { ...c, player: { ...c.player, softCap: v } }));
+}
+
+/** Give the player a trait. Idempotent — a trait is never granted twice. */
+export function addTrait(id) {
+    if (!TRAIT_BY_ID[id]) return false;
+    let added = false;
+    career.update(c => {
+        const cur = Array.isArray(c.player.traits) ? c.player.traits : [];
+        if (cur.includes(id)) return c;
+        added = true;
+        return { ...c, player: { ...c.player, traits: [...cur, id] } };
+    });
+    return added;
 }
 
 /** Directly set an attribute (used by role changes and decay). */

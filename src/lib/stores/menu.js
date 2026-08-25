@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { activeSlot } from '../utils/storage.js';
 
 // === Main Menu / Gamemode shell ===
 // The main menu is deliberately NOT persisted: it opens on every page load, in front of
@@ -6,6 +7,7 @@ import { writable } from 'svelte/store';
 // game state is untouched by it.
 //
 //   'menu'    → the main menu (title, login, gamemode buttons)
+//   'slots'   → the save slot picker for the gamemode just chosen
 //   'loading' → the gamemode loading screen animation
 //   'game'    → Ultimate Roster (App renders the normal Header + TabContent shell)
 //   'career'  → Ultimate Career (App renders CareerShell instead)
@@ -13,6 +15,38 @@ export const menuScreen = writable('menu');
 
 // 'roster' | 'career' | null — which gamemode the player picked.
 export const selectedMode = writable(null);
+
+// ─────────────────────────────────────────────────────────────────────────
+//  BOOT INTENT
+//  Switching the ACTIVE ROSTER SLOT at runtime is not safe: initGame() runs
+//  once at App init and merges rather than resets, the roster shell is
+//  deliberately never unmounted, and Header/AuthPanel read their storage once
+//  at mount. So a roster slot change reloads the page — and this is how the
+//  player lands back where they were going instead of at the title screen.
+//
+//  sessionStorage, not localStorage: an intent that outlived the tab would drag
+//  the player straight into a gamemode on some unrelated visit later.
+// ─────────────────────────────────────────────────────────────────────────
+const BOOT_KEY = 'lurmeta_boot_intent';
+
+export function setBootIntent(modeId) {
+    try { sessionStorage.setItem(BOOT_KEY, String(modeId || '')); } catch (e) { /* ignore */ }
+}
+
+/** Read and CLEAR the pending intent. Reading it twice must never re-enter. */
+export function takeBootIntent() {
+    let v = null;
+    try {
+        v = sessionStorage.getItem(BOOT_KEY);
+        sessionStorage.removeItem(BOOT_KEY);
+    } catch (e) { return null; }
+    return v === 'roster' || v === 'career' ? v : null;
+}
+
+/** Which slot each gamemode is currently pointed at. */
+export function currentSlot(modeId) {
+    return activeSlot(modeId === 'career' ? 'career' : 'roster');
+}
 
 export const GAMEMODES = [
     {
@@ -59,5 +93,12 @@ export const CAREER_PILLARS = [
 export function openMenu() {
     selectedMode.set(null);
     menuScreen.set('menu');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+}
+
+/** Straight back to the slot picker for the mode just left. */
+export function openSlots(modeId) {
+    selectedMode.set(modeId);
+    menuScreen.set('slots');
     if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
 }

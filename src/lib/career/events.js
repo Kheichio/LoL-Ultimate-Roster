@@ -85,7 +85,16 @@ function snapshot() {
 const PL = c => (c && c.player) || {};
 
 function isSigned(c) { return !!PL(c).clubId; }
-function ageOf(c) { return Number(PL(c).age) || 16; }
+/** Age, or 16 when the save cannot supply one. Deliberately NOT `|| 16`: a save
+ *  carrying age 0 or a non-numeric age used to read as 16, which quietly passed
+ *  every maximum-age gate in the pool. `??` alone does not catch NaN either, so
+ *  this tests for a finite number and nothing else. */
+function ageOf(c) { const a = Number(PL(c).age); return Number.isFinite(a) ? a : 16; }
+/** The two age gates every flavour-driven event wants. Written once so that a
+ *  new event can say "this line only makes sense at 17" in four characters and
+ *  never has to re-derive it. */
+function agedAtLeast(c, n) { return ageOf(c) >= n; }
+function agedBetween(c, min, max) { const a = ageOf(c); return a >= min && a <= max; }
 function formOf(c) { return Number(PL(c).form) || 0; }
 function moraleOf(c) { return Number(PL(c).morale) || 0; }
 function energyOf(c) { return Number(PL(c).energy) || 0; }
@@ -98,7 +107,99 @@ function phaseIdOf(c) { return phaseForWeek(c?.time?.week || 1).id; }
 function flagOf(c, key) { return !!(c?.flags && c.flags[key]); }
 
 const BIG_STAGE = ['spring_po', 'summer_po', 'msi', 'worlds'];
-function onBigStage(c) { return BIG_STAGE.includes(phaseIdOf(c)); }
+const INTL_PHASES = ['msi', 'worlds'];
+
+/** This season's fixtures. Shape, from blankCareer() in stores/career.js and
+ *  written by engine.js pushSchedule()/completeMatch():
+ *  { id, week, phase, opponentId, home, played, won, score, myRating }. */
+function scheduleOf(c) {
+    return Array.isArray(c?.season?.schedule) ? c.season.schedule : [];
+}
+
+/** Completed split rows, from engine.js closeSplit():
+ *  { year, split, teamId, teamName, w, l, placement, champPoints, awards }. */
+function historyOf(c) {
+    return Array.isArray(c?.history) ? c.history : [];
+}
+
+/** "The calendar says playoffs." Says nothing about whether the player is in
+ *  them. Kept as its own helper because that is genuinely the right question
+ *  for anything about the season rather than about the seat. */
+function inBigStageWeek(c) { return BIG_STAGE.includes(phaseIdOf(c)); }
+
+/**
+ * Is the player actually playing on this stage? The calendar makes 13 of the 40
+ * weeks a playoff or an international every single year whether or not the club
+ * qualified, so a phase check on its own tells a bottom-of-the-table academy
+ * player that eight thousand people booed them off a Worlds stage.
+ *
+ * Evidence, in the shapes engine.js really writes:
+ *   - season.bracket, from openBracket(): { kind, rounds: [{ name, ties: [{ id,
+ *     a, b, score, winner, bestOf }] }], byes: [{ id, name, seed }], ... }.
+ *     `kind` is the phase id, and the player's club has to appear in it - a
+ *     bracket is opened for the region even when the player missed the cut.
+ *   - season.schedule: addBracketFixture() pushes a row stamped with the
+ *     bracket's `phase` the moment a tie is the player's.
+ * Anything missing or unreadable counts as not playing, which is the direction
+ * that fails quietly rather than the one that lies.
+ */
+function onBigStage(c) {
+    if (!isSigned(c)) return false;
+    const phase = phaseIdOf(c);
+    if (!BIG_STAGE.includes(phase)) return false;
+    const clubId = PL(c).clubId;
+
+    const b = c?.season?.bracket;
+    if (b && typeof b === 'object' && String(b.kind || '') === phase) {
+        const rounds = Array.isArray(b.rounds) ? b.rounds : [];
+        for (const r of rounds) {
+            const ties = r && Array.isArray(r.ties) ? r.ties : [];
+            for (const t of ties) {
+                if (!t) continue;
+                if ((t.a && t.a.id === clubId) || (t.b && t.b.id === clubId)) return true;
+            }
+        }
+        for (const s of (Array.isArray(b.byes) ? b.byes : [])) {
+            if (s && s.id === clubId) return true;
+        }
+    }
+
+    for (const f of scheduleOf(c)) {
+        if (f && String(f.phase || '') === phase) return true;
+    }
+    return false;
+}
+
+/** True when the last `n` fixtures the engine marked played were all losses.
+ *  Fewer than n played rows is not a streak, it is a short season. */
+function losingStreak(c, n) {
+    const played = scheduleOf(c).filter(f => f && f.played === true);
+    if (played.length < n) return false;
+    return played.slice(-n).every(f => f.won === false);
+}
+
+const INTL_AWARD_IDS = ['msi_champ', 'worlds_champ', 'worlds_finalist'];
+
+/**
+ * Has the player been to an international before this one? The engine keeps no
+ * attendance ledger, so this reads every marker a save could plausibly carry:
+ * international silverware in the awards list, the same filed against a past
+ * split's history row, and any explicit international field a row happens to
+ * hold. Partial by construction - it cannot see a quarter-final exit from three
+ * years ago - so the one line that depends on it is bounded by age as well.
+ */
+function everPlayedInternational(c) {
+    const isIntlAward = a => !!a && INTL_AWARD_IDS.includes(a.id);
+    if ((Array.isArray(c?.awards) ? c.awards : []).some(isIntlAward)) return true;
+    for (const h of historyOf(c)) {
+        if (!h || typeof h !== 'object') continue;
+        if ((Array.isArray(h.awards) ? h.awards : []).some(isIntlAward)) return true;
+        if (h.msi || h.worlds || h.international || h.intl) return true;
+        if (INTL_PHASES.includes(String(h.phase || ''))) return true;
+    }
+    return false;
+}
+
 function inSplit(c) { const p = phaseIdOf(c); return p === 'spring' || p === 'summer'; }
 function offSeason(c) { const p = phaseIdOf(c); return p === 'offseason' || p === 'preseason'; }
 
@@ -585,7 +686,8 @@ export const EVENT_POOL = [
         icon: '\u{1F4BC}',
         title: 'A Bigger Agency',
         text: 'The agency that represents two of the players you watched growing up wants twenty minutes. They already know your contract dates, which is the point of the call.',
-        when: c => hypeOf(c) >= 8000,
+        // "watched growing up", and an option about being scouted at fifteen.
+        when: c => agedAtLeast(c, 17) && hypeOf(c) >= 8000,
         options: [
             {
                 id: 'switch',
@@ -782,7 +884,8 @@ export const EVENT_POOL = [
         icon: '\u{1F964}',
         title: 'Brand Partnership',
         text: 'An energy drink you have never tasted wants three posts and a visible can on stream. The contract is four pages and one of them is about what you may not say.',
-        when: c => hypeOf(c) >= 2000,
+        // Signing a beverage endorsement personally, and paid in months of rent.
+        when: c => agedAtLeast(c, 17) && hypeOf(c) >= 2000,
         options: [
             {
                 id: 'sign',
@@ -825,7 +928,9 @@ export const EVENT_POOL = [
         icon: '\u{1F3B0}',
         title: 'A Betting Company Calls',
         text: 'The offer is larger than your salary. The only requirement is your face on a billboard in a city you have never visited.',
-        when: c => hypeOf(c) >= 20000,
+        // Gambling advertising, and an offer measured against a salary. Neither
+        // is legal or coherent for a minor, and neither works without a club.
+        when: c => isSigned(c) && agedAtLeast(c, 18) && hypeOf(c) >= 20000,
         options: [
             {
                 id: 'take',
@@ -868,7 +973,8 @@ export const EVENT_POOL = [
         icon: '\u{1F3A5}',
         title: 'Exclusivity Offer',
         text: 'A platform offers two years exclusive. The money is real. The clause about competitive commitments is vague in a way that is not accidental.',
-        when: c => hypeOf(c) >= 15000,
+        // A two-year exclusivity contract signed in person, twenty hours a week.
+        when: c => agedAtLeast(c, 18) && hypeOf(c) >= 15000,
         options: [
             {
                 id: 'take',
@@ -906,7 +1012,8 @@ export const EVENT_POOL = [
         icon: '\u{1F5E3}',
         title: 'The Weak Link',
         text: 'On the desk at halftime, an analyst with a whiteboard explains, politely and at some length, that the problem with your team is you.',
-        when: c => isSigned(c) && formOf(c) <= 56,
+        // An outcome that measures the quiet against how your head was at fifteen.
+        when: c => isSigned(c) && agedAtLeast(c, 17) && formOf(c) <= 56,
         options: [
             {
                 id: 'stage',
@@ -944,7 +1051,8 @@ export const EVENT_POOL = [
         icon: '\u{1F575}',
         title: 'Account Sharing Allegations',
         text: 'A thread with six screenshots claims somebody else played your account during the climb. Two of the screenshots are of an entirely different player.',
-        when: c => mmrOf(c) >= 2400,
+        // One option publishes nine hours of the player's own webcam footage.
+        when: c => agedAtLeast(c, 16) && mmrOf(c) >= 2400,
         options: [
             {
                 id: 'proof',
@@ -987,7 +1095,8 @@ export const EVENT_POOL = [
         icon: '\u{1F58A}',
         title: 'Meet And Greet',
         text: 'The org has booked two hours of signings in a shopping centre on a scrim day. Four hundred people have been queuing since eight in the morning.',
-        when: c => isSigned(c) && hypeOf(c) >= 1000,
+        // The payoff is an adult looking down at an eleven-year-old fan.
+        when: c => isSigned(c) && agedAtLeast(c, 17) && hypeOf(c) >= 1000,
         options: [
             {
                 id: 'full',
@@ -1063,7 +1172,8 @@ export const EVENT_POOL = [
         icon: '\u{1F49A}',
         title: 'Charity Stream',
         text: 'Twelve hours, a marathon of the champions you are worst at, and a total on screen that chat will not allow to stop climbing.',
-        when: c => hypeOf(c) >= 3000,
+        // Measures the total raised against a monthly wage, in a scrim week.
+        when: c => isSigned(c) && hypeOf(c) >= 3000,
         options: [
             {
                 id: 'do',
@@ -1189,7 +1299,8 @@ export const EVENT_POOL = [
         icon: '\u{1F91D}',
         title: 'An Old Duo',
         text: 'The friend you climbed with at fourteen is online for the first time in a year. He is two divisions below where he used to be and he wants to queue.',
-        when: c => (Number(c?.soloq?.games) || 0) >= 20,
+        // "The friend you climbed with at fourteen", who has since had a year off.
+        when: c => agedAtLeast(c, 16) && (Number(c?.soloq?.games) || 0) >= 20,
         options: [
             {
                 id: 'queue',
@@ -1227,7 +1338,8 @@ export const EVENT_POOL = [
         icon: '\u{2708}',
         title: 'Bootcamp Offer',
         text: 'Two weeks in a room in Seoul containing five computers and a rice cooker. The org will pay for the flights but not for what the fortnight costs you.',
-        when: c => isSigned(c) && offSeason(c),
+        // Options that live away from family and rent a room abroad unsupervised.
+        when: c => isSigned(c) && agedAtLeast(c, 17) && offSeason(c),
         options: [
             {
                 id: 'go',
@@ -1270,7 +1382,8 @@ export const EVENT_POOL = [
         icon: '\u{1F5A5}',
         title: 'Blue Screen',
         text: 'Your rig dies eleven minutes into a scrim and refuses to come back. The spare machine in the building has a monitor from 2019 on it.',
-        when: () => true,
+        // A scrim, a building and a spare machine: all three need a club.
+        when: c => isSigned(c),
         options: [
             {
                 id: 'buy',
@@ -1429,7 +1542,8 @@ export const EVENT_POOL = [
         icon: '\u{1F634}',
         title: 'Nine Days',
         text: 'You have not slept properly in nine days. The block ends at two, the solo queue ends when you stop, and lately you have stopped noticing that you do not stop.',
-        when: c => energyOf(c) <= 38 || healthOf(c) <= 55,
+        // The unsigned branch books and pays for a private appointment alone.
+        when: c => agedAtLeast(c, 16) && (energyOf(c) <= 38 || healthOf(c) <= 55),
         options: [
             {
                 id: 'doctor',
@@ -1472,7 +1586,8 @@ export const EVENT_POOL = [
         icon: '\u{1F91A}',
         title: 'Physio Flags Your Wrist',
         text: 'The physio holds your forearm, presses somewhere very specific, and watches your face rather than your arm. "How long has that been there?"',
-        when: c => healthOf(c) <= 80,
+        // There is no club physio holding your forearm without a club.
+        when: c => isSigned(c) && healthOf(c) <= 80,
         options: [
             {
                 id: 'rest',
@@ -1553,7 +1668,8 @@ export const EVENT_POOL = [
         icon: '\u{1F4DE}',
         title: 'A Call From Home',
         text: 'Your mother is doing the thing on the phone where she is trying not to worry you, which is exactly how you know.',
-        when: () => true,
+        // Flying home, telling the coach, and a building nobody in it knows.
+        when: c => isSigned(c) && agedAtLeast(c, 17),
         options: [
             {
                 id: 'fly',
@@ -1591,7 +1707,8 @@ export const EVENT_POOL = [
         icon: '\u{1F573}',
         title: 'You Think About Quitting',
         text: 'Not dramatically. Just a quiet twenty minutes at four in the morning working out what you would do instead, and it is not nothing.',
-        when: c => moraleOf(c) <= 34,
+        // "For the first time since you were twelve" needs a gap worth naming.
+        when: c => agedAtLeast(c, 16) && moraleOf(c) <= 34,
         options: [
             {
                 id: 'psych',
@@ -1634,7 +1751,8 @@ export const EVENT_POOL = [
         icon: '\u{1F6C2}',
         title: 'Paperwork',
         text: 'Your visa appointment is on a Tuesday, in a building four hours away, and the alternative is missing the first fortnight of the split.',
-        when: c => isSigned(c),
+        // A work visa needs legal working age, and a minor needs a guardian there.
+        when: c => isSigned(c) && agedAtLeast(c, 18),
         options: [
             {
                 id: 'queue',
@@ -1677,7 +1795,8 @@ export const EVENT_POOL = [
         icon: '\u{23F3}',
         title: 'How Long Have You Got Left?',
         text: 'Somebody asks it as the last question of a long interview, in the polite voice people use for it. You are the oldest player on your roster by four years.',
-        when: c => ageOf(c) >= 26,
+        // "The oldest player on your roster" needs a roster to be oldest on.
+        when: c => isSigned(c) && agedAtLeast(c, 26),
         options: [
             {
                 id: 'years',
@@ -1785,6 +1904,217 @@ export const EVENT_POOL = [
                 apply: () => ({
                     text: 'Nine weeks of turning up and playing solo queue in the back room. Everybody in the building can tell, including the people writing next year\'s roster.',
                     effects: { morale: -6, chemistry: -9, form: -5 },
+                }),
+            },
+        ],
+    },
+
+    // ---- THE BEDROOM YEARS -------------------------------------------------
+    //  Nobody has signed you, nobody is paying you, and there is homework on
+    //  the desk. Everything above this line needs a club, a wage, a physio or a
+    //  past; these are gated to the unsigned pre-competitive years so the early
+    //  game has texture of its own instead of borrowed professional drama.
+    {
+        id: 'school_hall_lan',
+        weight: 12,
+        type: 'match',
+        icon: '\u{1F3C6}',
+        title: 'A Tournament In A School Hall',
+        text: 'Somebody has booked a school hall, forty machines and a projector for the Saturday. Entry is fifteen a head, the prize is two hundred, and the bracket is on a spreadsheet.',
+        when: c => !isSigned(c) && agedBetween(c, 13, 16),
+        options: [
+            {
+                id: 'team',
+                label: 'Enter with the Discord five',
+                desc: 'Four people you have never seen standing up.',
+                apply: (c) => (mmrOf(c) >= 1400
+                    ? {
+                        text: 'You win it in front of about sixty people and one hired microphone. Two of the teams you beat add you that night.',
+                        effects: { gold: 260, followers: 900, morale: 9, energy: -8, attr: { tmf: 1 } },
+                    }
+                    : {
+                        text: 'Out in the second round to five boys who have obviously played together for a year. You learn more in that hour than in the month before it.',
+                        effects: { gold: -60, morale: -4, energy: -8, attr: { tmf: 1, knw: 1 } },
+                    }),
+            },
+            {
+                id: 'solo',
+                label: 'Turn up alone and fill in',
+                desc: 'Whoever arrives a man short takes you.',
+                apply: () => ({
+                    text: 'You play for three different teams in one afternoon on three different roles. Nobody in the hall knows your name and four people ask for it.',
+                    effects: { gold: -60, followers: 400, energy: -10, attr: { chp: 1 } },
+                }),
+            },
+            {
+                id: 'stay',
+                label: 'Stay in and queue',
+                desc: 'Ranked does not cost fifteen.',
+                apply: () => ({
+                    text: 'Eleven games on the Saturday while it happens without you. The rating is real and the room was not, which is either the right call or the one you tell yourself.',
+                    effects: { mmr: 90, energy: -12, morale: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'bedroom_rig',
+        weight: 12,
+        type: 'money',
+        icon: '\u{1F5A5}',
+        title: 'Thirty Frames',
+        text: 'The machine in the corner of the living room drops to thirty frames every time five people are on the screen, and it has done for two years. Nobody in this house thinks that is a real problem.',
+        when: c => PL(c).path === 'precomp' && !isSigned(c) && agedBetween(c, 13, 16),
+        options: [
+            {
+                id: 'save',
+                label: 'Save for a second-hand card',
+                desc: 'Months of birthday money and a marketplace listing.',
+                apply: () => ({
+                    text: 'It arrives in a box with somebody else\'s dust in it and it works. Every teamfight you have ever played was happening slightly before you saw it.',
+                    effects: { gold: -320, mmr: 110, morale: 6, attr: { mec: 1 } },
+                }),
+            },
+            {
+                id: 'ask',
+                label: 'Ask them to go halves',
+                desc: 'You have to explain what a frame is first.',
+                apply: (c) => (mmrOf(c) >= 1800
+                    ? {
+                        text: 'You show them the ladder and the machine and the gap between the two. Your mother pays half of it on the Thursday and says nothing about maths for a fortnight.',
+                        effects: { gold: -160, mmr: 110, morale: 7, attr: { mec: 1 } },
+                    }
+                    : {
+                        text: 'They ask what it would change and you do not have an answer that survives being said out loud. The machine stays as it is.',
+                        effects: { morale: -7 },
+                    }),
+            },
+            {
+                id: 'settle',
+                label: 'Learn to play at thirty',
+                desc: 'It is what you have. Work inside it.',
+                apply: () => ({
+                    text: 'You stop blaming the machine and start playing around it. It costs you a handful of kills a week and it teaches you where to stand instead.',
+                    effects: { mmr: -40, morale: -2, attr: { cmp: 1, map: 1 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'discord_five',
+        weight: 12,
+        type: 'training',
+        icon: '\u{1F4AC}',
+        title: 'The Discord Five',
+        text: 'Five of you in a voice channel every night at seven, none of you old enough to drive, one of you in a different country. Somebody has put the word "team" in the channel name.',
+        when: c => !isSigned(c) && agedBetween(c, 13, 16) && (Number(c?.soloq?.games) || 0) >= 10,
+        options: [
+            {
+                id: 'call',
+                label: 'Take the calls',
+                desc: 'Be the voice. Nobody else wants it.',
+                apply: () => ({
+                    text: 'You do the drakes, the timers and the arguing. It is the first time four other people have done what you said, and that turns out to be a skill of its own.',
+                    effects: { energy: -8, morale: 4, attr: { ldr: 2 } },
+                }),
+            },
+            {
+                id: 'scrim',
+                label: 'Book games against older teams',
+                desc: 'Message every amateur roster in the region.',
+                apply: () => ({
+                    text: 'Two replies out of thirty and both of them beat you comfortably. You watch the second one back four times and write down what they did at fourteen minutes.',
+                    effects: { energy: -10, morale: -3, attr: { knw: 1, map: 1 } },
+                }),
+            },
+            {
+                id: 'leave',
+                label: 'Leave and go back to the ladder',
+                desc: 'They are not going anywhere and you might be.',
+                apply: () => ({
+                    text: 'You mute the channel on a Tuesday and nobody asks why. The ladder is lonelier and it climbs faster, and you think about the channel most nights.',
+                    effects: { mmr: 120, morale: -6, attr: { mec: 1 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'paid_coach_dm',
+        weight: 11,
+        type: 'money',
+        icon: '\u{1F4B3}',
+        title: 'Forty A Session',
+        text: 'A coach with a Challenger tag in his display name offers to review two of your games for forty. His own account has not been ranked in three seasons.',
+        when: c => PL(c).path === 'precomp' && !isSigned(c) && agedBetween(c, 13, 16),
+        options: [
+            {
+                id: 'pay',
+                label: 'Book a session',
+                desc: 'It is your money and it is a lot of it.',
+                apply: () => (chance(0.55)
+                    ? {
+                        text: 'Ninety minutes, of which about eleven are worth the forty. He shows you one wave pattern you have been misplaying since the day you started.',
+                        effects: { gold: -160, morale: 2, attr: { lne: 1, knw: 1 } },
+                    }
+                    : {
+                        text: 'Ninety minutes of a man reading your own minimap back to you in a tone. You pay, you thank him, and you do not book the second one.',
+                        effects: { gold: -160, morale: -6 },
+                    }),
+            },
+            {
+                id: 'free',
+                label: 'Do it yourself for nothing',
+                desc: 'A pro on your champion, and a notebook.',
+                apply: () => ({
+                    text: 'Six hours of somebody else\'s replays with a notebook next to the keyboard. Slower than being told and it stays in your head considerably longer.',
+                    effects: { energy: -12, attr: { knw: 1 } },
+                }),
+            },
+            {
+                id: 'queue',
+                label: 'Ignore it and queue',
+                desc: 'Games are the only free coaching there is.',
+                apply: () => ({
+                    text: 'Twenty more games instead. You are no wiser and you are a division higher, and this far down the ladder those are nearly the same thing.',
+                    effects: { mmr: 100, energy: -10, morale: 2 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'final_from_the_bedroom',
+        weight: 11,
+        type: 'system',
+        icon: '\u{1F4FA}',
+        title: 'The Final, From Your Bedroom',
+        text: 'The stage you are not on is on the second monitor at eleven at night, and somebody four years older than you is holding a trophy on it and cannot speak.',
+        when: c => !isSigned(c) && agedBetween(c, 13, 16) && inBigStageWeek(c),
+        options: [
+            {
+                id: 'study',
+                label: 'Watch it like homework',
+                desc: 'Pause it. Rewind the draft. Write it down.',
+                apply: () => ({
+                    text: 'You watch the same twelve minutes five times and understand about half of what the winning side did. It is the useful half.',
+                    effects: { energy: -8, morale: 2, attr: { knw: 1, map: 1 } },
+                }),
+            },
+            {
+                id: 'play',
+                label: 'Turn it off and queue',
+                desc: 'Watching is not playing.',
+                apply: () => ({
+                    text: 'Nine games while the confetti falls somewhere else. You are not on that stage this year and there is exactly one route to it.',
+                    effects: { mmr: 90, energy: -12, morale: -3, attr: { mec: 1 } },
+                }),
+            },
+            {
+                id: 'sit',
+                label: 'Just watch it',
+                desc: 'No notebook. No client open.',
+                apply: () => ({
+                    text: 'Two hours of wanting it very badly and nothing else. You are still awake at three working out how old you would be the year it comes to your region.',
+                    effects: { morale: 8, energy: -4 },
                 }),
             },
         ],
@@ -2119,7 +2449,9 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_loss_game_three',
-        when: (c, ctx) => !!ctx?.lost,
+        // There is no game three in a regular-season Bo1. Ask for a series, or
+        // failing a scoreline to read, for the stage that only plays series.
+        when: (c, ctx) => !!ctx?.lost && (!!ctx?.series || !!ctx?.big),
         question: 'What went wrong in game three?',
         options: [
             { label: 'I threw it. That is the answer.', tone: 'humble', effects: { morale: -3, chemistry: 6, followers: 1200 } },
@@ -2130,7 +2462,13 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_mvp',
-        when: (c, ctx) => !!ctx?.mvp,
+        // "MVP again" needs a second one. The defiant answer claims last year's
+        // league MVP as well, and the options carry no gate of their own - the
+        // index into this array is what applyInterviewAnswer resolves - so the
+        // completed-prior-season term has to live up here on the question.
+        when: (c, ctx) => !!ctx?.mvp
+            && (Number(c?.totals?.mvps) || 0) >= 2
+            && historyOf(c).length >= 2,
         question: 'MVP again. Are you the best player in this league right now?',
         options: [
             { label: 'No. I am playing well on a team that is playing well.', tone: 'humble', effects: { followers: 1400, chemistry: 7, morale: 3 } },
@@ -2141,7 +2479,8 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_losing_streak',
-        when: (c, ctx) => !!ctx?.lost && formOf(c) <= 45,
+        // "That is three in a row" - so read three in a row off the schedule.
+        when: (c, ctx) => !!ctx?.lost && losingStreak(c, 3) && formOf(c) <= 45,
         question: 'That is three in a row. Is something broken in this team?',
         options: [
             { label: 'Something is broken and most of it is me.', tone: 'humble', effects: { morale: -5, chemistry: 8, followers: 1800 } },
@@ -2163,7 +2502,14 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_worlds_stage',
-        when: c => phaseIdOf(c) === 'worlds' || phaseIdOf(c) === 'msi',
+        // "First time on this stage" fired every year of a fifteen-year career,
+        // to four-time champions, and to players whose club never qualified.
+        // Needs a seat at this international, no international behind it, and a
+        // player young enough for "the veterans carried us" to be true.
+        when: c => INTL_PHASES.includes(phaseIdOf(c))
+            && onBigStage(c)
+            && !everPlayedInternational(c)
+            && ageOf(c) <= 23,
         question: 'First time on this stage. Is it bigger than you expected?',
         options: [
             { label: 'It is enormous. I could not hear my own keyboard.', tone: 'humble', effects: { followers: 2600, morale: 4, chemistry: 3 } },
@@ -2174,7 +2520,9 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_rival_bo5',
-        when: (c, ctx) => !!ctx?.big && !!ctx?.lost,
+        // "Still never beaten him" and "that is the record" need a record. Sixty
+        // professional games is roughly two full splits of one.
+        when: (c, ctx) => !!ctx?.big && !!ctx?.lost && gamesOf(c) >= 60,
         question: 'You have still never beaten him in a best-of-five.',
         options: [
             { label: 'He is better than me in a Bo5. That is the record.', tone: 'humble', effects: { morale: -4, followers: 2000, chemistry: 4, attr: { cmp: 1 } } },
@@ -2207,7 +2555,9 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_teenager',
-        when: c => ageOf(c) <= 18,
+        // The question hardcodes seventeen and asserts a starting spot in a
+        // league, so it fires at exactly seventeen and only with a club.
+        when: c => isSigned(c) && ageOf(c) === 17,
         question: 'You are seventeen and you are starting in this league. Does it feel too fast?',
         options: [
             { label: 'Every day. I am mostly trying to keep up.', tone: 'humble', effects: { followers: 2200, chemistry: 5, morale: 3 } },
@@ -2229,7 +2579,9 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_banned_out',
-        when: c => !!PL(c).champion && hypeOf(c) >= 3000,
+        // Nine professional bans in a row need nine professional games. Hype
+        // alone is earnable from a bedroom with zero of them.
+        when: c => !!PL(c).champion && gamesOf(c) >= 9 && hypeOf(c) >= 3000,
         question: 'They have banned your signature pick nine games in a row. Respect, or a problem?',
         options: [
             { label: 'A problem. I need more than one champion.', tone: 'humble', effects: { followers: 1200, chemistry: 3, attr: { chp: 1 } } },
@@ -2240,7 +2592,8 @@ export const INTERVIEW_POOL = [
     },
     {
         id: 'iv_call_credit',
-        when: (c, ctx) => !!ctx?.won && !!ctx?.big,
+        // A jungler cannot be quoted praising their own jungler.
+        when: (c, ctx) => !!ctx?.won && !!ctx?.big && PL(c).role !== 'JNG',
         question: 'Your jungler said the baron call was yours. Was it?',
         options: [
             { label: 'We all said it at the same time, honestly.', tone: 'humble', effects: { followers: 1100, chemistry: 7, morale: 2 } },
@@ -2282,18 +2635,35 @@ export const INTERVIEW_BY_ID = INTERVIEW_POOL.reduce((m, q) => { m[q.id] = q; re
  */
 function matchCtx(matchResult, c) {
     const m = matchResult && typeof matchResult === 'object' ? matchResult : {};
+    // Explicit, not inferred from the normalised fields below: a genuine engine
+    // result that happens to report nothing is still a game that was played,
+    // while doMedia() in a week with no match hands this a null. Without the
+    // distinction the calendar alone made week 33 a "big stage" and an unsigned
+    // thirteen-year-old got asked how they planned to win the semi-final.
+    const played = matchResult != null && typeof matchResult === 'object';
+
     const won = m.won === true || m.win === true || m.result === 'win' || m.outcome === 'win';
     const lost = m.won === false || m.win === false || m.result === 'loss' || m.outcome === 'loss';
     const rating = Number(m.myRating ?? m.rating ?? m.playerRating ?? m.score ?? 0) || 0;
     const mvp = !!(m.mvp || m.isMVP || m.playerOfTheGame) || rating >= 9;
     const phase = m.phase || m.phaseId || phaseIdOf(c);
-    const big = !!(m.big || m.playoff || m.international) || BIG_STAGE.includes(phase);
+    // The phase only speaks for a match that exists. A missing result cannot
+    // borrow the week's importance.
+    const big = played
+        && (!!(m.big || m.playoff || m.international) || BIG_STAGE.includes(phase));
+    // Was this a series rather than a single game? completeMatch() writes
+    // `score` as a [myGames, theirGames] pair for a Bo5 tie and null for a Bo1.
+    const score = Array.isArray(m.score) ? m.score : null;
+    const gameCount = score
+        ? score.reduce((n, v) => n + (Number(v) || 0), 0)
+        : Number(m.games) || 0;
+    const series = played && (gameCount >= 3 || (Number(m.bestOf) || 0) >= 3);
     // A "heavy" defeat is a 0-x sweep or a personal disaster. An engine that
     // reports no per-match rating gets only the sweep, otherwise every routine
     // loss would draw a camera and interviews would fire twice as often as
     // intended.
     const heavy = (lost && rating > 0 && rating <= 4) || m.sweep === true;
-    return { won, lost, mvp, rating, phase, big, heavy };
+    return { played, won, lost, mvp, rating, phase, big, series, heavy };
 }
 
 /**

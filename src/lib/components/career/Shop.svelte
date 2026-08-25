@@ -126,7 +126,7 @@
             case 'valueMult':        return `+${pct(v)} market value`;
             case 'decayMult':        return `Age decay runs at ${pct(v)} speed`;
             case 'unsignedCapBonus': return `+${v} to the unsigned soft cap`;
-            case 'ceilingBonus':     return `+${v} to every attribute ceiling`;
+            case 'ceilingBonus':     return `+${v} to every attribute ceiling, permanently`;
             case 'chemistryBonus':   return `+${v} starting chemistry`;
             case 'extraChampion':    return `+${v} signature champion`;
             case 'clutchBonus':      return `+${pct(v)} in elimination games`;
@@ -157,6 +157,17 @@
             if (k === 'ALL') out.push({ text: `+${v} all attributes`, bad: false });
             else if (k === 'ROLE_PRIMARY') out.push({ text: `+${v} main attribute`, bad: false });
             else if (ATTR_BY_KEY[k]) out.push({ text: `+${v} ${ATTR_BY_KEY[k].abbr}`, bad: false, color: ATTR_BY_KEY[k].color });
+        }
+        // Ceiling points are not attribute points. They are the only renewable
+        // way to raise the roof, so they get their own chip rather than reading
+        // like a slightly bigger training session.
+        const pot = effect.potentialXP || {};
+        for (const k of Object.keys(pot)) {
+            const v = Number(pot[k]) || 0;
+            if (!v) continue;
+            if (k === 'ALL') out.push({ text: `+${v} to every ceiling`, bad: false });
+            else if (k === 'ROLE_PRIMARY') out.push({ text: `+${v} main attribute ceiling`, bad: false });
+            else if (ATTR_BY_KEY[k]) out.push({ text: `+${v} ${ATTR_BY_KEY[k].abbr} ceiling`, bad: false, color: ATTR_BY_KEY[k].color });
         }
         if (effect.chemistry) out.push({ text: `+${effect.chemistry} chemistry`, bad: false });
         if (effect.followers) out.push({ text: `+${fmtFollowers(effect.followers)} followers`, bad: false });

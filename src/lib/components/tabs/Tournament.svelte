@@ -6,6 +6,7 @@
     import { getDB, makeUniqueId, LEGACY_TIERS, AWARD_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import { playSound } from '../../utils/sound.js';
+    import { saveToStorage, loadFromStorage } from '../../utils/storage.js';
     import { get } from 'svelte/store';
     import { onMount } from 'svelte';
 
@@ -306,7 +307,7 @@
 
     function startGRCooldown() {
         grCooldownEnd = Date.now() + 30 * 60 * 1000;
-        localStorage.setItem('lur_gr_cooldown', String(grCooldownEnd));
+        saveToStorage('lur_gr_cooldown', grCooldownEnd);
         updateGRCooldown();
         if (grTimer) clearInterval(grTimer);
         grTimer = setInterval(updateGRCooldown, 1000);
@@ -317,13 +318,13 @@
         if (r <= 0 && grTimer) { clearInterval(grTimer); grTimer = null; }
     }
     function initGRCooldown() {
-        const saved = localStorage.getItem('lur_gr_cooldown');
-        if (saved) {
-            grCooldownEnd = Number(saved);
-            if (grCooldownEnd > Date.now()) {
-                updateGRCooldown();
-                grTimer = setInterval(updateGRCooldown, 1000);
-            }
+        // Back-compat: written raw via String(ms) before slots. A bare number is valid
+        // JSON, so Number() reads both forms; an unreadable value becomes 0, which
+        // means no cooldown rather than one that never expires.
+        grCooldownEnd = Number(loadFromStorage('lur_gr_cooldown')) || 0;
+        if (grCooldownEnd > Date.now()) {
+            updateGRCooldown();
+            grTimer = setInterval(updateGRCooldown, 1000);
         }
     }
     initGRCooldown();

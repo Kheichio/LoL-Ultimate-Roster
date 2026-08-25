@@ -195,7 +195,7 @@
                 <span class="step-n">2</span>
                 <div>
                     <span class="step-h">Keep training anyway</span>
-                    <span class="step-t">Unsigned, every attribute chokes at {UNSIGNED_SOFT_CAP}. A club environment is the only thing that lifts that cap, so train right up to it and stop wasting weeks.</span>
+                    <span class="step-t">Unsigned, every attribute crawls past {UNSIGNED_SOFT_CAP} &#8212; roughly a seventh of the normal rate, not a wall. A club environment is what lifts that, so train up to it and stop burning weeks on the other side.</span>
                 </div>
             </li>
             <li>

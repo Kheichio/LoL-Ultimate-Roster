@@ -19,30 +19,31 @@
 //      node tools/championCheck.mjs --list    and print the pool per role
 // ===========================================================================
 
-import { CHAMPIONS, CHAMPION_BY_ID, ATTR_KEYS, ROLES, championsForRole } from '../src/lib/career/constants.js';
+import {
+    CHAMPIONS, CHAMPION_BY_ID, ATTR_KEYS, ROLES, championsForRole,
+    ARCHETYPE_BIAS, PLAYSTYLES, championsForStyle, biasDistance,
+    FIT_MAX, STYLE_POOL_MIN,
+} from '../src/lib/career/constants.js';
 import fs from 'node:fs';
 
 const LIST = process.argv.includes('--list');
 
-// The archetype table lives in match.js as a module-private const, so it is
-// read out of the source rather than imported. If that table is ever renamed
-// this check fails loudly instead of silently passing everything.
-function archetypesFromMatch() {
-    const src = fs.readFileSync(new URL('../src/lib/career/match.js', import.meta.url), 'utf8');
-    const block = src.match(/const ARCHETYPE_BIAS = \{([\s\S]*?)\n\};/);
-    if (!block) {
-        console.error('FATAL: could not find ARCHETYPE_BIAS in src/lib/career/match.js');
-        process.exit(2);
-    }
-    const keys = [];
-    for (const m of block[1].matchAll(/^\s*(?:'([^']+)'|([A-Za-z ]+?))\s*:\s*\{/gm)) {
-        keys.push((m[1] || m[2]).trim());
-    }
-    return keys;
-}
-
-const ARCHETYPES = archetypesFromMatch();
+// ARCHETYPE_BIAS used to be a module-private const in match.js and was read out
+// of the source by regex. It now lives in constants.js because championsForStyle
+// reads it too, so it can simply be imported -- which also removes a formatting
+// dependency that would have failed this file loudly for no real reason.
+const ARCHETYPES = Object.keys(ARCHETYPE_BIAS);
 const ROLE_IDS = ROLES.map(r => r.id);
+
+/** COMFORT_BONUS still lives in match.js. Read rather than remembered: the
+ *  comment here previously claimed 0.06 long after it had been doubled, which
+ *  made the fairness thresholds below twice as permissive as they read. */
+function comfortBonusFromMatch() {
+    const src = fs.readFileSync(new URL('../src/lib/career/match.js', import.meta.url), 'utf8');
+    const m = src.match(/const COMFORT_BONUS = ([0-9.]+)/);
+    return m ? Number(m[1]) : null;
+}
+const COMFORT_BONUS = comfortBonusFromMatch();
 
 // Every id that has ever shipped. A career save stores player.champion as a
 // bare string, so removing or renaming one of these orphans real saves --
@@ -98,8 +99,9 @@ for (const c of CHAMPIONS) {
 
     // The one that fails silently in production.
     if (!ARCHETYPES.includes(c.archetype)) {
-        err(tag + ': archetype "' + c.archetype + '" is not in match.js ARCHETYPE_BIAS '
-            + '- the comfort-pick bonus would never fire');
+        err(tag + ': archetype "' + c.archetype + '" is not in ARCHETYPE_BIAS '
+            + '- the comfort-pick bonus would never fire, and championsForStyle() '
+            + 'would never rank it as fitting any playstyle');
     }
 
     if (!c.mods || typeof c.mods !== 'object') { err(tag + ': missing mods'); continue; }
@@ -150,6 +152,94 @@ for (const role of ROLES) {
 const used = new Set(CHAMPIONS.map(c => c.archetype));
 for (const a of ARCHETYPES) if (!used.has(a)) warn('archetype "' + a + '" is in ARCHETYPE_BIAS but no champion uses it');
 
+// --------------------------------------------------------- playstyle pools
+//  A signature champion has to fit the chosen playstyle. That constraint is
+//  derived (playstyle bias vs archetype bias), not authored, so a change to
+//  either table can silently starve one of the twenty playstyles -- and a
+//  playstyle with two legal champions is not a choice, it is a lookup answer.
+//  The thin cases are structural rather than accidental: the jungle simply does
+//  not contain many archetypes a Farming Jungler wants, which is why
+//  championsForStyle() tops a pool up to STYLE_POOL_MIN by nearest fit.
+console.log('');
+console.log('=== champion pool per playstyle ====================================');
+console.log('  (fit <= ' + FIT_MAX + ', topped up to ' + STYLE_POOL_MIN + ')');
+for (const role of ROLES) {
+    const styles = PLAYSTYLES[role.id] || [];
+    if (!styles.length) { err(role.id + ': no playstyles defined'); continue; }
+    const roleTotal = championsForRole(role.id).length;
+    for (const s of styles) {
+        const pool = championsForStyle(role.id, s.id);
+        const arch = new Set(pool.map(c => c.archetype));
+        const share = roleTotal ? Math.round((pool.length / roleTotal) * 100) : 0;
+        console.log('  ' + role.id.padEnd(4) + ' ' + s.id.padEnd(15)
+            + String(pool.length).padStart(3) + '/' + String(roleTotal).padStart(3)
+            + ' champions  ' + String(share).padStart(3) + '%  '
+            + arch.size + ' archetypes');
+
+        if (pool.length < STYLE_POOL_MIN) {
+            err(role.id + '/' + s.id + ': only ' + pool.length + ' legal champions - '
+                + 'championsForStyle() should have topped this up to ' + STYLE_POOL_MIN);
+        }
+        if (arch.size < 2) {
+            warn(role.id + '/' + s.id + ': every legal champion is a "' + [...arch][0]
+                + '" - the pick has no real variety');
+        }
+        // A "constraint" that leaves 95% of the role available is not one, and
+        // it makes the playstyle choice meaningless at champion select.
+        if (roleTotal >= 20 && share > 95) {
+            warn(role.id + '/' + s.id + ': ' + share + '% of the role is legal - barely a constraint');
+        }
+        if (LIST) {
+            for (const g of [...arch].sort()) {
+                console.log('        ' + g + ': ' + pool.filter(c => c.archetype === g).map(c => c.name).join(', '));
+            }
+        }
+    }
+}
+
+// Every champion must be reachable by at least one playstyle in EVERY role it
+// lists, or it is data nobody can ever pick in that role. championsForStyle()
+// guarantees this by construction; this asserts the guarantee still holds.
+for (const role of ROLES) {
+    const reachable = new Set();
+    for (const s of (PLAYSTYLES[role.id] || [])) {
+        for (const c of championsForStyle(role.id, s.id)) reachable.add(c.id);
+    }
+    for (const c of championsForRole(role.id)) {
+        if (!reachable.has(c.id)) {
+            err(c.id + ' ("' + c.name + '", ' + c.archetype + ') fits no ' + role.id
+                + ' playstyle - it can never be picked in that role');
+        }
+    }
+}
+
+// A playstyle's blurb names the champions it is ABOUT. Those champions must be
+// legal for it, or the game is describing a pick it will not let you make. This
+// is the check that caught the Frontline Tank being unable to pick Ornn or Sion
+// while its own blurb read "Ornn, K'Sante, Sion".
+//
+// Warning rather than error because the blurbs are prose, not a spec: sup_roam
+// names Pyke, whose archetype is Assassin, and mechanically Pyke really is
+// closer to a lane-bully support than to a vision roamer. That one is a known,
+// accepted mismatch -- anything NEW showing up here is drift.
+const normName = s => String(s).toLowerCase().replace(/[^a-z]/g, '');
+const CHAMP_BY_NORM = new Map(CHAMPIONS.map(c => [normName(c.name), c]));
+for (const role of ROLES) {
+    for (const s of (PLAYSTYLES[role.id] || [])) {
+        const legal = new Set(championsForStyle(role.id, s.id).map(c => c.id));
+        // The blurbs open with a comma list of champion names, then a full stop.
+        const named = String(s.blurb || '').split('.')[0].split(',')
+            .map(x => CHAMP_BY_NORM.get(normName(x)))
+            .filter(c => c && c.roles.includes(role.id));
+        for (const c of named) {
+            if (!legal.has(c.id)) {
+                warn(role.id + '/' + s.id + ': blurb names ' + c.name + ' (' + c.archetype
+                    + ') but the fit rule rejects it');
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------ balance spread
 console.log('');
 console.log('=== balance spread =================================================');
@@ -191,20 +281,10 @@ for (const m of evSrc.matchAll(/bias:\s*bias\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s
 if (!biases.length) {
     warn('no option biases parsed out of matchEvents.js - skipping fairness check');
 } else {
-    const biasSrc = fs.readFileSync(new URL('../src/lib/career/match.js', import.meta.url), 'utf8');
-    const tbl = {};
-    const blk = biasSrc.match(/const ARCHETYPE_BIAS = \{([\s\S]*?)\n\};/)[1];
-    for (const m of blk.matchAll(/^\s*(?:'([^']+)'|([A-Za-z ]+?))\s*:\s*\{([^}]*)\}/gm)) {
-        const name = (m[1] || m[2]).trim();
-        const b = {};
-        for (const kv of m[3].matchAll(/(aggression|risk|teamplay)\s*:\s*([0-9.]+)/g)) b[kv[1]] = Number(kv[2]);
-        tbl[name] = b;
-    }
-    const dist = (a, b) => (Math.abs(a.aggression - b.aggression) + Math.abs(a.risk - b.risk)
-        + Math.abs(a.teamplay - b.teamplay)) / 3;
+    const dist = biasDistance;
 
     const rows = [];
-    for (const [name, ab] of Object.entries(tbl)) {
+    for (const [name, ab] of Object.entries(ARCHETYPE_BIAS)) {
         let sum = 0;
         for (const ob of biases) sum += Math.max(0, 1 - 2 * dist(ab, ob));
         const mean = sum / biases.length;
@@ -220,9 +300,16 @@ if (!biases.length) {
     const best = rows[0], worst = rows[rows.length - 1];
     const spread = best.mean - worst.mean;
     console.log('  spread: ' + spread.toFixed(3) + ' (' + best.name + ' over ' + worst.name + ')');
-    // COMFORT_BONUS is 0.06, so the spread in actual win-chance terms is
-    // spread * 0.06. Anything past ~0.5 here means a 3-point swing on every
-    // decision in the game purely from which archetype you picked.
+    if (COMFORT_BONUS == null) {
+        warn('could not read COMFORT_BONUS out of match.js - the swing figure below is unverified');
+    } else {
+        console.log('  worth ' + (spread * COMFORT_BONUS * 100).toFixed(1)
+            + ' percentage points of success chance per decision (COMFORT_BONUS '
+            + COMFORT_BONUS + ')');
+    }
+    // The spread in actual win-chance terms is spread * COMFORT_BONUS. Anything
+    // past ~0.5 here means a swing on every decision in the game purely from
+    // which archetype you picked.
     if (spread > 0.55) {
         err('archetype comfort spread ' + spread.toFixed(3) + ' is too wide - "' + best.name
             + '" picks are systematically stronger than "' + worst.name + '" ones');

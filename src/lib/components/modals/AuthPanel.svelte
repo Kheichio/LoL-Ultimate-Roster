@@ -4,7 +4,7 @@
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
     import { club, collectionRegistry, blueEssence, saveGame } from '../../stores/game.js';
-    import { clearStorage } from '../../utils/storage.js';
+    import { clearStorage, saveToStorage, loadFromStorage } from '../../utils/storage.js';
     import { getDB, makeUniqueId } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { trapFocus } from '../../utils/a11y.js';
@@ -16,7 +16,12 @@
     let regEmail = '';
     let regPass = '';
     let redeemCode = '';
-    let redeemedCodes = JSON.parse(localStorage.getItem('lur_redeemed_codes') || '{}');
+    // Per-save, not per-device: shared across slots, one slot redeeming a code would
+    // lock every other slot out of it. Back-compat: this key was always written as a
+    // JSON object, so pre-slot records decode unchanged — the shape check is only
+    // there so a corrupt value starts empty instead of throwing at component setup.
+    const _storedCodes = loadFromStorage('lur_redeemed_codes');
+    let redeemedCodes = (_storedCodes && typeof _storedCodes === 'object' && !Array.isArray(_storedCodes)) ? _storedCodes : {};
 
     const CODES = {
         'MSISIG2024': { type: 'card', quality: 'MSI', signature: true, label: 'MSI Signature Card' },
@@ -48,7 +53,7 @@
         }
 
         redeemedCodes[code] = true;
-        localStorage.setItem('lur_redeemed_codes', JSON.stringify(redeemedCodes));
+        saveToStorage('lur_redeemed_codes', redeemedCodes);
         redeemCode = '';
         saveGame();
     }
@@ -64,7 +69,7 @@
     }
 
     function wipeAccount() {
-        openConfirmModal('This will erase ALL local data — cards, squad, progress, quests, everything. You cannot undo this.', () => {
+        openConfirmModal('This will erase EVERY save slot in BOTH gamemodes — every Ultimate Roster slot (cards, squad, progress, quests) and every Ultimate Career slot. Only your device settings survive. You cannot undo this.', () => {
             clearStorage();
             showToast('Account wiped. Reloading...', 'info');
             setTimeout(() => location.reload(), 800);

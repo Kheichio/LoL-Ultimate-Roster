@@ -6,6 +6,7 @@
     import { getDB, LEGACY_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import { playSound } from '../../utils/sound.js';
+    import { saveToStorage, loadFromStorage, removeFromStorage } from '../../utils/storage.js';
     import { get } from 'svelte/store';
 
     let phase = 'lobby';
@@ -18,18 +19,20 @@
     let upgradeChoices = [];
     let totalBEEarned = 0;
 
+    // An in-progress run is per-save, so it goes through storage.js and lands in the
+    // active save slot rather than being shared by every slot on the device.
     function saveTowerRun() {
-        localStorage.setItem('lur_tower_run', JSON.stringify({ floor, towerBuffs, totalBEEarned }));
+        saveToStorage('lur_tower_run', { floor, towerBuffs, totalBEEarned });
     }
     function loadTowerRun() {
-        try {
-            const raw = localStorage.getItem('lur_tower_run');
-            if (!raw) return null;
-            return JSON.parse(raw);
-        } catch(e) { return null; }
+        // Back-compat: this key was always written as a JSON object (setItem +
+        // JSON.stringify), so pre-slot runs decode unchanged. Still shape-checked,
+        // because a half-written run must not resume as a broken climb.
+        const raw = loadFromStorage('lur_tower_run');
+        return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : null;
     }
     function clearTowerRun() {
-        localStorage.removeItem('lur_tower_run');
+        removeFromStorage('lur_tower_run');
     }
 
     // Load saved run on mount

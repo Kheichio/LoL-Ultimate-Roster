@@ -20,14 +20,14 @@
 
 import {
     ROLE_BY_ID, PLAYSTYLE_BY_ID, CHAMPION_BY_ID, REGION_BY_ID, CLUB_TIERS,
-    PHASES, phaseForWeek, teamById,
+    PHASES, phaseForWeek, teamById, ARCHETYPE_BIAS, biasDistance,
 } from './constants.js';
 import {
     clamp, randInt, pick, bell, calcOVR, statusInfo, fmtKDA,
 } from './ratings.js';
 import { teamStrength, teamStrengthWithPlayer, teammatesOf } from './teams.js';
 import { career, addNews, grantGold, grantFollowers, adjustCondition, logWeek, saveCareer } from '../stores/career.js';
-import { gearAttrBonus } from './economy.js';
+import { gearAttrBonus, perkEffects } from './economy.js';
 import { getEffectiveRating } from '../utils/cards.js';
 import { showToast } from '../stores/toasts.js';
 import { playSound } from '../utils/sound.js';
@@ -92,29 +92,10 @@ const CP_TABLE = {
 
 const PHASE_BY_ID = PHASES.reduce((m, p) => { m[p.id] = p; return m; }, {});
 
-/**
- * How a signature champion's archetype wants to be played. Matched against an
- * option's bias to decide whether the pick feels comfortable in that moment.
- */
-const ARCHETYPE_BIAS = {
-    Juggernaut: { aggression: 0.70, risk: 0.45, teamplay: 0.55 },
-    Diver:      { aggression: 0.85, risk: 0.75, teamplay: 0.65 },
-    Duelist:    { aggression: 0.72, risk: 0.62, teamplay: 0.25 },
-    Skirmisher: { aggression: 0.75, risk: 0.65, teamplay: 0.40 },
-    Warden:     { aggression: 0.30, risk: 0.25, teamplay: 0.95 },
-    Vanguard:   { aggression: 0.80, risk: 0.70, teamplay: 0.90 },
-    Battlemage: { aggression: 0.50, risk: 0.40, teamplay: 0.75 },
-    Specialist: { aggression: 0.50, risk: 0.55, teamplay: 0.55 },
-    Marksman:   { aggression: 0.45, risk: 0.45, teamplay: 0.60 },
-    Assassin:   { aggression: 0.90, risk: 0.88, teamplay: 0.25 },
-    Mage:       { aggression: 0.40, risk: 0.35, teamplay: 0.80 },
-    Hypercarry: { aggression: 0.35, risk: 0.35, teamplay: 0.65 },
-    Poke:       { aggression: 0.40, risk: 0.30, teamplay: 0.70 },
-    'Lane Bully': { aggression: 0.85, risk: 0.65, teamplay: 0.35 },
-    Utility:    { aggression: 0.30, risk: 0.30, teamplay: 0.90 },
-    Catcher:    { aggression: 0.75, risk: 0.75, teamplay: 0.80 },
-    Enchanter:  { aggression: 0.20, risk: 0.20, teamplay: 1.00 },
-};
+// ARCHETYPE_BIAS moved to constants.js: the comfort bonus below and
+// championsForStyle() (which decides whether a champion is a legal signature
+// pick for your playstyle) must read the same table or the two can disagree
+// about what a champion is. biasDistance() came with it for the same reason.
 
 // ---------------------------------------------------------------------------
 //  SECONDARY TUNING - how the numbers above turn into the running totals
@@ -207,15 +188,6 @@ function phaseIdFor(c, given) {
 function winsNeeded(bestOf) {
     const bo = Math.max(1, Math.round(num(bestOf, 1)));
     return Math.floor(bo / 2) + 1;
-}
-
-/** Mean absolute distance between two {aggression, risk, teamplay} triples. */
-function biasDistance(a, b) {
-    if (!a || !b) return 0.5;
-    const keys = ['aggression', 'risk', 'teamplay'];
-    let sum = 0;
-    for (const k of keys) sum += Math.abs(num(a[k], 0.5) - num(b[k], 0.5));
-    return sum / keys.length;
 }
 
 function weightedPick(list) {
@@ -457,10 +429,18 @@ export function rollDraft(c, oppStrength) {
 }
 
 /** How much of the comfort bonus this game's draft is worth. Old saves have no
- *  `draft` on their in-progress match, so they keep the previous behaviour. */
-function draftComfort(match) {
+ *  `draft` on their in-progress match, so they keep the previous behaviour.
+ *
+ *  The Second Signature perk ("a second champion you are trusted on - the
+ *  comfort-pick bonus follows you through one more ban") is what its own
+ *  description always said it was: on the games your signature is banned, the
+ *  pocket pick keeps nearly all of the comfort instead of under half of it. */
+function draftComfort(match, state) {
     const o = match && match.draft && match.draft.outcome;
-    if (o === 'pocket') return POCKET_COMFORT;
+    if (o === 'pocket') {
+        const extra = num(perkEffects(state).extraChampion, 0);
+        return extra > 0 ? clamp(POCKET_COMFORT + 0.45 * extra, POCKET_COMFORT, 1) : POCKET_COMFORT;
+    }
     if (o === 'offscript') return 0;
     return 1;
 }
@@ -603,7 +583,7 @@ export function successChance(c, match, option, event) {
     // Comfort pick. On the games the draft actually gave you your champion,
     // the plays it was built for get easier. On the games you were banned out
     // of your whole pool, you are on something you do not know and it costs.
-    const scale = draftComfort(match);
+    const scale = draftComfort(match, state);
     if (scale > 0) {
         const champ = CHAMPION_BY_ID[p.champion];
         const arche = champ ? ARCHETYPE_BIAS[champ.archetype] : null;

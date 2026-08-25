@@ -165,12 +165,13 @@
     }
 
     function restoreHeaderCooldown() {
-        const saved = localStorage.getItem('lur_split_cooldown');
-        if (saved) {
-            const end = Number(saved);
-            if (end > Date.now()) {
-                splitCooldownEnd.set(end);
-            }
+        // Same read as Season.svelte's restoreCooldown, and the same back-compat:
+        // the timestamp used to be written raw via String(ms), which is valid JSON,
+        // so Number() handles both the old and the new form. Anything unreadable
+        // reads as 0 and simply shows no cooldown.
+        const end = Number(loadFromStorage('lur_split_cooldown')) || 0;
+        if (end > Date.now()) {
+            splitCooldownEnd.set(end);
         }
     }
     restoreHeaderCooldown();

@@ -509,6 +509,13 @@ function signTier1() {
 }
 
 const STATES = [];
+// CareerShell hydrates from storage rather than from the store, so every state
+// has to be written to the save key as well as set on the store. Asked for
+// rather than hard-coded: save SLOTS resolve the real localStorage key inside
+// utils/storage.js, and a literal here would go on silently writing a key
+// nothing reads, leaving every shell render quietly testing a blank career.
+const CAREER_KEY = typeof ST.careerSaveKey === 'function' ? ST.careerSaveKey() : 'lurc_career';
+
 function pushState(name, note) {
     const snap = clone(cur());
     const rec = { name, note, snap };
@@ -522,7 +529,7 @@ function applyState(snap) {
     ST.careerOverlay.set(null);
     ST.careerScreen.set('hub');
     // CareerShell hydrates from storage, so the save has to agree with the store
-    storage.setItem('lurc_career', JSON.stringify(snap));
+    storage.setItem(CAREER_KEY, JSON.stringify(snap));
 }
 
 console.log('');
@@ -700,6 +707,11 @@ const SINGLE_ROT = [
     ['region-is-unknown',        c => ({ ...c, player: { ...c.player, region: 'NOT_A_REGION' } })],
     ['lastMatch-is-malformed',   c => ({ ...c, lastMatch: { won: null, score: null, kda: null, rating: 'x' } })],
     ['inventory-ids-unknown',    c => ({ ...c, inventory: { gear: { nope: 9 }, lifestyle: { nope: 1 }, consumables: { nope: 2 }, perks: ['nope'] } })],
+    // Traits are bare ids like player.champion, so a save can carry an id that
+    // no longer exists, or the wrong type entirely. Both must render.
+    ['traits-is-null',           c => ({ ...c, player: { ...c.player, traits: null } })],
+    ['traits-hold-a-dead-id',    c => ({ ...c, player: { ...c.player, traits: ['no_such_trait'] } })],
+    ['playstyle-is-unknown',     c => ({ ...c, player: { ...c.player, playstyle: 'NOT_A_STYLE' } })],
 ];
 const SINGLE_STATES = [];
 for (const [label, fn] of SINGLE_ROT) {
@@ -901,8 +913,27 @@ function overlayPayloads() {
 
     out.push(['retire-valid', 'retire', null]);
 
+    // A revealed genetic trait, and a breakthrough split. Both are raised by the
+    // engine at a year rollover / split close, so neither is reachable from a
+    // static snapshot -- they are built here from the real tables.
+    const trait = (K.TRAITS && K.TRAITS[0]) || null;
+    out.push(['trait-valid', 'trait', {
+        trait: trait || { id: 'x', name: 'Talented', rarity: 'uncommon', icon: '✨', blurb: 'A trait.' },
+        applied: { mec: 4, lne: 2, cmp: 2 },
+        potBefore: 84, potAfter: 88, age: 16,
+    }]);
+    out.push(['breakthrough-valid', 'breakthrough', {
+        points: 2,
+        applied: { mec: 2, cmp: 2, knw: 2 },
+        attrs: [
+            { key: 'mec', name: 'Mechanics', abbr: 'MEC', color: '#ef4444', gained: 2, ceiling: 88 },
+            { key: 'cmp', name: 'Composure', abbr: 'CMP', color: '#a855f7', gained: 2, ceiling: 81 },
+        ],
+        potOVR: 89,
+    }]);
+
     // malformed / missing payloads
-    for (const kind of ['event', 'interview', 'result', 'offer', 'awards', 'season', 'retire']) {
+    for (const kind of ['event', 'interview', 'result', 'offer', 'awards', 'season', 'retire', 'trait', 'breakthrough']) {
         out.push([kind + '-payload-null', kind, null]);
         out.push([kind + '-payload-garbage', kind, kind === 'awards' ? [null, undefined, 7] : { nope: true, options: [] }]);
     }
@@ -921,7 +952,7 @@ ST.careerOverlay.set({ kind: 'retire', payload: null });
 await render('CareerOverlay(retire)', COMPONENT_DIR + 'CareerOverlay.svelte', {}, 'overlay-retire-retrospective', { minText: 120 });
 
 // every overlay kind against the hostile save
-for (const kind of ['event', 'interview', 'result', 'offer', 'awards', 'season', 'retire']) {
+for (const kind of ['event', 'interview', 'result', 'offer', 'awards', 'season', 'retire', 'trait', 'breakthrough']) {
     applyState(S_HOSTILE.snap);
     ST.careerOverlay.set({ kind, payload: kind === 'awards' ? [{ id: 'z' }] : { id: 'malformed_offer' } });
     await render('CareerOverlay(' + kind + ')', COMPONENT_DIR + 'CareerOverlay.svelte', {}, 'overlay-hostile-' + kind, { minText: 40 });

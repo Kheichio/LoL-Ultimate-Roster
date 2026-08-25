@@ -438,6 +438,79 @@ function assertInvariants(c, tally) {
     }
     prevSnapshot = { year: Number(t.year) || 0, age: Number(p.age) || 0 };
 
+    // ---- genetic traits ---------------------------------------------------
+    //  Rolled once, on the birthday the start path names. Everything about this
+    //  system is about WHEN: revealed early it is something players restart
+    //  careers for, revealed twice it doubles a potential bonus, revealed with a
+    //  dead id it prints "undefined" on the Profile screen.
+    const traits = p.traits;
+    if (!Array.isArray(traits)) {
+        fail('crash', 'src/lib/stores/career.js', 'player.traits is not an array',
+            `${ctxLine()} -> ${JSON.stringify(traits)}`,
+            'blankCareer declares traits: [] and hydrate must coerce it back.');
+    } else {
+        if (traits.length > 1) {
+            fail('wrong', 'src/lib/career/engine.js', 'a career carries more than one genetic trait',
+                `${ctxLine()} -> ${JSON.stringify(traits)}`,
+                'revealTrait must return early once player.traits is non-empty.');
+        }
+        for (const id of traits) {
+            if (!K.TRAIT_BY_ID[id]) {
+                fail('wrong', 'src/lib/career/constants.js', 'player.traits holds an unknown trait id',
+                    `${ctxLine()} -> "${id}"`,
+                    'Trait ids are persisted like player.champion; never rename or delete one.',
+                    'traitid|' + id);
+            }
+        }
+        const revealAt = R.revealAgeFor(p);
+        if (traits.length && isNum(p.age) && p.age < revealAt) {
+            fail('wrong', 'src/lib/career/engine.js', 'a genetic trait was revealed before its reveal age',
+                `${ctxLine()} -> age ${p.age}, path ${p.path}, reveal age ${revealAt}`,
+                'The whole point of the late reveal is that it cannot be rerolled for.');
+        }
+        if (!traits.length && isNum(p.age) && p.age >= revealAt + 1 && !(c.flags && c.flags.retired)) {
+            fail('wrong', 'src/lib/career/engine.js', 'a career passed its reveal age with no trait',
+                `${ctxLine()} -> age ${p.age}, path ${p.path}, reveal age ${revealAt}`,
+                'rolloverYear calls revealTrait() after the age bump; check it is still wired.',
+                'traitmissing');
+        }
+    }
+
+    // ---- earned and bought ceiling ---------------------------------------
+    //  Both are bounded for a whole career. Unbounded, either one takes every
+    //  player to 99 in everything and the ceiling stops meaning anything -- the
+    //  first cut of both did exactly that.
+    const btOVR = Number(c.flags && c.flags.breakthroughOVR) || 0;
+    // One split may overshoot the budget on its final grant, so the assertion is
+    // the budget plus one split's worth rather than the budget exactly.
+    if (btOVR > G.BREAKTHROUGH_CAREER_MAX + 3) {
+        fail('wrong', 'src/lib/career/engine.js', 'breakthroughs raised the ceiling past their career budget',
+            `${ctxLine()} -> flags.breakthroughOVR=${btOVR} budget=${G.BREAKTHROUGH_CAREER_MAX}`,
+            'checkBreakthrough must return early once the budget is spent.',
+            'btbudget');
+    }
+    const boughtOVR = Number(c.flags && c.flags.boughtCeilingOVR) || 0;
+    if (boughtOVR > E.CEILING_PURCHASE_MAX + 1) {
+        fail('wrong', 'src/lib/career/economy.js', 'purchased ceiling ran past CEILING_PURCHASE_MAX',
+            `${ctxLine()} -> flags.boughtCeilingOVR=${boughtOVR} cap=${E.CEILING_PURCHASE_MAX}`,
+            'useConsumable checks the budget before consuming the item.',
+            'campbudget');
+    }
+
+    // ---- signature champion vs playstyle ---------------------------------
+    //  The comfort bonus in the match engine is scored on the agreement between
+    //  the champion archetype and the playstyle, so a mismatch is a career that
+    //  is quietly worse at the game for a reason nobody could ever see.
+    if (p.champion && p.playstyle && K.PLAYSTYLE_BY_ID[p.playstyle] && K.ROLE_BY_ID[p.role]) {
+        if (!K.championFitsStyle(p.champion, p.role, p.playstyle)) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'signature champion is illegal for the playstyle',
+                `${ctxLine()} -> ${p.role}/${p.playstyle} holding ${p.champion}`,
+                'createCareer coerces and changeRole picks from championsForStyle; one of them regressed.',
+                'champfit|' + p.role + '|' + p.playstyle);
+        }
+    }
+
     // ---- schedule --------------------------------------------------------
     const sch = (c.season && Array.isArray(c.season.schedule)) ? c.season.schedule : [];
     for (const f of sch) {
@@ -1026,6 +1099,9 @@ function runCareer(cfg, label) {
     return {
         label, cfg, retired, weeks,
         ovrByYear,
+        traits: Array.isArray(end.player.traits) ? end.player.traits.slice() : [],
+        breakthroughOVR: Number(end.flags && end.flags.breakthroughOVR) || 0,
+        boughtCeilingOVR: Number(end.flags && end.flags.boughtCeilingOVR) || 0,
         endOVR: R.calcOVR(end.player.attrs, end.player.role),
         potOVR: R.calcPotentialOVR(end.player.potential, end.player.role),
         age: end.player.age,
@@ -1058,14 +1134,19 @@ function buildConfigs(n) {
         const regionId = regions[i % regions.length];
         const p = K.PATH_BY_ID[pathId];
         const styles = K.PLAYSTYLES[roleId] || [];
-        const champs = K.championsForRole(roleId);
+        const styleId = styles.length ? styles[i % styles.length].id : '';
+        // The champion has to be legal for the PLAYSTYLE, not just the role.
+        // Picking the two from independent modular indices used to mint
+        // combinations createCareer now has to coerce, which would have quietly
+        // stopped the harness testing the config it thought it was testing.
+        const champs = styleId ? K.championsForStyle(roleId, styleId) : K.championsForRole(roleId);
         out.push({
             handle: `Smoke${i + 1}`,
             pathId,
             age: p.ages[i % p.ages.length],
             regionId,
             roleId,
-            playstyleId: styles.length ? styles[i % styles.length].id : '',
+            playstyleId: styleId,
             championId: champs.length ? champs[i % champs.length].id : '',
             tryRoleChange: i === 2,
         });
@@ -1406,6 +1487,23 @@ console.log(`  offers seen / accepted : ${stats.offersSeen} / ${stats.offersAcce
 console.log(`  shop purchases         : ${stats.shopBuys}`);
 console.log(`  events / interviews    : ${stats.eventsApplied} / ${stats.interviewsApplied}`);
 console.log(`  role changes           : ${stats.roleChanges}`);
+// Traits and the two ceiling budgets. Not an assertion -- the invariants above
+// cover correctness. This is the balance readout: a run where every career is a
+// Legend, or where nobody ever earns a breakthrough, is a tuning problem the
+// pass/fail line will never catch.
+{
+    const traitRows = results
+        .map(r => (Array.isArray(r.traits) && r.traits[0]) || 'none')
+        .reduce((m, id) => m.set(id, (m.get(id) || 0) + 1), new Map());
+    console.log('  traits revealed        : ' + Array.from(traitRows.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([id, n]) => `${K.TRAIT_BY_ID[id] ? K.TRAIT_BY_ID[id].name : id} x${n}`).join(', '));
+    const bt = results.map(r => Number(r.breakthroughOVR) || 0);
+    const camp = results.map(r => Number(r.boughtCeilingOVR) || 0);
+    const mean = a => (a.length ? (a.reduce((s, v) => s + v, 0) / a.length) : 0);
+    console.log(`  ceiling earned / bought: +${mean(bt).toFixed(1)} / +${mean(camp).toFixed(1)} mean OVR`
+        + ` (budgets ${G.BREAKTHROUGH_CAREER_MAX} / ${E.CEILING_PURCHASE_MAX})`);
+}
 console.log(`  awards / milestones    : ${stats.awardsGranted} / ${stats.milestonesGranted}`);
 console.log('  award ids granted      : ' + Array.from(stats.awardIds.entries())
     .sort((a, b) => b[1] - a[1]).map(([id, n]) => `${id} x${n}`).join(', '));

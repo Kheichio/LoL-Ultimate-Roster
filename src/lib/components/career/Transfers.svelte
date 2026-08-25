@@ -14,7 +14,7 @@
     } from '../../stores/career.js';
     import {
         ROLES, ROLE_BY_ID, REGION_BY_ID, CLUB_TIERS, SQUAD_STATUS,
-        PLAYSTYLES, championsForRole, phaseForWeek, ATTRS, UNSIGNED_SOFT_CAP,
+        PLAYSTYLES, championsForStyle, championFitsStyle, phaseForWeek, ATTRS, UNSIGNED_SOFT_CAP,
     } from '../../career/constants.js';
     import {
         statusInfo, fmtGold, weeklySalaryFor, SCOUT_MMR_GATE,
@@ -252,7 +252,12 @@
 
     $: rcPreview = (rcRole && roleGate.ok) ? roleChangePreview(c, rcRole) : null;
     $: rcStyles = rcRole ? (PLAYSTYLES[rcRole] || []) : [];
-    $: rcChamps = rcRole ? championsForRole(rcRole) : [];
+    // Gated by the playstyle, not merely by the role: contracts.changeRole()
+    // already refuses a champion the style would not main and silently re-picks
+    // for you, so offering the whole role here would be offering a lie.
+    $: rcChamps = rcRole ? championsForStyle(rcRole, rcStyle) : [];
+    $: rcStyleObj = rcStyles.find(s => s.id === rcStyle) || null;
+    $: rcStyleName = rcStyleObj ? rcStyleObj.name : 'your new playstyle';
     $: if (!roleGate.ok && rcRole) { rcRole = null; rcConfirm = false; }
 
     function pickRole(id) {
@@ -262,8 +267,24 @@
         rcRole = id;
         const styles = PLAYSTYLES[id] || [];
         rcStyle = styles.length ? styles[0].id : '';
-        const champs = championsForRole(id);
+        // The default champion has to be legal for the style that is defaulted
+        // to on the same click, or the panel opens on a combination it would
+        // not let you choose by hand.
+        const champs = championsForStyle(id, rcStyle);
         rcChamp = champs.length ? champs[0].id : '';
+    }
+
+    function pickStyle(id) {
+        if (rcStyle === id) return;
+        playSound('click');
+        rcStyle = id;
+        rcConfirm = false;
+        // Only re-pick when the champion in hand is now illegal, so flicking
+        // between two styles that both allow it keeps the choice you made.
+        if (!championFitsStyle(rcChamp, rcRole, id)) {
+            const champs = championsForStyle(rcRole, id);
+            rcChamp = champs.length ? champs[0].id : '';
+        }
     }
 
     function commitRole() {
@@ -813,7 +834,7 @@
                                         class="rc-style"
                                         class:rc-on={rcStyle === s.id}
                                         aria-pressed={rcStyle === s.id}
-                                        on:click={() => { playSound('click'); rcStyle = s.id; rcConfirm = false; }}
+                                        on:click={() => pickStyle(s.id)}
                                     >
                                         <span class="rs-name">{s.name}</span>
                                         <span class="rs-blurb">{s.blurb}</span>
@@ -824,6 +845,11 @@
 
                         <div class="rc-block">
                             <div class="side-label">Pick a signature champion</div>
+                            <p class="rc-note">
+                                Cut to the {rcChamps.length} picks {rcStyleName} would actually main &#x2014; the comfort
+                                bonus a match pays you is scored on that agreement. Change the playstyle above to see
+                                a different list.
+                            </p>
                             <div class="rc-champs">
                                 {#each rcChamps as ch}
                                     <button
@@ -1070,6 +1096,7 @@
     .rs-name { font-size: 12.5px; font-weight: 700; color: #dbe4f5; }
     .rs-blurb { font-size: 11px; color: #56688a; line-height: 1.55; }
 
+    .rc-note { font-size: 11px; color: #475569; line-height: 1.6; margin: -3px 0 10px; max-width: 720px; }
     .rc-champs { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); max-height: 250px; overflow-y: auto; }
     .rc-champ { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.42); border: 1px solid rgba(51,65,85,0.24); font-family: inherit; cursor: pointer; }
     .rc-champ:hover { border-color: rgba(139,92,246,0.35); }

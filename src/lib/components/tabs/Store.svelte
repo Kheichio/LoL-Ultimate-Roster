@@ -5,6 +5,7 @@
     import { inspectingCard } from '../../stores/ui.js';
     import { getDB, rollPackTier, makeUniqueId, getSellValue, AWARD_TIERS, MYTHIC_TIERS, TIER_COLORS } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
+    import { saveToStorage, loadFromStorage } from '../../utils/storage.js';
     import { get } from 'svelte/store';
 
     import { onDestroy } from 'svelte';
@@ -27,8 +28,18 @@
     let eventTimeLeft = '';
     let eventTimer = null;
 
-    let msiPityCount = parseInt(localStorage.getItem('lur_msi_pity') || '0');
-    let ewcPityCount = parseInt(localStorage.getItem('lur_ewc_pity') || '0');
+    // Pity is per-save. Shared across slots it is an exploit: bank the counter on one
+    // slot, cash the guaranteed pull on another. Routed through storage.js so each slot
+    // keeps its own.
+    // Back-compat: pity used to be written raw via String(n). A bare number is valid
+    // JSON, so old counters still decode — anything else (or nothing) reads as 0.
+    function readPity(key) {
+        const n = Math.floor(Number(loadFromStorage(key)));
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    let msiPityCount = readPity('lur_msi_pity');
+    let ewcPityCount = readPity('lur_ewc_pity');
 
     // Event registry keyed by the pack id it boosts. getMsiEventDrops / getEwcEventDrops
     // are hoisted function declarations, so referencing them here is safe.
@@ -193,7 +204,7 @@
         const sigChance = 0.001;
         const ev = free ? null : (EVENTS[pack.id] && Date.now() < EVENTS[pack.id].end ? EVENTS[pack.id] : null);
         const drops = ev ? ev.drops() : pack.drops;
-        let pity = ev ? parseInt(localStorage.getItem(ev.pityKey) || '0') : 0;
+        let pity = ev ? readPity(ev.pityKey) : 0;
 
         for (let p = 0; p < packs; p++) {
             // Reset per pack so the event guarantee fires once per pack, exactly as if the
@@ -225,7 +236,7 @@
             }
         }
         if (ev) {
-            localStorage.setItem(ev.pityKey, String(pity));
+            saveToStorage(ev.pityKey, pity);
             if (ev.tier === 'MSI') msiPityCount = pity;
             else if (ev.tier === 'EWC') ewcPityCount = pity;
         }

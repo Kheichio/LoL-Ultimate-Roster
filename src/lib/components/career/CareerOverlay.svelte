@@ -19,7 +19,7 @@
     import { onMount, onDestroy, tick } from 'svelte';
 
     import {
-        career, careerScreen, careerOverlay,
+        career, careerScreen, careerOverlay, nextOverlay, clearOverlays,
         absWeek, saveCareer, flushCareer, resetCareer,
     } from '../../stores/career.js';
     import { showToast } from '../../stores/toasts.js';
@@ -28,6 +28,7 @@
 
     import {
         NEWS_TYPES, CLUB_TIERS, REGION_BY_ID, ROLE_BY_ID, teamById,
+        ATTR_BY_KEY, TRAIT_RARITIES,
     } from '../../career/constants.js';
     import {
         fmtGold, fmtFollowers, fmtKDA, ordinal, statusInfo, ovrLabel,
@@ -49,6 +50,9 @@
         deflect:   { name: 'Deflect',   color: '#a78bfa' },
     };
     const TIER_COLOR = { legendary: '#f59e0b', major: '#a78bfa', minor: '#64748b' };
+    const RARITY_COLOR = {
+        common: '#94a3b8', uncommon: '#22c55e', rare: '#3b82f6', legendary: '#eab308',
+    };
     const TIER_NAME  = { legendary: 'Legendary', major: 'Major', minor: 'Minor' };
     const SPLIT_NAME = { spring: 'Spring', summer: 'Summer' };
     const PURPLE = '#a78bfa';
@@ -149,6 +153,8 @@
         if (kind === 'awards')    return awardList.length > 0;
         if (kind === 'season')    return !!(payload && typeof payload === 'object');
         if (kind === 'retire')    return true;
+        if (kind === 'trait')     return !!(payload && typeof payload === 'object' && payload.trait && payload.trait.name);
+        if (kind === 'breakthrough') return !!(payload && typeof payload === 'object' && Array.isArray(payload.attrs) && payload.attrs.length);
         return false;
     })();
 
@@ -165,8 +171,48 @@
         if (kind === 'offer')     return payload.teamAccent || PURPLE;
         if (kind === 'awards')    return TIER_COLOR[topTier(awardList)] || PURPLE;
         if (kind === 'retire')    return heroic ? '#f59e0b' : PURPLE;
+        if (kind === 'trait')     return payload.trait.accent || RARITY_COLOR[payload.trait.rarity] || PURPLE;
+        if (kind === 'breakthrough') return '#eab308';
         return PURPLE;
     })();
+
+    // ---- trait reveal / breakthrough views -------------------------
+    $: traitView = (kind === 'trait' && valid) ? (() => {
+        const t = payload.trait;
+        const rarity = TRAIT_RARITIES[t.rarity] || TRAIT_RARITIES.common;
+        const before = Math.round(num(payload.potBefore, 0));
+        const after = Math.round(num(payload.potAfter, before));
+        const applied = payload.applied && typeof payload.applied === 'object' ? payload.applied : {};
+        const rows = Object.keys(applied)
+            .map(k => ({
+                key: k,
+                abbr: ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].abbr : String(k).toUpperCase(),
+                color: ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].color : '#94a3b8',
+                gained: Math.round(num(applied[k], 0)),
+            }))
+            .filter(r => r.gained > 0)
+            .sort((a, b) => b.gained - a.gained);
+        return {
+            trait: t, rarity, before, after,
+            moved: Math.max(0, after - before),
+            age: Math.round(num(payload.age, 16)),
+            rows,
+        };
+    })() : null;
+
+    $: breakView = (kind === 'breakthrough' && valid) ? {
+        points: Math.round(num(payload.points, 0)),
+        potOVR: Math.round(num(payload.potOVR, 0)),
+        attrs: payload.attrs
+            .filter(a => a && typeof a === 'object')
+            .map(a => ({
+                abbr: String(a.abbr || a.key || '??').toUpperCase(),
+                name: String(a.name || a.abbr || a.key || 'Attribute'),
+                color: a.color || '#94a3b8',
+                gained: Math.round(num(a.gained, 0)),
+                ceiling: Math.round(num(a.ceiling, 0)),
+            })),
+    } : null;
 
     function topTier(list) {
         const order = { legendary: 2, major: 1, minor: 0 };
@@ -241,9 +287,15 @@
     // ---------------------------------------------------------------
     //  actions
     // ---------------------------------------------------------------
+    // One advance-week can raise several panels: a split close produces awards
+    // or a season review, a birthday can reveal a genetic trait, and the weekly
+    // random event lands last. nextOverlay() shows whatever is queued behind
+    // this one and only clears the store when nothing is left -- before the
+    // queue existed the last writer won and split awards were routinely thrown
+    // away unseen.
     function close() {
         stopReveal();
-        careerOverlay.set(null);
+        nextOverlay();
     }
 
     function dismiss() {
@@ -370,7 +422,8 @@
     function toMenu() {
         playSound('click');
         stopReveal();
-        careerOverlay.set(null);
+        // Leaving the mode drops the whole queue, not just the panel on top.
+        clearOverlays();
         flushCareer();
         openMenu();
     }
@@ -936,6 +989,105 @@
                 </div>
             </div>
 
+        {:else if kind === 'trait' && traitView}
+            <!-- =========== GENETIC TRAIT REVEALED ===========
+                 Fires once per career, on the birthday the start path names.
+                 The whole point of it landing years in is that the player has
+                 already invested a career by the time they see it. -->
+            <header class="co-head">
+                <span class="co-badge">
+                    <span class="co-badge-ico" aria-hidden="true">&#x1F9EC;</span>
+                    <span class="co-badge-t">Something Shows Itself</span>
+                </span>
+                <button class="co-x" on:click={dismiss} aria-label="Close">&#x2715;</button>
+            </header>
+
+            <div class="co-body">
+                <div class="co-trait" style="--t:{accent}">
+                    <span class="co-trait-ico" aria-hidden="true">{traitView.trait.icon || '\u{2728}'}</span>
+                    <span class="co-trait-rarity">{traitView.rarity.name}</span>
+                    <h2 class="co-trait-name" id="co-title">{traitView.trait.name}</h2>
+                </div>
+
+                <p class="co-lede">{traitView.trait.blurb}</p>
+                <p class="co-week">
+                    You are {traitView.age}. Nobody could have told you this at thirteen, including you.
+                </p>
+
+                {#if traitView.moved > 0}
+                    <div class="co-stats">
+                        <div class="co-stat">
+                            <span class="co-stat-v co-muted">{traitView.before}</span>
+                            <span class="co-stat-l">Ceiling was</span>
+                        </div>
+                        <div class="co-stat">
+                            <span class="co-stat-v" style="color:{accent}">{traitView.after}</span>
+                            <span class="co-stat-l">Ceiling now</span>
+                            <span class="co-stat-s" style="color:{accent}">+{traitView.moved} overall</span>
+                        </div>
+                    </div>
+                {/if}
+
+                {#if traitView.rows.length}
+                    <p class="co-lbl">Where the room went</p>
+                    <div class="co-chips">
+                        {#each traitView.rows as r (r.key)}
+                            <span class="co-chip" style="--t:{r.color}">{r.abbr} +{r.gained}</span>
+                        {/each}
+                    </div>
+                {/if}
+
+                <p class="co-empty">
+                    The number is the ceiling, not the player. You still have to train every point of it.
+                </p>
+
+                <div class="co-acts">
+                    <button class="btn-gold co-wide" on:click={dismiss}>Get back to work</button>
+                </div>
+            </div>
+
+        {:else if kind === 'breakthrough' && breakView}
+            <!-- =========== BREAKTHROUGH SPLIT ===========
+                 The earned half of the ceiling. A split has to be genuinely
+                 outstanding, and a whole career only has so much of it. -->
+            <header class="co-head">
+                <span class="co-badge">
+                    <span class="co-badge-ico" aria-hidden="true">&#x1F4C8;</span>
+                    <span class="co-badge-t">Breakthrough</span>
+                </span>
+                <button class="co-x" on:click={dismiss} aria-label="Close">&#x2715;</button>
+            </header>
+
+            <div class="co-body">
+                <h2 class="co-title" id="co-title">Something clicked</h2>
+                <p class="co-lede">
+                    A split nobody can explain away. The staff go back through the VODs looking for what
+                    changed and find that the answer is you.
+                </p>
+
+                <p class="co-lbl">Ceiling raised</p>
+                <div class="co-awards">
+                    {#each breakView.attrs as a, i (a.abbr + ':' + i)}
+                        <div class="co-award co-award-slim" style="--t:{a.color}">
+                            <span class="co-aw-ico" aria-hidden="true">{a.abbr}</span>
+                            <span class="co-aw-main">
+                                <span class="co-aw-name">{a.name}</span>
+                                <span class="co-aw-meta"><span class="co-aw-tier">now caps at {a.ceiling}</span></span>
+                            </span>
+                            <span class="co-aw-lp">+{a.gained}</span>
+                        </div>
+                    {/each}
+                </div>
+
+                <p class="co-empty">
+                    Most of it is already in your hands. The rest is training you can finally do again.
+                </p>
+
+                <div class="co-acts">
+                    <button class="btn-gold co-wide" on:click={dismiss}>Continue</button>
+                </div>
+            </div>
+
         {:else}
             <!-- =========== RETIREMENT =========== -->
             {#if stage !== 'done'}
@@ -1310,6 +1462,26 @@
     .co-term-gold { color: #fbbf24; }
 
     /* ============ AWARDS ============ */
+    /* ---- trait reveal ---- */
+    .co-trait {
+        display: flex; flex-direction: column; align-items: center; gap: 7px;
+        margin-bottom: 16px; padding: 22px 16px 18px; border-radius: 16px;
+        background: color-mix(in srgb, var(--t) 8%, rgba(15, 23, 42, 0.5));
+        border: 1px solid color-mix(in srgb, var(--t) 32%, transparent);
+        animation: coPop 0.34s ease both;
+    }
+    .co-trait-ico { font-size: 40px; line-height: 1; }
+    .co-trait-rarity {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 9.5px; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase;
+        color: var(--t);
+    }
+    .co-trait-name {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 27px; font-weight: 700; letter-spacing: -0.01em;
+        color: #e8eefb; margin: 0; text-align: center;
+    }
+
     .co-awards { display: flex; flex-direction: column; gap: 9px; }
     .co-award {
         display: flex; align-items: center; gap: 13px; padding: 14px 15px; border-radius: 14px;

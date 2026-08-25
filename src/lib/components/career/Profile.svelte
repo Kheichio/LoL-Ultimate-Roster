@@ -11,16 +11,21 @@
 
     import {
         career, careerOVR, careerPotOVR, currentTeam, soloRank, marketValue,
-        careerOverlay, saveCareer,
+        careerOverlay, pushOverlay, saveCareer,
     } from '../../stores/career.js';
     import {
         ATTRS, ATTR_BY_KEY, ROLE_BY_ID, REGION_BY_ID, PLAYSTYLE_BY_ID,
         CHAMPION_BY_ID, PATH_BY_ID, teamById, RETIREMENT_AGE_MIN,
+        TRAIT_RARITIES, championFit,
     } from '../../career/constants.js';
     import {
         ovrTier, ovrLabel, ageBand, growthFor, statusInfo, toCareerCard,
         rankFromMMR, fmtGold, fmtKDA, fmtRecord, ordinal,
+        traitsOf, revealAgeFor,
     } from '../../career/ratings.js';
+    import {
+        canSwitchChampion, switchableChampions, championSwitchPreview, switchChampion,
+    } from '../../career/contracts.js';
     import {
         MILESTONES, claimedMilestoneIds, awardHistoryByYear, AWARD_BY_ID,
         legacyScore, legacyTier, LEGACY_TIER_BANDS, peakOVR, careerYears,
@@ -179,6 +184,51 @@
         }))
         .sort((a, b) => (b.year - a.year) || ((b.split === 'summer' ? 1 : 0) - (a.split === 'summer' ? 1 : 0)));
 
+    // ---- genetic traits -------------------------------------------------
+    //  Rolled and revealed on one birthday, once, years into the career. Before
+    //  that there is genuinely nothing to show -- the roll has not happened, so
+    //  there is nothing here to reload the save and re-roll for either.
+    $: traits = traitsOf(p);
+    $: traitRevealAge = revealAgeFor(p);
+    $: traitPending = !traits.length && !c.flags.retired;
+
+    // ---- signature champion --------------------------------------------
+    let switching = false;
+    let switchPick = '';
+
+    $: switchGate = canSwitchChampion(c);
+    $: switchPool = switching ? switchableChampions(c) : [];
+    $: switchPreview = (switching && switchPick) ? championSwitchPreview(c, switchPick) : null;
+    // A career created before signature picks were gated by playstyle can be
+    // holding an off-style champion. It is never taken away from them -- it is
+    // labelled, and the switch flow is offered.
+    $: champOffStyle = !!(champ && style && championFit(champ, style.id) < 0.5);
+
+    function openSwitch() {
+        playSound('click');
+        if (!switchGate.ok) { showToast(switchGate.reason, 'error'); return; }
+        switching = true;
+        switchPick = '';
+    }
+
+    function cancelSwitch() {
+        playSound('click');
+        switching = false;
+        switchPick = '';
+    }
+
+    function pickSwitch(id) {
+        playSound('click');
+        switchPick = switchPick === id ? '' : id;
+    }
+
+    function commitSwitch() {
+        if (!switchPick) return;
+        const res = switchChampion(switchPick);
+        showToast(res.msg, res.ok ? 'success' : 'error');
+        if (res.ok) { switching = false; switchPick = ''; }
+    }
+
     // ---- retirement ----------------------------------------------------
     $: gate = canRetire(c);
 
@@ -189,13 +239,13 @@
             return;
         }
         playSound('click');
-        careerOverlay.set({ kind: 'retire' });
+        pushOverlay('retire', null);
         saveCareer();
     }
 
     function viewSummary() {
         playSound('click');
-        careerOverlay.set({ kind: 'retire' });
+        pushOverlay('retire', null);
         saveCareer();
     }
 </script>
@@ -246,6 +296,19 @@
                     <span class="sub">{champ ? champ.archetype : 'No comfort pick'}</span>
                 </div>
                 <div class="id-cell">
+                    <span class="lbl">Trait</span>
+                    <span class="val val-sm">{traits.length ? traits.map(t => t.name).join(', ') : 'Unknown'}</span>
+                    <span class="sub">
+                        {#if traits.length}
+                            {(TRAIT_RARITIES[traits[0].rarity] || TRAIT_RARITIES.common).name}
+                        {:else if traitPending}
+                            shows itself at {traitRevealAge}
+                        {:else}
+                            never showed itself
+                        {/if}
+                    </span>
+                </div>
+                <div class="id-cell">
                     <span class="lbl">Path</span>
                     <span class="val val-sm">{path.name}</span>
                     <span class="sub">{path.tag}</span>
@@ -256,6 +319,28 @@
                     <span class="sub">started at {p.startAge}</span>
                 </div>
             </div>
+
+            {#if traits.length}
+                <div class="tr-strip">
+                    {#each traits as t (t.id)}
+                        {@const r = TRAIT_RARITIES[t.rarity] || TRAIT_RARITIES.common}
+                        <div class="tr" style="--k:{t.accent || r.color}">
+                            <span class="tr-ico" aria-hidden="true">{t.icon}</span>
+                            <span class="tr-main">
+                                <span class="tr-top">
+                                    <span class="tr-name">{t.name}</span>
+                                    <span class="tr-rar">{r.name}</span>
+                                </span>
+                                <span class="tr-blurb">{t.blurb}</span>
+                            </span>
+                        </div>
+                    {/each}
+                </div>
+            {:else if traitPending}
+                <p class="id-contract id-contract-free">
+                    Whatever you were born with has not shown itself yet. It will, at {traitRevealAge}.
+                </p>
+            {/if}
 
             {#if p.contract}
                 <p class="id-contract">
@@ -306,8 +391,9 @@
         <div class="panel pad">
             <div class="slab">Attributes</div>
             <p class="note">
-                Weights below are for {role.name}. The ghosted part of each bar is your hidden ceiling &#8212;
-                training can never push past it.
+                Weights below are for {role.name}. The ghosted part of each bar is your ceiling &#8212;
+                no drill ever pushes past it. Moving the ceiling itself takes a breakthrough split,
+                the Evergreen perk, or a performance camp.
             </p>
 
             <div class="dev">
@@ -388,6 +474,106 @@
                 rating fill in the rest.
             </p>
         </div>
+    </div>
+
+    <!-- ============ SIGNATURE CHAMPION ============
+         Re-maining. The pool is gated by playstyle, because the comfort bonus
+         in the match engine is scored on exactly that agreement -- a Weakside
+         Specialist maining Fiora is quietly worse at the game and never told
+         why. Priced in champion pool and form rather than gold: it is the one
+         cost that touches the system the champion belongs to. -->
+    <div class="panel pad sig">
+        <div class="slab">Signature Pick</div>
+
+        <div class="sig-now" style="--k:{champ ? role.accent : '#64748b'}">
+            <span class="sig-name">{champ ? champ.name : 'No signature pick'}</span>
+            <span class="sig-meta">
+                {#if champ}
+                    {champ.archetype}
+                    {#if style}<span class="dot">&#183;</span> {style.name}{/if}
+                {:else}
+                    You draft without a comfort pick. Every game is off-script.
+                {/if}
+            </span>
+            {#if champOffStyle}
+                <span class="sig-warn">
+                    Off-style. This pick predates the playstyle rule and is yours to keep,
+                    but it earns you less comfort than one that suits {style.name}.
+                </span>
+            {/if}
+        </div>
+
+        {#if c.flags.retired}
+            <p class="note">Your playing career is over. Nobody is asking what you play any more.</p>
+        {:else if !switching}
+            <p class="note">
+                {switchGate.ok
+                    ? switchGate.reason
+                    : switchGate.reason}
+            </p>
+            <div class="sig-acts">
+                <button class="sig-btn" on:click={openSwitch} disabled={!switchGate.ok}>
+                    {champ ? 'Change your main' : 'Pick a main'}
+                </button>
+            </div>
+        {:else}
+            <p class="note">
+                Only champions a {style ? style.name : 'player of your style'} would actually play.
+                Nearest fit first.
+            </p>
+
+            <div class="sig-grid">
+                {#each switchPool as ch (ch.id)}
+                    <button
+                        class="sig-opt"
+                        class:sig-opt-on={switchPick === ch.id}
+                        on:click={() => pickSwitch(ch.id)}
+                    >
+                        <span class="sig-opt-n">{ch.name}</span>
+                        <span class="sig-opt-a">{ch.archetype}</span>
+                    </button>
+                {:else}
+                    <p class="note">Nothing else your playstyle would let you play.</p>
+                {/each}
+            </div>
+
+            {#if switchPreview && switchPreview.ok}
+                <div class="sig-prev">
+                    <div class="sig-prev-row">
+                        <span class="sig-prev-l">Champion Pool</span>
+                        <span class="sig-prev-v">
+                            {switchPreview.chpBefore} &#8594; <b>{switchPreview.chpAfter}</b>
+                        </span>
+                    </div>
+                    <div class="sig-prev-row">
+                        <span class="sig-prev-l">Overall</span>
+                        <span class="sig-prev-v">
+                            {switchPreview.ovrBefore} &#8594; <b>{switchPreview.ovrAfter}</b>
+                        </span>
+                    </div>
+                    <div class="sig-prev-row">
+                        <span class="sig-prev-l">Form</span>
+                        <span class="sig-prev-v">
+                            {Math.round(p.form)} &#8594; <b>{Math.round(switchPreview.formAfter)}</b>
+                        </span>
+                    </div>
+                    <p class="sig-prev-note">
+                        Weeks of one-tricking somebody else. Your pool gets narrower, which is what
+                        decides whether you keep your pick through a ban phase &#8212; and it does not
+                        come back on its own.
+                    </p>
+                </div>
+            {:else if switchPreview && switchPreview.reason}
+                <p class="note">{switchPreview.reason}</p>
+            {/if}
+
+            <div class="sig-acts">
+                <button class="sig-btn sig-btn-go" on:click={commitSwitch} disabled={!switchPreview || !switchPreview.ok}>
+                    {switchPreview && switchPreview.ok ? `Main ${switchPreview.to.name}` : 'Pick one'}
+                </button>
+                <button class="sig-btn" on:click={cancelSwitch}>Not yet</button>
+            </div>
+        {/if}
     </div>
 
     <!-- ============ CAREER TOTALS ============ -->
@@ -672,6 +858,86 @@
     .slab-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .slab-ct { font-size: 10px; font-weight: 700; letter-spacing: 0.4px; color: #4a5b76; margin-bottom: 12px; }
     .note { font-size: 11.5px; line-height: 1.6; color: #56688a; margin: 0 0 14px; }
+
+    /* ---- genetic traits ---- */
+    .tr-strip { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+    .tr {
+        display: flex; align-items: flex-start; gap: 12px;
+        padding: 12px 14px; border-radius: 12px;
+        background: color-mix(in srgb, var(--k) 7%, rgba(15, 23, 42, 0.45));
+        border: 1px solid color-mix(in srgb, var(--k) 28%, transparent);
+    }
+    .tr-ico { font-size: 22px; line-height: 1.1; flex-shrink: 0; }
+    .tr-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .tr-top { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+    .tr-name {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 14px; font-weight: 700; color: #e2e8f0;
+    }
+    .tr-rar {
+        font-size: 8.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase;
+        color: var(--k);
+    }
+    .tr-blurb { font-size: 11.5px; line-height: 1.6; color: #64769a; }
+
+    /* ---- signature champion ---- */
+    .sig-now {
+        display: flex; flex-direction: column; gap: 5px;
+        padding: 14px 16px; margin-bottom: 14px; border-radius: 12px;
+        background: color-mix(in srgb, var(--k) 6%, rgba(15, 23, 42, 0.45));
+        border: 1px solid color-mix(in srgb, var(--k) 26%, transparent);
+    }
+    .sig-name {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 18px; font-weight: 700; color: #e8eefb;
+    }
+    .sig-meta { font-size: 11.5px; color: #64769a; }
+    .sig-warn {
+        margin-top: 5px; font-size: 11px; line-height: 1.6; color: #fbbf24;
+    }
+
+    .sig-acts { display: flex; flex-wrap: wrap; gap: 9px; }
+    .sig-btn {
+        font-family: inherit; font-size: 12px; font-weight: 700;
+        padding: 10px 18px; border-radius: 9px; cursor: pointer;
+        color: #94a3b8; background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+    }
+    .sig-btn:hover:not(:disabled) { color: #e2e8f0; border-color: rgba(71, 85, 105, 0.75); background: rgba(30, 41, 59, 0.6); }
+    .sig-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .sig-btn-go {
+        color: #fca5a5; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.32);
+    }
+    .sig-btn-go:hover:not(:disabled) { color: #fecaca; background: rgba(239, 68, 68, 0.16); border-color: rgba(239, 68, 68, 0.5); }
+
+    .sig-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+        gap: 7px; margin-bottom: 14px;
+    }
+    .sig-opt {
+        display: flex; flex-direction: column; gap: 2px; text-align: left;
+        font-family: inherit; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+        background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(51, 65, 85, 0.4);
+        transition: border-color 0.14s ease, background 0.14s ease;
+    }
+    .sig-opt:hover { border-color: rgba(71, 85, 105, 0.7); background: rgba(30, 41, 59, 0.5); }
+    .sig-opt-on { border-color: rgba(139, 92, 246, 0.6); background: rgba(139, 92, 246, 0.12); }
+    .sig-opt-n { font-size: 12.5px; font-weight: 700; color: #cbd5e1; }
+    .sig-opt-a { font-size: 10px; color: #56688a; }
+
+    .sig-prev {
+        padding: 13px 15px; margin-bottom: 14px; border-radius: 11px;
+        background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(51, 65, 85, 0.45);
+    }
+    .sig-prev-row {
+        display: flex; align-items: baseline; justify-content: space-between;
+        gap: 12px; padding: 4px 0;
+    }
+    .sig-prev-l { font-size: 11px; color: #56688a; }
+    .sig-prev-v { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; color: #7d93b8; }
+    .sig-prev-v b { color: #f87171; font-weight: 700; }
+    .sig-prev-note { margin: 9px 0 0; font-size: 11px; line-height: 1.6; color: #56688a; }
     .note-tight { margin: 12px 0 0; font-size: 11px; }
     .dot { color: #2c3a52; margin: 0 5px; }
 

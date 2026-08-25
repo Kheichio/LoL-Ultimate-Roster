@@ -24,6 +24,7 @@
         trainingOverview, trainingBlurb, completeDrill,
     } from '../../career/training.js';
     import { energyLabel, fmtGold, clamp } from '../../career/ratings.js';
+    import { unsignedCapFor } from '../../career/economy.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -88,6 +89,9 @@
     $: throttled = overview.filter(a => a.throttled);
     $: maxedOut = overview.filter(a => a.headroom <= 0);
     $: unsigned = !p.clubId;
+    // Not the constant: the Self-Made legacy perk moves this player's own cap,
+    // so the screen has to ask rather than quote.
+    $: unsignedCap = Math.round(unsignedCapFor(c));
 
     $: selectedRow = overview.find(a => a.key === selectedAttr) || null;
     $: selectedDrills = selectedAttr ? drillsForAttr(selectedAttr) : [];
@@ -365,9 +369,9 @@
             <div class="warn warn-warn">
                 <span class="warn-ico" aria-hidden="true">&#x1F512;</span>
                 <span class="warn-t">
-                    <strong>{throttled.length} attribute{throttled.length === 1 ? '' : 's'} at the unsigned ceiling of {UNSIGNED_SOFT_CAP}.</strong>
-                    {throttled.map(a => a.abbr).join(', ')} cannot move again until you are in a
-                    professional environment. Sign for a club.
+                    <strong>{throttled.length} attribute{throttled.length === 1 ? '' : 's'} past the unsigned ceiling of {unsignedCap}.</strong>
+                    {throttled.map(a => a.abbr).join(', ')} still move, at roughly a seventh of the
+                    normal rate. Training alone gets you scouted; it does not get you good. Sign for a club.
                 </span>
                 <button class="warn-btn" on:click={() => goto('transfers')}>Transfers</button>
             </div>
@@ -375,8 +379,8 @@
             <div class="warn warn-info">
                 <span class="warn-ico" aria-hidden="true">&#x2139;</span>
                 <span class="warn-t">
-                    <strong>Unsigned.</strong> Training alone runs at 0.9x and every attribute stalls at
-                    {UNSIGNED_SOFT_CAP}. Good enough to get scouted, never good enough to be great.
+                    <strong>Unsigned.</strong> Training alone runs at 0.9x, and past {unsignedCap} every
+                    attribute crawls. Good enough to get scouted, never good enough to be great.
                 </span>
             </div>
         {/if}
@@ -501,8 +505,9 @@
                     <div class="drills" id={'drills-' + a.key}>
                         {#if selectedRow && selectedRow.headroom <= 0}
                             <p class="drills-note">
-                                {a.name} has reached your potential ceiling of {Math.round(a.ceiling)}.
-                                No drill moves it again - your growth has to come from somewhere else.
+                                {a.name} is at your ceiling of {Math.round(a.ceiling)}. No drill moves it
+                                again - but the ceiling itself is not fixed. A breakthrough split, the
+                                Evergreen legacy perk or a performance camp all raise it.
                             </p>
                         {/if}
 

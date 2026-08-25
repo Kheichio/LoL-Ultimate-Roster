@@ -22,7 +22,7 @@ import {
 } from './constants.js';
 import {
     calcOVR, clamp, gainCurve, attrCeiling, environmentCap, growthFor,
-    pick, randInt,
+    pick, randInt, traitEffects, traitsOf,
 } from './ratings.js';
 import {
     gearTrainingBonus, lifestyleTrainingBonus, perkEffects, buffValue,
@@ -299,6 +299,18 @@ function healthFactor(health) {
     return 0.55 + clamp(health, 0, 100) / 100 * 0.47;
 }
 
+/** Training multiplier from genetic traits. 1 before the trait is revealed, and
+ *  1 for the traits whose whole value is in the ceiling rather than the rate. */
+function traitTrainingMult(player) {
+    const n = Number(traitEffects(player).trainMult);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function traitLabel(player) {
+    const list = traitsOf(player);
+    return list.length ? list.map(t => t.name).join(', ') : 'No trait yet';
+}
+
 /**
  * Every component of the player's training effectiveness, in the order the UI
  * should list them. Multiply the `mult` column together and you get exactly
@@ -327,6 +339,7 @@ export function trainingMultiplierBreakdown(c) {
         { key: 'gear',      label: 'Gear',                          mult: gearMult,               note: 'Peripherals and setup' },
         { key: 'lifestyle', label: 'Lifestyle',                     mult: lifeMult,               note: 'Sleep, diet, coaching staff' },
         { key: 'perks',     label: 'Legacy perks',                  mult: perkTrainingMult(s),    note: 'What the career has taught you' },
+        { key: 'trait',     label: traitLabel(p),                   mult: traitTrainingMult(p),   note: 'What you were born with' },
         { key: 'buffs',     label: 'Active buffs',                  mult: buffTrainingMult(s),    note: 'Bootcamps and supplements' },
         { key: 'age',       label: `Age ${Math.round(p.age || 18)}`, mult: growthFor(p.age),      note: 'How fast you still learn' },
         { key: 'morale',    label: 'Morale',                        mult: moraleFactor(p.morale), note: 'Wanting to be there' },
@@ -524,7 +537,13 @@ export function canTrain(c, drill_) {
     const cur = (p.attrs && p.attrs[d.attr]) || 0;
     const attrName = ATTR_BY_KEY[d.attr] ? ATTR_BY_KEY[d.attr].name : d.attr;
     if (cur >= attrCeiling(p, d.attr)) {
-        return { ok: false, reason: `${attrName} has reached your potential ceiling.` };
+        // The ceiling is no longer the end of the road, so say where the road
+        // goes. Breakthroughs, the Evergreen perk and a performance camp all
+        // move this number; a drill never will.
+        return {
+            ok: false,
+            reason: `${attrName} is at your ceiling. Only a breakthrough season, a legacy perk or a performance camp raises it now.`,
+        };
     }
     if (cur >= d.attrCap) {
         const next = drillsForAttr(d.attr).find(x => x.difficulty > d.difficulty);
@@ -787,7 +806,8 @@ export function trainingOverview(c) {
             headroom: Math.max(0, ceiling - cur),
             trainedThisWeek: (s && s.weekly && s.weekly.trained && s.weekly.trained[a.key]) || 0,
             // Above the soft cap an unsigned player is running at 15% of normal.
-            throttled: !p.clubId && cur >= UNSIGNED_SOFT_CAP,
+            // environmentCap(), not the constant: the Self-Made perk moves it.
+            throttled: !p.clubId && cur >= environmentCap(p),
             drills: drillsForAttr(a.key),
         };
     });

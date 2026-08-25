@@ -10,7 +10,7 @@
     import { onDestroy } from 'svelte';
     import {
         START_PATHS, REGIONS, ROLES, PLAYSTYLES, CHAMPIONS, championsForRole,
-        ATTRS, AGE_TRADE,
+        championsForStyle, championFitsStyle, championFit, ATTRS, AGE_TRADE,
     } from '../../career/constants.js';
     import {
         previewAttrs, previewPotential, calcOVR, calcPotentialOVR, ovrTier, ovrLabel,
@@ -144,22 +144,51 @@
     }
 
     // --- Champions -------------------------------------------------------
-    $: champPool = roleId ? championsForRole(roleId) : [];
-    $: champFiltered = (() => {
-        const q = champSearch.trim().toLowerCase();
-        if (!q) return champPool;
-        return champPool.filter(c => c.name.toLowerCase().includes(q) || c.archetype.toLowerCase().includes(q));
+    // The pool is gated by PLAYSTYLE, not merely by role: the comfort bonus the
+    // match engine pays is scored on the archetype agreeing with the decisions
+    // your identity already wants to make, so an off-style signature is quietly
+    // worse forever. The rest of the role is still listed below the legal
+    // groups, greyed and unpickable, because a player hunting for one champion
+    // must be able to see it exists rather than assume it was deleted.
+    $: champPool = roleId
+        ? (playstyleId ? championsForStyle(roleId, playstyleId) : championsForRole(roleId))
+        : [];
+    $: champOff = (() => {
+        if (!roleId || !playstyleId) return [];
+        const legal = new Set(champPool.map(c => c.id));
+        return championsForRole(roleId).filter(c => !legal.has(c.id));
     })();
-    $: champGroups = (() => {
+    $: styleName = style ? style.name : 'your playstyle';
+    // 'an Assassin', 'a Carry Top'. Playstyle names are the only thing on the
+    // screen that needs inflecting, and an unreadable one keeps a bare phrase
+    // rather than printing an article in front of nothing.
+    $: styleArticled = style ? ((/^[AEIOU]/i.test(style.name) ? 'an ' : 'a ') + style.name) : 'your playstyle';
+
+    function matchesSearch(list, q) {
+        if (!q) return list;
+        return list.filter(c => c.name.toLowerCase().includes(q) || c.archetype.toLowerCase().includes(q));
+    }
+
+    $: champQuery = champSearch.trim().toLowerCase();
+    $: champFiltered = matchesSearch(champPool, champQuery);
+    $: champOffFiltered = matchesSearch(champOff, champQuery);
+    $: champGroups = groupByArchetype(champFiltered);
+    // Nearest miss first: the archetypes a change of playstyle would open up
+    // cheapest are the ones worth reading.
+    $: champOffGroups = groupByArchetype(champOffFiltered)
+        .map(g => ({ ...g, fit: Math.round(championFit(g.items[0], playstyleId) * 100) }))
+        .sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name));
+    $: champDetail = hoverChamp || champ;
+
+    function groupByArchetype(list) {
         const map = new Map();
-        for (const c of champFiltered) {
+        for (const c of list) {
             if (!map.has(c.archetype)) map.set(c.archetype, []);
             map.get(c.archetype).push(c);
         }
         return [...map.entries()].map(([name, items]) => ({ name, items }))
             .sort((a, b) => a.name.localeCompare(b.name));
-    })();
-    $: champDetail = hoverChamp || champ;
+    }
 
     // --- Handles ---------------------------------------------------------
     const HANDLE_POOL = [
@@ -253,7 +282,20 @@
         maxStage = Math.min(maxStage, Math.max(stage, 5));
         playSound('click');
     }
-    function pickStyle(id) { if (playstyleId !== id) { playstyleId = id; playSound('click'); } }
+    function pickStyle(id) {
+        if (playstyleId === id) return;
+        playstyleId = id;
+        // The rail lets you come back and change your mind, which can leave a
+        // champion selected that the new playstyle would never main. Clear it
+        // only when it is actually off-style, so switching back and forth does
+        // not wipe a pick that is still legal.
+        if (championId && !championFitsStyle(championId, roleId, id)) {
+            const dropped = champ ? champ.name : 'That champion';
+            championId = ''; hoverChamp = null;
+            showToast(dropped + ' is off-style for that identity. Pick a new signature.', 'info');
+        }
+        playSound('click');
+    }
     function pickChamp(id) { if (championId !== id) { championId = id; playSound('click'); } }
 
     function toMenu() { playSound('click'); openMenu(); }
@@ -573,7 +615,7 @@
                         {:else if stage === 6}
                             <div class="head">
                                 <h2 class="h2">What is your signature pick?</h2>
-                                <p class="sub">One champion you are known for. It shims your starting attributes forever, and the match engine hands you a comfort bonus in every game you get it.</p>
+                                <p class="sub">One champion you are known for. It shims your starting attributes forever, and the match engine hands you a comfort bonus in every game you get it &mdash; which is why the list is cut to the champions {styleName} would actually play.</p>
                             </div>
 
                             <div class="champbar">
@@ -581,6 +623,9 @@
                                     placeholder="Search champion or archetype..." aria-label="Search champions"
                                     autocomplete="off" spellcheck="false" />
                                 <span class="champ-count">{champFiltered.length} available</span>
+                                {#if champOffFiltered.length}
+                                    <span class="champ-count off">{champOffFiltered.length} off-style</span>
+                                {/if}
                             </div>
 
                             {#if champDetail}
@@ -597,7 +642,7 @@
                                 <div class="champdetail empty">Hover or select a champion to see exactly what it gives you.</div>
                             {/if}
 
-                            {#if champGroups.length === 0}
+                            {#if champGroups.length === 0 && champOffGroups.length === 0}
                                 <div class="emptybox">
                                     <p>No champion here matches that search.</p>
                                     <button class="quiet" on:click={() => (champSearch = '')}>Clear search</button>
@@ -609,6 +654,9 @@
                                      without this the step is a 2000px page where
                                      you cannot see what you are hovering. -->
                                 <div class="champscroll">
+                                {#if champGroups.length === 0}
+                                    <p class="offnote">Nothing your playstyle can main matches that search &mdash; only the off-style champions below.</p>
+                                {/if}
                                 {#each champGroups as g}
                                     <div class="cgroup">
                                         <div class="label">{g.name}</div>
@@ -632,6 +680,38 @@
                                         </div>
                                     </div>
                                 {/each}
+
+                                {#if champOffGroups.length}
+                                    <!-- Nothing is hidden, only shut. Listing the
+                                         rest of the role with the reason attached
+                                         is the difference between a rule and a
+                                         champion the player thinks was deleted. -->
+                                    <div class="offhead">
+                                        <div class="label">Does not fit your playstyle</div>
+                                        <p class="offnote">
+                                            Still {role ? role.name : 'in-role'} picks, shut to {styleArticled}. Change your
+                                            playstyle at step 5 to open them &mdash; nothing has been removed from the game.
+                                        </p>
+                                    </div>
+                                    {#each champOffGroups as g}
+                                        <div class="cgroup off">
+                                            <div class="label">{g.name}</div>
+                                            <div class="why">{g.name} is too far from how {styleArticled} plays &mdash; {g.fit}% fit.</div>
+                                            <div class="cwrap">
+                                                {#each g.items as c}
+                                                    <button class="cchip off" disabled aria-label="{c.name}, off-style for {styleName}">
+                                                        <span class="cc-name">{c.name}</span>
+                                                        <span class="cc-mods">
+                                                            {#each modChips(c.mods) as m}
+                                                                <span class="cc-mod" class:neg={m.v < 0} style="--c:{m.color}">{m.abbr}{sign(m.v)}</span>
+                                                            {/each}
+                                                        </span>
+                                                    </button>
+                                                {/each}
+                                            </div>
+                                        </div>
+                                    {/each}
+                                {/if}
                                 </div>
                             {/if}
 
@@ -737,7 +817,7 @@
                                 {/if}
 
                                 <button class="start" on:click={confirmCareer} disabled={!canFinish}>Start Career</button>
-                                <p class="fc-note">Your career save is separate from Ultimate Roster and can be reset from the profile screen at any time.</p>
+                                <p class="fc-note">This career fills the Ultimate Career save slot you picked at the main menu &mdash; one of three, kept apart from your Ultimate Roster saves &mdash; and can be reset from the profile screen at any time.</p>
                             </div>
                         {/if}
                     </div>
@@ -1013,6 +1093,7 @@
     .champbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .champ-search { flex: 1; min-width: 180px; max-width: 380px; }
     .champ-count { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #3f5069; }
+    .champ-count.off { color: #64748b; opacity: 0.7; }
     .champdetail { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; padding: 12px 16px; border-radius: 12px; min-height: 46px; background: rgba(12, 16, 28, 0.5); border: 1px solid rgba(51, 65, 85, 0.34); }
     .champdetail.empty { font-size: 11.5px; color: #475569; }
     .cd-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 14px; font-weight: 700; color: #e8eefb; }
@@ -1042,6 +1123,15 @@
     .cc-mods { display: flex; gap: 5px; }
     .cc-mod { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 8.5px; font-weight: 700; color: var(--c); }
     .cc-mod.neg { opacity: 0.45; }
+    .offhead { margin-top: 8px; padding-top: 16px; border-top: 1px dashed rgba(51, 65, 85, 0.42); }
+    .offhead .label { margin-top: 0; }
+    .offnote { font-size: 11px; line-height: 1.65; color: #475569; margin: 0; max-width: 620px; }
+    .cgroup.off { opacity: 0.6; }
+    .cgroup.off .label { margin-bottom: 3px; }
+    .why { font-size: 10.5px; line-height: 1.5; color: #3f5069; margin-bottom: 9px; }
+    .cchip.off { cursor: not-allowed; background: rgba(15, 23, 42, 0.3); border-style: dashed; }
+    .cchip.off:hover { transform: none; background: rgba(15, 23, 42, 0.3); border-color: rgba(51, 65, 85, 0.34); }
+    .cchip.off .cc-name { color: #64748b; }
     .emptybox { padding: 30px; border-radius: 16px; text-align: center; background: rgba(12, 16, 28, 0.4); border: 1px dashed rgba(51, 65, 85, 0.4); color: #56688a; font-size: 12px; margin-top: 14px; }
     .emptybox p { margin: 0 0 10px; }
 

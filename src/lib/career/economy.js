@@ -27,7 +27,7 @@ import {
 import {
     career, absWeek, saveCareer, addNews,
     grantGold, spendGold, grantFollowers, spendLegacy,
-    adjustCondition, applyAttrGain,
+    adjustCondition, applyAttrGain, raisePotential, setSoftCap,
     setGearTier, setLifestyle, addConsumable, addPerk,
 } from '../stores/career.js';
 import { getDB, getEffectiveRating, getEra } from '../utils/cards.js';
@@ -180,6 +180,12 @@ export const GEAR = [
 export const GEAR_BY_ID = GEAR.reduce((m, g) => { m[g.id] = g; return m; }, {});
 export const GEAR_MAX_TIER = 5;
 
+/** Total potential OVR a career may BUY. Gold is renewable and a ceiling is
+ *  not, so anything that sells headroom has to be bounded for the career rather
+ *  than merely priced -- otherwise the answer to "am I at my ceiling" becomes
+ *  "how many splits until I can afford another camp". */
+export const CEILING_PURCHASE_MAX = 3;
+
 // ---------------------------------------------------------------------------
 //  CONSUMABLES
 //  Single use. The `effect` block is the whole contract - useConsumable() reads
@@ -187,6 +193,9 @@ export const GEAR_MAX_TIER = 5;
 //
 //    condition  { energy, morale, health, form }  straight deltas via adjustCondition()
 //    attrXP     { <attrKey|ROLE_PRIMARY|ALL>: points }  pre-curve, via applyAttrGain()
+//    potentialXP { <attrKey|ROLE_PRIMARY|ALL>: points } raises the CEILING itself,
+//               via raisePotential(). The only renewable way to buy headroom, so
+//               anything using it must be priced like an endgame gold sink.
 //    chemistry  flat points on player.chemistry
 //    followers  granted, scaled by the player's follower multiplier
 //    gold       granted (no consumable currently does, but the reader handles it)
@@ -287,6 +296,19 @@ export const CONSUMABLES = [
         },
     },
     {
+        // The gold answer to "my ceiling is the problem". The most expensive
+        // thing on the page, and repeatable only up to CEILING_PURCHASE_MAX for
+        // a whole career -- gold is renewable and a ceiling is not, so without
+        // that bound a veteran with a decade of wages simply buys 99 in
+        // everything. The first cut of this had no bound and did exactly that.
+        id: 'performance_camp', name: 'Performance Camp', icon: '\u{1F3D4}', cost: 26000,
+        desc: 'Ten days at altitude with sports scientists, a biomechanist and nobody to scrim. You come back with a different upper limit.',
+        effect: {
+            potentialXP: { ALL: 1 },
+            condition: { energy: -25, form: -4 },
+        },
+    },
+    {
         id: 'agent_retainer', name: 'Agent Retainer', icon: '\u{1F4BC}', cost: 1800,
         desc: 'Somebody else makes the calls for two months. The next number on the table is a better number.',
         effect: {
@@ -314,7 +336,10 @@ export const CONSUMABLE_BY_ID = CONSUMABLES.reduce((m, x) => { m[x.id] = x; retu
 // ---------------------------------------------------------------------------
 export const LIFESTYLE = [
     {
-        id: 'studio_flat', name: 'Studio Apartment', icon: '\u{1F3E0}', cost: 3500, reqFollowers: 0,
+        // reqAge: the career can start at thirteen. Moving out of the family home
+        // and buying a car are not things the mode should sell to a child, and
+        // the random-event pool has copy that assumes both.
+        id: 'studio_flat', name: 'Studio Apartment', icon: '\u{1F3E0}', cost: 3500, reqFollowers: 0, reqAge: 17,
         desc: 'Out of the family living room. A door that closes is worth more than any peripheral on this page.',
         effects: { energyRegen: 3, moraleFloor: 20 },
     },
@@ -361,7 +386,7 @@ export const LIFESTYLE = [
         effects: { energyRegen: 5, injuryResist: 0.12, moraleFloor: 35 },
     },
     {
-        id: 'car', name: 'The Car', icon: '\u{1F697}', cost: 45000, reqFollowers: 120000,
+        id: 'car', name: 'The Car', icon: '\u{1F697}', cost: 45000, reqFollowers: 120000, reqAge: 18,
         desc: 'Nobody needs it. Everybody who can afford it buys it, and the garage photo does numbers.',
         effects: { moraleFloor: 30, followerMult: 0.10, energyRegen: 2 },
     },
@@ -766,9 +791,14 @@ export function followerMultiplier(c) {
     return Math.round(lifestyleEffects(s).followerMult * perkEffects(s).followerMult * 1000) / 1000;
 }
 
-/** The unsigned attribute soft cap after Self-Made. */
+/** The unsigned attribute soft cap this player actually runs into. Reads the
+ *  value written onto the player when Self-Made was bought, so it agrees with
+ *  ratings.environmentCap() rather than being a second opinion. */
 export function unsignedCapFor(c) {
-    return UNSIGNED_SOFT_CAP + perkEffects(st(c)).unsignedCapBonus;
+    const s = st(c);
+    const own = Number(s && s.player && s.player.softCap);
+    if (Number.isFinite(own) && own > 0) return own;
+    return UNSIGNED_SOFT_CAP + perkEffects(s).unsignedCapBonus;
 }
 
 // ---------------------------------------------------------------------------
@@ -921,6 +951,14 @@ export function useConsumable(id) {
         return fail(`${item.name} needs a roster to use it on.`);
     }
 
+    // Bought ceiling is bounded for a whole career. Checked BEFORE the item is
+    // consumed, so a player at the limit keeps the item and their gold rather
+    // than paying for nothing.
+    const ceilingSpent = Math.max(0, Number(c?.flags?.boughtCeilingOVR) || 0);
+    if (eff.potentialXP && ceilingSpent >= CEILING_PURCHASE_MAX) {
+        return fail(`There is nothing left for a camp to find. You have taken ${CEILING_PURCHASE_MAX} rating of ceiling this way already.`);
+    }
+
     const parts = [];
 
     // Condition meters.
@@ -940,6 +978,24 @@ export function useConsumable(id) {
     for (const k of Object.keys(xp)) {
         const applied = applyAttrGain(k, xp[k]);
         if (applied > 0) parts.push(`+${applied} ${k.toUpperCase()}`);
+    }
+
+    // Ceiling points. Unlike attrXP these are NOT put through gainCurve - they
+    // move potential itself, which is the whole reason to buy them.
+    if (eff.potentialXP) {
+        const potBefore = calcOVR(c.player.potential, c.player.role);
+        const rose = raisePotential(resolveAttrXP(eff.potentialXP, c.player.role));
+        const roseKeys = Object.keys(rose);
+        if (roseKeys.length) {
+            const potAfter = calcOVR(snapshot().player.potential, c.player.role);
+            career.update(x => ({
+                ...x,
+                flags: { ...x.flags, boughtCeilingOVR: ceilingSpent + Math.max(0, potAfter - potBefore) },
+            }));
+            parts.push(roseKeys.length === ATTR_KEYS.length
+                ? `+${rose[roseKeys[0]]} to every ceiling`
+                : roseKeys.map(k => `+${rose[k]} ${k.toUpperCase()} ceiling`).join(', '));
+        }
     }
 
     if (eff.chemistry) {
@@ -993,6 +1049,16 @@ export function useConsumable(id) {
 // ---------------------------------------------------------------------------
 //  PURCHASING - LIFESTYLE
 // ---------------------------------------------------------------------------
+/** Why an age-gated lifestyle item is not available yet, or null. Exported so
+ *  the shop can render the same reason it would refuse the purchase with. */
+export function lifestyleAgeGate(c, item) {
+    const need = Number(item && item.reqAge) || 0;
+    if (!need) return null;
+    const age = Math.round(Number(c && c.player && c.player.age) || 0);
+    if (age >= need) return null;
+    return `${item.name} is not something you can sign for at ${age}. Come back at ${need}.`;
+}
+
 export function buyLifestyle(id) {
     const item = LIFESTYLE_BY_ID[id];
     if (!item) return fail('No such upgrade.');
@@ -1012,6 +1078,9 @@ export function buyLifestyle(id) {
         return fail(`${item.name} needs ${fmtFollowers(item.reqFollowers)} followers - you have ${fmtFollowers(followers)}.`);
     }
 
+    const ageGate = lifestyleAgeGate(c, item);
+    if (ageGate) return fail(ageGate);
+
     if (!spendGold(item.cost)) {
         return fail(`Not enough gold. ${item.name} costs ${fmtGold(item.cost)}.`);
     }
@@ -1026,6 +1095,55 @@ export function buyLifestyle(id) {
 // ---------------------------------------------------------------------------
 //  PURCHASING - LEGACY PERKS
 // ---------------------------------------------------------------------------
+/**
+ * Perks whose effect is a ONE-OFF WRITE rather than a multiplier read live.
+ *
+ * ceilingBonus and unsignedCapBonus were aggregated by perkEffects() and then
+ * read by nothing at all, which made Evergreen (14 legacy, the most expensive
+ * perk in the mode, sold as "the only thing that raises the roof") and Self-Made
+ * (8 points of unsigned soft cap) do literally nothing. They are applied here
+ * instead of being derived, so that player.potential stays the single source of
+ * truth for the ceiling and the two systems can never disagree.
+ */
+function isPermanentPerk(id) {
+    const e = (PERK_BY_ID[id] && PERK_BY_ID[id].effect) || {};
+    return (Number(e.ceilingBonus) || 0) > 0 || (Number(e.unsignedCapBonus) || 0) > 0;
+}
+
+function applyPermanentPerk(id) {
+    const e = (PERK_BY_ID[id] && PERK_BY_ID[id].effect) || {};
+    const ceil = Number(e.ceilingBonus) || 0;
+    if (ceil > 0) {
+        const bonus = {};
+        for (const k of ATTR_KEYS) bonus[k] = ceil;
+        raisePotential(bonus);
+    }
+    const cap = Number(e.unsignedCapBonus) || 0;
+    if (cap > 0) setSoftCap(UNSIGNED_SOFT_CAP + cap);
+}
+
+/**
+ * Apply any permanent perk the save owns but has never had applied. Idempotent
+ * and cheap, and it is what backfills a career that bought Evergreen back when
+ * the perk did nothing. There is no save migration mechanism in this mode, so
+ * the reconciliation has to be inferable from the state itself.
+ */
+export function reconcilePermanentPerks() {
+    const c = snapshot();
+    if (!c || !c.created) return [];
+    const owned = Array.isArray(c.inventory && c.inventory.perks) ? c.inventory.perks : [];
+    const already = Array.isArray(c.flags && c.flags.perksApplied) ? c.flags.perksApplied : [];
+    const todo = owned.filter(id => isPermanentPerk(id) && !already.includes(id));
+    if (!todo.length) return [];
+
+    for (const id of todo) applyPermanentPerk(id);
+    career.update(x => ({
+        ...x,
+        flags: { ...x.flags, perksApplied: [...already, ...todo] },
+    }));
+    return todo;
+}
+
 export function buyPerk(id) {
     const perk = PERK_BY_ID[id];
     if (!perk) return fail('No such perk.');
@@ -1040,6 +1158,15 @@ export function buyPerk(id) {
     }
 
     addPerk(id);
+    if (isPermanentPerk(id)) {
+        applyPermanentPerk(id);
+        career.update(x => {
+            const already = Array.isArray(x.flags && x.flags.perksApplied) ? x.flags.perksApplied : [];
+            return already.includes(id)
+                ? x
+                : { ...x, flags: { ...x.flags, perksApplied: [...already, id] } };
+        });
+    }
     addNews(`Legacy perk unlocked: ${perk.name}.`, 'award');
     playSound('rare');
     saveCareer();

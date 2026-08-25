@@ -4,6 +4,7 @@
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
+    import { saveToStorage, loadFromStorage, removeFromStorage } from '../../utils/storage.js';
     import { getDB, LEGACY_TIERS, ALL_SPECIAL, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import { get } from 'svelte/store';
@@ -90,7 +91,7 @@
 
     function startCooldown() {
         cooldownEnd = Date.now() + cooldownSecs * 1000;
-        localStorage.setItem('lur_split_cooldown', String(cooldownEnd));
+        saveToStorage('lur_split_cooldown', cooldownEnd);
         splitCooldownEnd.set(cooldownEnd);
         updateCooldown();
         if (cooldownTimer) clearInterval(cooldownTimer);
@@ -105,9 +106,12 @@
         }
     }
     function restoreCooldown() {
-        const saved = localStorage.getItem('lur_split_cooldown');
-        if (saved) {
-            const end = Number(saved);
+        // Back-compat: the timestamp used to be written raw via String(ms). A bare
+        // number is valid JSON, so pre-slot cooldowns still decode here; Number()
+        // covers both forms and anything unreadable falls through as 0 (no cooldown),
+        // never as a permanent one.
+        const end = Number(loadFromStorage('lur_split_cooldown')) || 0;
+        if (end > 0) {
             if (end > Date.now()) {
                 cooldownEnd = end;
                 splitCooldownEnd.set(end);
@@ -115,7 +119,7 @@
                 if (cooldownTimer) clearInterval(cooldownTimer);
                 cooldownTimer = setInterval(updateCooldown, 1000);
             } else {
-                localStorage.removeItem('lur_split_cooldown');
+                removeFromStorage('lur_split_cooldown');
             }
         }
     }

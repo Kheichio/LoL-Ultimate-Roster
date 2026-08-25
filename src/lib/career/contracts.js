@@ -11,17 +11,19 @@
 //  ten-plus years means a wage that looks small on the offer sheet is still the
 //  dominant source of gold in a full career -- keep multipliers, not additions.
 
+import { get } from 'svelte/store';
 import {
     REGION_BY_ID, ROLE_BY_ID, PLAYSTYLES, PLAYSTYLE_BY_ID, CHAMPION_BY_ID,
-    CLUB_TIERS, SQUAD_STATUS, PHASES, ATTR_KEYS,
-    phaseForWeek, teamById, allTeams, championsForRole,
+    CLUB_TIERS, SQUAD_STATUS, PHASES, ATTR_KEYS, ATTR_MIN, ATTR_MAX,
+    phaseForWeek, teamById, allTeams, championsForRole, championsForStyle,
+    championFit,
 } from './constants.js';
 import {
     calcOVR, calcPotentialOVR, deservedStatus, statusInfo, weeklySalaryFor,
     marketValueFor, SCOUT_MMR_GATE, clamp, clampAttr, emptyAttrs, fmtGold,
 } from './ratings.js';
 import {
-    career, absWeek, addNews, grantGold, saveCareer,
+    career, matchState, absWeek, addNews, grantGold, saveCareer,
 } from '../stores/career.js';
 import { teamsInRegion, allTeamsForPlayer, teamStrength } from './teams.js';
 import { getDB, getEffectiveRating, getEra } from '../utils/cards.js';
@@ -1101,9 +1103,15 @@ export function changeRole(newRoleId, newPlaystyleId, newChampionId) {
     const wantStyle = PLAYSTYLE_BY_ID[newPlaystyleId];
     const style = (wantStyle && styleList.some(s => s.id === wantStyle.id)) ? wantStyle : styleList[0];
 
-    const champList = championsForRole(to.id);
+    // The champion has to be legal for the STYLE, not merely for the role. The
+    // fallback used to be championsForRole(to.id)[0] paired with styleList[0],
+    // which for MID produced a Lane-Dominator-shaped Assassin playstyle holding
+    // Ahri and no comfort bonus worth the name.
+    const champList = style ? championsForStyle(to.id, style.id) : championsForRole(to.id);
     const wantChamp = CHAMPION_BY_ID[newChampionId];
-    const champ = (wantChamp && wantChamp.roles.includes(to.id)) ? wantChamp : champList[0];
+    const champ = (wantChamp && champList.some(x => x.id === wantChamp.id))
+        ? wantChamp
+        : (champList[0] || null);
 
     // The hidden ceiling was rolled around the old role's weights (see
     // rollNewPlayer). Re-centre it on the new role with the same scale factor,
@@ -1135,6 +1143,138 @@ export function changeRole(newRoleId, newPlaystyleId, newChampionId) {
     saveCareer();
 
     return { ok: true, msg };
+}
+
+// ---------------------------------------------------------------------------
+//  SIGNATURE CHAMPION SWITCH
+//  Re-maining. Much smaller than a role change -- champion mods are applied at
+//  creation only and are deliberately NOT re-applied here, so the switch moves
+//  no attributes by that route -- but it is not free either.
+//
+//  The price is CHP and form, not gold. That is on purpose and it is the only
+//  price that interacts with the thing being changed: chp is the one attribute
+//  whose sole mechanical job is champion select (match.js rollDraft), so
+//  throwing away the champion you were trusted on and starting again on another
+//  narrows the pool you can be trusted on. It is also self-limiting without
+//  needing a cooldown or a new field on the save: switch repeatedly and your
+//  draft odds collapse, which is exactly what would happen.
+// ---------------------------------------------------------------------------
+
+/** CHP lost per switch, and the form hit for being on something new. The role
+ *  change costs 7-10 OVR and 12 form; this is deliberately a fraction of that. */
+const CHAMP_SWITCH_CHP = 6;
+const CHAMP_SWITCH_FORM = 8;
+
+export function canSwitchChampion(c) {
+    if (!c || !c.created) return { ok: false, reason: 'No career in progress.' };
+    if (c.flags?.retired) return { ok: false, reason: 'Your playing career is over.' };
+    const p = c.player;
+    if (!p.playstyle || !PLAYSTYLE_BY_ID[p.playstyle]) {
+        return { ok: false, reason: 'Pick a playstyle first - it decides which champions you can main.' };
+    }
+    if (championsForStyle(p.role, p.playstyle).length < 2) {
+        return { ok: false, reason: 'There is nothing else your playstyle would let you play.' };
+    }
+    return {
+        ok: true,
+        reason: `${CHAMP_SWITCH_CHP} champion pool and ${CHAMP_SWITCH_FORM} form. Re-maining is not free.`,
+    };
+}
+
+/** The champions this player may switch to, current pick excluded. */
+export function switchableChampions(c) {
+    const p = c?.player;
+    if (!p) return [];
+    return championsForStyle(p.role, p.playstyle).filter(x => x.id !== p.champion);
+}
+
+/** The honest numbers before they commit. Mirrors roleChangePreview(). */
+export function championSwitchPreview(c, newChampionId) {
+    const p = c?.player;
+    const to = CHAMPION_BY_ID[newChampionId];
+    const from = CHAMPION_BY_ID[p?.champion] || null;
+    const base = {
+        from, to: to || null, ok: false, reason: '',
+        chpBefore: 0, chpAfter: 0, ovrBefore: 0, ovrAfter: 0, formAfter: 0, fit: 0,
+    };
+    if (!p || !to) return { ...base, reason: 'That is not a champion.' };
+    if (from && from.id === to.id) return { ...base, reason: `${to.name} is already your signature pick.` };
+
+    const legal = championsForStyle(p.role, p.playstyle);
+    if (!legal.some(x => x.id === to.id)) {
+        const style = PLAYSTYLE_BY_ID[p.playstyle];
+        return {
+            ...base,
+            reason: `A ${style ? style.name : 'player of your style'} does not main a ${to.archetype}.`,
+        };
+    }
+
+    const chpBefore = Number(p.attrs?.chp) || 0;
+    const chpAfter = clamp(chpBefore - CHAMP_SWITCH_CHP, ATTR_MIN, ATTR_MAX);
+    const after = { ...p.attrs, chp: chpAfter };
+
+    return {
+        ...base,
+        ok: true,
+        reason: '',
+        chpBefore: Math.round(chpBefore),
+        chpAfter: Math.round(chpAfter),
+        ovrBefore: calcOVR(p.attrs, p.role),
+        ovrAfter: calcOVR(after, p.role),
+        formAfter: clamp((Number(p.form) ?? 50) - CHAMP_SWITCH_FORM, 0, 100),
+        fit: championFit(to, p.playstyle),
+    };
+}
+
+export function switchChampion(newChampionId) {
+    const c = snap();
+    const gate = canSwitchChampion(c);
+    if (!gate.ok) return { ok: false, msg: gate.reason };
+
+    // Never mid-series. rollDraft has already resolved champion select for the
+    // game being played and match.draft still names the OLD pick, so switching
+    // here would silently change the comfort bonus between game two and three.
+    if (get(matchState)) {
+        return { ok: false, msg: 'Not in the middle of a series. Finish the match first.' };
+    }
+
+    const preview = championSwitchPreview(c, newChampionId);
+    if (!preview.ok) return { ok: false, msg: preview.reason || 'You cannot main that.' };
+
+    const to = preview.to;
+    const from = preview.from;
+
+    career.update(x => ({
+        ...x,
+        player: {
+            ...x.player,
+            champion: to.id,
+            // Fractional on purpose, like every other attribute write outside
+            // creation and role changes.
+            attrs: {
+                ...x.player.attrs,
+                chp: clamp((Number(x.player.attrs.chp) || 0) - CHAMP_SWITCH_CHP, ATTR_MIN, ATTR_MAX),
+            },
+            form: clamp((x.player.form ?? 50) - CHAMP_SWITCH_FORM, 0, 100),
+        },
+    }));
+
+    addNews(
+        from
+            ? `Dropped ${from.name} for ${to.name}. Weeks of one-tricking somebody else, and a pool that is narrower than it was on Friday.`
+            : `${to.name} is the pick now. Something to be known for.`,
+        'training',
+    );
+    showToast(`Now maining ${to.name}`, 'info');
+    playSound('pack');
+    saveCareer();
+
+    return {
+        ok: true,
+        msg: from
+            ? `${from.name} ${ARROW} ${to.name}. Champion pool ${preview.chpBefore}${ARROW}${preview.chpAfter}.`
+            : `${to.name} is your signature pick.`,
+    };
 }
 
 // ---------------------------------------------------------------------------

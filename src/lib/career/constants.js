@@ -499,6 +499,141 @@ export function championsForRole(role) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  ARCHETYPE BIAS
+//  How a champion's archetype wants to be played, on the same
+//  {aggression, risk, teamplay} triple that every playstyle carries.
+//
+//  This table used to live in match.js, where the match engine matched it
+//  against an in-game option's bias to hand out the comfort-pick bonus. It moved
+//  here because it is now read by TWO consumers that must agree: that comfort
+//  bonus, and championsForStyle() below, which decides whether a champion is a
+//  legal signature pick for your playstyle. A champion that fits your playstyle
+//  is literally a champion that gets comfort on the same decisions your identity
+//  already helps you win — one table, one meaning.
+//
+//  tools/championCheck.mjs imports this directly. Every archetype used by any
+//  entry in CHAMPIONS must have a row here or the comfort bonus silently never
+//  fires for it.
+// ─────────────────────────────────────────────────────────────────────────
+export const ARCHETYPE_BIAS = {
+    Juggernaut: { aggression: 0.70, risk: 0.45, teamplay: 0.55 },
+    Diver:      { aggression: 0.85, risk: 0.75, teamplay: 0.65 },
+    Duelist:    { aggression: 0.72, risk: 0.62, teamplay: 0.25 },
+    Skirmisher: { aggression: 0.75, risk: 0.65, teamplay: 0.40 },
+    Warden:     { aggression: 0.30, risk: 0.25, teamplay: 0.95 },
+    Vanguard:   { aggression: 0.80, risk: 0.70, teamplay: 0.90 },
+    Battlemage: { aggression: 0.50, risk: 0.40, teamplay: 0.75 },
+    Specialist: { aggression: 0.50, risk: 0.55, teamplay: 0.55 },
+    Marksman:   { aggression: 0.45, risk: 0.45, teamplay: 0.60 },
+    Assassin:   { aggression: 0.90, risk: 0.88, teamplay: 0.25 },
+    Mage:       { aggression: 0.40, risk: 0.35, teamplay: 0.80 },
+    Hypercarry: { aggression: 0.35, risk: 0.35, teamplay: 0.65 },
+    Poke:       { aggression: 0.40, risk: 0.30, teamplay: 0.70 },
+    'Lane Bully': { aggression: 0.85, risk: 0.65, teamplay: 0.35 },
+    Utility:    { aggression: 0.30, risk: 0.30, teamplay: 0.90 },
+    Catcher:    { aggression: 0.75, risk: 0.75, teamplay: 0.80 },
+    Enchanter:  { aggression: 0.20, risk: 0.20, teamplay: 1.00 },
+};
+
+/** Mean absolute distance between two {aggression, risk, teamplay} triples.
+ *  The match engine scores every in-game decision with this same function. */
+export function biasDistance(a, b) {
+    if (!a || !b) return 0.5;
+    const keys = ['aggression', 'risk', 'teamplay'];
+    let sum = 0;
+    for (const k of keys) {
+        const x = Number(a[k]); const y = Number(b[k]);
+        sum += Math.abs((Number.isFinite(x) ? x : 0.5) - (Number.isFinite(y) ? y : 0.5));
+    }
+    return sum / keys.length;
+}
+
+// A champion is "in your playstyle" when its archetype plays the way your
+// identity plays. FIT_MAX is the distance that means it, and STYLE_POOL_MIN is
+// the floor that stops a narrow style being left with nothing to pick.
+//
+// Both numbers are calibrated, not guessed:
+//  - At 0.30 a Ganking Machine can pick 46 of 49 junglers, which is not a
+//    constraint at all, so the threshold has to be tight.
+//  - At 0.22 the Frontline Tank could not pick Ornn or Sion, which its own
+//    blurb names, and all six top-lane Vanguards became unpickable in the role.
+//    0.24 is the smallest value that fixes that; 0.25 additionally opened the
+//    entire ADC pool to the Hypercarry style, which is not a constraint at all.
+//  - Even at 0.25 the thinnest pools are jng_farm and jng_call: the jungle
+//    simply does not contain many archetypes a Farming Jungler wants. Rather
+//    than loosen the threshold for all twenty styles to rescue two, those pools
+//    are topped up by nearest distance until STYLE_POOL_MIN is met.
+//
+// tools/championCheck.mjs asserts the floor holds for all twenty playstyles,
+// that no champion is left unpickable, and that a style's blurb never names a
+// champion the rule rejects.
+export const FIT_MAX = 0.24;
+export const STYLE_POOL_MIN = 8;
+
+/** How well one champion suits one playstyle: 1 is identical, 0 is opposite. */
+export function championFit(champ, playstyleId) {
+    const style = PLAYSTYLE_BY_ID[playstyleId];
+    const arche = champ && ARCHETYPE_BIAS[champ.archetype];
+    if (!style || !arche) return 0;
+    return Math.max(0, 1 - 2 * biasDistance(style.bias, arche));
+}
+
+/**
+ * The champions a player of this role and playstyle may take as their signature
+ * pick, nearest fit first. With no playstyle (or an unknown one) this is just
+ * the role pool, so nothing is ever locked out by bad data.
+ */
+export function championsForStyle(roleId, playstyleId) {
+    const pool = championsForRole(roleId);
+    const style = PLAYSTYLE_BY_ID[playstyleId];
+    if (!style || !pool.length) return pool;
+
+    const distOf = (s, c) => (ARCHETYPE_BIAS[c.archetype]
+        ? biasDistance(s.bias, ARCHETYPE_BIAS[c.archetype])
+        : 1);
+
+    const ranked = pool.map(c => ({ c, d: distOf(style, c) })).sort((a, b) => a.d - b.d);
+
+    let cut = ranked.filter(r => r.d <= FIT_MAX).length;
+    if (cut < STYLE_POOL_MIN) {
+        // Top up by nearest distance, but never split an archetype across the
+        // line: if one Specialist is legal, all of them are, or the player is
+        // shown two identical champions with different answers.
+        cut = Math.min(ranked.length, STYLE_POOL_MIN);
+        while (cut < ranked.length && ranked[cut].d === ranked[cut - 1].d) cut++;
+    }
+
+    const taken = ranked.slice(0, cut);
+    const have = new Set(taken.map(r => r.c.id));
+
+    // Coverage guarantee. A champion that no playstyle fits WELL still belongs
+    // to the one that fits it least badly — otherwise it is data in the game
+    // that nobody can ever pick, which is precisely the silent kind of failure
+    // this rule is supposed to avoid rather than create.
+    const styles = PLAYSTYLES[roleId] || [];
+    if (styles.length > 1) {
+        for (const row of ranked) {
+            if (have.has(row.c.id)) continue;
+            let best = null, bestD = Infinity;
+            for (const s of styles) {
+                const sd = distOf(s, row.c);
+                if (sd < bestD) { bestD = sd; best = s; }
+            }
+            if (best && best.id === style.id) { taken.push(row); have.add(row.c.id); }
+        }
+        taken.sort((a, b) => a.d - b.d);
+    }
+
+    return taken.map(r => r.c);
+}
+
+/** Whether a specific champion is a legal signature pick for a role+playstyle. */
+export function championFitsStyle(championId, roleId, playstyleId) {
+    if (!championId) return false;
+    return championsForStyle(roleId, playstyleId).some(c => c.id === championId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  START PATHS
 //  The two entry points the whole mode is built around.
 //
@@ -518,6 +653,9 @@ export const START_PATHS = [
         name: 'Pre-Competitive',
         tag: 'Age 13 — unsigned',
         ages: [13, 14, 15],
+        // The age your genetic trait shows itself. Late on purpose: a trait you
+        // could see at creation is a trait players reroll a new career for.
+        revealAge: 16,
         accent: '#22c55e',
         blurb: 'You are thirteen, you are nobody, and you have a computer. Grind solo queue, train whatever you like, and make somebody in a scouting office write your name down.',
         baseAttr: 33,          // mean starting attribute before every modifier
@@ -548,6 +686,9 @@ export const START_PATHS = [
         name: 'Academy Debut',
         tag: 'Age 16 — signed',
         ages: [16, 17, 18],
+        // Later than the pre-comp path: you arrived already formed, so it takes
+        // longer for anyone to work out what you actually are.
+        revealAge: 18,
         accent: '#f59e0b',
         blurb: 'Sixteen, contracted, and already on a roster. Somebody has decided you are worth a seat — now hold it. Training runs on the club’s schedule, not yours.',
         baseAttr: 57,
@@ -580,6 +721,104 @@ export const PATH_BY_ID = START_PATHS.reduce((m, p) => { m[p.id] = p; return m; 
 // Choosing an older start inside a path is a straight trade: more ready now,
 // less room to grow later.
 export const AGE_TRADE = { attrPerYear: 4, potentialPerYear: -4 };
+
+// ─────────────────────────────────────────────────────────────────────────
+//  GENETIC TRAITS
+//  Every career has exactly one, rolled and revealed on the birthday named by
+//  its path's `revealAge` — never at creation. That is the whole point: a trait
+//  you can see before you have invested three in-game years in a player is a
+//  trait you reroll for, and rerolling is not a game.
+//
+//  A trait is the main thing in the mode that raises the roof. Its effects:
+//    pot        flat potential added to EVERY attribute
+//    potRole    extra potential on this role's key attributes (weight >= 0.14)
+//    potKeys    extra potential on named attributes
+//    trainMult  permanent multiplier on training gain
+//    decayMult  multiplier on age decay (below 1 = you last longer)
+//    earlyTrainMult / earlyUntilAge  a training penalty that expires with age
+//
+//  Because potential is what the ceiling reads, a trait bump goes straight into
+//  player.potential rather than sitting beside it as a derived bonus. That keeps
+//  one number as the truth for training, the UI, wages and market value alike.
+//
+//  IDS ARE PERMANENT. Saves store the bare id, exactly like player.champion, so
+//  renaming or deleting one orphans every career that rolled it.
+// ─────────────────────────────────────────────────────────────────────────
+export const TRAIT_RARITIES = {
+    common:    { id: 'common',    name: 'Common',    color: '#94a3b8' },
+    uncommon:  { id: 'uncommon',  name: 'Uncommon',  color: '#22c55e' },
+    rare:      { id: 'rare',      name: 'Rare',      color: '#3b82f6' },
+    legendary: { id: 'legendary', name: 'Legendary', color: '#eab308' },
+};
+
+export const TRAITS = [
+    {
+        id: 'grinder', name: 'Grinder', rarity: 'common', weight: 22,
+        icon: '\u{1F513}', accent: '#94a3b8',
+        blurb: 'Nothing came easily and nothing had to. You put the hours in and the hours pay.',
+        effects: { pot: 2, trainMult: 1.06 },
+    },
+    {
+        id: 'quick_study', name: 'Quick Study', rarity: 'common', weight: 20,
+        icon: '\u{1F4D6}', accent: '#94a3b8',
+        blurb: 'You are shown a thing once. The coaching staff notice inside a fortnight.',
+        effects: { pot: 2, trainMult: 1.10 },
+    },
+    {
+        id: 'late_bloomer', name: 'Late Bloomer', rarity: 'common', weight: 13,
+        icon: '\u{1F331}', accent: '#94a3b8',
+        blurb: 'Everything arrives two years after everyone told you it was too late. Then it keeps arriving.',
+        effects: { pot: 6, earlyTrainMult: 0.80, earlyUntilAge: 20 },
+    },
+    {
+        id: 'talented', name: 'Talented', rarity: 'uncommon', weight: 16,
+        icon: '\u{2728}', accent: '#22c55e',
+        blurb: 'Whatever your role is built on, you were built on it too. The rest is ordinary.',
+        effects: { pot: 2, potRole: 4 },
+    },
+    {
+        id: 'mastermind', name: 'Mastermind', rarity: 'uncommon', weight: 12,
+        icon: '\u{1F9E0}', accent: '#22c55e',
+        blurb: 'You read the game one beat before it happens and you can explain why, which is rarer.',
+        effects: { pot: 3, potKeys: { knw: 7, map: 7, ldr: 7 } },
+    },
+    {
+        id: 'ice_veins', name: 'Ice Veins', rarity: 'uncommon', weight: 9,
+        icon: '\u{2744}', accent: '#22c55e',
+        blurb: 'Game five plays exactly like game one. Nobody has ever seen your hands shake.',
+        effects: { pot: 4, potKeys: { cmp: 8 } },
+    },
+    {
+        id: 'iron_wrists', name: 'Iron Wrists', rarity: 'uncommon', weight: 8,
+        icon: '\u{1F4AA}', accent: '#22c55e',
+        blurb: 'The thing that ends most careers is not going to be the thing that ends yours.',
+        effects: { pot: 4, decayMult: 0.70 },
+    },
+    {
+        id: 'natural', name: 'Natural', rarity: 'rare', weight: 6,
+        icon: '\u{1F31F}', accent: '#3b82f6',
+        blurb: 'People who have watched a thousand prospects go quiet when they watch you.',
+        effects: { pot: 7 },
+    },
+    {
+        id: 'prodigy', name: 'Prodigy', rarity: 'rare', weight: 3.5,
+        icon: '\u{1F52E}', accent: '#3b82f6',
+        blurb: 'An academy coach writes one sentence in a report and three orgs ring him about it.',
+        effects: { pot: 9, trainMult: 1.12 },
+    },
+    {
+        id: 'legend', name: 'Legend', rarity: 'legendary', weight: 1.2,
+        icon: '\u{1F451}', accent: '#eab308',
+        blurb: 'One of these is born every few years. The region spends the next decade arguing about you.',
+        effects: { pot: 12, trainMult: 1.15, decayMult: 0.75 },
+    },
+];
+
+export const TRAIT_BY_ID = TRAITS.reduce((m, t) => { m[t.id] = t; return m; }, {});
+
+// The attribute weight above which an attribute counts as "key" for a role, and
+// therefore gets a trait's potRole bonus. ROLES weights run 0.02 to 0.24.
+export const ROLE_KEY_ATTR_WEIGHT = 0.14;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  CALENDAR

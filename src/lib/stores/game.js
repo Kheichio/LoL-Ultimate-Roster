@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { loadFromStorage, saveToStorage } from '../utils/storage.js';
+import { loadFromStorage, saveToStorage, loadFromSlot } from '../utils/storage.js';
 import { getDB, getCardById } from '../utils/cards.js';
 import { validateCard, clampNum, signSave, verifySave, BOUNDS } from '../utils/anticheat.js';
 
@@ -234,20 +234,150 @@ export function snapshotState() {
     };
 }
 
+// The module defaults of every persisted store, captured at load time — before
+// initGame() has had any chance to overwrite them. Taking them from snapshotState()
+// rather than re-typing each default means the reset table below cannot drift from the
+// store declarations at the top of this file, and adding a store to the save
+// automatically adds it here.
+const _DEFAULTS = snapshotState();
+
+// Defaults are handed out as copies: several are objects/arrays, and a store handed the
+// same reference twice would let one slot's mutation follow the player into the next.
+function _defaultFor(key) {
+    const v = _DEFAULTS[key];
+    return (v === null || typeof v !== 'object') ? v : JSON.parse(JSON.stringify(v));
+}
+
+// How each snapshotState() key maps back onto its store(s). Keyed by storage key so
+// resetGameStores() can walk snapshotState()'s own key list and warn about anything
+// persisted that it does not know how to reset.
+const _RESETTERS = {
+    lur_be:                   d => blueEssence.set(d),
+    lur_club:                 d => club.set(d),
+    lur_squad:                d => squad.set(d),
+    lur_bench:                d => bench.set(d),
+    lur_starter:              d => hasBoughtStarter.set(d),
+    lur_showcase:             d => showcasePicks.set(d),
+    lur_identity:             d => teamIdentity.set(d),
+    lur_stats:                d => trackStats.set(d),
+    lur_progression:          d => { managerXP.set(d.xp); managerLevel.set(d.level); skillPoints.set(d.sp); skills.set(d.skills); },
+    lur_collection:           d => collectionRegistry.set(d),
+    lur_unlocks:              d => unlocks.set(d),
+    lur_season:               d => seasonData.set(d),
+    lur_battlepass:           d => battlePass.set(d),
+    lur_dailylogin:           d => dailyLogin.set(d),
+    lur_quests_claimed:       d => questsClaimed.set(d),
+    lur_quests_rbase:         d => questsRepeatableBaselines.set(d),
+    lur_quests_rcounts:       d => questsRepeatableCounts.set(d),
+    lur_achievements_claimed: d => achievementsClaimed.set(d),
+    lur_archive_rewards:      d => archiveRewards.set(d),
+    lur_prestige:             d => prestige.set(d),
+    lur_milestone_cards:      d => milestoneCards.set(d),
+    lur_academy:              d => academy.set(d),
+    lur_rbc:                  d => rbcState.set(d),
+    lur_freepacks:            d => freePacks.set(d),
+    lur_trademarket:          d => tradeMarket.set(d),
+    lur_matchhistory:         d => matchHistory.set(d),
+};
+
+/**
+ * Put every persisted store back to its module default.
+ *
+ * WHY THIS EXISTS: initGame() is a MERGE, not a load. Every read is guarded by
+ * `if (raw)` with no else-branch, and several of them merge over `get(store)` — the
+ * store's CURRENT value — rather than over a default. That is exactly right when there
+ * is only ever one save, but with save slots it means loading slot B on top of slot A
+ * carries A's club, BE, squad, quests, unlocks and stats straight into B for every key
+ * B happens not to have written. Call this first and initGame() merges over defaults
+ * instead of over the previous slot.
+ *
+ * Component-local keys (lur_tower_run, the pity counters, the cooldowns,
+ * lur_redeemed_codes) are not stores and are not reset here — they are slot-namespaced
+ * in storage.js and re-read from the active slot when their component next mounts.
+ */
+export function resetGameStores() {
+    for (const key of Object.keys(_DEFAULTS)) {
+        const reset = _RESETTERS[key];
+        if (reset) reset(_defaultFor(key));
+        else console.warn(`[LUR] resetGameStores: no default for ${key} — it will leak between save slots.`);
+    }
+}
+
+// The write itself. saveGame() defers it, flushGame() runs it now — factored out so the
+// two can never disagree about which keys a save covers.
+function writeSave() {
+    const state = snapshotState();
+    for (const [k, v] of Object.entries(state)) saveToStorage(k, v);
+    // Integrity signature — written last so it covers all values above
+    saveToStorage('lur_s', signSave(get(blueEssence), get(managerLevel), get(prestige), get(club).length));
+}
+
 export function saveGame() {
     if (_saveDebounce) clearTimeout(_saveDebounce);
-    _saveDebounce = setTimeout(() => {
-        const state = snapshotState();
-        for (const [k, v] of Object.entries(state)) saveToStorage(k, v);
-        // Integrity signature — written last so it covers all values above
-        saveToStorage('lur_s', signSave(get(blueEssence), get(managerLevel), get(prestige), get(club).length));
-    }, 100);
+    _saveDebounce = setTimeout(() => { _saveDebounce = null; writeSave(); }, 100);
+}
+
+/** Immediate, non-debounced write. Must run before the active roster slot changes: a
+ *  save still sitting in the 100ms debounce resolves its keys when it FIRES, so it
+ *  would otherwise write this slot's snapshot into whichever slot is selected by then. */
+export function flushGame() {
+    if (_saveDebounce) { clearTimeout(_saveDebounce); _saveDebounce = null; }
+    writeSave();
+}
+
+/**
+ * Enough of one slot's save to draw a save-slot card, read without switching to it.
+ * Returns null for an empty slot. Everything is treated as untrusted — a slot can hold
+ * a partial, hand-edited or half-written save.
+ */
+export function rosterSlotSummary(slot) {
+    const rawProg = loadFromSlot('lur_progression', slot);
+    const rawClub = loadFromSlot('lur_club', slot);
+    const rawBE   = loadFromSlot('lur_be', slot);
+    // Empty means nothing has ever been written here — no progression, no club, no BE.
+    if (rawProg === null && rawClub === null && rawBE === null) return null;
+
+    const rawId = loadFromSlot('lur_identity', slot);
+    const id = (rawId && typeof rawId === 'object' && !Array.isArray(rawId)) ? rawId : {};
+    // Fall back to the identity store's own defaults rather than re-typing them.
+    const fallback = _defaultFor('lur_identity');
+
+    const rawStats = loadFromSlot('lur_stats', slot);
+    const stat = k => {
+        const n = Math.floor(Number(rawStats && rawStats[k]));
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    // Same weighting as the weightedTrophies derived store above.
+    const trophies = (stat('worldsWon') * 6) + (stat('msiWon') * 4) + (stat('firstStandWon') * 2) +
+        (stat('regionalSplitWon') * 1) + (stat('goldenRoads') * 10);
+
+    return {
+        name:      (typeof id.name === 'string' && id.name.trim()) ? id.name.trim().slice(0, 24) : fallback.name,
+        // Length-checked rather than sliced: the logo is a single glyph made of several
+        // UTF-16 units, and cutting one in half renders as a broken box.
+        logo:      (typeof id.logo === 'string' && id.logo.trim() && id.logo.trim().length <= 8) ? id.logo.trim() : fallback.logo,
+        color:     (typeof id.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(id.color)) ? id.color : fallback.color,
+        level:     clampNum(rawProg && rawProg.level, BOUNDS.level.min, BOUNDS.level.max, BOUNDS.level.min),
+        prestige:  clampNum(loadFromSlot('lur_prestige', slot), BOUNDS.prestige.min, BOUNDS.prestige.max, 0),
+        be:        clampNum(rawBE, BOUNDS.be.min, BOUNDS.be.max, 0),
+        clubSize:  Array.isArray(rawClub) ? rawClub.length : 0,
+        trophies:  clampNum(trophies, BOUNDS.trophies.min, BOUNDS.trophies.max, 0),
+    };
 }
 
 // Write a full snapshot (key → value) into localStorage, then re-hydrate every store
 // via initGame() so cloud loads get the exact same validation/clamping as local loads.
+//
+// CLOUD SYNC TRACKS THE ACTIVE ROSTER SLOT ONLY. There is one Firestore document per
+// user (see cloudSave/cloudLoad in stores/auth.js), and these bare `lur_*` names resolve
+// through storage.js's slot resolver, so a cloud save uploads whichever slot is selected
+// now and a cloud load restores into it. The other slots — and the whole career
+// gamemode, which never syncs at all — are untouched.
 export function applyState(state) {
     if (!state || typeof state !== 'object') return;
+    // Reset first, because initGame() merges: without this, anything the cloud blob is
+    // missing would be silently kept from whatever was already in this slot.
+    resetGameStores();
     for (const [k, v] of Object.entries(state)) {
         if (v !== undefined) saveToStorage(k, v);
     }
@@ -255,6 +385,12 @@ export function applyState(state) {
     saveGame();
 }
 
+// NOTE: this MERGES, it does not reset. Every read below is guarded by `if (raw)` with
+// no else-branch, and several merge over `get(store)`, so any key the save does not hold
+// keeps whatever the store already had. That is deliberate — it is how a save from an
+// older version picks up newly added defaults. Its companion is resetGameStores(): call
+// that first whenever the stores may be holding a DIFFERENT save (a slot switch, a cloud
+// load), or the previous one bleeds through.
 export function initGame() {
     const dbLoaded = !!getDB();
 

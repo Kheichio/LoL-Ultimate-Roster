@@ -21,11 +21,12 @@
 import {
     WEEKS_PER_YEAR, PHASES, phaseForWeek, ACTIVITY_BY_ID, CLUB_TRAINING_SLOTS,
     PATH_BY_ID, REGION_IDS, MMR_MAX, RETIREMENT_AGE_FORCED, ATTR_KEYS,
-    teamById, DEFAULT_START_YEAR,
+    teamById, DEFAULT_START_YEAR, ROLE_BY_ID, ATTR_BY_KEY,
 } from './constants.js';
 import {
-    clamp, randInt, calcOVR, statusInfo, decayFor, rankFromMMR,
-    fmtGold, fmtFollowers,
+    clamp, randInt, calcOVR, calcPotentialOVR, statusInfo, decayFor, rankFromMMR,
+    fmtGold, fmtFollowers, rollTrait, traitPotentialBonus, traitEffects,
+    revealAgeFor,
 } from './ratings.js';
 import {
     generateSchedule, blankStandings, simulateAIWeek, leagueTable,
@@ -37,7 +38,7 @@ import {
 } from './training.js';
 import {
     weeklyIncome, expireSponsors, expireBuffs, lifestyleEffects, perkEffects,
-    gearEnergyBonus, followerMultiplier,
+    gearEnergyBonus, followerMultiplier, reconcilePermanentPerks,
 } from './economy.js';
 import {
     pruneExpiredOffers, generateOffers, clubReview, promotionCheck,
@@ -49,9 +50,9 @@ import {
 import { rollWeeklyEvent, rollInterview } from './events.js';
 import { buildMatch, quickSim, applyMatchResult } from './match.js';
 import {
-    career, matchState, careerOverlay, absWeek, saveCareer, addNews,
+    career, matchState, careerOverlay, pushOverlay, absWeek, saveCareer, addNews,
     grantGold, grantFollowers, adjustCondition, applyAttrGain, spendAction,
-    logWeek,
+    logWeek, raisePotential, addTrait,
 } from '../stores/career.js';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,30 @@ const NOSHOW_MORALE_CAP = 6;
 
 /** Bo5 for every knockout tie in the mode. */
 const PLAYOFF_BEST_OF = 5;
+
+/** BREAKTHROUGHS -- the split-by-split way past your own ceiling.
+ *
+ *  The genetic trait is the LUCK lever on the ceiling; this is the EARNED one.
+ *  It is deliberately the smaller of the two, and it is bounded for a career,
+ *  not just per split. Without the lifetime budget a player who wins things for
+ *  a decade gets two dozen chances at it and arrives at 99 in everything -- the
+ *  first cut of this did exactly that, taking every smoke career to 94-99 and
+ *  making the ceiling meaningless in the process. The budget is expressed in
+ *  potential OVERALL points because that is the number the player actually
+ *  reads; how it is spread across attributes is an implementation detail. */
+const BREAKTHROUGH_MIN_GAMES = 10;    // a real split, not three games and an injury
+const BREAKTHROUGH_RATING = 7.9;      // mean own-rating worth one point
+const BREAKTHROUGH_RATING_HIGH = 8.4; // ...and worth two
+const BREAKTHROUGH_MAX = 3;           // ceiling points from any one split
+const BREAKTHROUGH_ATTRS = 3;         // how many attributes share them
+/** Total potential OVR a whole career may gain this way. A decade of winning
+ *  everything spends it; anything less never sees the end of it.
+ *  Exported so tools/careerSmoke.mjs asserts the real budget rather than a
+ *  copy of it that can quietly go stale. */
+export const BREAKTHROUGH_CAREER_MAX = 4;
+/** Fraction of a breakthrough that lands on the attribute straight away. The
+ *  rest still has to be trained: the raise opens the room, it does not fill it. */
+const BREAKTHROUGH_INSTANT = 0.6;
 
 /** Championship points by finishing position in a domestic bracket. */
 const CP_BY_PLACE = [140, 90, 55, 40, 25, 15];
@@ -246,6 +271,11 @@ export function startCareerWeek() {
     }
     const dropped = safe(() => pruneExpiredOffers(), 0);
     if (dropped > 0) notes.push(dropped === 1 ? 'An offer lapsed.' : `${dropped} offers lapsed.`);
+
+    // Perks whose effect is a one-off write rather than a live multiplier. This
+    // is idempotent and cheap, and it is what gives a save that bought Evergreen
+    // while the perk was inert the ceiling it paid fourteen legacy points for.
+    safe(() => reconcilePermanentPerks(), null);
 
     // ---- slots -------------------------------------------------------------
     const c = snap();
@@ -524,9 +554,16 @@ function doMedia(c) {
     adjustCondition('morale', swing);
 
     // Press follows content. If a camera turns up, the interview goes to the
-    // overlay exactly as it would after a match.
-    const iv = safe(() => rollInterview(snap(), snap().lastMatch), null);
-    if (iv) careerOverlay.set({ kind: 'interview', payload: iv });
+    // overlay exactly as it would after a match -- but only for a player the
+    // press has a reason to point one at. This activity needs no club, so an
+    // unsigned thirteen-year-old can spend a slot here, and every question in
+    // the pool is written for somebody with a team and a professional record.
+    // The followers are paid either way; only the press conference is skipped.
+    const now = snap();
+    const pressWorthy = !!(now && now.player && now.player.clubId)
+        && num(now.totals && now.totals.games, 0) > 0;
+    const iv = pressWorthy ? safe(() => rollInterview(now, now.lastMatch), null) : null;
+    if (iv) pushOverlay('interview', iv);
 
     const detail = `+${fmtFollowers(followers)} followers, morale ${swing >= 0 ? '+' : ''}${swing}`;
     logWeek('Media & Content', detail, '#22d3ee');
@@ -1122,8 +1159,12 @@ function closeSplit(splitId) {
     // at a time, so a split that produced silverware opens the ceremony -- it
     // lists the same awards the review would have -- and a quiet one opens the
     // season review instead.
-    if (awards.length) careerOverlay.set({ kind: 'awards', payload: awards });
-    else if (row) careerOverlay.set({ kind: 'season', payload: row });
+    if (awards.length) pushOverlay('awards', awards);
+    else if (row) pushOverlay('season', row);
+
+    // A season good enough to move the ceiling. Checked before the season block
+    // is reset, because it reads the split's own per-match ratings.
+    safe(() => checkBreakthrough(c, awards, mine), null);
 
     if (!c.player.clubId) { saveCareer(); return; }
 
@@ -1138,10 +1179,170 @@ function closeSplit(splitId) {
     saveCareer();
 }
 
+// ---------------------------------------------------------------------------
+//  RAISING THE ROOF
+//  Two things in this file move player.potential upward. Everywhere else in the
+//  mode the ceiling is fixed at creation, which is why a career plateaus in its
+//  early twenties and then has nothing left to give for a decade.
+//
+//  Both raise POTENTIAL rather than letting an attribute pass it. That is not a
+//  style preference: attrs > potential is a hard failure in
+//  tools/careerSmoke.mjs, and potential is also what wages, market value,
+//  scouting interest and every ceiling readout in the UI are computed from, so
+//  moving the real number keeps all of them honest for free.
+// ---------------------------------------------------------------------------
+
+/** Mean of the player's own match ratings inside the split just finished. */
+function splitMeanRating(c) {
+    const rows = Array.isArray(c && c.season && c.season.schedule) ? c.season.schedule : [];
+    let sum = 0, n = 0;
+    for (const f of rows) {
+        if (!f || !f.played) continue;
+        const r = Number(f.myRating);
+        if (!Number.isFinite(r)) continue;
+        sum += r; n++;
+    }
+    return { mean: n ? sum / n : 0, games: n };
+}
+
+/** How many ceiling points a split earned. 0 means it was just a season. */
+function breakthroughPoints(c, awards, standing) {
+    const { mean, games } = splitMeanRating(c);
+    if (games < BREAKTHROUGH_MIN_GAMES) return 0;
+
+    let pts = 0;
+    if (mean >= BREAKTHROUGH_RATING_HIGH) pts += 2;
+    else if (mean >= BREAKTHROUGH_RATING) pts += 1;
+    pts += Math.min(2, Array.isArray(awards) ? awards.length : 0);
+    if (standing && Number(standing.rank) === 1) pts += 1;
+
+    return Math.min(BREAKTHROUGH_MAX, pts);
+}
+
+/**
+ * A split that was genuinely outstanding permanently raises the ceiling.
+ *
+ * The points land on the attributes with the LEAST headroom left, because those
+ * are the ones the player is actually walled by — raising a ceiling they were
+ * nowhere near would read as nothing happening. Part of the gain is applied to
+ * the attribute immediately: you did not just unlock the room, you are already
+ * standing in some of it, which is what "something clicked this split" means.
+ */
+function checkBreakthrough(c, awards, standing) {
+    if (!c || !c.created || (c.flags && c.flags.retired)) return null;
+
+    const spent = num(c.flags && c.flags.breakthroughOVR, 0);
+    if (spent >= BREAKTHROUGH_CAREER_MAX) return null;
+
+    const pts = breakthroughPoints(c, awards, standing);
+    if (pts <= 0) return null;
+
+    const p = c.player;
+    const potBefore = calcPotentialOVR(p.potential, p.role);
+    const role = ROLE_BY_ID[p.role];
+    const ranked = ATTR_KEYS
+        .map(k => ({
+            k,
+            room: Math.max(0, num(p.potential[k], 99) - num(p.attrs[k], 0)),
+            weight: role ? num(role.weights[k], 0) : 0,
+        }))
+        // Least headroom first; ties broken toward what the role actually needs.
+        .sort((a, b) => (a.room - b.room) || (b.weight - a.weight));
+
+    const targets = ranked.slice(0, BREAKTHROUGH_ATTRS);
+    const bonus = {};
+    for (const t of targets) bonus[t.k] = pts;
+    const applied = raisePotential(bonus);
+
+    const keys = Object.keys(applied);
+    if (!keys.length) return null;
+
+    // Bill the career budget in the same units the player reads the ceiling in.
+    const potAfter = calcPotentialOVR(snap().player.potential, p.role);
+    career.update(x => ({
+        ...x,
+        flags: { ...x.flags, breakthroughOVR: spent + Math.max(0, potAfter - potBefore) },
+    }));
+
+    // Close most of the gap the raise just opened, without rounding: attributes
+    // are fractional on purpose and rounding here would throw the remainder away.
+    career.update(x => {
+        const attrs = { ...x.player.attrs };
+        for (const k of keys) {
+            const cap = num(x.player.potential[k], 99);
+            const head = Math.min(cap, num(attrs[k], 0) + applied[k] * BREAKTHROUGH_INSTANT);
+            if (head > attrs[k]) attrs[k] = clamp(head, 1, 99);
+        }
+        return { ...x, player: { ...x.player, attrs } };
+    });
+
+    const named = keys.map(k => (ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].abbr : k.toUpperCase())).join(', ');
+    addNews(
+        `Something clicked this split. Your ceiling moved: ${named} +${pts}. Coaches call it a level; nobody can tell you where it came from.`,
+        'training',
+    );
+    logWeek('Breakthrough', `${named} ceiling +${pts}`, '#eab308');
+    pushOverlay('breakthrough', {
+        points: pts,
+        applied,
+        attrs: keys.map(k => ({
+            key: k,
+            name: ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].name : k.toUpperCase(),
+            abbr: ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].abbr : k.toUpperCase(),
+            color: ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].color : '#94a3b8',
+            gained: applied[k],
+            ceiling: num(snap().player.potential[k], 99),
+        })),
+        potOVR: calcPotentialOVR(snap().player.potential, p.role),
+    });
+    return { pts, applied };
+}
+
+/**
+ * Roll and reveal the player's genetic trait, once, on the birthday the path
+ * says. Deliberately late — a trait you can see at creation is a trait people
+ * restart careers for until they get the one they wanted.
+ *
+ * Gated on player.age directly rather than on any proxy (games played, being
+ * signed, MMR). Proxies are how a thirteen-year-old ends up being told about the
+ * friend they climbed with at fourteen.
+ *
+ * Idempotent, and safe on a save that predates traits: a career already past its
+ * reveal age simply gets the roll on its next birthday.
+ */
+export function revealTrait() {
+    const c = snap();
+    if (!c || !c.created) return null;
+    const p = c.player;
+    if (Array.isArray(p.traits) && p.traits.length) return null;
+    if (num(p.age, 0) < revealAgeFor(p)) return null;
+
+    const trait = rollTrait();
+    if (!trait || !addTrait(trait.id)) return null;
+
+    const potBefore = calcPotentialOVR(p.potential, p.role);
+    const applied = raisePotential(traitPotentialBonus(trait.id, p.role));
+    const after = snap();
+    const potAfter = calcPotentialOVR(after.player.potential, after.player.role);
+
+    addNews(`${trait.name}. ${trait.blurb}`, 'award');
+    logWeek('Trait revealed', trait.name, trait.accent || '#eab308');
+    pushOverlay('trait', {
+        trait,
+        applied,
+        potBefore,
+        potAfter,
+        age: num(after.player.age, 16),
+    });
+    return trait;
+}
+
 /** How much of decayFor() each attribute takes. See DECAY_WEIGHTS. */
 function applyAgeDecay() {
     const c = snap();
-    const rate = num(decayFor(c.player.age), 0) * num(perkEffects(c).decayMult, 1);
+    const rate = num(decayFor(c.player.age), 0)
+        * num(perkEffects(c).decayMult, 1)
+        * num(traitEffects(c.player).decayMult, 1);
     if (rate <= 0) return [];
 
     const lost = [];
@@ -1184,6 +1385,11 @@ export function rolloverYear() {
 
     const c = snap();
     addNews(`${c.time.year} preseason. You are ${c.player.age}.`, 'system');
+
+    // A birthday is the only place a genetic trait can show itself, and the only
+    // place player.age ever changes. Runs after the preseason line so the news
+    // feed reads "you are sixteen" and then what that turned out to mean.
+    safe(() => revealTrait(), null);
 
     // Contracts tick down; a deal whose final year has passed becomes free
     // agency, and the club's verdict decides whether they cut you first.
@@ -1235,7 +1441,7 @@ export function rolloverYear() {
 
     if (num(after.player.age, 0) >= RETIREMENT_AGE_FORCED && !(after.flags && after.flags.retired)) {
         const summary = safe(() => retire({ force: true }), null);
-        if (summary) careerOverlay.set({ kind: 'retire', payload: summary });
+        if (summary) pushOverlay('retire', summary);
     }
 
     saveCareer();

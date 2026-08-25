@@ -17,7 +17,7 @@
     import { get } from 'svelte/store';
 
     import {
-        career, careerOverlay, currentTeam, currentPhase, careerOVR, saveCareer,
+        career, careerOverlay, pushOverlay, currentTeam, currentPhase, careerOVR, saveCareer,
     } from '../../stores/career.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
@@ -53,7 +53,7 @@
     $: if (!$careerOverlay && pendingInterview) {
         const iv = pendingInterview;
         pendingInterview = null;
-        careerOverlay.set({ kind: 'interview', payload: iv });
+        pushOverlay('interview', iv);
     }
 
     // -- state reads ------------------------------------------------------
@@ -316,7 +316,7 @@
         const raw = r.events;
         const evs = Array.isArray(raw) ? raw : (raw ? [raw] : []);
         const choice = evs.find(e => e && Array.isArray(e.options) && e.options.length);
-        if (choice) careerOverlay.set({ kind: 'event', payload: choice });
+        if (choice) pushOverlay('event', choice);
 
         const now = get(career);
         if (r.yearRolled) showToast('The ' + now.time.year + ' season begins.', 'success');
@@ -365,7 +365,7 @@
             playSound(res.won ? 'win' : 'lose');
         }
         pendingInterview = interview;
-        careerOverlay.set({ kind: 'result', payload: res });
+        pushOverlay('result', res);
     }
 </script>
 
