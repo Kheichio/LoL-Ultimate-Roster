@@ -305,7 +305,24 @@ export function resetGameStores() {
 
 // The write itself. saveGame() defers it, flushGame() runs it now — factored out so the
 // two can never disagree about which keys a save covers.
+/**
+ * Set once initGame() has actually loaded a save into the stores.
+ *
+ * Until then the stores hold their module defaults, and persisting THOSE is not
+ * saving an empty game - it is destroying whatever is in the slot. The career
+ * store had exactly this bug: the save-slot picker flushed it from the main
+ * menu before anything had been loaded, wrote a blank career over the player's
+ * save and then loaded the blank back. The roster side is not reachable the same
+ * way today, because App.svelte calls initGame() at boot, but the guard costs
+ * nothing and the failure mode is unrecoverable data loss.
+ */
+let _hydrated = false;
+
 function writeSave() {
+    if (!_hydrated && loadFromStorage('lur_progression') !== null) {
+        console.warn('[LUR] Refused to overwrite a saved club before initGame() had loaded it.');
+        return;
+    }
     const state = snapshotState();
     for (const [k, v] of Object.entries(state)) saveToStorage(k, v);
     // Integrity signature — written last so it covers all values above
@@ -392,6 +409,8 @@ export function applyState(state) {
 // that first whenever the stores may be holding a DIFFERENT save (a slot switch, a cloud
 // load), or the previous one bleeds through.
 export function initGame() {
+    // From here on the stores reflect a real load, so persisting them is safe.
+    _hydrated = true;
     const dbLoaded = !!getDB();
 
     // Helpers

@@ -104,9 +104,15 @@
         if (!slotMode) return;
         const family = slotMode.id === 'career' ? 'career' : 'roster';
 
-        // Drain any debounced write BEFORE the active slot moves, or the save
-        // in flight lands under the slot the player is switching TO.
-        if (family === 'career') flushCareer(); else flushGame();
+        // Drain any debounced write BEFORE the active slot moves, or the save in
+        // flight lands under the slot the player is switching TO.
+        //
+        // ONLY for a mode that is actually loaded. The career store is blank
+        // until CareerShell mounts, so flushing it from the menu wrote an empty
+        // career over the player's save and then loaded the blank back. The
+        // roster stores ARE hydrated here, because App.svelte calls initGame()
+        // at boot, so that one is both safe and necessary.
+        if (family === 'roster') flushGame();
 
         const changed = setActiveSlot(family, n);
 
@@ -131,7 +137,9 @@
         openConfirmModal(
             `Delete ${slotMode.name} slot ${n}? Everything in it goes, and it does not come back.`,
             () => {
-                if (family === 'career') flushCareer(); else flushGame();
+                // Same reason as chooseSlot: never flush a store that has not
+                // been loaded. The slot is about to be erased either way.
+                if (family === 'roster') flushGame();
                 clearSlot(family, n);
                 // Wiping the slot you are standing in leaves the in-memory stores
                 // holding a save that no longer exists on disk. A reload is the

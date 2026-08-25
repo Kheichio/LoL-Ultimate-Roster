@@ -365,6 +365,50 @@ eq('rosterSlotSummary weights trophies', rs1 ? rs1.trophies : -1, 12,
     'Two Worlds titles is 2 x 6 on the same weighting the Leaderboard uses.');
 
 // ---------------------------------------------------------------------------
+section('an empty store must never overwrite a real save');
+// ---------------------------------------------------------------------------
+//  REGRESSION. The career store is blankCareer() from module load until
+//  CareerShell mounts and calls initCareer(). The save-slot picker flushed it
+//  from the MAIN MENU, before anything had been loaded, so opening the slot list
+//  and choosing your own career wrote an empty save over it and then loaded the
+//  empty one back. It destroyed real player saves.
+//
+//  The original 58 checks in this file all missed it because every one of them
+//  persisted a store that had just been populated. This is the case that
+//  matters: persisting a store that has NOT been loaded.
+S.setActiveSlot('career', 1);
+CAREER.resetCareer();
+makeCareer('Guarded', 'MID');
+CAREER.flushCareer();
+truthy('a career is saved to begin with', CAREER.hasCareerSave(1));
+
+// Exactly the state the store is in at the main menu.
+CAREER.career.set(CAREER.blankCareer());
+
+CAREER.flushCareer();
+truthy('flushCareer did NOT wipe the saved career', CAREER.hasCareerSave(1),
+    'This is the bug: a blank in-memory career means "nothing is loaded", not "no career exists".');
+
+CAREER.saveCareer();
+await new Promise(r => setTimeout(r, 220));   // outlast the 120ms debounce
+truthy('the debounced saveCareer did NOT wipe it either', CAREER.hasCareerSave(1),
+    'saveCareer runs on a timer, so it can fire after the player has already left the screen.');
+
+const survived = CAREER.careerSlotSummary(1);
+eq('the career survived intact', survived && survived.handle, 'Guarded');
+
+// The guard must not block DELIBERATE destruction.
+CAREER.resetCareer();
+falsy('resetCareer can still clear a slot on purpose', CAREER.hasCareerSave(1),
+    'Starting a new career has to work; the guard is only about accidental writes.');
+
+// And a genuinely empty slot must still be writable.
+S.setActiveSlot('career', 3);
+CAREER.career.set(CAREER.blankCareer());
+CAREER.flushCareer();
+ok('flushing a blank career into an empty slot is allowed');
+
+// ---------------------------------------------------------------------------
 section('flush before switch');
 // ---------------------------------------------------------------------------
 //  saveGame/saveCareer are debounced. Switching slot mid-debounce would land

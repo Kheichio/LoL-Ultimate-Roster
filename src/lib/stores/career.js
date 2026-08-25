@@ -207,10 +207,39 @@ export function absWeek(c) {
 // ─────────────────────────────────────────────────────────────────────────
 let _debounce = null;
 
+/**
+ * REFUSE TO WRITE AN EMPTY CAREER OVER A REAL ONE.
+ *
+ * The `career` store is initialised to blankCareer() at module load and only
+ * becomes the player's actual save when CareerShell mounts and calls
+ * initCareer(). Anything that persists the store BEFORE that point is not
+ * saving "no career" - it is destroying whatever is in the slot.
+ *
+ * That is not hypothetical. The save-slot picker called flushCareer() from the
+ * main menu, before the career had ever been loaded, so opening the slot list
+ * and choosing your own save wrote a blank career over it and then loaded the
+ * blank back. It read to the player as the game forcing them to start again,
+ * and it destroyed real saves.
+ *
+ * `created` is the flag that separates the two states, so it is the guard.
+ * Deliberate destruction still works: resetCareer() writes through
+ * saveToStorage directly and does not come past here.
+ */
+function safeToPersist(c) {
+    if (c && c.created) return true;
+    const existing = loadFromStorage(SAVE_KEY);
+    if (existing && existing.created) {
+        console.warn('[LUR] Refused to overwrite a saved career with an empty one.');
+        return false;
+    }
+    return true;
+}
+
 export function saveCareer() {
     if (_debounce) clearTimeout(_debounce);
     _debounce = setTimeout(() => {
         const c = get(career);
+        if (!safeToPersist(c)) return;
         // pendingMatch/lastMatch are large; keep lastMatch (the player sees it
         // on the hub) but drop the transient live-match object.
         saveToStorage(SAVE_KEY, { ...c, pendingMatch: c.pendingMatch || null });
@@ -220,7 +249,9 @@ export function saveCareer() {
 /** Immediate, non-debounced write. Used before navigating away from the mode. */
 export function flushCareer() {
     if (_debounce) { clearTimeout(_debounce); _debounce = null; }
-    saveToStorage(SAVE_KEY, get(career));
+    const c = get(career);
+    if (!safeToPersist(c)) return;
+    saveToStorage(SAVE_KEY, c);
 }
 
 /** The logical save key. Save SLOTS are applied inside storage.js, so this is
