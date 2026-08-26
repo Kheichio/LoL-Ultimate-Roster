@@ -541,7 +541,248 @@ export function teamStrengthWithPlayer(c, team) {
     const share = statusInfo(c?.player?.status).playChance;
 
     const delta = (myOVR - incumbent) * share * SEAT_WEIGHT;
-    return Math.round(clamp(base + delta, STRENGTH_MIN, STRENGTH_MAX));
+    // ...plus whatever the club itself has done since the season started: who it
+    // has signed, and how it is going. Only ever non-zero for the player's own
+    // club - see clubStrengthDelta().
+    return Math.round(clamp(base + delta + clubStrengthDelta(c, t.id), STRENGTH_MIN, STRENGTH_MAX));
+}
+
+// ---------------------------------------------------------------------------
+//  THE PLAYER'S OWN CLUB
+//  Every other org in the mode is a pure derivation of (teamId, year) out of the
+//  card database, memoised in _rosterCache and identical on every page load.
+//  That is deliberate and it stays. This section is the one exception: the club
+//  the player actually plays for gets a history, because it is the only roster
+//  they watch closely enough to notice.
+//
+//  Two mechanics, both scoped to career.club:
+//
+//    MOMENTUM  -1..1, written weekly by engine.tickClubMomentum() off the last
+//              few results. It shifts every teammate's rating a few points and
+//              the club's strength a few more, so a team on a run genuinely is
+//              better to play in than the same five names on a slide.
+//    CHURN     career.club.roster maps a seat to a replacement card, written by
+//              engine.runRosterChurn() in the offseason. An org that has just
+//              been beaten all year makes changes; one that won will lose
+//              somebody to a bigger cheque.
+//
+//  NOTHING HERE MUTATES A CACHED CARD. getTeamRoster() hands out the same object
+//  instance to Club.svelte, awards.js, match.js and teamStrength(); scaling a
+//  teammate by writing card.rating in place would leak into all of them, would
+//  not trigger Svelte reactivity, and would compound every time it ran. Every
+//  scaled seat below is a fresh shallow copy.
+// ---------------------------------------------------------------------------
+
+/** Rating points a teammate moves at full momentum, before their own bias. */
+export const SEAT_FORM_SWING = 5;
+
+/** Team-strength points at full momentum. Deliberately smaller than the sum of
+ *  the seat swings: momentum is confidence, not a different roster, and this
+ *  number feeds back into results that feed back into momentum. */
+export const CLUB_MOMENTUM_STRENGTH = 4;
+
+/** How far roster changes may drag a club off its written line, on top of the
+ *  ROSTER_TILT the derived roster already applies. */
+const CHURN_TILT_CAP = 5;
+
+/** The career's club block, but only when it still describes the club the
+ *  player is at. A transfer therefore resets momentum and roster changes with
+ *  no hook of any kind: the ids stop matching and the block stops counting. */
+export function clubBlock(c) {
+    const club = c && c.club;
+    const clubId = c && c.player && c.player.clubId;
+    if (!clubId || !club || typeof club !== 'object' || Array.isArray(club)) return null;
+    if (club.teamId !== clubId) return null;
+    return club;
+}
+
+/** -1 (falling apart) .. +1 (on a run). 0 when unsigned or freshly signed. */
+export function clubMomentum(c) {
+    const b = clubBlock(c);
+    return b ? clamp(Number(b.momentum) || 0, -1, 1) : 0;
+}
+
+/** Per-seat sensitivity, 0.55..1.45, derived from the card rather than stored.
+ *  A team on a run should have somebody carrying it and somebody along for the
+ *  ride, and that is more interesting than five identical +5s. */
+function seatBias(card) {
+    const key = String((card && (card.uniqueId || card.name)) || 'seat');
+    return 0.55 + (hash32('bias:' + key) % 91) / 100;
+}
+
+/** Rating shift on one teammate from the club's current momentum. */
+export function teammateFormDelta(c, card) {
+    const m = clubMomentum(c);
+    if (!m || !card) return 0;
+    return Math.round(m * SEAT_FORM_SWING * seatBias(card));
+}
+
+/**
+ * The player's club roster with signings and form applied, as fresh objects.
+ *
+ * `quality` is deliberately NOT recomputed from the shifted rating. It is the
+ * card's pedigree, not a live readout, and re-deriving it would quietly demote
+ * a signature or Hall of Legends card the first time its club had a bad month.
+ */
+export function clubRosterFor(c) {
+    const clubId = c?.player?.clubId;
+    const blank = {};
+    for (const r of ROSTER_SLOTS) blank[r] = null;
+    blank.COACH = null;
+    if (!clubId || !teamById(clubId)) return blank;
+
+    const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
+    const base = getTeamRoster(clubId, year);
+    const b = clubBlock(c);
+    const overrides = (b && b.roster && typeof b.roster === 'object') ? b.roster : {};
+
+    // Names are resolved AT THE MERGE, because this is the one roster in the
+    // mode that is half persisted and half re-derived every year. getTeamRoster
+    // re-rolls a colliding name against the seats IT generated, and knows
+    // nothing about a signing stored in the save - so a 2029 signing and a 2033
+    // teammate can land on the same person and the board shows them twice.
+    //
+    // Overrides claim their names first, and ANY colliding derived seat is
+    // replaced with a generated player on a salt outside getTeamRoster's own
+    // 0..7. Including a real database card: a signing IS a real card most of the
+    // time, and the same professional turning up in two seats of one roster is a
+    // worse thing to render than an unfamiliar name.
+    const team = teamById(clubId);
+    const order = ROSTER_SLOTS.concat(['COACH']);
+    const used = new Set();
+    for (const role of order) {
+        const o = overrides[role];
+        if (o && typeof o === 'object' && o.name) used.add(String(o.name).toLowerCase());
+    }
+
+    const out = {};
+    for (const role of order) {
+        const signing = overrides[role] && typeof overrides[role] === 'object' ? overrides[role] : null;
+        let card = signing || base[role] || null;
+        if (!card) { out[role] = null; continue; }
+
+        if (!signing && team && used.has(String(card.name || '').toLowerCase())) {
+            for (let salt = 100; salt < 116; salt++) {
+                const alt = syntheticPlayer(team, role, year, salt);
+                if (!used.has(String(alt.name).toLowerCase())) { card = alt; break; }
+            }
+        }
+        used.add(String(card.name || '').toLowerCase());
+
+        const delta = teammateFormDelta(c, card);
+        out[role] = {
+            ...card,
+            rating: clamp(Math.round((Number(card.rating) || 50) + delta), 25, 99),
+            baseRating: Math.round(Number(card.rating) || 50),
+            formDelta: delta,
+            signing: !!signing,
+            signedYear: signing ? Math.round(Number(signing.signedYear) || year) : 0,
+        };
+    }
+    return out;
+}
+
+/**
+ * How far the player's own club is playing from its written line right now:
+ * the seats it has changed, plus momentum. Zero for every other club in the
+ * mode, which is what keeps teamStrength() a pure function of (team, year) and
+ * the league table stable between page loads.
+ */
+export function clubStrengthDelta(c, teamId) {
+    if (!teamId || c?.player?.clubId !== teamId) return 0;
+    const b = clubBlock(c);
+    let delta = clubMomentum(c) * CLUB_MOMENTUM_STRENGTH;
+
+    if (b && b.roster && typeof b.roster === 'object') {
+        const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
+        const base = getTeamRoster(teamId, year);
+        let sum = 0;
+        let n = 0;
+        for (const role of ROSTER_SLOTS) {
+            const o = b.roster[role];
+            if (!o || typeof o !== 'object') continue;
+            const was = base[role] ? getEffectiveRating(base[role]) : null;
+            if (was === null) continue;
+            sum += getEffectiveRating(o) - was;
+            n++;
+        }
+        // Averaged over the whole five, not over the seats that changed: one
+        // upgrade in five seats is one fifth of a roster.
+        if (n) delta += clamp((sum / ROSTER_SLOTS.length) * ROSTER_TILT, -CHURN_TILT_CAP, CHURN_TILT_CAP);
+    }
+    return clamp(delta, -9, 9);
+}
+
+/** The club's strength as the player experiences it, without their own seat.
+ *  Club.svelte's "you rate N above the roster line" runs on this. */
+export function clubStrengthFor(c, team) {
+    const t = resolveTeam(team);
+    if (!t) return 50;
+    const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
+    return Math.round(clamp(
+        teamStrength(t, year) + clubStrengthDelta(c, t.id),
+        STRENGTH_MIN, STRENGTH_MAX,
+    ));
+}
+
+/**
+ * A player the club could plausibly put in one seat, aimed at `targetRating`.
+ *
+ * Tries the same regional pool the derived rosters are built from first, so a
+ * signing is usually a real name, and falls back to a generated player.
+ *
+ * The synthetic path steers the rating by handing syntheticPlayer() a team
+ * object whose `strength` is the target - but syntheticPlayer's `strength` is a
+ * ROSTER MEAN, not a seat rating: it adds SYN_ROLE_TILT[role] on top (the five
+ * tilts sum to zero so the MEAN lands on the argument). Passing a seat target
+ * straight through therefore missed by the tilt every time, and always in the
+ * same direction per role - a club replacing its support with an equal support
+ * signed one two points worse, forever, while its mid always gained two. The
+ * tilt is backed out here so the argument means what this function needs it to.
+ *
+ * `salt` must differ between two signings made in the same year for the same
+ * seat, or they generate the same person.
+ *
+ * BOTH ids AND names are excluded, and the names matter more. The card database
+ * holds several prints of the same professional (BrokenBlade 2024, 2025, 2026),
+ * they have different ids, and claimedIds() only ever locks the ONE print
+ * currently sitting in a tier-1 seat. Filtering on id alone therefore let a club
+ * "replace" a player with a two-year-old card of that same player, which is how
+ * the first cut of this read in the news feed.
+ */
+export function signingFor(team, role, year, targetRating, salt = 0, avoidIds = [], avoidNames = []) {
+    const t = resolveTeam(team);
+    if (!t) return null;
+    const y = Math.round(Number(year) || DEFAULT_START_YEAR);
+    const target = clamp(Math.round(Number(targetRating) || 60), 30, 96);
+    const avoid = new Set((avoidIds || []).filter(v => v !== null && v !== undefined));
+    const banned = new Set((avoidNames || []).filter(Boolean).map(n => String(n).toLowerCase()));
+
+    const regionId = t.region && t.region !== 'ALL' ? t.region : null;
+    if (regionId) {
+        const claimed = claimedIds(regionId, y);
+        const pool = regionPool(regionId, role, y)
+            .filter(card => !avoid.has(card.id)
+                && !claimed.has(card.id)
+                && !banned.has(String(card.name || '').toLowerCase()))
+            .map(card => ({ card, gap: Math.abs(getEffectiveRating(card) - target) }))
+            .filter(x => x.gap <= 6)
+            .sort((a, b) => a.gap - b.gap)
+            .slice(0, 5);
+        if (pool.length) {
+            const pickIdx = hash32('sign:' + t.id + ':' + role + ':' + y + ':' + salt) % pool.length;
+            return { ...pool[pickIdx].card, signedYear: y };
+        }
+    }
+
+    // Generated fallback. Re-rolled up to eight times so the club does not sign
+    // a name already in the building - the same guard getTeamRoster() uses.
+    const seatTarget = clamp(target - (SYN_ROLE_TILT[role] || 0), 25, 96);
+    for (let i = 0; i < 8; i++) {
+        const made = syntheticPlayer({ ...t, strength: seatTarget }, role, y, 900 + salt + i * 17);
+        if (!banned.has(String(made.name || '').toLowerCase())) return { ...made, signedYear: y };
+    }
+    return { ...syntheticPlayer({ ...t, strength: seatTarget }, role, y, 900 + salt), signedYear: y };
 }
 
 // ---------------------------------------------------------------------------
@@ -782,15 +1023,20 @@ export function rivalFor(c) {
 // ---------------------------------------------------------------------------
 //  TEAMMATES
 // ---------------------------------------------------------------------------
-/** The four other seats and the coach at the player's current club. */
+/**
+ * The four other seats and the coach at the player's current club.
+ *
+ * Reads clubRosterFor(), so every consumer - the Club screen's five, the MVP
+ * roll in match.js - sees the same signings and the same form swing. The cards
+ * are copies; nothing downstream may write to them.
+ */
 export function teammatesOf(c) {
     const clubId = c?.player?.clubId;
     if (!clubId) return { starters: [], coach: null, all: [] };
     const team = teamById(clubId);
     if (!team) return { starters: [], coach: null, all: [] };
 
-    const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
-    const roster = getTeamRoster(clubId, year);
+    const roster = clubRosterFor(c);
     const myRole = ROLE_BY_ID[c?.player?.role] ? c.player.role : 'MID';
 
     const starters = ROSTER_SLOTS

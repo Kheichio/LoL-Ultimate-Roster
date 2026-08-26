@@ -35,6 +35,7 @@
     } from '../../career/teams.js';
     import { contractStatusLine, interestedTeams } from '../../career/contracts.js';
     import { matchRatingLabel } from '../../career/match.js';
+    import BracketView from './BracketView.svelte';
     import {
         ensureSeason, weekSummary, canAdvanceWeek, doActivity,
         startFixture, simFixture, advanceWeek, benchOrStart,
@@ -194,6 +195,12 @@
     $: powerTotal = Math.max(1, myPower + oppPower);
     $: myTeamName = $currentTeam ? $currentTeam.name : (p.handle || 'Free Agent');
     $: myTeamAccent = $currentTeam ? $currentTeam.accent : '#22c55e';
+
+    // The draw, but only while one is running. BracketView has its own empty
+    // state; the Hub does not want it, so the panel is gated instead.
+    $: liveBracket = (c.season && c.season.bracket && typeof c.season.bracket === 'object')
+        ? c.season.bracket
+        : null;
     $: bestOf = nextFixture
         ? (Number(nextFixture.bestOf) || (SERIES_PHASES.indexOf(phase.id) >= 0 ? 5 : 1))
         : 1;
@@ -492,6 +499,28 @@
                 <div class="flash" role="status">{flash.text}</div>
             {/if}
         </section>
+
+        <!-- ---------- BRACKET ---------- -->
+        <!-- Only while one is actually running. The Season screen owns the
+             permanent home for this; the Hub is where the player is standing
+             the week they have a tie to play, and reading the draw should not
+             cost them a navigation. -->
+        {#if liveBracket}
+            <section class="panel block" aria-labelledby="hub-bracket">
+                <div class="blk-head">
+                    <h2 class="lbl" id="hub-bracket">Bracket</h2>
+                    <span class="mini">{phase.name}</span>
+                </div>
+                <BracketView
+                    bracket={liveBracket}
+                    myId={p.clubId}
+                    myName={myTeamName}
+                    myAccent={myTeamAccent}
+                    accent={phase.accent || '#a78bfa'}
+                    showHead={true}
+                />
+            </section>
+        {/if}
 
         <!-- ---------- WEEK LOG ---------- -->
         <section class="panel block" aria-labelledby="hub-log">

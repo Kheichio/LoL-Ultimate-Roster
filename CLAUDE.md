@@ -94,14 +94,16 @@ src/lib/career/
                     Champion select (`rollDraft`) is rolled once per GAME, not per series:
                     signature / pocket / off-script, weighted by CHP and by how strong the
                     opponent is. It is the only place CHP does anything mechanical.
-  economy.js      — gear, consumables, lifestyle, legacy perks, sponsors, the shop
+  economy.js      — 9 gear categories, consumables, 20 lifestyle items, 24 legacy perks,
+                    the legacy exchange (repeatable trades + the monument ladder), sponsors, shop
   contracts.js    — scouting, offers, negotiation, transfers, role changes, promotion
   awards.js       — awards, milestones, legacy score, retirement
   events.js       — random weekly events and press interviews
-  engine.js       — the week/season orchestrator (advanceWeek, doActivity, playoffs, rollover)
+  engine.js       — the week/season orchestrator (advanceWeek, doActivity, playoffs, rollover,
+                    club momentum and offseason roster churn)
 src/lib/stores/career.js          — the whole career state; saves to `lurc_career` (LOCAL ONLY,
                                     deliberately outside the Firebase cloud save)
-src/lib/components/career/        — CareerShell + 9 screens + CareerOverlay
+src/lib/components/career/        — CareerShell + 9 screens + BracketView + CareerOverlay
 src/lib/components/career/minigames/ — 8 training minigames + MinigameHost
 ```
 
@@ -121,8 +123,13 @@ holding. Five things move it:
 | **Genetic trait** | +2 to +12, once | `engine.revealTrait()` at a birthday |
 | **Breakthrough split** | up to +3 a split, **+4 OVR per career** | `engine.checkBreakthrough()` at split close |
 | **Evergreen** legacy perk | +3 to every ceiling | `economy.applyPermanentPerk()` |
+| **Ascendant** legacy perk | +2 to every ceiling, needs Evergreen | `economy.applyPermanentPerk()` |
 | **Performance Camp** consumable | +1 to every ceiling, **+3 OVR per career** | `economy.useConsumable()` |
 | **Role change** | re-centres, usually down | `contracts.changeRole()` |
+
+The two perks are +5 between them and carry no budget flag, because they are one-time unlocks and
+therefore bounded by construction — unlike the Performance Camp, which is renewable and is why
+`flags.boughtCeilingOVR` exists. Any NEW repeatable ceiling source needs its own career budget.
 
 Both repeatable levers are bounded FOR THE CAREER, not merely priced. Gold and splits are renewable
 and a ceiling is not: the first cut of each had no budget and took every smoke career to 94-99 in
@@ -188,6 +195,72 @@ champion stays legal for *some* style in each of its roles. Mid-career switching
 `contracts.switchChampion()`, priced in CHP and form rather than gold. **Existing saves are
 grandfathered — never auto-reassign a saved champion.**
 
+### The legacy economy is priced against measured income
+Legacy points are **not scarce** and the old board was written as if they were. Eight simulated
+twelve-year careers retire holding **618 to 6,531 LP**; the thirteen-perk board cost **107 LP in
+total**, i.e. it was bought out inside three years by a career that never won a trophy. The board is
+now **24 perks / 8,910 LP** (`economy.PERK_BOARD_COST`), plus a **Legacy Exchange**: repeatable
+trades whose price climbs `step` every purchase, and a four-rung **monument ladder** (4,350 LP) that
+buys nothing mechanical and only adds to the retirement legacy score.
+
+- **If awards.js ever retunes its payouts, re-measure before repricing.** `careerSmoke` prints
+  `legacy economy` (perks owned, LP unspent, board cost) and the per-career `legacy` column. Those
+  are the only honest source for these numbers.
+- Monuments feed `awards.legacyScore()` but **not** `awards.earnedLegacyScore()`, which is what
+  `hallOfLegendsEligible()` runs on. The induction is not for sale — same reason `LEGACY_WEIGHTS`
+  gives `hall_of_legends` a weight of 0.
+- **Every perk effect key must have a reader.** Five of them did not: `clutchBonus`, `intlBonus`,
+  `chemistryBonus`, `valueMult` and the perk half of `offerBonus` were aggregated by `perkEffects()`
+  and read by nothing, exactly like `ceilingBonus`/`unsignedCapBonus` before them. They are wired now
+  (`match.stakesBonus`, `contracts.offerMultiplier`/`startingChemistry`, `player.valueMult`), and the
+  reader for each key is listed in the comment above `LEGACY_PERKS`. `clutchBonus` and `intlBonus`
+  are capped **separately** — one shared cap left Big Game Player doing nothing at Worlds for anyone
+  who already owned the clutch perks.
+- `valueMult` is written onto `player.valueMult` by `applyPermanentPerk()` rather than derived,
+  because its only live reader is the `marketValue` store in `stores/career.js` and importing
+  economy.js from there would be a cycle. Same trick as `player.softCap`.
+
+### The room: teammates change and scale
+Every org in the mode is a pure deterministic derivation of `(teamId, year)` out of the card
+database, memoised in `teams._rosterCache`. **`career.club` is the single exception**, and it covers
+only the club the player actually plays for:
+
+- **`club.momentum`** (-1..1) is written weekly by `engine.tickClubMomentum()` from the last six
+  results. It shifts every teammate a few rating points (`teams.teammateFormDelta`, per-seat bias so
+  they do not all move together) and club strength by up to ±4 (`teams.clubStrengthDelta`). The
+  feedback loop is bounded because the TARGET is a win rate, which cannot exceed 1 however strong the
+  club gets; `MOMENTUM_PULL` controls how fast, not how far.
+- **`club.roster`** maps a seat to a replacement card, written by `engine.runRosterChurn()` at the
+  week-35→36 offseason transition. A bad season gets people cut, a good one gets one poached, and a
+  signing older than `SIGNING_TENURE_YEARS` hands the seat back to the derived roster.
+- **`club.teamId` is what scopes the block.** A mismatch with `player.clubId` means "this is not our
+  club" and the whole thing is ignored, so a transfer resets momentum and roster history with no
+  hook of any kind.
+- **Nothing mutates a cached card.** `getTeamRoster()` hands the same object instance to Club.svelte,
+  awards.js, match.js and `teamStrength()`; scaling by writing `card.rating` in place would leak into
+  all of them and compound. `clubRosterFor()` returns fresh shallow copies, and `quality` is
+  deliberately not re-derived from the shifted rating.
+- `teamStrength(team, year)` stays blind to all of it — that is what keeps the league table stable
+  between page loads. `teamStrengthWithPlayer()` and `clubStrengthFor()` are the club-aware readers.
+- A signing is excluded by **name as well as id**: the card DB holds several prints of the same
+  professional, so filtering on id alone let a club "replace" a player with an older card of himself.
+  `clubRosterFor()` also re-resolves names **at the merge**, because half the roster is persisted and
+  half is re-derived every year — `getTeamRoster()` de-duplicates against the seats *it* generated and
+  cannot see a signing sitting in the save.
+- **`season.schedule` is not in week order.** `ensureSeason()` rebuilds it as
+  `[...freshSplitRows, ...carriedBracketRows]`, and MSI is carried into summer from weeks 17-19, so
+  the array *tail* holds the oldest games of the half-year. Anything taking `.slice(-n)` off it must
+  `.sort()` by week first. `tickClubMomentum()` and `formBaseline()` both do; a raw tail pinned three
+  MSI results into the six-game momentum window from week 20 to Worlds, so a club that then won every
+  league game still read as 50%.
+- **`syntheticPlayer()`'s `strength` argument is a ROSTER MEAN, not a seat rating** — it adds
+  `SYN_ROLE_TILT[role]` on top, and the five tilts sum to zero so the *mean* lands on the argument.
+  `signingFor()` backs the tilt out. Passing a seat target straight through made every club sign a
+  support two points worse and a mid two points better than asked, forever, purely by role.
+- `runRosterChurn()` reads the roster it is about to churn from the **post-expiry** copy, not from the
+  snapshot it entered with — otherwise a signing whose tenure just ran out is announced as retired and
+  then replaced again in the same week, and priced against the dead card.
+
 ### Age-gated events
 An event's `when` gate is the ONLY filter between the pool and the popup. Copy that references a
 past age, a life stage, a club, or a stage appearance must gate on `player.age` / `isSigned` / real
@@ -202,7 +275,11 @@ playoff-shaped calendar week.
   (exactly one, never before its reveal age, never a dead id), both ceiling budgets, and that
   `player.champion` stays legal for `player.playstyle`. Its coverage block prints the trait
   distribution and mean ceiling earned/bought — a run where every career is a Legend is a tuning
-  problem no pass/fail line will catch.
+  problem no pass/fail line will catch. It also prints **`roster churn`** (teammates replaced per
+  career, from `flags.rosterMoves` — `club.changes` is wiped by a transfer and cannot be the lifetime
+  count) and **`legacy economy`** (perks owned, LP unspent, board cost). Both carry inertness
+  assertions: a roster system that never moves a seat and a momentum that never leaves zero are
+  wired-and-dead, which is the failure this file exists to catch.
 - `node tools/eventCheck.mjs` — the in-match decision pools (`matchEvents.js`). That file opens
   with a page of authoring discipline that was, until this existed, enforced entirely by a comment:
   3-or-4 options, a safest and a greedy play at least 0.12 of difficulty apart, safest averaging
@@ -217,9 +294,13 @@ playoff-shaped calendar week.
   predates slots is still there. Also isolation both ways, device prefs staying global, scoped
   delete and wipe, both stores round-tripping across a switch (which is what proves
   `resetGameStores()` actually resets), and that the picker's summary readers never switch slot.
-- `node tools/careerRender.mjs` — Vite SSR-renders all 20 career components against 31 game
-  states (unsigned rookie, null bracket, retired, damaged save). The only check that exercises
-  the Svelte templates.
+- `node tools/careerRender.mjs` — Vite SSR-renders all 21 career components against 42 game
+  states (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
+  check that exercises the Svelte templates. Note two extra loops beyond the screens matrix: the
+  **Shop is rendered once per tab** (`initialTab`, a prop only this harness passes — `tab` is
+  component-local, so every section but `gear` used to ship untested), and **BracketView is driven
+  directly** against a dozen hand-built bracket shapes because it is a child of Calendar and gets no
+  coverage from the screens loop. Only crashes fail the build; `wrong`/`warning` print and exit 0.
 - `node tools/championCheck.mjs` — validates the 173-champion signature list and the playstyle fit
   rule in `constants.js`
   (`--list` prints the pool per role). Catches the three ways that data fails *silently*: an
@@ -231,6 +312,18 @@ playoff-shaped calendar week.
   unpickable, and that a playstyle's blurb never names a champion the fit rule rejects. That last
   check is what caught the Frontline Tank being unable to pick Ornn or Sion. It has one known
   standing warning: `sup_roam` names Pyke, whose archetype really is closer to a lane bully.
+- `node tools/clutchSim.mjs` — calibration gate for the CMP composure drill (ClutchGame). Parses
+  the tuning table straight out of the component (a calibration that quotes numbers the component
+  no longer has is worse than none) and simulates the real scoring maths. Asserts that skill pays at
+  every tier, that the three tiers stay ordered, that a competent session lands near **0.50** — the
+  same 1.0x reference `waveSim` holds the laning drill to — and that a near-perfect one lands in
+  0.70–0.90 so there is somewhere left to go. It also asserts the thing the drill was actually fixed
+  for: **`speed` / `half0` / `halfMin` / `shrink` must stay at their original values.** The drill was
+  never too hard, it was *unreadable* — a near-perfect player scored 0.47 on the old build because a
+  third of reps were decided by a 2x speed jump or a teleporting zone no input could beat.
+  Telegraphing that interference is worth +0.34 on its own; the first cut of the fix ALSO softened
+  the sweep and the zone and took a competent session to 0.63, which would have made CMP the
+  cheapest attribute in the mode to max. Run it after touching any constant in `cfg()`.
 - `node tools/waveSim.mjs` — calibration gate for the LNE laning drill (WaveControlGame). Sweeps
   press-error profiles against the crash-value ladder and asserts that the optimal stack size still
   moves with skill (or the drill's only decision has a lookup answer), that a competent session

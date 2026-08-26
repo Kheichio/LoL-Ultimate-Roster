@@ -26,6 +26,8 @@ import {
     clamp,
 } from './ratings.js';
 import { leagueTable, getTeamRoster, rosterAverage } from './teams.js';
+// economy.js imports nothing from here, so this direction is safe.
+import { monumentScore } from './economy.js';
 import {
     career, addNews, addAward, addTrophy, grantLegacy, grantGold, saveCareer,
 } from '../stores/career.js';
@@ -962,7 +964,16 @@ export function peakOVR(c) {
     return Math.max(now, num(st?.totals?.peakOVR), num(st?.flags?.peakOVR));
 }
 
-export function legacyScore(c) {
+/**
+ * Everything the career EARNED on the pitch: trophies, longevity, peak rating,
+ * loyalty. Nothing bought.
+ *
+ * This is the number Hall of Legends eligibility runs on. The monument ladder in
+ * the Legacy Exchange adds to legacyScore() below, and it must never be able to
+ * buy the induction - the same reason LEGACY_WEIGHTS gives hall_of_legends a
+ * weight of 0, so the induction cannot feed its own gate.
+ */
+export function earnedLegacyScore(c) {
     const st = c || snapshot();
     if (!st) return 0;
 
@@ -984,6 +995,16 @@ export function legacyScore(c) {
     if (orgs.size === 1 && games >= 200) score += ONE_CLUB_BONUS;
 
     return Math.round(score);
+}
+
+/** The score the career is ranked and remembered by: earned, plus whatever the
+ *  player put their leftover legacy points into. */
+export function legacyScore(c) {
+    const st = c || snapshot();
+    if (!st) return 0;
+    let bought = 0;
+    try { bought = monumentScore(st); } catch (e) { bought = 0; }
+    return Math.round(earnedLegacyScore(st) + bought);
 }
 
 // Seven bands, spaced off simulated careers rather than round numbers:
@@ -1053,7 +1074,9 @@ export function careerYears(c) {
 export function hallOfLegendsEligible(c) {
     const st = c || snapshot();
     if (!st || !st.created) return false;
-    const score = legacyScore(st);
+    // EARNED, not total. A statue outside the arena is something you buy with
+    // leftover legacy points; the induction is not for sale.
+    const score = earnedLegacyScore(st);
     if (legacyTier(score).id !== 'hol') return false;
     return careerYears(st) >= 8 && num(st.totals?.games) >= 300;
 }

@@ -26,6 +26,9 @@ import {
     career, matchState, absWeek, addNews, grantGold, saveCareer,
 } from '../stores/career.js';
 import { teamsInRegion, allTeamsForPlayer, teamStrength } from './teams.js';
+// economy.js imports constants/ratings/stores/utils and nothing from here, so
+// this direction is the safe one. Do NOT import contracts.js from economy.js.
+import { perkEffects, lifestyleEffects, buffValue } from './economy.js';
 import { getDB, getEffectiveRating, getEra } from '../utils/cards.js';
 import { showToast } from '../stores/toasts.js';
 import { playSound } from '../utils/sound.js';
@@ -44,6 +47,33 @@ const OFFER_LIFETIME_WEEKS = 3;
 
 /** Below this a club is curious, not interested, and does not make the call. */
 const MIN_OFFER_INTEREST = 35;
+
+/**
+ * Ceiling on the stacked offer premium.
+ *
+ * `offerBonus` is granted by three legacy perks (0.45), five lifestyle items
+ * (0.42) and the Agent Retainer consumable (0.18) — 1.05 unstacked, i.e. a
+ * fully-built veteran negotiating against double money. It was aggregated by
+ * economy.perkEffects()/lifestyleEffects() and read by NOTHING until this
+ * constant existed, which is why nobody noticed. Wiring it up without a cap
+ * would have been worse than leaving it dead.
+ */
+const OFFER_BONUS_CAP = 0.60;
+
+/** Everything the player has bought that makes an offer sheet better. */
+function offerMultiplier(c) {
+    const total = (Number(perkEffects(c).offerBonus) || 0)
+        + (Number(lifestyleEffects(c).offerBonus) || 0)
+        + (Number(buffValue(c, 'offerBonus')) || 0);
+    return 1 + clamp(total, 0, OFFER_BONUS_CAP);
+}
+
+/** Chemistry the player walks into a new room with. Base is the hostile 38 a
+ *  transfer has always started on; Mentor and The Voice buy it back. */
+function startingChemistry(c, base) {
+    const bonus = Math.max(0, Math.round(Number(perkEffects(c).chemistryBonus) || 0));
+    return clamp(base + bonus, 0, 100);
+}
 
 /** Turn a club down twice and they stop asking -- permanently. */
 const REJECTIONS_BEFORE_BLACKLIST = 2;
@@ -418,7 +448,10 @@ export function buildOffer(c, team, opts = {}) {
     // through the motions open below it and expect to be haggled with. Both
     // sides of that spread are inside one negotiation round of `fair`.
     const eagerness = 0.88 + (interest / 100) * 0.30;
-    const salary = Math.max(25, Math.round(Number.isFinite(opts.salary) ? opts.salary : fair * eagerness));
+    // An agent, a manager, a reputation. Applied to the club's opening number
+    // rather than to `fair`, so haggling still works from the same place.
+    const premium = offerMultiplier(c);
+    const salary = Math.max(25, Math.round(Number.isFinite(opts.salary) ? opts.salary : fair * eagerness * premium));
 
     const years = Math.round(clamp(
         Number.isFinite(opts.years) ? opts.years : defaultYears(p, interest), 1, 4));
@@ -426,11 +459,13 @@ export function buildOffer(c, team, opts = {}) {
     // Two to seven weeks of wages up front, damped hard below tier 1 -- an
     // academy side does not have a war chest to hand a sixteen-year-old.
     const bonusWeeks = (2 + interest / 20) * (tier === 1 ? 1 : tier === 2 ? 0.55 : 0.20);
+    // NOT multiplied by `premium` again: it is a number of weeks of `salary`,
+    // and `salary` already carries it. Doing both squares the bonus.
     const signingBonus = Math.max(0, Math.round(
         Number.isFinite(opts.signingBonus) ? opts.signingBonus : salary * bonusWeeks));
 
     // The keener the club, the harder they make it to take you away again.
-    const mv = marketValueFor({ ovr, potentialOVR: pot, age: p.age, region, hype: p.hype });
+    const mv = marketValueFor({ ovr, potentialOVR: pot, age: p.age, region, hype: p.hype, valueMult: p.valueMult });
     const releaseClause = Math.max(0, Math.round(
         Number.isFinite(opts.releaseClause)
             ? opts.releaseClause
@@ -651,10 +686,11 @@ export function acceptOffer(offerId) {
             contract,
             // Low but not hostile on a move: nobody in the room knows you, and
             // the player you just replaced knows exactly who you are. A renewal
-            // keeps whatever you already built.
+            // keeps whatever you already built. Mentor and The Voice are what
+            // buy the cold start back.
             chemistry: renewal
                 ? clamp((x.player.chemistry ?? 50) + 6, 0, 100)
-                : 38,
+                : startingChemistry(c, 38),
             morale: clamp((x.player.morale ?? 50) + (renewal ? 6 : 10), 0, 100),
             transferRequested: false,
         },
@@ -749,10 +785,16 @@ export function negotiateOffer(offerId, ask = {}) {
         };
     }
 
+    // The club's own valuation, INCLUDING the premium its opening number was
+    // written with. Without offerMultiplier() here, buying Hard Bargainer made
+    // negotiating strictly worse: the perk raised the offer, `greed` is measured
+    // as reqSalary / fair, and asking for the number already on the table then
+    // scored as a 45% overreach and got the offer withdrawn. The premium is the
+    // club's position, not the player's ask.
     const fair = weeklySalaryFor({
         ovr, clubTier: found.tier, region: found.region, age: p.age,
         status: reqStatus, potentialOVR: pot,
-    });
+    }) * offerMultiplier(c);
     const statusReach = statusIndex(reqStatus) - statusIndex(found.status);
     // Everything asked for, priced as one number against the club's own
     // valuation. 1.00 is "exactly what we think you are worth".
@@ -1478,7 +1520,7 @@ export function promotionCheck(c) {
         status,
         bonus: 0,
         releaseClause: Math.round(marketValueFor({
-            ovr, potentialOVR: pot, age: p.age, region, hype: p.hype,
+            ovr, potentialOVR: pot, age: p.age, region, hype: p.hype, valueMult: p.valueMult,
         }) * 2.0),
         role: p.role,
         region,
@@ -1496,7 +1538,7 @@ export function promotionCheck(c) {
             contract,
             // A new room, but the org already knows your name. Nothing like the
             // cold start a transfer to a rival would be.
-            chemistry: clamp((x.player.chemistry ?? 50) * 0.75 + 12, 0, 100),
+            chemistry: startingChemistry(state, clamp((x.player.chemistry ?? 50) * 0.75 + 12, 0, 100)),
             morale: clamp((x.player.morale ?? 50) + 16, 0, 100),
             transferRequested: false,
         },

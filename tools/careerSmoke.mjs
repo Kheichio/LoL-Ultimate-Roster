@@ -898,7 +898,7 @@ function exerciseEconomy() {
         const secs = E.shopSections(c);
         if (!Array.isArray(secs) || !secs.length) {
             fail('wrong', 'src/lib/career/economy.js', 'shopSections returned nothing',
-                `${ctxLine()} -> ${JSON.stringify(secs)}`, 'The shop must always render its five sections.');
+                `${ctxLine()} -> ${JSON.stringify(secs)}`, 'The shop must always render its six sections.');
         }
         return secs;
     });
@@ -922,6 +922,23 @@ function exerciseEconomy() {
     const perk = rpick(E.LEGACY_PERKS);
     const r4 = step('economy.buyPerk', () => E.buyPerk(perk.id), null);
     if (r4 && r4.ok) stats.shopBuys++;
+
+    // The legacy exchange. Rolled rarely on purpose: a career that dumped every
+    // spare point into trades would never buy a perk, and the perk board is the
+    // thing whose pricing this run is meant to measure. Both paths still fire
+    // hundreds of times across eight careers, which is what matters -- an
+    // untested purchase path is how a shop function ships broken.
+    if (Math.random() < 0.25) {
+        const trade = rpick(E.LEGACY_TRADES);
+        const r5 = step('economy.buyTrade', () => E.buyTrade(trade.id), null);
+        if (r5 && r5.ok) stats.shopBuys++;
+        step('economy.tradeCost', () => E.tradeCost(cur(), trade.id), 0);
+    }
+    if (Math.random() < 0.12) {
+        const mon = rpick(E.MONUMENTS);
+        const r6 = step('economy.buyMonument', () => E.buyMonument(mon.id), null);
+        if (r6 && r6.ok) stats.shopBuys++;
+    }
 
     const avail = step('economy.availableSponsors', () => E.availableSponsors(cur()), []);
     if (Array.isArray(avail) && avail.length) {
@@ -1150,6 +1167,18 @@ function runCareer(cfg, label) {
             ? { ...end.player.proficiency } : {},
         breakthroughOVR: Number(end.flags && end.flags.breakthroughOVR) || 0,
         boughtCeilingOVR: Number(end.flags && end.flags.boughtCeilingOVR) || 0,
+        // Roster churn and club momentum. club.changes belongs to a CLUB and is
+        // wiped by a transfer, so the lifetime total has to come off the flag.
+        rosterChanges: Number(end.flags && end.flags.rosterMoves) || 0,
+        rosterSeats: (end.club && end.club.roster && typeof end.club.roster === 'object')
+            ? Object.keys(end.club.roster).length : 0,
+        changes: (end.club && Array.isArray(end.club.changes)) ? end.club.changes.slice() : [],
+        momentum: Number(end.club && end.club.momentum) || 0,
+        monuments: (end.inventory && Array.isArray(end.inventory.monuments))
+            ? end.inventory.monuments.length : 0,
+        trades: (end.inventory && end.inventory.trades && typeof end.inventory.trades === 'object')
+            ? Object.values(end.inventory.trades).reduce((s, v) => s + (Number(v) || 0), 0) : 0,
+        perksOwned: (end.inventory && Array.isArray(end.inventory.perks)) ? end.inventory.perks.length : 0,
         endOVR: R.calcOVR(end.player.attrs, end.player.role),
         potOVR: R.calcPotentialOVR(end.player.potential, end.player.role),
         age: end.player.age,
@@ -1587,6 +1616,98 @@ console.log(`  role changes           : ${stats.roleChanges}`);
     const mean = a => (a.length ? (a.reduce((s, v) => s + v, 0) / a.length) : 0);
     console.log(`  ceiling earned / bought: +${mean(bt).toFixed(1)} / +${mean(camp).toFixed(1)} mean OVR`
         + ` (budgets ${G.BREAKTHROUGH_CAREER_MAX} / ${E.CEILING_PURCHASE_MAX})`);
+}
+// Club momentum and roster churn. Both are balance readouts, but two of them
+// are also inertness checks with a hard line: a roster system that never moves a
+// seat, or a momentum that never leaves zero, is wired and dead - which is the
+// exact failure mode this file exists to catch, and the one a pass/fail on
+// attributes would never see.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const changes = results.map(r => Number(r.rosterChanges) || 0);
+    const seats = results.map(r => Number(r.rosterSeats) || 0);
+    const mom = results.map(r => Math.abs(Number(r.momentum) || 0));
+    const totalChanges = changes.reduce((s, v) => s + v, 0);
+    console.log(`  roster churn           : ${mean(changes).toFixed(1)} teammates replaced per career`
+        + `, ${mean(seats).toFixed(1)} seats currently held by a signing`
+        + `, |momentum| ${mean(mom).toFixed(2)} at retirement`);
+    if (totalChanges === 0) {
+        fail('wrong', 'src/lib/career/engine.js', 'no club ever changed its roster',
+            `${results.length} careers, 0 logged roster changes`,
+            'runRosterChurn() is hooked to the offseason phase change; check handlePhaseChange and that the career had a club.');
+    }
+    if (mean(mom) === 0) {
+        fail('warning', 'src/lib/career/engine.js', 'club momentum never left zero',
+            'mean |momentum| 0.00 across every career',
+            'tickClubMomentum() runs in advanceWeek; it needs three played fixtures in season.schedule before it moves.');
+    }
+
+    // One seat, one move, one offseason. runRosterChurn() used to read the
+    // roster from a snapshot taken BEFORE it expired the aged-out signings in
+    // the same run, so a seat could be retired and replaced in the same week --
+    // two contradictory news lines, and the replacement priced against the dead
+    // card. Nothing else checks this.
+    for (const r of results) {
+        const rows = Array.isArray(r.changes) ? r.changes : [];
+        const seen = new Set();
+        for (const ch of rows) {
+            if (!ch || !ch.role) continue;
+            const key = `${ch.year}:${ch.role}`;
+            if (seen.has(key)) {
+                fail('wrong', 'src/lib/career/engine.js',
+                    'one seat changed twice in a single offseason',
+                    `${r.name}: ${key} appears more than once in club.changes`,
+                    'runRosterChurn() must read `live` from the post-expiry roster, not from the snapshot it took at entry.');
+                break;
+            }
+            seen.add(key);
+        }
+    }
+}
+// signingFor() has to land on the rating it was asked for. The synthetic
+// fallback used to pass a SEAT target into syntheticPlayer()'s `strength`, which
+// is a ROSTER MEAN and adds SYN_ROLE_TILT on top -- so a club replacing a
+// support with an equal support always signed one two points worse, and a mid
+// two points better, purely as a function of the seat. Deterministic given the
+// seeded RNG, and an ALL-region club is used so the synthetic path always fires.
+step('teams.signingFor hits its target', () => {
+    const club = K.teamById('am_pug3') || K.teamById(K.AMATEUR_TEAMS?.[0]?.id) || null;
+    if (!club) return null;
+    const TARGET = 60;
+    const N = 300;
+    for (const role of T.ROSTER_SLOTS) {
+        let sum = 0;
+        let n = 0;
+        for (let salt = 0; salt < N; salt++) {
+            const card = T.signingFor(club, role, 2032, TARGET, salt, [], []);
+            if (!card) continue;
+            sum += Number(card.rating) || 0;
+            n++;
+        }
+        if (!n) continue;
+        const got = sum / n;
+        if (Math.abs(got - TARGET) > 0.8) {
+            fail('wrong', 'src/lib/career/teams.js',
+                'signingFor misses the rating it was asked for',
+                `${role}: asked ${TARGET}, delivered ${got.toFixed(2)} over ${n} salts`,
+                'The synthetic fallback must back SYN_ROLE_TILT[role] out of the target -- syntheticPlayer treats `strength` as a roster mean, not a seat rating.');
+        }
+    }
+    return true;
+}, null);
+// The legacy economy. The board was repriced against exactly these numbers, so
+// a run where every career retires holding thousands means the prices in
+// economy.js are stale again.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const perks = results.map(r => Number(r.perksOwned) || 0);
+    const left = results.map(r => Number(r.legacy) || 0);
+    const mons = results.reduce((s, r) => s + (Number(r.monuments) || 0), 0);
+    const trades = results.reduce((s, r) => s + (Number(r.trades) || 0), 0);
+    console.log(`  legacy economy         : ${mean(perks).toFixed(1)}/${E.LEGACY_PERKS.length} perks owned`
+        + `, ${mean(left).toFixed(0)} LP unspent at retirement`
+        + ` (board costs ${E.PERK_BOARD_COST} LP)`
+        + `, ${mons} monuments + ${trades} trades bought`);
 }
 console.log(`  awards / milestones    : ${stats.awardsGranted} / ${stats.milestonesGranted}`);
 console.log('  award ids granted      : ' + Array.from(stats.awardIds.entries())

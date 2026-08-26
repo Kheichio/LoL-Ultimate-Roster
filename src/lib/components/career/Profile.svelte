@@ -28,7 +28,7 @@
     } from '../../career/contracts.js';
     import {
         MILESTONES, claimedMilestoneIds, awardHistoryByYear, AWARD_BY_ID,
-        legacyScore, legacyTier, LEGACY_TIER_BANDS, peakOVR, careerYears,
+        legacyScore, earnedLegacyScore, legacyTier, LEGACY_TIER_BANDS, peakOVR, careerYears,
         canRetire,
     } from '../../career/awards.js';
     import { showToast } from '../../stores/toasts.js';
@@ -138,6 +138,8 @@
 
     // ---- legacy -------------------------------------------------------
     $: lScore = legacyScore(c);
+    $: lEarned = earnedLegacyScore(c);
+    $: lEndowed = Math.max(0, lScore - lEarned);
     $: lTier = legacyTier(lScore);
     $: bandRows = LEGACY_TIER_BANDS;
     $: bandIdx = bandRows.findIndex(b => b.id === lTier.id);
@@ -457,6 +459,15 @@
                 <span class="lg-tier">{lTier.name}</span>
             </div>
             <p class="lg-blurb">{lTier.blurb}</p>
+            {#if lEndowed > 0}
+                <!-- What the player BOUGHT, stated plainly. The score they are
+                     remembered by includes it; the Hall of Legends vote does
+                     not, and pretending otherwise would be the dishonest half. -->
+                <p class="lg-endow">
+                    {lEarned.toLocaleString()} earned, {lEndowed.toLocaleString()} endowed.
+                    The Hall of Legends vote counts the earned half only.
+                </p>
+            {/if}
 
             {#if nextBand}
                 <div class="lg-prog">
@@ -1139,6 +1150,7 @@
     .lg-score { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 42px; font-weight: 800; line-height: 1; color: var(--k); }
     .lg-tier { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 15px; font-weight: 700; color: #e2e8f0; }
     .lg-blurb { font-size: 11.5px; line-height: 1.6; color: #56688a; margin: 10px 0 14px; }
+    .lg-endow { font-size: 10.5px; line-height: 1.55; color: #475569; margin: -8px 0 14px; }
     .lg-prog-bar { height: 5px; border-radius: 4px; background: rgba(148,163,184,0.1); overflow: hidden; }
     .lg-prog-fill { height: 100%; border-radius: 4px; background: var(--k); transition: width 0.4s ease; }
     .lg-next { font-size: 11px; font-weight: 600; color: #56688a; margin: 8px 0 0; }

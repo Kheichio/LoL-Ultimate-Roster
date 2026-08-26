@@ -369,14 +369,22 @@ export function weeklySalaryFor({ ovr, clubTier = 1, region = 'LEC', age = 18, s
     return Math.max(25, Math.round(base * tierMult * regionMult * statusMult * youthMult));
 }
 
-/** Rough transfer valuation — what an org would pay to buy this contract out. */
-export function marketValueFor({ ovr, potentialOVR, age, region = 'LEC', hype = 0 }) {
+/**
+ * Rough transfer valuation — what an org would pay to buy this contract out.
+ *
+ * `valueMult` is the additive premium the Market Darling / Living Legend legacy
+ * perks write onto player.valueMult. It arrives as a parameter rather than being
+ * looked up because this module is imported BY economy.js: reading the perk
+ * table here would be an import cycle. Every caller passes `player.valueMult`.
+ */
+export function marketValueFor({ ovr, potentialOVR, age, region = 'LEC', hype = 0, valueMult = 0 }) {
     const wage = weeklySalaryFor({ ovr, clubTier: 1, region, age, potentialOVR });
     const yearly = wage * 40;
     const upside = Math.max(0, (potentialOVR || ovr) - ovr);
     const ageMult = age <= 17 ? 2.4 : age <= 20 ? 2.0 : age <= 23 ? 1.6 : age <= 26 ? 1.1 : age <= 29 ? 0.6 : 0.25;
     const hypeMult = 1 + Math.min(0.6, (hype || 0) / 900_000);
-    return Math.round(yearly * ageMult * hypeMult * (1 + upside * 0.02));
+    const premium = 1 + clamp(Number(valueMult) || 0, 0, 5);
+    return Math.round(yearly * ageMult * hypeMult * (1 + upside * 0.02) * premium);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

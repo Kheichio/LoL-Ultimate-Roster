@@ -5,15 +5,29 @@
 //
 //    gold      - earned every week from wages, sponsors and streaming. Spent on
 //                gear, consumables and lifestyle. Renewable, so the sinks here
-//                are deliberately deep: a full tier-5 desk setup plus the top of
-//                the lifestyle ladder is roughly 530k, which is several seasons
-//                of a main-league wage and completely out of reach for anyone
-//                still on an academy contract.
+//                are deliberately deep: every rung of all nine gear categories
+//                is ~582k and the full lifestyle ladder is ~1.97m, which is a
+//                decade of main-league wages and completely out of reach for
+//                anyone still on an academy contract.
 //    followers - never spent, only gated against. It is the reputation number
 //                that unlocks lifestyle items and sponsors.
-//    legacy    - only ever granted by awards and career milestones, so it is
-//                the scarcest thing in the mode. Thirteen perks cost 107 LP in
-//                total and a decade-long career earns nowhere near all of it.
+//    legacy    - granted by awards, career milestones and a handful of event
+//                options. It is NOT scarce, and the comment that used to sit
+//                here claiming otherwise was wrong by between six and sixty
+//                times: eight simulated twelve-year careers retired holding
+//                618 to 6,531 LP against a thirteen-perk board that cost 107 LP
+//                in total, i.e. the whole board was bought out inside three
+//                years by a career that never won anything.
+//
+//                So the board is now priced against measured income, not
+//                against a guess. Twenty-four perks cost 8,910 LP
+//                (economy.PERK_BOARD_COST - never write that total by hand
+//                again), the monument ladder another 4,350, and the trades
+//                below never run out. A dominant twelve-year career clears
+//                maybe three quarters of it.
+//                If the award payouts in awards.js are ever retuned, THESE
+//                NUMBERS MUST BE RE-MEASURED - careerSmoke prints the earned
+//                total per career, which is the only honest source for them.
 //
 //  Emoji are written as \u escapes on purpose - this repo has been bitten by
 //  encoding corruption when files are rewritten by tooling.
@@ -27,8 +41,8 @@ import {
 import {
     career, absWeek, saveCareer, addNews,
     grantGold, spendGold, grantFollowers, spendLegacy,
-    adjustCondition, applyAttrGain, raisePotential, setSoftCap,
-    setGearTier, setLifestyle, addConsumable, addPerk,
+    adjustCondition, applyAttrGain, raisePotential, setSoftCap, addValueMult,
+    setGearTier, setLifestyle, addConsumable, addPerk, addTrade, addMonument,
 } from '../stores/career.js';
 import { getDB, getEffectiveRating, getEra } from '../utils/cards.js';
 import { playSound } from '../utils/sound.js';
@@ -66,17 +80,29 @@ function r3(n) { return Math.round((Number(n) || 0) * 1000) / 1000; }
 
 // ---------------------------------------------------------------------------
 //  GEAR
-//  Six categories, five tiers each, bought strictly in order. Tiers replace
-//  rather than stack - owning tier 4 gives you tier 4's numbers, not the sum of
-//  1 through 4 - so the escalation in the data below is already cumulative.
+//  Nine categories, EXACTLY five tiers each, bought strictly in order. Tiers
+//  replace rather than stack - owning tier 4 gives you tier 4's numbers, not the
+//  sum of 1 through 4 - so the escalation in the data below is already
+//  cumulative.
 //
-//  trainingBonus is additive across categories and folded into a 1.0 baseline
-//  by gearTrainingBonus(). A full tier-5 desk is +33.7% training, which is worth
-//  roughly as much as a main-league club's facilities (CLUB_TIERS[1] = 1.25).
+//  GEAR_MAX_TIER is global, not per category: gearSection() indexes
+//  cat.tiers[ownedTier] and reports maxTier: GEAR_MAX_TIER unconditionally, so a
+//  category with four or six rungs renders a badge that can never fill. Five, or
+//  change GEAR_MAX_TIER to be read per category.
+//
+//  trainingBonus is additive across categories and folded into a 1.0 baseline by
+//  gearTrainingBonus(). A full nine-category tier-5 setup is +40.0% training
+//  (0.337 from the original six, 0.063 from the last three). The last three are
+//  deliberately light on training and heavy on attrBonus: they are endgame gold
+//  sinks (~349k on their own, more than the original six put together) and by
+//  the time you can afford them you are close enough to your ceiling that a
+//  training multiplier buys almost nothing.
 //
 //  attrBonus is a MATCH-TIME performance bonus only. It never touches
 //  player.attrs, never counts toward OVR, and vanishes the moment the gear is
-//  replaced - see gearAttrBonus() for the full warning.
+//  replaced - see gearAttrBonus() for the full warning. Fully kitted that is
+//  43 attribute points spread over all eight attributes, worth roughly +5
+//  effective OVR in a game, for ~582k gold.
 // ---------------------------------------------------------------------------
 export const GEAR = [
     {
@@ -173,6 +199,62 @@ export const GEAR = [
               desc: 'Overkill on purpose. Nothing between your input and the server except the server.' },
             { tier: 5, name: 'Bootcamp-Spec Workstation', cost: 55000, trainingBonus: 0.095, attrBonus: { mec: 3, tmf: 3 }, energyBonus: 2,
               desc: 'The exact machine the Korean bootcamp runs, down to the RAM timings. No adjustment period.' },
+        ],
+    },
+
+    // -----------------------------------------------------------------------
+    //  The endgame three. Priced so that a main-league starter finishes the
+    //  first six categories years before they can seriously start on these,
+    //  and weighted toward match performance rather than training - by the time
+    //  you can afford them you are near your ceiling and a training multiplier
+    //  buys almost nothing.
+    // -----------------------------------------------------------------------
+    {
+        id: 'net', name: 'Connection', icon: '\u{1F310}',
+        desc: 'Every input you make is a packet. This is the category nobody thinks about until a teamfight desyncs.',
+        tiers: [
+            { tier: 1, name: 'Household Broadband', cost: 500, trainingBonus: 0.003, attrBonus: {}, energyBonus: 0,
+              desc: 'Shared with four other people and a television. Ninety ping on a good evening.' },
+            { tier: 2, name: 'Wired Fibre', cost: 2200, trainingBonus: 0.006, attrBonus: { mec: 1 }, energyBonus: 0,
+              desc: 'Off the wifi and into the wall. The spikes stop, the floor stays where you left it.' },
+            { tier: 3, name: 'Prioritised Line', cost: 7500, trainingBonus: 0.009, attrBonus: { mec: 1, lne: 1 }, energyBonus: 0,
+              desc: 'Traffic-shaped so nothing in the house can push in front of the game. Jitter under a millisecond.' },
+            { tier: 4, name: 'Dedicated Uplink', cost: 22000, trainingBonus: 0.012, attrBonus: { mec: 2, lne: 1 }, energyBonus: 1,
+              desc: 'Your own line, your own contention ratio. Twelve to the server and it never moves.' },
+            { tier: 5, name: 'Leased Server Route', cost: 58000, trainingBonus: 0.015, attrBonus: { mec: 3, lne: 2 }, energyBonus: 1,
+              desc: 'A private route to the game servers, the way the tournament venue does it. You are playing on LAN from your bedroom.' },
+        ],
+    },
+    {
+        id: 'lighting', name: 'Lighting & Room', icon: '\u{1F4A1}',
+        desc: 'The room decides how hour ten feels, and hour ten is where splits are lost.',
+        tiers: [
+            { tier: 1, name: 'The Ceiling Bulb', cost: 700, trainingBonus: 0.005, attrBonus: {}, energyBonus: 0,
+              desc: 'One overhead light, half of it behind you, all of it on the monitor. Your eyes are doing overtime.' },
+            { tier: 2, name: 'Bias Lighting', cost: 2800, trainingBonus: 0.010, attrBonus: { cmp: 1 }, energyBonus: 1,
+              desc: 'A strip behind the panel and a lamp off to one side. The headaches stop within a week.' },
+            { tier: 3, name: 'Blackout and Acoustic Panels', cost: 9000, trainingBonus: 0.016, attrBonus: { cmp: 1, knw: 1 }, energyBonus: 2,
+              desc: 'No glare, no street, no echo. The room stops being a thing you are playing against.' },
+            { tier: 4, name: 'Climate and Air', cost: 26000, trainingBonus: 0.022, attrBonus: { cmp: 2, knw: 1 }, energyBonus: 3,
+              desc: 'Filtered, twenty degrees, held there. Nobody notices a good room. Everybody notices a bad one.' },
+            { tier: 5, name: 'Purpose-Built Practice Room', cost: 68000, trainingBonus: 0.028, attrBonus: { cmp: 3, knw: 2 }, energyBonus: 4,
+              desc: 'Designed around one chair by somebody who does this for orgs. Twelve hours in it costs you eight.' },
+        ],
+    },
+    {
+        id: 'vodrig', name: 'Review Station', icon: '\u{1F39E}',
+        desc: 'A second machine that does nothing but replay. The gap between playing a lot and getting better.',
+        tiers: [
+            { tier: 1, name: 'The Client Replay Tab', cost: 1200, trainingBonus: 0.004, attrBonus: {}, energyBonus: 0,
+              desc: 'Free, built in, and it drops your frames while you scrub. You will watch three games and stop.' },
+            { tier: 2, name: 'Capture Card', cost: 4500, trainingBonus: 0.009, attrBonus: { knw: 1 }, energyBonus: 0,
+              desc: 'Recording without paying for it in performance. Suddenly every scrim block is reviewable.' },
+            { tier: 3, name: 'Second Screen and Timeline Tool', cost: 14000, trainingBonus: 0.014, attrBonus: { knw: 1, map: 1 }, energyBonus: 0,
+              desc: 'Tagged timestamps and a scrub bar that lands where you meant. Review stops being a chore.' },
+            { tier: 4, name: 'Scrim Server and Archive', cost: 38000, trainingBonus: 0.018, attrBonus: { knw: 2, map: 1, chp: 1 }, energyBonus: 1,
+              desc: 'Every game you have ever played, indexed by patch and matchup, searchable in seconds.' },
+            { tier: 5, name: 'Analyst-Grade Review Suite', cost: 95000, trainingBonus: 0.020, attrBonus: { knw: 3, map: 2, chp: 2 }, energyBonus: 1,
+              desc: 'The software the analysts use, on hardware that runs it. You stop guessing why you lost.' },
         ],
     },
 ];
@@ -401,89 +483,347 @@ export const LIFESTYLE = [
         desc: 'The address is the point. You have won enough that where you sleep is now part of the story.',
         effects: { energyRegen: 6, moraleFloor: 45, trainingMult: 0.07, followerMult: 0.10 },
     },
+
+    // -----------------------------------------------------------------------
+    //  THE BACK HALF
+    //  Eight items nobody buys before their sixth or seventh year. Between them
+    //  they cost 1.56m gold on top of the 405k above, and the follower gates run
+    //  to 1.2 million - a number a career only reaches by winning internationals
+    //  and streaming through the whole thing.
+    //
+    //  Deliberately light on energyRegen. The ladder above already reaches +34 a
+    //  week, which the comment on lifestyleEffects() calls close to
+    //  fatigue-neutral; these add +16 for a total of +50, so a fully kitted
+    //  veteran stops thinking about energy in their last few seasons. That is a
+    //  power fantasy the price tag has earned, but it is the reason none of them
+    //  adds more.
+    // -----------------------------------------------------------------------
+    {
+        id: 'sleep_lab', name: 'Sleep Study', icon: '\u{1F634}', cost: 52000, reqFollowers: 70000,
+        desc: 'Two nights wired to a machine, then a schedule somebody else wrote. It turns out you have been doing it wrong for six years.',
+        effects: { energyRegen: 5, injuryResist: 0.08 },
+    },
+    {
+        id: 'analyst_hire', name: 'Personal Analyst', icon: '\u{1F4C8}', cost: 72000, reqFollowers: 130000,
+        desc: 'Not the team analyst. Yours. They watch your games, and only yours, and tell you things you do not want to hear.',
+        effects: { trainingMult: 0.07, offerBonus: 0.05 },
+    },
+    {
+        id: 'second_home', name: 'Bootcamp Apartment', icon: '\u{1F303}', cost: 95000, reqFollowers: 180000,
+        requires: 'city_apartment',
+        desc: 'A second place, in the city everybody bootcamps in. You stop losing a fortnight to jet lag twice a year.',
+        effects: { trainingMult: 0.07, energyRegen: 2 },
+    },
+    {
+        id: 'media_team', name: 'Media Team', icon: '\u{1F4F8}', cost: 110000, reqFollowers: 250000,
+        requires: 'manager',
+        desc: 'Three people whose whole job is what you look like. You have not edited a clip in a year and the numbers have tripled.',
+        effects: { followerMult: 0.25, offerBonus: 0.05 },
+    },
+    {
+        id: 'physio_team', name: 'Full-Time Physio', icon: '\u{1FA7A}', cost: 130000, reqFollowers: 300000,
+        requires: 'personal_trainer',
+        desc: 'On the payroll, at the venue, in the hotel. The career-ending thing gets caught in week two instead of month five.',
+        effects: { injuryResist: 0.22, energyRegen: 4, moraleFloor: 38 },
+    },
+    {
+        id: 'estate', name: 'The Estate', icon: '\u{1F3F0}', cost: 260000, reqFollowers: 700000, reqAge: 21,
+        requires: 'penthouse',
+        desc: 'Land, a gate and a practice room in a building that is not the building you sleep in. The commute is a walk across grass.',
+        effects: { energyRegen: 4, moraleFloor: 55, trainingMult: 0.06, followerMult: 0.10 },
+    },
+    {
+        id: 'foundation', name: 'Your Own Foundation', icon: '\u{1F91D}', cost: 340000, reqFollowers: 900000, reqAge: 21,
+        desc: 'Scholarships, a grassroots circuit and your name on all of it. The first thing you have built that outlasts your hands.',
+        effects: { followerMult: 0.20, moraleFloor: 50, offerBonus: 0.08 },
+    },
+    {
+        id: 'own_org', name: 'A Stake in the Org', icon: '\u{1F4BC}', cost: 500000, reqFollowers: 1200000, reqAge: 24,
+        desc: 'You own a piece of the thing that employs you. Nobody in that building talks to you the same way again.',
+        effects: { trainingMult: 0.08, followerMult: 0.15, offerBonus: 0.12, moraleFloor: 62, energyRegen: 1 },
+    },
 ];
 
 export const LIFESTYLE_BY_ID = LIFESTYLE.reduce((m, x) => { m[x.id] = x; return m; }, {});
 
 // ---------------------------------------------------------------------------
 //  LEGACY PERKS
-//  Bought with legacy points, which only awards and milestones grant. 107 LP
-//  buys all thirteen and a full decade of winning does not get you there, so
-//  these are the shape of the career you chose rather than a checklist.
+//  Bought with legacy points, which awards, milestones and a handful of event
+//  options grant. Twenty-four perks cost 8,910 LP in total, against a measured
+//  income of 618 LP for the worst of eight simulated twelve-year careers and
+//  6,531 for the best - so a washout buys four of the cheap ones, a good career
+//  gets through the first two groups, and a dominant one clears about three
+//  quarters of the board. Nobody buys it all.
 //
-//  effect keys are read by whichever module owns the mechanic - training.js
-//  reads growthMult/ceilingBonus, transfers.js reads offerBonus/salaryMult,
-//  the match engine reads clutchBonus/intlBonus. perkEffects() aggregates them.
+//  THE PRICES ARE MEASURED, NOT GUESSED. The previous board cost 107 LP against
+//  exactly the same income, i.e. it was bought out inside three years by a
+//  career that never won a trophy. If awards.js ever retunes its payouts, run
+//  `node tools/careerSmoke.mjs --seed 42` and re-read the `legacy` column before
+//  touching these numbers.
+//
+//  `group` is presentation only (Shop.svelte renders a divider per group);
+//  `requires` is a real gate enforced by buyPerk() and surfaced by perkSection().
+//
+//  EVERY effect key below is read by something. That is not decoration - this
+//  file has already shipped a board where ceilingBonus and unsignedCapBonus were
+//  aggregated by perkEffects() and then read by nothing at all, which made the
+//  two most expensive perks in the mode do literally nothing. Five more were in
+//  the same state until this board was written:
+//
+//    growthMult, trainingMult  -> training.js:73
+//    energyRegen, extraActions,
+//    moraleFloor, formFloor    -> engine.js startCareerWeek (283-327)
+//    injuryResist              -> engine.js injuryRoll (447)
+//    decayMult                 -> engine.js applyAgeDecay (1344)
+//    followerMult              -> followerMultiplier() below
+//    salaryMult                -> weeklyIncome() below
+//    unsignedCapBonus,
+//    ceilingBonus              -> applyPermanentPerk() below (one-off writes)
+//    valueMult                 -> player.valueMult, written by applyPermanentPerk
+//                                and read by ratings.marketValueFor()
+//    extraChampion             -> match.js rollDraft (573)
+//    offerBonus                -> contracts.js buildOffer (offerMultiplier)
+//    chemistryBonus            -> contracts.js acceptOffer / promotion
+//    clutchBonus, intlBonus    -> match.js successChance (stakesBonus)
+//
+//  If you add a key, add its reader in the same commit or the perk is a lie.
 // ---------------------------------------------------------------------------
 export const LEGACY_PERKS = [
+    // -- Foundation ---------------------------------------------------------
+    // Affordable inside the first three or four splits of a real career, which
+    // is the point: something has to be buyable while the choices still matter.
     {
-        id: 'self_made', name: 'Self-Made', icon: '\u{1F4AA}', cost: 5, currency: 'legacy',
+        id: 'self_made', name: 'Self-Made', icon: '\u{1F4AA}', cost: 120, currency: 'legacy', group: 'foundation',
         desc: 'The unsigned soft cap moves from ' + UNSIGNED_SOFT_CAP + ' to ' + (UNSIGNED_SOFT_CAP + 8) + '. For the ones who never wanted a badge on the door.',
         effect: { unsignedCapBonus: 8 },
     },
     {
-        id: 'crowd_favourite', name: 'Crowd Favourite', icon: '\u{1F4E3}', cost: 5, currency: 'legacy',
+        id: 'crowd_favourite', name: 'Crowd Favourite', icon: '\u{1F4E3}', cost: 130, currency: 'legacy', group: 'foundation',
         desc: 'Followers arrive 35% faster and the crowd will not let your morale fall below 30.',
         effect: { followerMult: 0.35, moraleFloor: 30 },
     },
     {
-        id: 'iron_wrists', name: 'Iron Wrists', icon: '\u{1F9BE}', cost: 6, currency: 'legacy',
+        id: 'work_ethic', name: 'Work Ethic', icon: '\u{1F6E0}', cost: 140, currency: 'legacy', group: 'foundation',
+        desc: 'You are the first one in the building. Practice sticks 8% better and you start every week four energy up.',
+        effect: { trainingMult: 0.08, energyRegen: 4 },
+    },
+    {
+        id: 'iron_wrists', name: 'Iron Wrists', icon: '\u{1F9BE}', cost: 160, currency: 'legacy', group: 'foundation',
         desc: 'Thirty percent less injury risk, permanently, and five energy back every week.',
         effect: { injuryResist: 0.30, energyRegen: 5 },
     },
     {
-        id: 'mentor', name: 'Mentor', icon: '\u{1F393}', cost: 6, currency: 'legacy',
+        id: 'hometown_hero', name: 'Hometown Hero', icon: '\u{1F3E1}', cost: 170, currency: 'legacy', group: 'foundation',
+        desc: 'A region that claims you as its own. Followers arrive 20% faster and every wage is 6% higher.',
+        effect: { followerMult: 0.20, salaryMult: 0.06 },
+    },
+    {
+        id: 'mentor', name: 'Mentor', icon: '\u{1F393}', cost: 180, currency: 'legacy', group: 'foundation',
         desc: 'Rookies listen to you. Chemistry starts twelve points higher everywhere you sign, and teaching sharpens your own practice.',
         effect: { chemistryBonus: 12, trainingMult: 0.06 },
     },
+
+    // -- Career -------------------------------------------------------------
+    // The middle band. A good career picks four or five of these and that
+    // selection is most of what makes two good careers feel different.
     {
-        id: 'hard_bargainer', name: 'Hard Bargainer', icon: '\u{1F4C4}', cost: 7, currency: 'legacy',
-        desc: 'Every offer that reaches you is 20% better and every wage 10% higher. You read the whole contract now.',
+        id: 'hard_bargainer', name: 'Hard Bargainer', icon: '\u{1F4C4}', cost: 200, currency: 'legacy', group: 'career',
+        desc: 'Every offer sheet that reaches you is 20% better and every wage 10% higher. You read the whole contract now.',
         effect: { offerBonus: 0.20, salaryMult: 0.10 },
     },
     {
-        id: 'market_darling', name: 'Market Darling', icon: '\u{1F4C8}', cost: 7, currency: 'legacy',
-        desc: 'Your valuation carries a 25% premium orgs have stopped arguing about.',
+        id: 'market_darling', name: 'Market Darling', icon: '\u{1F4C8}', cost: 220, currency: 'legacy', group: 'career',
+        desc: 'Your valuation carries a 25% premium orgs have stopped arguing about, and offers come in 10% higher.',
         effect: { valueMult: 0.25, offerBonus: 0.10 },
     },
     {
-        id: 'prodigy', name: 'Prodigy', icon: '\u{1F31F}', cost: 8, currency: 'legacy',
+        id: 'quick_healer', name: 'Quick Healer', icon: '\u{1FA79}', cost: 230, currency: 'legacy', group: 'career',
+        desc: 'Whatever it is, you are back inside a week. Twenty percent less injury risk and six energy back every week.',
+        effect: { injuryResist: 0.20, energyRegen: 6 },
+    },
+    {
+        id: 'ice_veins', name: 'Ice in the Veins', icon: '\u{2744}', cost: 250, currency: 'legacy', group: 'career',
+        desc: 'Every decision in a knockout series comes off 15% more often, and your form has a floor of 30 no matter what the split did to you.',
+        effect: { clutchBonus: 0.15, formFloor: 30 },
+    },
+    {
+        id: 'prodigy', name: 'Prodigy', icon: '\u{1F31F}', cost: 270, currency: 'legacy', group: 'career',
         desc: 'Everything you practise sticks 18% harder. Buy it early or do not buy it at all.',
         effect: { growthMult: 0.18 },
     },
     {
-        id: 'ice_veins', name: 'Ice in the Veins', icon: '\u{2744}', cost: 8, currency: 'legacy',
-        desc: 'Fifteen percent better in elimination games, and your form has a floor of 30 no matter what the split did to you.',
-        effect: { clutchBonus: 0.15, formFloor: 30 },
+        id: 'the_voice', name: 'The Voice', icon: '\u{1F399}', cost: 290, currency: 'legacy', group: 'career',
+        desc: 'Four other people do what you say without being asked twice. Chemistry starts eighteen points higher and the room holds together in a Bo5.',
+        effect: { chemistryBonus: 18, clutchBonus: 0.06 },
     },
     {
-        id: 'second_signature', name: 'Second Signature', icon: '\u{1F3AE}', cost: 9, currency: 'legacy',
+        id: 'second_signature', name: 'Second Signature', icon: '\u{1F3AE}', cost: 310, currency: 'legacy', group: 'career',
         desc: 'A second champion you are trusted on. The comfort-pick bonus follows you through one more ban.',
         effect: { extraChampion: 1 },
     },
     {
-        id: 'big_game', name: 'Big Game Player', icon: '\u{1F3C6}', cost: 10, currency: 'legacy',
-        desc: 'Twelve percent better at MSI and Worlds. Some players are simply different in October.',
+        id: 'franchise', name: 'Franchise Player', icon: '\u{1F3DF}', cost: 330, currency: 'legacy', group: 'career',
+        desc: 'The org builds around you rather than the other way round. Wages 25% higher, offer sheets 15% better.',
+        effect: { salaryMult: 0.25, offerBonus: 0.15 },
+    },
+    {
+        id: 'big_game', name: 'Big Game Player', icon: '\u{1F3C6}', cost: 360, currency: 'legacy', group: 'career',
+        desc: 'Twelve percent better at MSI and Worlds, and a little of it carries into any knockout. Some players are simply different in October.',
         effect: { intlBonus: 0.12, clutchBonus: 0.05 },
     },
     {
-        id: 'late_bloomer', name: 'Late Bloomer', icon: '\u{1F551}', cost: 10, currency: 'legacy',
+        id: 'late_bloomer', name: 'Late Bloomer', icon: '\u{1F551}', cost: 390, currency: 'legacy', group: 'career',
         desc: 'Age decay runs at 60% speed. Two or three extra seasons at a level worth watching.',
         effect: { decayMult: 0.60 },
     },
+
+    // -- Legend -------------------------------------------------------------
+    // Nothing here is reachable without international silverware. Three of them
+    // chain off a cheaper perk, so the endgame is a path rather than a shelf.
     {
-        id: 'extra_hour', name: 'The Extra Hour', icon: '\u{23F0}', cost: 12, currency: 'legacy',
+        id: 'third_signature', name: 'Third Signature', icon: '\u{1F0CF}', cost: 430, currency: 'legacy', group: 'legend',
+        requires: 'second_signature',
+        desc: 'A third pick nobody can ban you off. At this point the draft is negotiating with you.',
+        effect: { extraChampion: 1 },
+    },
+    {
+        id: 'unbreakable', name: 'Unbreakable', icon: '\u{1F5FF}', cost: 470, currency: 'legacy', group: 'legend',
+        desc: 'Age takes another 20% off what it was going to take, and your form never drops below 40 again.',
+        effect: { decayMult: 0.80, formFloor: 40 },
+    },
+    {
+        id: 'extra_hour', name: 'The Extra Hour', icon: '\u{23F0}', cost: 500, currency: 'legacy', group: 'legend',
         desc: 'One more activity every single week, forever. The most expensive perk per word and the best one.',
         effect: { extraActions: 1 },
     },
     {
-        id: 'evergreen', name: 'Evergreen', icon: '\u{1F332}', cost: 14, currency: 'legacy',
-        desc: 'Three points of headroom added to every attribute ceiling. The only thing in the mode that raises the roof.',
+        id: 'kingmaker', name: 'Kingmaker', icon: '\u{1F451}', cost: 540, currency: 'legacy', group: 'legend',
+        desc: 'Eighteen percent better in any knockout series and ten on top of that abroad. The player other regions plan around.',
+        effect: { clutchBonus: 0.18, intlBonus: 0.10 },
+    },
+    {
+        id: 'evergreen', name: 'Evergreen', icon: '\u{1F332}', cost: 600, currency: 'legacy', group: 'legend',
+        desc: 'Three points of headroom added to every attribute ceiling. One of only two things in the mode that raises the roof.',
         effect: { ceilingBonus: 3 },
+    },
+    {
+        id: 'living_legend', name: 'Living Legend', icon: '\u{1F31F}', cost: 720, currency: 'legacy', group: 'legend',
+        desc: 'A name that sells tickets on its own. Followers 40% faster, valuation 40% higher, and morale that never falls below 55.',
+        effect: { followerMult: 0.40, valueMult: 0.40, moraleFloor: 55 },
+    },
+    {
+        id: 'second_wind', name: 'Second Wind', icon: '\u{1F32C}', cost: 900, currency: 'legacy', group: 'legend',
+        requires: 'extra_hour',
+        desc: 'A second extra activity every week, and five more energy to spend it with. Two of these is more week than anyone else gets.',
+        effect: { extraActions: 1, energyRegen: 5 },
+    },
+    {
+        // The other half of the roof, and the end of the board. Evergreen plus
+        // this is +5 to every ceiling for 1,600 LP - unbudgeted only because
+        // both are one-time unlocks, unlike the Performance Camp consumable
+        // which is renewable and therefore has to be capped by the career.
+        id: 'ascendant', name: 'Ascendant', icon: '\u{1F52E}', cost: 1000, currency: 'legacy', group: 'legend',
+        requires: 'evergreen',
+        desc: 'Two more points of ceiling on every attribute, and everything you practise sticks 10% harder on the way there.',
+        effect: { ceilingBonus: 2, growthMult: 0.10 },
     },
 ];
 
 export const PERK_BY_ID = LEGACY_PERKS.reduce((m, x) => { m[x.id] = x; return m; }, {});
+
+/** Total cost of the whole board. Exported so the shop blurb and careerSmoke
+ *  quote a number that cannot drift away from the data. */
+export const PERK_BOARD_COST = LEGACY_PERKS.reduce((n, p) => n + (Number(p.cost) || 0), 0);
+
+// ---------------------------------------------------------------------------
+//  THE LEGACY EXCHANGE
+//  What a career does with legacy points once the perks it wanted are bought.
+//
+//  Two halves, both priced in LP:
+//
+//    TRADES     repeatable, and the price goes UP every time. Legacy is a
+//               renewable currency, so an exchange rate that stayed flat would
+//               be an infinite gold printer for a decorated veteran; the `step`
+//               is what stops that. Counts live in inventory.trades.
+//    MONUMENTS  a four-rung ladder, one each, chained. They buy nothing
+//               mechanical at all - they add to the retirement legacy SCORE,
+//               which is the only thing left to spend on when the career is
+//               already good enough not to need help. 4,350 LP for +2,600
+//               score. Deliberately excluded from Hall of Legends eligibility
+//               (awards.earnedLegacyScore) - the induction has to be earned on
+//               the pitch, not endowed.
+// ---------------------------------------------------------------------------
+export const LEGACY_TRADES = [
+    {
+        id: 'lx_appearance', name: 'Appearance Fee', icon: '\u{1F3A4}', currency: 'legacy',
+        cost: 25, step: 5,
+        desc: 'A signing, a panel, two hours at an event that is not yours. They are paying for the name, and the name is the part you already own.',
+        gold: 40000,
+    },
+    {
+        id: 'lx_feature', name: 'Documentary Feature', icon: '\u{1F3AC}', currency: 'legacy',
+        cost: 22, step: 5,
+        desc: 'Forty minutes about you, cut by people who are good at it, on a platform everybody already has.',
+        followers: 60000,
+    },
+    {
+        id: 'lx_camp', name: 'Winter Camp', icon: '\u{2744}', currency: 'legacy',
+        cost: 60, step: 15,
+        desc: 'Three weeks somewhere cold with four coaches and no press. You come back a month ahead of everybody.',
+        buff: { key: 'trainingMult', value: 0.28, weeks: 4, name: 'Winter Camp' },
+        condition: { energy: 30, form: 6 },
+    },
+];
+
+export const TRADE_BY_ID = LEGACY_TRADES.reduce((m, x) => { m[x.id] = x; return m; }, {});
+
+export const MONUMENTS = [
+    {
+        id: 'mon_jersey', name: 'Jersey Retirement', icon: '\u{1F455}', currency: 'legacy',
+        cost: 300, score: 150,
+        desc: 'Your number goes up in the rafters and comes out of circulation. Nobody wears it again while the org exists.',
+    },
+    {
+        id: 'mon_wing', name: 'A Wing of the Museum', icon: '\u{1F3DB}', currency: 'legacy',
+        cost: 650, score: 350, requires: 'mon_jersey',
+        desc: 'Peripherals under glass, a jersey on a mannequin, and a forty-second video on a loop that schoolchildren walk past.',
+    },
+    {
+        id: 'mon_academy', name: 'The Academy', icon: '\u{1F3EB}', currency: 'legacy',
+        cost: 1200, score: 700, requires: 'mon_wing',
+        desc: 'A building with your name on it, full of thirteen-year-olds who will be better than you were and know it.',
+    },
+    {
+        id: 'mon_statue', name: 'The Statue', icon: '\u{1F5FD}', currency: 'legacy',
+        cost: 2200, score: 1400, requires: 'mon_academy',
+        desc: 'Bronze, outside the arena, mid-callout with one hand up. People meet under it without knowing who you were.',
+    },
+];
+
+export const MONUMENT_BY_ID = MONUMENTS.reduce((m, x) => { m[x.id] = x; return m; }, {});
+
+/** Legacy score bought through the monument ladder. Read by awards.legacyScore()
+ *  and deliberately NOT by awards.earnedLegacyScore(). Defensive against a
+ *  hand-edited save carrying a non-array or a dead id. */
+export function monumentScore(c) {
+    const s = st(c);
+    const owned = Array.isArray(s?.inventory?.monuments) ? s.inventory.monuments : [];
+    let total = 0;
+    for (const id of owned) {
+        const m = MONUMENT_BY_ID[id];
+        if (m) total += Number(m.score) || 0;
+    }
+    return total;
+}
+
+/** What one more of a repeatable trade costs right now. */
+export function tradeCost(c, id) {
+    const item = TRADE_BY_ID[id];
+    if (!item) return 0;
+    const s = st(c);
+    const bought = Math.max(0, Math.round(Number(s?.inventory?.trades?.[id]) || 0));
+    return Math.max(1, Math.round(item.cost + item.step * bought));
+}
 
 // ---------------------------------------------------------------------------
 //  SPONSORS
@@ -635,9 +975,11 @@ export function ownedGear(c, categoryId) {
 }
 
 /**
- * Training multiplier from gear, 1.0 baseline. A full tier-5 desk is ~1.34,
- * which sits deliberately just above a main-league club's 1.25 facility bonus:
- * hardware you own should matter about as much as the building you train in.
+ * Training multiplier from gear, 1.0 baseline. The original six categories at
+ * tier 5 are ~1.34, which sits deliberately just above a main-league club's 1.25
+ * facility bonus: hardware you own should matter about as much as the building
+ * you train in. All nine reaches ~1.40, and the last six percent costs 349k -
+ * that is the point at which gear stops being a training decision.
  */
 export function gearTrainingBonus(c) {
     const s = st(c);
@@ -658,7 +1000,8 @@ export function gearTrainingBonus(c) {
  * it to the attributes it scores a game with and nothing else may apply it -
  * anything that persists it is a bug that will inflate the player permanently.
  *
- * A complete tier-5 desk is worth about +4 effective OVR in-game for ~137k gold.
+ * The original six at tier 5 are worth about +4 effective OVR in-game for ~137k
+ * gold; all nine, about +5 for ~582k.
  */
 export function gearAttrBonus(c) {
     const s = st(c);
@@ -673,7 +1016,7 @@ export function gearAttrBonus(c) {
     return out;
 }
 
-/** Flat weekly energy returned by gear alone. Full tier-5 desk is +12. */
+/** Flat weekly energy returned by gear alone. All nine at tier 5 is +18. */
 export function gearEnergyBonus(c) {
     const s = st(c);
     let total = 0;
@@ -698,9 +1041,12 @@ function ownedLifestyleItems(c) {
  * (floors do not add), injuryResist sums but is capped at 0.75 so no amount of
  * money makes a player literally unbreakable.
  *
- * Fully kitted, energyRegen reaches +34/week on top of gear's +12. That is close
- * to fatigue-neutral for a four-action week and it is meant to be: it costs the
- * better part of 400k gold and several hundred thousand followers to get there.
+ * The first twelve items reach +34/week on top of gear's +18, which is close to
+ * fatigue-neutral for a four-action week and is meant to be: it costs the better
+ * part of 400k gold and several hundred thousand followers to get there. The
+ * eight back-half items add +16 more, i.e. a veteran who has spent ~1.97m gold
+ * and reached a million followers genuinely stops running out of week. Nothing
+ * cheaper than that should ever be allowed to.
  */
 export function lifestyleEffects(c) {
     const items = ownedLifestyleItems(c);
@@ -1049,8 +1395,13 @@ export function useConsumable(id) {
 // ---------------------------------------------------------------------------
 //  PURCHASING - LIFESTYLE
 // ---------------------------------------------------------------------------
-/** Why an age-gated lifestyle item is not available yet, or null. Exported so
- *  the shop can render the same reason it would refuse the purchase with. */
+/** Why an age-gated lifestyle item is not available yet, or null.
+ *
+ *  Read by buyLifestyle() AND by lifestyleSection(), which is the point: for a
+ *  long time it was read only by the first, so the shop rendered an enabled Buy
+ *  button for a fifteen-year-old and the age gate arrived as an error toast.
+ *  Every gate this module has must be resolved into the section view model -
+ *  the component renders flags, never rules. */
 export function lifestyleAgeGate(c, item) {
     const need = Number(item && item.reqAge) || 0;
     if (!need) return null;
@@ -1104,10 +1455,19 @@ export function buyLifestyle(id) {
  * (8 points of unsigned soft cap) do literally nothing. They are applied here
  * instead of being derived, so that player.potential stays the single source of
  * truth for the ceiling and the two systems can never disagree.
+ *
+ * valueMult joined them for a different reason: the only live reader of market
+ * value is a derived store in stores/career.js, and stores/career.js is a module
+ * economy.js already imports. Reading the perk from there would be an import
+ * cycle, so the multiplier is written onto the player exactly the way Self-Made
+ * writes player.softCap, and ratings.marketValueFor() reads it off the player.
+ * Additive across perks, so Market Darling plus Living Legend is +0.65.
  */
 function isPermanentPerk(id) {
     const e = (PERK_BY_ID[id] && PERK_BY_ID[id].effect) || {};
-    return (Number(e.ceilingBonus) || 0) > 0 || (Number(e.unsignedCapBonus) || 0) > 0;
+    return (Number(e.ceilingBonus) || 0) > 0
+        || (Number(e.unsignedCapBonus) || 0) > 0
+        || (Number(e.valueMult) || 0) > 0;
 }
 
 function applyPermanentPerk(id) {
@@ -1120,6 +1480,8 @@ function applyPermanentPerk(id) {
     }
     const cap = Number(e.unsignedCapBonus) || 0;
     if (cap > 0) setSoftCap(UNSIGNED_SOFT_CAP + cap);
+    const val = Number(e.valueMult) || 0;
+    if (val > 0) addValueMult(val);
 }
 
 /**
@@ -1152,6 +1514,15 @@ export function buyPerk(id) {
     const owned = Array.isArray(c?.inventory?.perks) ? c.inventory.perks : [];
     if (owned.includes(id)) return fail(`${perk.name} is already unlocked.`);
 
+    // Chained perks. Checked before spendLegacy so a refused purchase never
+    // costs anything - same ordering rule as the ceiling cap in useConsumable().
+    if (perk.requires) {
+        const need = PERK_BY_ID[perk.requires];
+        if (need && !owned.includes(perk.requires)) {
+            return fail(`${perk.name} needs ${need.name} first.`);
+        }
+    }
+
     const have = Math.max(0, Math.round(Number(c?.money?.legacy) || 0));
     if (!spendLegacy(perk.cost)) {
         return fail(`${perk.name} costs ${perk.cost} legacy - you have ${have}.`);
@@ -1171,6 +1542,88 @@ export function buyPerk(id) {
     playSound('rare');
     saveCareer();
     return done(`${perk.name} unlocked.`);
+}
+
+// ---------------------------------------------------------------------------
+//  PURCHASING - THE LEGACY EXCHANGE
+// ---------------------------------------------------------------------------
+/**
+ * Spend legacy on something repeatable. The price is read fresh from
+ * tradeCost() and the counter is bumped only after the spend lands, so a
+ * refused purchase never moves the ladder.
+ */
+export function buyTrade(id) {
+    const item = TRADE_BY_ID[id];
+    if (!item) return fail('No such trade.');
+
+    const c = snapshot();
+    const price = tradeCost(c, id);
+    const have = Math.max(0, Math.round(Number(c?.money?.legacy) || 0));
+    if (!spendLegacy(price)) {
+        return fail(`${item.name} costs ${price} legacy - you have ${have}.`);
+    }
+
+    addTrade(id, 1);
+    const parts = [];
+
+    if (item.gold) {
+        const g = grantGold(item.gold);
+        parts.push(`${fmtGold(g)} gold`);
+    }
+    if (item.followers) {
+        const f = Math.round((Number(item.followers) || 0) * followerMultiplier(c));
+        grantFollowers(f);
+        parts.push(`${fmtFollowers(f)} followers`);
+    }
+    if (item.condition) {
+        for (const field of ['energy', 'morale', 'health', 'form']) {
+            const d = Number(item.condition[field]) || 0;
+            if (!d) continue;
+            adjustCondition(field, d);
+            parts.push(`${d > 0 ? '+' : ''}${d} ${field}`);
+        }
+    }
+    if (item.buff && item.buff.key) {
+        pushBuff(item.buff);
+        parts.push(`${item.buff.name || item.buff.key} for ${Math.max(1, Math.round(Number(item.buff.weeks) || 1))}w`);
+    }
+
+    addNews(`${item.name} - ${price} legacy.`, 'money');
+    playSound('claim');
+    saveCareer();
+    return done(parts.length ? `${item.name}: ${parts.join(', ')}.` : `${item.name} done.`);
+}
+
+/**
+ * The monument ladder. Buys nothing mechanical - the whole return is legacy
+ * score at retirement, which is the point: it is what a career spends on once
+ * winning more is no longer the constraint.
+ */
+export function buyMonument(id) {
+    const item = MONUMENT_BY_ID[id];
+    if (!item) return fail('No such monument.');
+
+    const c = snapshot();
+    const owned = Array.isArray(c?.inventory?.monuments) ? c.inventory.monuments : [];
+    if (owned.includes(id)) return fail(`${item.name} already stands.`);
+
+    if (item.requires) {
+        const need = MONUMENT_BY_ID[item.requires];
+        if (need && !owned.includes(item.requires)) {
+            return fail(`${item.name} comes after ${need.name}.`);
+        }
+    }
+
+    const have = Math.max(0, Math.round(Number(c?.money?.legacy) || 0));
+    if (!spendLegacy(item.cost)) {
+        return fail(`${item.name} costs ${item.cost} legacy - you have ${have}.`);
+    }
+
+    addMonument(id);
+    addNews(`${item.name}. Whatever happens next, that part is permanent.`, 'award');
+    playSound('rare');
+    saveCareer();
+    return done(`${item.name} - ${item.score} legacy score, for good.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,7 +1748,9 @@ function gearSection(c) {
     return {
         id: 'gear',
         name: 'Gear',
-        blurb: 'Six things on your desk, five tiers each, bought in order. Hardware raises training and how you perform in a game - it never raises your rating on its own.',
+        // Counts read from the data. The literal "Six" outlived the six-category
+        // era by exactly one commit.
+        blurb: `${GEAR.length} things on and around your desk, ${GEAR_MAX_TIER} tiers each, bought in order. Hardware raises training and how you perform in a game - it never raises your rating on its own.`,
         currency: 'gold',
         items,
     };
@@ -1346,10 +1801,16 @@ function lifestyleSection(c) {
         const prereqMissing = !!(prereq && !ownedMap[item.requires]);
         const famous = followers >= item.reqFollowers;
         const affordable = gold >= item.cost;
+        // The age gate used to be enforced by buyLifestyle() and by nothing
+        // else, so a fifteen-year-old with the cash saw an enabled Buy button on
+        // the Studio Apartment and got an error toast for pressing it. Resolved
+        // here with every other gate: the component renders flags, never rules.
+        const tooYoung = !!lifestyleAgeGate(c, item);
 
         let lockReason = '';
         if (owned) lockReason = '';
         else if (prereqMissing) lockReason = `Needs ${prereq.name}`;
+        else if (tooYoung) lockReason = `Not at ${Math.round(Number(c?.player?.age) || 0)} - come back at ${item.reqAge}`;
         else if (!famous) lockReason = `Needs ${fmtFollowers(item.reqFollowers)} followers`;
         else if (!affordable) lockReason = `Need ${fmtGold(item.cost - gold)} more gold`;
 
@@ -1359,7 +1820,7 @@ function lifestyleSection(c) {
             currency: 'gold',
             owned,
             affordable,
-            locked: !owned && (prereqMissing || !famous || !affordable),
+            locked: !owned && (prereqMissing || tooYoung || !famous || !affordable),
             lockReason,
         };
     });
@@ -1373,6 +1834,12 @@ function lifestyleSection(c) {
     };
 }
 
+const PERK_GROUPS = [
+    { id: 'foundation', name: 'Foundation', note: 'Reachable in your first few splits.' },
+    { id: 'career', name: 'Career', note: 'The middle of the board. Pick a shape and commit to it.' },
+    { id: 'legend', name: 'Legend', note: 'Nothing here is affordable without international silverware.' },
+];
+
 function perkSection(c) {
     const legacy = Math.max(0, Math.round(Number(c?.money?.legacy) || 0));
     const ownedPerks = Array.isArray(c?.inventory?.perks) ? c.inventory.perks : [];
@@ -1380,23 +1847,91 @@ function perkSection(c) {
     const items = LEGACY_PERKS.map(perk => {
         const owned = ownedPerks.includes(perk.id);
         const affordable = legacy >= perk.cost;
+        const prereq = perk.requires ? PERK_BY_ID[perk.requires] : null;
+        const prereqMissing = !!(prereq && !ownedPerks.includes(perk.requires));
+
+        let lockReason = '';
+        if (owned) lockReason = '';
+        else if (prereqMissing) lockReason = `Needs ${prereq.name}`;
+        else if (!affordable) lockReason = `Need ${perk.cost - legacy} more legacy`;
+
         return {
             kind: 'perk',
             ...perk,
             currency: 'legacy',
+            group: perk.group || 'career',
             owned,
             affordable,
-            locked: !owned && !affordable,
-            lockReason: owned ? '' : (!affordable ? `Need ${perk.cost - legacy} more legacy` : ''),
+            locked: !owned && (prereqMissing || !affordable),
+            lockReason,
         };
     });
 
     return {
         id: 'perks',
         name: 'Legacy Perks',
-        blurb: 'Bought with legacy points, which only trophies and awards pay out. Permanent, career-defining, and there is not enough legacy in a decade to buy them all.',
+        blurb: `Bought with legacy points, which trophies, awards and career milestones pay out. Permanent, career-defining, and the whole board costs ${PERK_BOARD_COST.toLocaleString('en-GB')} LP - more than any career has ever banked.`,
         currency: 'legacy',
+        groups: PERK_GROUPS,
         items,
+    };
+}
+
+function exchangeSection(c) {
+    const legacy = Math.max(0, Math.round(Number(c?.money?.legacy) || 0));
+    const ownedMon = Array.isArray(c?.inventory?.monuments) ? c.inventory.monuments : [];
+
+    const trades = LEGACY_TRADES.map(item => {
+        const price = tradeCost(c, item.id);
+        const bought = Math.max(0, Math.round(Number(c?.inventory?.trades?.[item.id]) || 0));
+        const affordable = legacy >= price;
+        return {
+            kind: 'trade',
+            ...item,
+            cost: price,
+            nextCost: price + item.step,
+            bought,
+            currency: 'legacy',
+            owned: false,           // repeatable: never "owned"
+            affordable,
+            locked: !affordable,
+            lockReason: affordable ? '' : `Need ${price - legacy} more legacy`,
+        };
+    });
+
+    const monuments = MONUMENTS.map(item => {
+        const owned = ownedMon.includes(item.id);
+        const prereq = item.requires ? MONUMENT_BY_ID[item.requires] : null;
+        const prereqMissing = !!(prereq && !ownedMon.includes(item.requires));
+        const affordable = legacy >= item.cost;
+
+        let lockReason = '';
+        if (owned) lockReason = '';
+        else if (prereqMissing) lockReason = `Comes after ${prereq.name}`;
+        else if (!affordable) lockReason = `Need ${item.cost - legacy} more legacy`;
+
+        return {
+            kind: 'monument',
+            ...item,
+            currency: 'legacy',
+            owned,
+            affordable,
+            locked: !owned && (prereqMissing || !affordable),
+            lockReason,
+        };
+    });
+
+    return {
+        id: 'exchange',
+        name: 'Legacy Exchange',
+        blurb: 'What legacy points are for once the perks you wanted are bought. The trades repeat and get dearer every time; the monuments buy nothing at all except the number your career is remembered by.',
+        currency: 'legacy',
+        trades,
+        monuments,
+        // `items` is the shape every other section hands back, and tabMeta and
+        // the empty-state checks in Shop.svelte read it generically.
+        items: trades.concat(monuments),
+        score: monumentScore(c),
     };
 }
 
@@ -1445,6 +1980,7 @@ export function shopSections(c) {
         consumableSection(s),
         lifestyleSection(s),
         perkSection(s),
+        exchangeSection(s),
         sponsorSection(s),
     ];
 }

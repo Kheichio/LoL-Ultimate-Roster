@@ -31,7 +31,7 @@ import {
 import {
     generateSchedule, blankStandings, simulateAIWeek, leagueTable,
     playoffSeeds, teamsInRegion, teamStrength, teamStrengthWithPlayer,
-    winChance,
+    winChance, ROSTER_SLOTS, clubRosterFor, signingFor,
 } from './teams.js';
 import {
     SOLOQ_GAIN, SCRIM_GAIN, VOD_GAIN, trainingMultiplier, restRecovery,
@@ -235,7 +235,13 @@ function pushSchedule(rows) {
 function formBaseline(c) {
     const morale = clamp(num(c.player.morale, 50), 0, 100);
     let base = 34 + morale * 0.28;
-    const played = scheduleOf(c).filter(f => f && f.played).slice(-4);
+    // Sorted before tailing, for the same reason tickClubMomentum() is: the
+    // schedule array is not in week order once a carried MSI bracket has been
+    // appended to a freshly drawn summer split.
+    const played = scheduleOf(c)
+        .filter(f => f && f.played)
+        .sort((a, b) => num(a.week, 0) - num(b.week, 0))
+        .slice(-4);
     if (played.length) {
         const rate = played.filter(f => f.won).length / played.length;
         base += (rate - 0.5) * 18;
@@ -797,6 +803,266 @@ export function ensureSeason() {
     }));
     saveCareer();
     return snap().season;
+}
+
+// ---------------------------------------------------------------------------
+//  THE CLUB: MOMENTUM AND ROSTER CHURN
+//  The four people sitting next to the player were, until this existed, a pure
+//  function of (teamId, year) that never once reacted to a season. They now do
+//  two things:
+//
+//    * scale  - a club on a run plays above its written line and every teammate
+//               a few rating points above theirs; a club falling apart does the
+//               reverse. Written weekly into career.club.momentum.
+//    * change - in the offseason the org acts on the year it just had. A bad
+//               one gets people cut; a good one gets them poached.
+//
+//  The maths and the read side live in teams.js (clubMomentum, clubRosterFor,
+//  clubStrengthDelta). This file only decides WHEN, so there is exactly one
+//  place that knows what a teammate's rating is.
+//
+//  FEEDBACK IS THE RISK HERE. Momentum raises club strength, which wins games,
+//  which raises momentum. It is bounded because the TARGET is a win rate, which
+//  cannot exceed 1 no matter how strong the club gets: at a 100% record the
+//  target is +1 and momentum simply parks there. MOMENTUM_PULL controls how
+//  fast, not how far.
+// ---------------------------------------------------------------------------
+
+/** How much of the gap to the target momentum closes each week. */
+const MOMENTUM_PULL = 0.30;
+
+/** With nothing played, momentum drifts back toward neutral at this rate. */
+const MOMENTUM_DECAY = 0.86;
+
+/** How many recent results the room is judged on. */
+const MOMENTUM_WINDOW = 6;
+
+/** A signing older than this is somebody who has aged out of the seat, and the
+ *  club goes back to whoever the database says plays there. */
+const SIGNING_TENURE_YEARS = 6;
+
+function blankClubBlock(teamId) {
+    return { teamId: teamId || null, momentum: 0, roster: {}, changes: [] };
+}
+
+function writeClub(patch) {
+    career.update(c => {
+        const cur = (c.club && typeof c.club === 'object' && !Array.isArray(c.club))
+            ? c.club
+            : blankClubBlock(c.player.clubId);
+        return { ...c, club: { ...cur, ...patch } };
+    });
+}
+
+/**
+ * Move career.club.momentum toward what the last few results deserve.
+ *
+ * A club the player has just joined starts from zero rather than inheriting the
+ * last room's mood - that reset is free, because the block is keyed on teamId
+ * and a mismatch means "this is not our club".
+ */
+function tickClubMomentum() {
+    const c = snap();
+    if (!c || !c.created) return;
+    const clubId = c.player.clubId || null;
+
+    const block = (c.club && typeof c.club === 'object' && !Array.isArray(c.club)) ? c.club : null;
+    if (!clubId) {
+        // Unsigned. Drop anything left over from the last club so a save never
+        // carries a roster for a team the player does not play for.
+        if (block && block.teamId) career.update(x => ({ ...x, club: blankClubBlock(null) }));
+        return;
+    }
+    if (!block || block.teamId !== clubId) {
+        career.update(x => ({ ...x, club: blankClubBlock(clubId) }));
+        return;
+    }
+
+    // SORTED, then tailed. season.schedule is not chronological: ensureSeason()
+    // rebuilds it as [...freshSplitRows, ...carriedBracketRows], and MSI is
+    // carried into the summer split from weeks 17-19 - so the array tail holds
+    // the OLDEST games of the half-year, not the newest. Taking the raw tail
+    // pinned up to three MSI results in the six-slot window from week 20 all the
+    // way to Worlds: a club that then won every league game it played still read
+    // as 50% and its momentum never left neutral.
+    const played = scheduleOf(c)
+        .filter(f => f && f.played === true)
+        .sort((a, b) => num(a.week, 0) - num(b.week, 0))
+        .slice(-MOMENTUM_WINDOW);
+    const cur = clamp(num(block.momentum, 0), -1, 1);
+
+    let next;
+    if (played.length < 3) {
+        next = cur * MOMENTUM_DECAY;
+    } else {
+        const rate = played.filter(f => f.won === true).length / played.length;
+        const target = clamp((rate - 0.5) * 2, -1, 1);
+        next = cur + (target - cur) * MOMENTUM_PULL;
+    }
+
+    next = clamp(Math.round(next * 1000) / 1000, -1, 1);
+    if (Math.abs(next) < 0.005) next = 0;
+    if (next !== cur) writeClub({ momentum: next });
+}
+
+/** -1 (a disaster of a season) .. +1 (won the league). */
+function seasonGrade(c) {
+    const rows = safe(() => leagueTable(c), []);
+    const mine = rows.find(r => r && r.isMine) || null;
+    const size = Math.max(1, rows.length);
+    const rank01 = mine && size > 1 ? 1 - ((num(mine.rank, 1) - 1) / (size - 1)) : 0.5;
+
+    const w = num(c.season && c.season.wins, 0);
+    const l = num(c.season && c.season.losses, 0);
+    const winRate = (w + l) > 0 ? w / (w + l) : 0.5;
+
+    return clamp(((rank01 - 0.5) * 2) * 0.6 + ((winRate - 0.5) * 2) * 0.4, -1, 1);
+}
+
+/**
+ * The org's offseason. Reads the year it just had and acts on it.
+ *
+ * Deliberately never touches the player's own seat - that is what contracts.js
+ * is for, and an org replacing you without a word would be a different feature
+ * with much sharper edges.
+ */
+function runRosterChurn() {
+    const c = snap();
+    if (!c || !c.created || (c.flags && c.flags.retired)) return;
+    const clubId = c.player.clubId;
+    if (!clubId) return;
+    const team = teamById(clubId);
+    if (!team) return;
+
+    const year = num(c.time.year, DEFAULT_START_YEAR);
+    const myRole = ROLE_BY_ID[c.player.role] ? c.player.role : 'MID';
+    const seats = ROSTER_SLOTS.filter(r => r !== myRole);
+
+    const block = (c.club && typeof c.club === 'object' && !Array.isArray(c.club) && c.club.teamId === clubId)
+        ? c.club
+        : blankClubBlock(clubId);
+    const roster = { ...(block.roster && typeof block.roster === 'object' ? block.roster : {}) };
+    const changes = Array.isArray(block.changes) ? block.changes.slice() : [];
+
+    // 1. Anyone the club signed long enough ago that they have aged out. The
+    //    seat goes back to whoever the card database says plays there, which is
+    //    also what keeps a twelve-year career from freezing five seats forever.
+    for (const role of Object.keys(roster)) {
+        const held = roster[role];
+        const since = num(held && held.signedYear, year);
+        if (year - since < SIGNING_TENURE_YEARS) continue;
+        delete roster[role];
+        changes.unshift({ year, role, outName: (held && held.name) || 'A veteran', inName: '', reason: 'retired' });
+        addNews(`${(held && held.name) || 'A veteran'} has retired. ${team.name} go back to the market for a ${role}.`, 'transfer');
+    }
+
+    // 2. How many seats move.
+    const grade = seasonGrade(c);
+    let moves;
+    if (grade <= -0.45) moves = Math.random() < 0.55 ? 2 : 1;
+    else if (grade <= 0.05) moves = Math.random() < 0.60 ? 1 : 0;
+    else moves = Math.random() < 0.30 ? 1 : 0;
+    // Winning does not make you safe: a title side loses somebody to a bigger
+    // cheque about a third of the time.
+    const poaching = grade > 0.55 && Math.random() < 0.35;
+    if (poaching) moves = Math.max(moves, 1);
+    moves = Math.min(moves, seats.length);
+
+    if (!moves) {
+        writeClub({ teamId: clubId, roster, changes: changes.slice(0, 12) });
+        if (changes.length !== (Array.isArray(block.changes) ? block.changes.length : 0)) saveCareer();
+        return;
+    }
+
+    // 3. Which seats. A bad year gets the worst players cut; a good year loses
+    //    the best one to somebody richer.
+    //
+    //    Read against the POST-EXPIRY roster, not the snapshot. `c` was taken
+    //    before step 1 deleted the aged-out overrides, so reading it back would
+    //    offer a player the club has just announced the retirement of as a
+    //    candidate for replacement - two contradictory news lines and two
+    //    change entries for one seat in one week, and worse, the replacement
+    //    would be priced against the dead card's rating rather than the
+    //    incumbent who now actually holds the seat.
+    const live = safe(() => clubRosterFor({ ...c, club: { ...block, teamId: clubId, roster } }), {}) || {};
+    const ranked = seats
+        .map(role => ({ role, card: live[role] || null }))
+        .filter(x => x.card)
+        .sort((a, b) => {
+            const ra = num(a.card.baseRating, num(a.card.rating, 50));
+            const rb = num(b.card.baseRating, num(b.card.rating, 50));
+            return poaching ? rb - ra : ra - rb;
+        });
+    if (!ranked.length) return;
+
+    // Both, and the names are the half that matters - see signingFor(). The
+    // player's own handle is in here too: an org signing somebody with your name
+    // reads as a bug even though the pools are unrelated.
+    const taken = new Set(Object.values(live).map(x => x && x.id).filter(v => v !== null && v !== undefined));
+    const takenNames = new Set(
+        Object.values(live).map(x => x && x.name).filter(Boolean).concat([c.player.handle || '']),
+    );
+
+    let done = 0;
+    for (const { role, card } of ranked) {
+        if (done >= moves) break;
+        const outRating = Math.round(num(card.baseRating, num(card.rating, 55)));
+
+        // A rebuilding club shops cheap and hopes; a winning one can attract.
+        const swing = grade > 0.05 ? randInt(-2, 5) : randInt(-4, 3);
+        const target = clamp(outRating + swing, 30, 96);
+
+        const replacement = safe(
+            () => signingFor(team, role, year, target, done + year, [...taken], [...takenNames]),
+            null,
+        );
+        if (!replacement) continue;
+
+        roster[role] = { ...replacement, signedYear: year };
+        taken.add(replacement.id);
+        takenNames.add(replacement.name);
+        done++;
+
+        const reason = poaching && done === 1 ? 'poached' : (grade <= -0.45 ? 'cut' : 'replaced');
+        changes.unshift({
+            year, role,
+            outName: card.name || 'A player',
+            inName: replacement.name || 'A rookie',
+            reason,
+        });
+
+        if (reason === 'poached') {
+            addNews(`${card.name} has been bought out of the ${role} seat. ${team.name} bring in ${replacement.name}.`, 'transfer');
+        } else if (reason === 'cut') {
+            addNews(`${team.name} have moved ${card.name} on after that season. ${replacement.name} takes the ${role} seat.`, 'drama');
+        } else {
+            addNews(`${team.name} replace ${card.name} with ${replacement.name} at ${role}.`, 'transfer');
+        }
+    }
+
+    if (done) {
+        // A room that has just changed is not the room the player built
+        // chemistry in, and its momentum is no longer about these five.
+        //
+        // flags.rosterMoves is the LIFETIME count. club.changes cannot be it:
+        // that list belongs to a club, so signing for somebody else resets it,
+        // and a career that moved five times would report almost no churn at
+        // all. careerSmoke reads this one.
+        career.update(x => ({
+            ...x,
+            player: { ...x.player, chemistry: clamp(num(x.player.chemistry, 50) - 4 * done, 0, 100) },
+            flags: { ...x.flags, rosterMoves: num(x.flags && x.flags.rosterMoves, 0) + done },
+        }));
+        writeClub({
+            teamId: clubId,
+            roster,
+            changes: changes.slice(0, 12),
+            momentum: clamp(num(block.momentum, 0) * 0.5, -1, 1),
+        });
+    } else {
+        writeClub({ teamId: clubId, roster, changes: changes.slice(0, 12) });
+    }
+    saveCareer();
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,6 +1804,10 @@ function handlePhaseChange(fromId, toId) {
     }
     if (toId === 'offseason') {
         addNews('Offseason. Contracts, transfers and the only weeks of the year that are yours.', 'system');
+        // The transfer window is the one moment the club is allowed to change
+        // who is sitting next to you. Runs before rolloverYear() bumps the year,
+        // so a signing is stamped with the season it was made in.
+        safe(() => runRosterChurn(), null);
     }
 }
 
@@ -1567,6 +1837,10 @@ export function advanceWeek() {
     if (standings) {
         career.update(c => ({ ...c, season: { ...c.season, standings } }));
     }
+
+    // 2b. how the room is going. After the week's results are committed and
+    // before the clock moves, so momentum always describes the week just played.
+    safe(() => tickClubMomentum(), null);
 
     // 3. the clock
     const before = snap();

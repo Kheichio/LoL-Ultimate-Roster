@@ -28,6 +28,7 @@
     } from '../../career/ratings.js';
     import {
         ROSTER_SLOTS, describeTeam, teamStrength, teammatesOf, leagueTable, rivalFor,
+        clubStrengthFor, clubMomentum, clubBlock,
     } from '../../career/teams.js';
     import {
         contractStatusLine, contractYearsLeft, clubReview, promotionEligible,
@@ -124,7 +125,11 @@
     // -- signed --------------------------------------------------------
     $: tierInfo = team ? (CLUB_TIERS[team.tier] || CLUB_TIERS[1]) : CLUB_TIERS[1];
     $: reg = regionInfo(team ? team.region : p.region);
-    $: strength = team ? teamStrength(team, year) : 0;
+    // The line the player is measured against has to include what the club has
+    // actually done -- who it signed, and how it is going. teamStrength() is
+    // deliberately blind to both (it is a pure function of team and year for
+    // every org in the mode); clubStrengthFor() is the player's own club only.
+    $: strength = team ? clubStrengthFor(c, team) : 0;
     $: blurb = team ? describeTeam(team) : '';
     $: gap = $careerOVR - strength;
 
@@ -144,6 +149,48 @@
     $: five = ROSTER_SLOTS.map(slot => (slot === myRole
         ? { slot, card: myCard, me: true }
         : { slot, card: mates.starters.find(x => x && x.role === slot) || null, me: false }));
+
+    // -- the room ---------------------------------------------------------
+    //  Teammates are no longer a fixed derivation of (club, year): the club
+    //  signs people in the offseason and everybody plays a few points above or
+    //  below themselves depending on how the season is going. Both come off
+    //  career.club, and both are surfaced here or they may as well not exist.
+    $: momentum = signed ? clubMomentum(c) : 0;
+    $: momentumBand = momentumInfo(momentum);
+    $: momentumPct = Math.round(((momentum + 1) / 2) * 100);
+    $: roster = signed ? (clubBlock(c) || null) : null;
+    $: rosterChanges = (roster && Array.isArray(roster.changes) ? roster.changes : [])
+        .filter(x => x && x.role)
+        .slice(0, 6);
+
+    function momentumInfo(m) {
+        if (m >= 0.55) return { name: 'On a run', color: '#22c55e', note: 'The room believes it. Everybody is playing a level above their own.' };
+        if (m >= 0.2) return { name: 'Confident', color: '#3b82f6', note: 'Results are going the right way and it shows in scrims.' };
+        if (m > -0.2) return { name: 'Level', color: '#94a3b8', note: 'Nothing to read into either way. The five are playing at their own level.' };
+        if (m > -0.55) return { name: 'Shaky', color: '#f59e0b', note: 'A couple of bad weeks and people have started playing not to lose.' };
+        return { name: 'In freefall', color: '#ef4444', note: 'Nothing is coming off. Everybody is a step slower than the version of them that got signed.' };
+    }
+
+    const CHANGE_WORD = {
+        cut: 'released',
+        poached: 'bought out',
+        replaced: 'replaced',
+        retired: 'retired',
+    };
+
+    function changeLine(ch) {
+        const word = CHANGE_WORD[ch.reason] || 'replaced';
+        if (!ch.inName) return `${ch.outName || 'A player'} ${word}`;
+        return `${ch.outName || 'A player'} ${word} - ${ch.inName} in`;
+    }
+
+    /** The form chip on a teammate card. Empty string means "nothing to say",
+     *  which is the common case and must not render an empty pill. */
+    function formChip(card) {
+        const d = Math.round(Number(card && card.formDelta) || 0);
+        if (!d) return null;
+        return { text: (d > 0 ? '+' : '') + d, up: d > 0 };
+    }
 
     $: table = signed ? leagueTable(c) : [];
     $: showCut = table.length > 6;
@@ -431,6 +478,37 @@
         </div>
     {/if}
 
+    <!-- The room: momentum, and who the club has changed around you -->
+    <div class="pnl">
+        <div class="mom-head">
+            <span class="lbl">The room</span>
+            <span class="tiny-chip" style="--tc:{momentumBand.color}">{momentumBand.name}</span>
+        </div>
+        <div class="mom-track" role="img" aria-label={'Team momentum: ' + momentumBand.name}>
+            <span class="mom-mid" aria-hidden="true"></span>
+            <span class="mom-dot" style="left:{momentumPct}%; --tc:{momentumBand.color}"></span>
+        </div>
+        <p class="mom-note">{momentumBand.note}</p>
+
+        {#if rosterChanges.length}
+            <span class="lbl staff-lbl">Roster moves</span>
+            <ul class="moves">
+                {#each rosterChanges as ch, i (ch.year + ch.role + i)}
+                    <li class="move">
+                        <span class="move-y">{ch.year}</span>
+                        <span class="move-r">{ch.role}</span>
+                        <span class="move-t">{changeLine(ch)}</span>
+                    </li>
+                {/each}
+            </ul>
+        {:else}
+            <p class="mom-note mom-quiet">
+                Nobody has moved since you got here. Orgs make their changes in the
+                offseason, and a bad season is when they make the most of them.
+            </p>
+        {/if}
+    </div>
+
     <!-- Roster -->
     <div class="pnl">
         <span class="lbl">Starting five &#183; {year}</span>
@@ -438,12 +516,28 @@
             <div class="five">
                 {#each five as seat (seat.slot)}
                     {@const role = ROLE_BY_ID[seat.slot]}
+                    {@const chip = seat.me ? null : formChip(seat.card)}
+                    {@const fresh = !!(seat.card && seat.card.signing
+                        && Number(seat.card.signedYear) >= year - 1)}
                     <div class="seat" class:seat-me={seat.me}>
                         <div class="seat-top">
                             <span class="seat-role" style="--rc:{role ? role.accent : '#64748b'}">
                                 {role ? role.short : seat.slot}
                             </span>
                             {#if seat.me}<span class="seat-you">You</span>{/if}
+                            {#if chip}
+                                <span class="seat-form" class:seat-form-up={chip.up}>{chip.text}</span>
+                            {/if}
+                            <!-- Recency, not "is an override". A signing stays
+                                 in the seat for up to SIGNING_TENURE_YEARS, so
+                                 gating on `signing` alone left a six-year
+                                 veteran of the room labelled New. `>= year - 1`
+                                 rather than `=== year` because churn stamps
+                                 signedYear in the week-36 offseason, before the
+                                 year rolls a few weeks later. -->
+                            {#if fresh}
+                                <span class="seat-new">New</span>
+                            {/if}
                         </div>
                         {#if seat.card}
                             <Card card={seat.card} mini={true} />
@@ -921,7 +1015,51 @@
     .roster { display: flex; align-items: flex-start; gap: 22px; }
     .five { display: flex; flex-wrap: wrap; gap: 14px; flex: 1; min-width: 0; }
     .seat { display: flex; flex-direction: column; gap: 8px; width: 180px; }
-    .seat-top { display: flex; align-items: center; gap: 6px; height: 18px; }
+    /* Four chips now fit here at most (role + you/form + new), so the row wraps
+       rather than being pinned to one line at a fixed height. */
+    .seat-top { display: flex; align-items: center; gap: 5px; min-height: 18px; flex-wrap: wrap; }
+    .seat-form, .seat-new {
+        flex: none;
+        font-size: 8.5px; font-weight: 900; letter-spacing: 0.6px;
+        padding: 3px 6px; border-radius: 5px;
+    }
+    .seat-form { color: #fca5a5; background: rgba(127, 29, 29, 0.28); border: 1px solid rgba(248, 113, 113, 0.3); }
+    .seat-form-up { color: #86efac; background: rgba(20, 83, 45, 0.28); border-color: rgba(74, 222, 128, 0.3); }
+    .seat-new { color: #93c5fd; background: rgba(30, 58, 138, 0.3); border: 1px solid rgba(96, 165, 250, 0.32); text-transform: uppercase; }
+
+    /* ---------- the room ---------- */
+    .mom-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .mom-head .lbl { margin-bottom: 0; }
+    .mom-track {
+        position: relative; height: 8px; margin: 12px 0 10px;
+        border-radius: 999px; background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+    }
+    .mom-mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: rgba(71, 85, 105, 0.55); }
+    .mom-dot {
+        position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+        border-radius: 50%; background: var(--tc, #94a3b8);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--tc, #94a3b8) 22%, transparent);
+        transition: left 0.5s ease, background 0.5s ease;
+    }
+    .mom-note { font-size: 11.5px; color: #7c8db0; line-height: 1.55; }
+    .mom-quiet { color: #56688a; }
+
+    .moves { list-style: none; display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+    .move {
+        display: flex; align-items: baseline; gap: 8px;
+        padding: 6px 8px; border-radius: 7px;
+        background: rgba(15, 23, 42, 0.4);
+    }
+    .move-y {
+        flex: none; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 10px; font-weight: 800; color: #475569;
+    }
+    .move-r {
+        flex: none; min-width: 30px;
+        font-size: 9px; font-weight: 900; letter-spacing: 1px; color: #64748b;
+    }
+    .move-t { font-size: 11px; font-weight: 600; color: #94a3b8; line-height: 1.4; }
     .seat-role {
         font-size: 8.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
         padding: 3px 7px; border-radius: 5px;

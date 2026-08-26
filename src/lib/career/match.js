@@ -27,7 +27,7 @@ import {
 import {
     clamp, randInt, pick, bell, calcOVR, statusInfo, fmtKDA,
 } from './ratings.js';
-import { teamStrength, teamStrengthWithPlayer, teammatesOf } from './teams.js';
+import { teamStrength, teamStrengthWithPlayer, teammatesOf, clubStrengthFor } from './teams.js';
 import {
     career, addNews, grantGold, grantFollowers, adjustCondition, logWeek, saveCareer,
     addProficiency,
@@ -126,6 +126,32 @@ const BIAS_SWING = 0.16;        // playing to your identity, or against it
 const COMFORT_BONUS = 0.12;
 const WHEN_MATCH = 0.09;        // the option that reads the game state correctly
 const WHEN_MISS = -0.07;        // ...and the price for the ones that do not
+
+// ---------------------------------------------------------------------------
+//  STAKES
+//  clutchBonus and intlBonus have been aggregated by economy.perkEffects() since
+//  the perk board was written and read by absolutely nothing, so Ice in the
+//  Veins and Big Game Player were two of the most expensive perks in the mode
+//  and did half of what they said. They are wired here, and they are wired
+//  MULTIPLICATIVELY: the copy promises "15% more often", and 0.5 -> 0.575 is
+//  literally that, where a flat +0.15 would have been a 30% swing at the
+//  midpoint and a much bigger one at the bottom.
+//
+//  Capped, because four perks stack to 0.44 clutch plus 0.22 international and
+//  careerSmoke fails a run outright above a 7.6 mean match rating. Knockouts are
+//  a minority of games, but they are the games that decide awards - which are
+//  what pay for the perks.
+//
+//  The two are capped SEPARATELY on purpose. A single shared cap looks tidier
+//  and is wrong: with the clutch perks stacked it was already saturated, so Big
+//  Game Player's "twelve percent better at MSI and Worlds" bought nothing at
+//  all at MSI or Worlds - which is the exact class of silently-dead perk this
+//  whole wiring pass existed to remove.
+// ---------------------------------------------------------------------------
+const CLUTCH_BONUS_CAP = 0.25;
+const INTL_BONUS_CAP = 0.15;
+const KNOCKOUT_PHASES = new Set(['spring_po', 'summer_po', 'msi', 'worlds']);
+const INTL_PHASES = new Set(['msi', 'worlds']);
 
 // ---------------------------------------------------------------------------
 //  DRAFT
@@ -624,7 +650,11 @@ export function buildMatch(c, opts = {}) {
         myTeamId: myTeam.id,
         myTeamName: myTeam.name,
         myAccent: myTeam.accent || '#3b82f6',
-        myStrength: plays ? teamStrengthWithPlayer(state, myTeam) : teamStrength(myTeam, year),
+        // Benched, the player's own seat contribution comes out - but the
+        // CLUB's does not. Its signings and its momentum belong to the club
+        // whether or not you are in the chair, so the benched branch reads
+        // clubStrengthFor() rather than the written table value.
+        myStrength: plays ? teamStrengthWithPlayer(state, myTeam) : clubStrengthFor(state, myTeam),
 
         seriesScore: [0, 0],
         game: 1,
@@ -748,7 +778,32 @@ export function successChance(c, match, option, event) {
         chance += gameStateTags(match).has(option.when) ? WHEN_MATCH : WHEN_MISS;
     }
 
+    // Stakes. Multiplicative and applied last, so it scales whatever the other
+    // terms left rather than papering over a bad matchup.
+    const stakes = stakesBonus(state, match);
+    if (stakes > 0) chance *= 1 + stakes;
+
     return clamp(chance, CHANCE_MIN, CHANCE_MAX);
+}
+
+/**
+ * The clutch / international premium for this particular game, 0 when none
+ * applies. A knockout is any bracket phase OR any series long enough to be one -
+ * `bestOf` catches a tie the schedule labelled unusually, and the phase set
+ * catches a Bo1 group game at Worlds.
+ */
+function stakesBonus(state, match) {
+    if (!match) return 0;
+    const perks = perkEffects(state);
+    const phase = String(match.phase || '');
+    let bonus = 0;
+    if (KNOCKOUT_PHASES.has(phase) || num(match.bestOf, 1) >= 3) {
+        bonus += clamp(num(perks.clutchBonus, 0), 0, CLUTCH_BONUS_CAP);
+    }
+    if (INTL_PHASES.has(phase)) {
+        bonus += clamp(num(perks.intlBonus, 0), 0, INTL_BONUS_CAP);
+    }
+    return bonus;
 }
 
 function rollMagnitude(success, chance, option) {

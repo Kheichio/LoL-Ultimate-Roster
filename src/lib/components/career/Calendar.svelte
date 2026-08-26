@@ -30,6 +30,7 @@
         teamStrength, teamStrengthWithPlayer, winChance, FREE_AGENT_ID,
     } from '../../career/teams.js';
     import { matchRatingLabel } from '../../career/match.js';
+    import BracketView from './BracketView.svelte';
     import {
         ensureSeason, canAdvanceWeek, advanceWeek,
         startFixture, simFixture, completeMatch,
@@ -133,132 +134,16 @@
         } catch (e) { return null; }
     }
 
-    // -- bracket normalisation --------------------------------------------
-    //  The engine owns the bracket shape. Accept the plausible ones rather
-    //  than guessing exactly one and rendering nothing for the rest.
-    function bracketTeam(ref) {
-        if (ref === null || ref === undefined) return null;
-        if (typeof ref === 'string') {
-            const t = teamById(ref);
-            return {
-                id: ref,
-                name: t ? t.name : (ref === myId ? myTeamName : 'TBD'),
-                accent: t ? t.accent : (ref === myId ? myAccent : '#475569'),
-                score: null,
-            };
-        }
-        if (typeof ref !== 'object') return null;
-        const id = ref.id || ref.teamId || (typeof ref.team === 'string' ? ref.team : null);
-        const t = id ? teamById(id) : null;
-        const sc = ref.score ?? ref.wins ?? ref.games;
-        return {
-            id: id || null,
-            name: ref.name || (t ? t.name : (id === myId ? myTeamName : 'TBD')),
-            accent: ref.accent || (t ? t.accent : (id === myId ? myAccent : '#475569')),
-            score: Number.isFinite(Number(sc)) ? Number(sc) : null,
-        };
-    }
-
-    function normalizeTie(raw) {
-        if (!raw || typeof raw !== 'object') return null;
-        let ra = null, rb = null;
-        if (Array.isArray(raw.teams)) { ra = raw.teams[0]; rb = raw.teams[1]; }
-        else if (Array.isArray(raw.sides)) { ra = raw.sides[0]; rb = raw.sides[1]; }
-        else {
-            ra = raw.a ?? raw.home ?? raw.teamA ?? raw.top ?? raw.left ?? raw.one;
-            rb = raw.b ?? raw.away ?? raw.teamB ?? raw.bottom ?? raw.right ?? raw.two;
-        }
-        const A = bracketTeam(ra);
-        const B = bracketTeam(rb);
-        if (!A && !B) return null;
-
-        let sa = null, sb = null;
-        if (Array.isArray(raw.score) && raw.score.length >= 2) { sa = raw.score[0]; sb = raw.score[1]; }
-        else if (Array.isArray(raw.result) && raw.result.length >= 2) { sa = raw.result[0]; sb = raw.result[1]; }
-        else {
-            sa = raw.scoreA ?? raw.aScore ?? raw.homeScore ?? raw.winsA;
-            sb = raw.scoreB ?? raw.bScore ?? raw.awayScore ?? raw.winsB;
-        }
-        if (!Number.isFinite(Number(sa)) && A) sa = A.score;
-        if (!Number.isFinite(Number(sb)) && B) sb = B.score;
-        const hasScore = Number.isFinite(Number(sa)) || Number.isFinite(Number(sb));
-
-        const wref = raw.winner ?? raw.winnerId ?? raw.won;
-        const wid = typeof wref === 'string' ? wref : (wref && typeof wref === 'object' ? (wref.id || wref.teamId) : null);
-
-        const aScore = Number.isFinite(Number(sa)) ? Number(sa) : 0;
-        const bScore = Number.isFinite(Number(sb)) ? Number(sb) : 0;
-        const aWon = wid ? (A && A.id === wid) : (hasScore && aScore > bScore);
-        const bWon = wid ? (B && B.id === wid) : (hasScore && bScore > aScore);
-
-        return {
-            label: raw.label || raw.name || (raw.bestOf ? 'Bo' + raw.bestOf : ''),
-            done: !!(wid || (hasScore && aScore !== bScore)),
-            hasScore,
-            a: A ? { ...A, score: aScore, won: !!aWon, mine: !!A.id && A.id === myId } : null,
-            b: B ? { ...B, score: bScore, won: !!bWon, mine: !!B.id && B.id === myId } : null,
-        };
-    }
-
-    function roundName(i, total, given) {
-        if (given) return given;
-        const fromEnd = total - 1 - i;
-        if (fromEnd === 0) return 'Final';
-        if (fromEnd === 1) return 'Semifinals';
-        if (fromEnd === 2) return 'Quarterfinals';
-        return 'Round ' + (i + 1);
-    }
-
-    function normalizeBracket(b) {
-        if (!b || typeof b !== 'object') return null;
-
-        let rawRounds = [];
-        if (Array.isArray(b.rounds)) {
-            rawRounds = b.rounds;
-        } else {
-            const flat = Array.isArray(b.matches) ? b.matches
-                : Array.isArray(b.ties) ? b.ties
-                : Array.isArray(b.series) ? b.series : [];
-            if (flat.length) {
-                const map = new Map();
-                flat.forEach((m, i) => {
-                    const key = m && (m.round ?? m.roundIndex ?? m.stage);
-                    const k = key === undefined || key === null ? 0 : key;
-                    if (!map.has(k)) map.set(k, []);
-                    map.get(k).push(m);
-                });
-                rawRounds = [...map.entries()]
-                    .sort((x, y) => (typeof x[0] === 'number' && typeof y[0] === 'number' ? x[0] - y[0] : 0))
-                    .map(([k, ties]) => ({ name: typeof k === 'string' ? k : '', ties }));
-            }
-        }
-
-        const rounds = rawRounds.map((r, i) => {
-            const ties = Array.isArray(r)
-                ? r
-                : (r && (r.ties || r.matches || r.series || r.games || r.pairs)) || [];
-            return {
-                name: roundName(i, rawRounds.length, !Array.isArray(r) && r ? (r.name || r.label) : ''),
-                ties: (Array.isArray(ties) ? ties : []).map(normalizeTie).filter(Boolean),
-            };
-        }).filter(r => r.ties.length);
-
-        if (!rounds.length) return null;
-
-        const kind = String(b.kind ?? b.phase ?? b.id ?? '').toLowerCase();
-        const ph = PHASES.find(p => kind && (p.id === kind || kind.includes(p.id)));
-        const champRef = b.champion ?? b.winner ?? b.winnerId ?? b.championId;
-        const champ = bracketTeam(champRef);
-
-        return {
-            title: b.title || b.name || (ph ? ph.name : 'Playoff Bracket'),
-            accent: ph ? ph.accent : '#a78bfa',
-            bestOf: num(b.bestOf, 0),
-            champion: champ && champ.id ? champ : null,
-            rounds,
-        };
-    }
-    $: bracket = normalizeBracket(season.bracket);
+    // -- bracket ----------------------------------------------------------
+    //  Normalisation, byes, the round ladder and every degenerate save shape
+    //  live in BracketView.svelte now. This screen only decides which phase
+    //  colour the panel wears.
+    $: bracketPhase = (() => {
+        const kind = String(season.bracket?.kind ?? season.bracket?.phase ?? '').toLowerCase();
+        if (!kind) return null;
+        return PHASES.find(ph => ph.id === kind || kind.includes(ph.id)) || null;
+    })();
+    $: bracketAccent = bracketPhase ? bracketPhase.accent : '#a78bfa';
 
     // -- history ----------------------------------------------------------
     const SPLIT_ORDER = { spring: 0, summer: 1 };
@@ -573,67 +458,16 @@
     <div class="block">
         <div class="block-head">
             <div class="side-label">Bracket</div>
-            {#if bracket && bracket.bestOf}
-                <span class="block-note">Best of {bracket.bestOf}</span>
-            {/if}
         </div>
-
-        {#if !bracket}
-            <div class="panel empty empty-sm">
-                <div class="empty-ico" aria-hidden="true">&#x1F3C6;</div>
-                <h3 class="empty-h">No bracket running</h3>
-                <p class="empty-p">
-                    Playoff and international brackets appear here during the postseason
-                    weeks. Finish top six in the regular split to be drawn into one.
-                </p>
-            </div>
-        {:else}
-            <div class="panel bk-panel" style="--a:{bracket.accent}">
-                <div class="bk-head">
-                    <span class="bk-title">{bracket.title}</span>
-                    {#if bracket.champion}
-                        <span class="bk-champ" style="--t:{bracket.champion.accent}">
-                            <span aria-hidden="true">&#x1F3C6;</span> {bracket.champion.name}
-                        </span>
-                    {/if}
-                </div>
-
-                <div class="bk-scroll">
-                    <div class="bk">
-                        {#each bracket.rounds as r}
-                            <div class="bk-round">
-                                <div class="bk-rname">{r.name}</div>
-                                {#each r.ties as t}
-                                    <div class="tie" class:tie-live={!t.done}>
-                                        {#each [t.a, t.b] as side}
-                                            {#if side}
-                                                <div
-                                                    class="tie-row"
-                                                    class:tie-win={side.won}
-                                                    class:tie-mine={side.mine}
-                                                    style="--t:{side.accent}"
-                                                >
-                                                    <span class="tie-bar" aria-hidden="true"></span>
-                                                    <span class="tie-name">{side.name}</span>
-                                                    <span class="tie-sc">{t.hasScore ? side.score : '-'}</span>
-                                                </div>
-                                            {:else}
-                                                <div class="tie-row tie-tbd">
-                                                    <span class="tie-bar" aria-hidden="true"></span>
-                                                    <span class="tie-name">TBD</span>
-                                                    <span class="tie-sc">-</span>
-                                                </div>
-                                            {/if}
-                                        {/each}
-                                        {#if t.label}<div class="tie-lbl">{t.label}</div>{/if}
-                                    </div>
-                                {/each}
-                            </div>
-                        {/each}
-                    </div>
-                </div>
-            </div>
-        {/if}
+        <div class="panel bk-panel">
+            <BracketView
+                bracket={season.bracket}
+                myId={c.player.clubId}
+                myName={myTeamName}
+                myAccent={myAccent}
+                accent={bracketAccent}
+            />
+        </div>
     </div>
 
     <!-- ============== PAST SEASONS ============== -->
@@ -973,45 +807,8 @@
     .sim:hover:not(:disabled) { background: rgba(71, 85, 105, 0.6); color: #e2e8f0; }
 
     /* =========== BRACKET =========== */
+    /* The ladder itself is BracketView.svelte. This is only the panel it sits in. */
     .bk-panel { padding: 16px; }
-    .bk-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
-    .bk-title { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 15px; font-weight: 700; color: var(--a); }
-    .bk-champ {
-        display: inline-flex; align-items: center; gap: 6px;
-        font-size: 11px; font-weight: 800; color: var(--t);
-        padding: 4px 10px; border-radius: 8px;
-        background: color-mix(in srgb, var(--t) 12%, transparent);
-        border: 1px solid color-mix(in srgb, var(--t) 30%, transparent);
-    }
-    .bk-scroll { overflow-x: auto; padding-bottom: 6px; }
-    .bk-scroll::-webkit-scrollbar { height: 6px; }
-    .bk-scroll::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.4); border-radius: 4px; }
-    .bk { display: flex; align-items: flex-start; gap: 14px; min-width: min-content; }
-    .bk-round { flex: 0 0 205px; display: flex; flex-direction: column; gap: 10px; }
-    .bk-rname { font-size: 9px; font-weight: 900; letter-spacing: 1.4px; text-transform: uppercase; color: #3f5069; }
-    .tie { border-radius: 12px; overflow: hidden; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(51, 65, 85, 0.28); }
-    .tie-live { border-color: rgba(139, 92, 246, 0.34); }
-    .tie-row {
-        display: grid; grid-template-columns: 3px minmax(0, 1fr) auto;
-        align-items: center; gap: 8px; padding: 8px 10px;
-    }
-    .tie-row + .tie-row { border-top: 1px solid rgba(51, 65, 85, 0.22); }
-    .tie-bar { display: block; width: 3px; height: 16px; border-radius: 3px; background: var(--t, #334155); opacity: 0.8; }
-    .tie-name {
-        font-size: 11.5px; font-weight: 700; color: #64748b;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .tie-win .tie-name { color: #e2e8f0; }
-    .tie-mine .tie-name { color: #c4b5fd; }
-    .tie-mine { background: rgba(139, 92, 246, 0.09); }
-    .tie-sc { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 800; color: #475569; }
-    .tie-win .tie-sc { color: #4ade80; }
-    .tie-tbd .tie-name { color: #334155; font-style: italic; }
-    .tie-lbl {
-        padding: 3px 10px 5px; color: #334155;
-        font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
-        border-top: 1px solid rgba(51, 65, 85, 0.16);
-    }
 
     /* =========== TABLE =========== */
     .tbl-panel { padding: 6px; }

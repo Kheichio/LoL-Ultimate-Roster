@@ -58,6 +58,13 @@ export function blankCareer() {
             // means "use UNSIGNED_SOFT_CAP".
             softCap: 0,
 
+            // Market-value premium, written by the valueMult legacy perks the
+            // same way softCap is written by Self-Made. It lives on the player
+            // rather than being derived from inventory.perks because the only
+            // live reader is the marketValue store in THIS file, and importing
+            // economy.js here would be a cycle. Additive fraction, 0 = none.
+            valueMult: 0,
+
             // Champion proficiency: championId -> games played on it. Raw counts,
             // not a derived mastery value, so the curve in constants.js can be
             // retuned later without invalidating every save. The signature pick
@@ -87,8 +94,24 @@ export function blankCareer() {
             lifestyle: {},           // { apartment: 1, trainer: 1, ... }
             consumables: {},         // { energy_drink: 3, ... } → count held
             perks: [],               // permanent legacy unlocks (ids)
+            trades: {},              // { lx_appearance: 4, ... } → times bought; the
+                                     // count IS the price ladder, so it must persist
+            monuments: [],           // legacy-score monuments, in the order bought
         },
         sponsors: [],                // [{ id, name, weekly, endWeekAbs }]
+
+        // The player's own club, and only theirs. Every other org in the mode is
+        // a pure derivation of (teamId, year) out of the card database and stays
+        // that way — this block is the one place a roster is allowed to have a
+        // history. `teamId` is what scopes it: if it does not match
+        // player.clubId the whole block is ignored, which is how a transfer
+        // resets momentum and roster changes without needing a hook.
+        club: {
+            teamId: null,
+            momentum: 0,             // -1..1, how the room is going right now
+            roster: {},              // ROLE → a replacement card that overrides the derived seat
+            changes: [],             // [{ year, role, inName, outName, reason }] newest first
+        },
 
         season: {
             split: 'spring',         // 'spring' | 'summer'
@@ -196,6 +219,7 @@ export const marketValue   = derived(career, $c => marketValueFor({
     age: $c.player.age,
     region: $c.player.region,
     hype: $c.player.hype,
+    valueMult: $c.player.valueMult,
 }));
 
 /** Absolute week counter — useful for anything with a duration (sponsors,
@@ -389,6 +413,44 @@ function hydrate(raw) {
         ? raw.player.traits.filter(t => typeof t === 'string' && TRAIT_BY_ID[t])
         : [];
     out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
+    // Fractional on purpose (0.25 + 0.40), so it is clamped and not rounded.
+    out.player.valueMult = clamp(Number(out.player.valueMult) || 0, 0, 5);
+
+    // Inventory shapes hydrate() never used to look inside. `trades` is the
+    // price ladder for a repeatable purchase and `monuments` feeds the
+    // retirement score, so a save carrying a string, an array or a negative
+    // count must degrade to "nothing bought", never to a free ladder reset.
+    {
+        const rawTrades = out.inventory.trades;
+        const clean = {};
+        if (rawTrades && typeof rawTrades === 'object' && !Array.isArray(rawTrades)) {
+            for (const [id, v] of Object.entries(rawTrades)) {
+                const n = Math.floor(Number(v));
+                if (Number.isFinite(n) && n > 0) clean[id] = Math.min(n, 9999);
+            }
+        }
+        out.inventory.trades = clean;
+        out.inventory.monuments = Array.isArray(out.inventory.monuments)
+            ? out.inventory.monuments.filter(x => typeof x === 'string')
+            : [];
+    }
+
+    // The club block. Defensive to the same standard as inventory: an absent or
+    // hand-edited block must read as "no roster history", never crash a screen.
+    {
+        const raw = (out.club && typeof out.club === 'object' && !Array.isArray(out.club)) ? out.club : {};
+        const roster = (raw.roster && typeof raw.roster === 'object' && !Array.isArray(raw.roster)) ? raw.roster : {};
+        const seats = {};
+        for (const [role, card] of Object.entries(roster)) {
+            if (card && typeof card === 'object' && typeof card.name === 'string') seats[role] = card;
+        }
+        out.club = {
+            teamId: typeof raw.teamId === 'string' ? raw.teamId : null,
+            momentum: clamp(Number(raw.momentum) || 0, -1, 1),
+            roster: seats,
+            changes: Array.isArray(raw.changes) ? raw.changes.filter(Boolean).slice(0, 24) : [],
+        };
+    }
 
     // Proficiency is a plain id -> count map. A save can carry null, an array,
     // counts for champions that no longer exist, or negative/NaN values, none of
@@ -705,6 +767,18 @@ export function setSoftCap(value) {
     career.update(c => (c.player.softCap === v ? c : { ...c, player: { ...c.player, softCap: v } }));
 }
 
+/** Add to the market-value premium. Additive because two perks grant it, and
+ *  called exactly once per perk by economy.applyPermanentPerk() - which is
+ *  guarded by flags.perksApplied, so it can never double-apply. */
+export function addValueMult(delta) {
+    const d = Number(delta) || 0;
+    if (d <= 0) return;
+    career.update(c => ({
+        ...c,
+        player: { ...c.player, valueMult: clamp((Number(c.player.valueMult) || 0) + d, 0, 5) },
+    }));
+}
+
 /**
  * Bank games played on a champion. Called once per game played, on whatever was
  * actually picked in champion select — not on the signature pick, which is a
@@ -792,6 +866,27 @@ export function addPerk(id) {
     career.update(c => c.inventory.perks.includes(id)
         ? c
         : { ...c, inventory: { ...c.inventory, perks: [...c.inventory.perks, id] } });
+}
+
+/** Bump the times-bought counter for a repeatable legacy trade. The counter IS
+ *  the price ladder, so it is never reset by anything short of a new career. */
+export function addTrade(id, n = 1) {
+    if (!id) return 0;
+    let total = 0;
+    career.update(c => {
+        const cur = (c.inventory.trades && typeof c.inventory.trades === 'object') ? c.inventory.trades : {};
+        total = Math.min(9999, Math.max(0, Math.round(Number(cur[id]) || 0) + Math.round(Number(n) || 1)));
+        return { ...c, inventory: { ...c.inventory, trades: { ...cur, [id]: total } } };
+    });
+    return total;
+}
+
+export function addMonument(id) {
+    if (!id) return;
+    career.update(c => {
+        const cur = Array.isArray(c.inventory.monuments) ? c.inventory.monuments : [];
+        return cur.includes(id) ? c : { ...c, inventory: { ...c.inventory, monuments: [...cur, id] } };
+    });
 }
 
 // ── Awards / trophies ────────────────────────────────────────────────────

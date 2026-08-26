@@ -7,6 +7,13 @@
     //  on screen: where somebody was, how many were visible, who was
     //  missing, or which objective the enemy was stacking around.
     //
+    //  THE MAP IS THE ONLY THING ON A CLOCK. Answering is untimed on
+    //  purpose: the skill being trained is what you took off the minimap in
+    //  the glance you were given, not how fast you can then drive a mouse to
+    //  a coordinate. An answer timer measured the second thing and threw away
+    //  reads the player had actually made, which is why it is gone. The
+    //  countdown bar now runs during the FLASH and is empty afterwards.
+    //
     //  Self-contained on purpose: no stores, no career imports, no assets.
     // ===================================================================
     import { onMount, onDestroy } from 'svelte';
@@ -18,13 +25,15 @@
 
     // -- difficulty table ------------------------------------------------
     //  ready  = "watch the map" beat before the flash
-    //  flash  = how long the blips stay up
-    //  ans    = answer window (a miss on the clock scores zero)
+    //  flash  = how long the blips stay up. THE ONLY TIMED VALUE IN THE DRILL.
     //  bull   = bullseye radius in map units, fall = linear falloff after it
+    //
+    //  There is deliberately no `ans` any more. Difficulty lives entirely in how
+    //  little of the map you are shown and how much is on it.
     const CFG = {
-        1: { qs: 9,  ready: 480, flash: 900, ans: 3200, bull: 6.0, fall: 18, emin: 2, emax: 3, amin: 0, amax: 0, tag: 'Basic Drill' },
-        2: { qs: 10, ready: 430, flash: 620, ans: 2800, bull: 5.0, fall: 16, emin: 3, emax: 4, amin: 0, amax: 1, tag: 'Advanced' },
-        3: { qs: 11, ready: 380, flash: 380, ans: 2450, bull: 4.5, fall: 14, emin: 4, emax: 5, amin: 1, amax: 2, tag: 'Elite' },
+        1: { qs: 9,  ready: 480, flash: 900, bull: 6.0, fall: 18, emin: 2, emax: 3, amin: 0, amax: 0, tag: 'Basic Drill' },
+        2: { qs: 10, ready: 430, flash: 620, bull: 5.0, fall: 16, emin: 3, emax: 4, amin: 0, amax: 1, tag: 'Advanced' },
+        3: { qs: 11, ready: 380, flash: 380, bull: 4.5, fall: 14, emin: 4, emax: 5, amin: 1, amax: 2, tag: 'Elite' },
     };
 
     $: dNum = Math.max(1, Math.min(3, Math.round(Number(difficulty) || 1)));
@@ -172,11 +181,14 @@
         if (rafId) cancelAnimationFrame(rafId);
         rafId = 0;
     }
+    // Display only. It used to expire the question and score it zero; now the
+    // only thing it counts down is how long the blips stay up, and the step
+    // transition that follows is owned by the later() chain in nextQuestion().
     function tickCountdown() {
         rafId = requestAnimationFrame(() => {
             const left = deadline - (typeof performance !== 'undefined' ? performance.now() : Date.now());
             timeLeft = Math.max(0, left);
-            if (left <= 0) { rafId = 0; submit(null); }
+            if (left <= 0) rafId = 0;
             else tickCountdown();
         });
     }
@@ -298,12 +310,12 @@
             out.target = { x: t.x, y: t.y };
             out.targetName = t.n;
             out.prompt = 'Where was ' + t.name + ' (' + t.role + ') last seen?';
-            out.hint = 'Click the map, or move the crosshair with the arrow keys and press Enter.';
+            out.hint = 'Click the map, or move the crosshair with the arrow keys and press Enter. No clock - take your time.';
         } else if (kind === 'objective') {
             out.target = { x: obj.x, y: obj.y };
             out.targetName = obj.name;
             out.prompt = 'Which objective were they stacking around?';
-            out.hint = 'Click the pit they collapsed on. Arrow keys + Enter also work.';
+            out.hint = 'Click the pit they collapsed on. Arrow keys + Enter also work. No clock - take your time.';
         } else if (kind === 'count') {
             out.mode = 'choice';
             out.choices = [1, 2, 3, 4, 5].map((v) => ({ label: String(v), sub: v === 1 ? 'enemy' : 'enemies', value: v }));
@@ -351,10 +363,12 @@
         liveMsg = 'Question ' + (qIndex + 1) + ' of ' + C.qs + '. Watch the map.';
         later(() => {
             step = 'flash';
+            startCountdown(C.flash);        // the drill's one and only clock
             later(() => {
+                stopCountdown();
+                timeLeft = 0;
                 step = 'ask';
-                liveMsg = q.prompt;
-                startCountdown(C.ans);
+                liveMsg = q.prompt + ' Take as long as you need.';
             }, C.flash);
         }, C.ready);
     }
@@ -366,6 +380,9 @@
         return { acc, d };
     }
 
+    // `payload === null` means "no call made". Nothing reaches it any more now
+    // that the answer clock is gone; the handling is kept because it is the
+    // correct behaviour for an unanswered question and costs nothing.
     function submit(payload) {
         if (phase !== 'play' || step !== 'ask' || !q) return;
         stopCountdown();
@@ -602,7 +619,8 @@
                 <ul class="how-l">
                     <li><span class="kbd">Watch</span> the map. Red circles are enemies, blue squares are your own team.</li>
                     <li><span class="kbd">Click</span> the map to answer position questions - or arrow keys to move the crosshair, <span class="kbd">Enter</span> to lock in.</li>
-                    <li><span class="kbd">1</span>-<span class="kbd">5</span> answers multiple choice. Every question is on a clock.</li>
+                    <li><span class="kbd">1</span>-<span class="kbd">5</span> answers multiple choice.</li>
+                    <li><b>Only the map is on a clock.</b> Once the blips are gone, take as long as you like.</li>
                     <li>Bullseyes score full marks, near misses score partial, the wrong quadrant scores nothing.</li>
                 </ul>
             </div>
@@ -611,7 +629,7 @@
                 <div class="spec"><span class="sv">{preview.qs}</span><span class="sl">Questions</span></div>
                 <div class="spec"><span class="sv">{preview.flash}<i>ms</i></span><span class="sl">Flash</span></div>
                 <div class="spec"><span class="sv">{preview.emin}-{preview.emax}</span><span class="sl">Blips</span></div>
-                <div class="spec"><span class="sv">{(preview.ans / 1000).toFixed(1)}<i>s</i></span><span class="sl">To answer</span></div>
+                <div class="spec"><span class="sv">None</span><span class="sl">Answer clock</span></div>
             </div>
 
             <div class="intro-btns">
@@ -814,11 +832,13 @@
                 {/if}
             </div>
 
+            <!-- Runs during the FLASH only. Empty while you answer, because
+                 answering is not timed. -->
             <div class="clock" aria-hidden="true">
                 <div class="clock-fill"
                      class:warn={timeFrac < 0.35 && timeFrac >= 0.15}
                      class:crit={timeFrac < 0.15}
-                     style="width:{step === 'ask' ? Math.round(timeFrac * 100) : 0}%"></div>
+                     style="width:{step === 'flash' ? Math.round(timeFrac * 100) : 0}%"></div>
             </div>
         </div>
     {/if}

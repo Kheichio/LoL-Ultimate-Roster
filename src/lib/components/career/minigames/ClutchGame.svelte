@@ -5,11 +5,23 @@
     //  Stop a sweeping marker inside a target zone. Trivial on its own; the
     //  drill is the interference: the zone shrinks every time you land it,
     //  the chat gets nastier, the sweep changes speed mid-swing, the bar
-    //  reverses without warning and the target sometimes jumps.
+    //  reverses, and the target sometimes moves.
     //
     //  Miss three times and the TILT METER fills: the next two reps are
     //  worth double and every interference chance spikes. Recovering from a
     //  mistake is the entire point of the exercise.
+    //
+    //  EVERY INTERFERENCE IS TELEGRAPHED. That is not politeness, it is what
+    //  makes this a composure drill rather than a coin flip. The first cut
+    //  applied a 2x speed jump on the same frame the badge appeared and
+    //  teleported the scoring zone under a marker that was already committed,
+    //  which is unreadable rather than hard - there was no input that beat it.
+    //  So: a warning badge lands `tell` ms before the change, speed ramps
+    //  instead of jumping, the zone SLIDES to its new home, and a click aimed
+    //  at where the zone was still scores for a moment after it leaves
+    //  (graceC / graceUntil). Only one event is ever in flight, the first and
+    //  last stretch of every rep are clean, and the approach you commit to is
+    //  always the approach you are judged on.
     //
     //  Self-contained: no stores, no career imports, no assets, no network.
     // =====================================================================
@@ -32,21 +44,47 @@
             level:    d,
             name:     DIFF_NAMES[i],
             reps:     [14, 15, 16][i],          // fixed rep count
-            repMs:    [3200, 2900, 2600][i],    // per-rep timeout
+            // The only tuning number that moved. A change announced ~480ms
+            // ahead needs a rep long enough that the telegraph is not eaten by
+            // the timeout; everything below is exactly what it was.
+            repMs:    [3500, 3200, 2900][i],    // per-rep timeout
+            // DIFFICULTY DIALS - UNCHANGED ON PURPOSE.
+            // The drill was not too hard, it was unreadable: a simulation of
+            // the old scoring maths puts a near-perfect player at a 52% hit
+            // rate and a 0.47 session score, because roughly a third of reps
+            // were decided by a 2x speed jump or a teleporting zone that no
+            // input could beat. Removing that is worth about +0.34 of session
+            // score on its own. Softening the sweep or the zone on top of it
+            // took a competent session to 0.63 against a 0.50 reference (see
+            // the WaveControlGame calibration in tools/waveSim.mjs), i.e. it
+            // would have made CMP the cheapest attribute in the mode to max.
+            // So: the precision demand is the original one, and the fairness
+            // fixes are the whole change.
             speed:    [0.66, 0.86, 1.06][i],    // bar-widths per second
             half0:    [0.115, 0.094, 0.078][i], // starting half-width of zone
             halfMin:  [0.030, 0.024, 0.019][i],
             shrink:   [0.900, 0.885, 0.870][i], // per landed rep
             regrow:   [1.260, 1.220, 1.180][i], // forgiveness after a miss
             chatMs:   [1250, 1000, 820][i],
-            evtBase:  [0.00, 0.12, 0.24][i],
-            maxEvt:   [2, 3, 3][i],
+            evtBase:  [0.00, 0.10, 0.20][i],
+            // One event a rep on Basic, two higher up. Three at once was the
+            // difference between "interference" and "no readable input".
+            maxEvt:   [1, 2, 2][i],
+            // How long the warning badge is up before the change actually lands.
+            tell:     [560, 480, 420][i],
         };
     }
 
     // Hard guard. Checked before each rep, so the absolute worst case is this
     // plus one full rep timeout plus a gap - comfortably inside 60s.
-    const SESSION_CAP_MS = 48000;
+    const SESSION_CAP_MS = 52000;
+
+    // Interference physics. Nothing here is instant on purpose.
+    const SPEED_RAMP_MS = 240;      // a speed change eases in over this
+    const SHIFT_SLIDE_MS = 300;     // the zone travels to its new centre
+    const SHIFT_HOLD_MS = 900;      // ...stays there, then slides home
+    const GRACE_TAIL_MS = 260;      // old centre still scores this long after a move
+    const EVENT_GAP_MS = 700;       // minimum air between two events landing
 
     // ---- view / round state ---------------------------------------------
     let view = 'intro';             // intro | playing | result
@@ -56,13 +94,29 @@
     let rep = 0;
     let pos = 0.5;                  // marker position, 0..1 across the bar
     let dir = 1;
+
+    // Speed is eased, never set. speedMul is what the sweep reads; the three
+    // fields under it are the ramp that produces it.
     let speedMul = 1;
+    let speedFrom = 1;
+    let speedTo = 1;
+    let speedAt = 0;
 
     let homeC = 0.5;                // where the zone really lives
-    let targetC = 0.5;              // where it is drawn right now (teleports)
+    let targetC = 0.5;              // where it is drawn right now (slides)
     let halfW = 0.115;
     let tightest = 0.115;           // smallest zone actually landed in
     let teleported = false;
+
+    // The zone slide, and the forgiveness that comes with it: for GRACE_TAIL_MS
+    // after the zone starts moving, a click aimed at where it WAS still scores.
+    // Without this the drill punishes a decision the player made before there
+    // was anything to see.
+    let slideFrom = 0.5;
+    let slideTo = 0.5;
+    let slideAt = 0;
+    let graceC = null;
+    let graceUntil = 0;
 
     let hits = 0, misses = 0, streak = 0, best = 0;
     let weightSum = 0, weightedHits = 0, precSum = 0;
@@ -190,23 +244,58 @@
     }
 
     // ---- interference badges ---------------------------------------------
-    function addBadge(text) {
-        const b = { id: ++badgeSeq, text };
+    //  kind 'warn' is the telegraph, kind 'live' is the change actually landing.
+    function addBadge(text, ms = 900, kind = 'live') {
+        const b = { id: ++badgeSeq, text, kind };
         badges = [...badges, b].slice(-3);
-        later(repTimers, () => { badges = badges.filter(x => x.id !== b.id); }, 950);
+        later(repTimers, () => { badges = badges.filter(x => x.id !== b.id); }, ms);
     }
 
     function chanceOf(base) {
-        return Math.min(0.95, base + conf.evtBase + 0.018 * Math.max(0, rep - 1) + (tiltActive ? 0.32 : 0));
+        return Math.min(0.90, base + conf.evtBase + 0.012 * Math.max(0, rep - 1) + (tiltActive ? 0.18 : 0));
     }
 
     // ---- the sweep -------------------------------------------------------
+    function easeOut(k) { return 1 - (1 - k) * (1 - k); }
+
+    /** Start easing the sweep toward a new multiplier. Never assigns speedMul
+     *  directly - a step change in speed is exactly the thing the marker cannot
+     *  be tracked through. */
+    function rampSpeed(to) {
+        speedFrom = speedMul;
+        speedTo = to;
+        speedAt = Date.now();
+    }
+
+    /** Send the zone to a new centre, travelling rather than teleporting, and
+     *  keep the centre it is leaving scoreable for a moment. */
+    function slideZone(to) {
+        const now = Date.now();
+        graceC = targetC;
+        graceUntil = now + SHIFT_SLIDE_MS + GRACE_TAIL_MS;
+        slideFrom = targetC;
+        slideTo = to;
+        slideAt = now;
+    }
+
     function loop(t) {
         rafId = requestAnimationFrame(loop);
         const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
         lastT = t;
         if (phase !== 'sweep') return;
-        const sp = conf.speed * (1 + 0.03 * Math.max(0, rep - 1)) * (tiltActive ? 1.22 : 1) * speedMul;
+
+        const now = Date.now();
+
+        if (speedMul !== speedTo) {
+            const k = Math.min(1, (now - speedAt) / SPEED_RAMP_MS);
+            speedMul = k >= 1 ? speedTo : speedFrom + (speedTo - speedFrom) * easeOut(k);
+        }
+        if (targetC !== slideTo) {
+            const k = Math.min(1, (now - slideAt) / SHIFT_SLIDE_MS);
+            targetC = k >= 1 ? slideTo : slideFrom + (slideTo - slideFrom) * easeOut(k);
+        }
+
+        const sp = conf.speed * (1 + 0.03 * Math.max(0, rep - 1)) * (tiltActive ? 1.10 : 1) * speedMul;
         let p = pos + dir * sp * dt;
         if (p >= 1) { p = 1; dir = -1; }
         else if (p <= 0) { p = 0; dir = 1; }
@@ -227,12 +316,15 @@
 
         clearBucket(repTimers);
         badges = [];
-        speedMul = 1;
+        speedMul = 1; speedFrom = 1; speedTo = 1; speedAt = 0;
         teleported = false;
+        graceC = null;
+        graceUntil = 0;
         flashKind = '';
 
         homeC = clampCenter(0.12 + Math.random() * 0.76);
         targetC = homeC;
+        slideFrom = homeC; slideTo = homeC; slideAt = 0;
 
         let start = Math.random();
         let guard = 0;
@@ -249,44 +341,65 @@
         later(repTimers, () => judge(true), conf.repMs);
     }
 
+    /**
+     * Lay out this rep's interference.
+     *
+     * Two rules do all the work of turning this from a coin flip into a drill:
+     *   1. Every change is announced `conf.tell` ms before it happens, so there
+     *      is always an input that beats it.
+     *   2. Events never overlap and never land in the opening or closing stretch
+     *      of a rep, so the shot you line up is the shot you take.
+     * A cursor walks forward through the rep and each scheduled event pushes it
+     * past its own telegraph plus EVENT_GAP_MS, which is what enforces rule 2.
+     */
     function scheduleEvents() {
-        const window0 = Math.max(400, conf.repMs * 0.62);
+        const first = 460;
+        // Nothing lands inside the last stretch - the final approach is clean.
+        const last = Math.max(first + 150, conf.repMs - (conf.tell + 700));
         let slots = conf.maxEvt;
+        let cursor = first;
 
-        const roll = (p, fn) => {
-            if (slots <= 0) return;
+        const roll = (p, warn, fn) => {
+            if (slots <= 0 || cursor >= last) return;
             if (Math.random() >= p) return;
             slots -= 1;
-            const at = 300 + Math.random() * (window0 - 300);
-            later(repTimers, () => { if (phase === 'sweep') fn(); }, at);
+            const at = cursor + Math.random() * (last - cursor);
+            cursor = at + conf.tell + EVENT_GAP_MS;
+            later(repTimers, () => {
+                if (phase === 'sweep') addBadge(warn, conf.tell + 120, 'warn');
+            }, at);
+            later(repTimers, () => { if (phase === 'sweep') fn(); }, at + conf.tell);
         };
 
-        // speed changes mid-swing, no warning
-        roll(chanceOf(0.34), () => {
-            const up = Math.random() < 0.55 + 0.1 * (conf.level - 1);
-            speedMul = up ? (1.45 + Math.random() * 0.55) : (0.48 + Math.random() * 0.16);
+        // Speed change. Decided up front so the warning can name which way it
+        // is going, and eased in rather than snapped.
+        const up = Math.random() < 0.55 + 0.1 * (conf.level - 1);
+        roll(chanceOf(0.34), up ? 'SPEED UP INCOMING' : 'SPEED DROP INCOMING', () => {
+            rampSpeed(up ? (1.20 + Math.random() * 0.24) : (0.66 + Math.random() * 0.14));
             addBadge(up ? 'SPEED UP' : 'SPEED DROP');
         });
 
-        // the bar flips direction under the marker
-        roll(chanceOf(0.18), () => {
+        // The bar reverses.
+        roll(chanceOf(0.18), 'REVERSE INCOMING', () => {
             dir = -dir;
             addBadge('INVERTED');
         });
 
-        // the zone jumps somewhere else, then snaps back
-        roll(chanceOf(0.13), () => {
+        // The zone moves, holds, then travels back. It never appears somewhere
+        // new without crossing the ground in between, and the centre it left
+        // keeps scoring while it is in transit.
+        roll(chanceOf(0.13), 'TARGET MOVING', () => {
             let c = Math.random();
             let g = 0;
             while (Math.abs(c - homeC) < 0.26 && g++ < 40) c = Math.random();
-            targetC = clampCenter(c);
+            slideZone(clampCenter(c));
             teleported = true;
-            addBadge('TARGET SHIFT');
+            addBadge('TARGET SHIFT', SHIFT_SLIDE_MS + SHIFT_HOLD_MS);
             later(repTimers, () => {
                 if (phase !== 'sweep') return;
-                targetC = homeC;
+                slideZone(homeC);
                 teleported = false;
-            }, 520);
+            }, SHIFT_SLIDE_MS + SHIFT_HOLD_MS);
         });
     }
 
@@ -297,7 +410,16 @@
         badges = [];
 
         const weight = tiltActive ? 2 : 1;
-        const dist = timedOut ? 1 : Math.abs(pos - targetC);
+        // While the zone is travelling, the centre it left still counts. The
+        // player aimed at something that was there when they committed, and a
+        // composure drill has no business punishing that.
+        const graceLive = graceC !== null && Date.now() < graceUntil;
+        const dist = timedOut
+            ? 1
+            : Math.min(
+                Math.abs(pos - targetC),
+                graceLive ? Math.abs(pos - graceC) : Infinity,
+            );
         const hit = !timedOut && dist <= halfW;
         const prec = hit ? Math.max(0, 1 - dist / Math.max(1e-6, halfW)) : 0;
 
@@ -422,9 +544,12 @@
     function startRound() {
         conf = cfg(lvl);
         rep = 0;
-        pos = 0.5; dir = 1; speedMul = 1;
+        pos = 0.5; dir = 1;
+        speedMul = 1; speedFrom = 1; speedTo = 1; speedAt = 0;
         halfW = conf.half0; tightest = conf.half0;
         homeC = 0.5; targetC = 0.5; teleported = false;
+        slideFrom = 0.5; slideTo = 0.5; slideAt = 0;
+        graceC = null; graceUntil = 0;
         hits = 0; misses = 0; streak = 0; best = 0;
         weightSum = 0; weightedHits = 0; precSum = 0; distSum = 0; played = 0;
         tilt = 0; tiltActive = false; tiltLeft = 0; tiltRounds = 0; tiltHits = 0;
@@ -509,10 +634,11 @@
             <p class="cg-body">
                 A marker sweeps across the bar and you stop it inside the zone. That part is easy.
                 The drill is everything trying to stop you: the zone shrinks every time you land it,
-                your team fills the chat with abuse, the sweep changes speed mid-swing, the bar
-                reverses without warning and the zone occasionally jumps somewhere else. Miss three
-                times and the tilt meter fills - the next two reps are worth double and the
-                interference peaks. Composure is not never missing. It is what you do on rep four.
+                your team fills the chat with abuse, the sweep changes pace, the bar reverses and the
+                zone sometimes moves somewhere else entirely. Every one of those is announced a beat
+                before it happens - there is always a shot that beats it, and finding that shot while
+                the chat is going is the exercise. Miss three times and the tilt meter fills: the next
+                two reps are worth double. Composure is not never missing. It is what you do on rep four.
             </p>
 
             <div class="cg-how">
@@ -521,6 +647,8 @@
                     <li><b>Space</b> or <b>Enter</b> stops the marker. Mouse or touch: hit <b>STOP</b>, or tap the bar.</li>
                     <li>Land inside the zone. The closer to the centre line, the more the rep is worth.</li>
                     <li>Every landed rep shrinks the zone. Every miss feeds the tilt meter.</li>
+                    <li>An <b>amber badge</b> is a warning. The change it names lands about half a second later.</li>
+                    <li>If the zone moves while you are committing, the spot you aimed at still scores.</li>
                     <li>Reps played while <b>TILTED</b> count double. Those are the ones that decide your score.</li>
                     <li>Wait too long and the rep expires as a miss. Take the shot you have.</li>
                 </ul>
@@ -570,7 +698,7 @@
             >
                 <div class="cg-badges" aria-hidden="true">
                     {#each badges as b (b.id)}
-                        <span class="cg-badge">{b.text}</span>
+                        <span class="cg-badge cg-badge-{b.kind}">{b.text}</span>
                     {/each}
                 </div>
 
@@ -810,6 +938,15 @@
         color: #fde68a; background: rgba(120,53,15,0.5); border: 1px solid rgba(245,158,11,0.35);
         padding: 3px 8px; border-radius: 7px;
     }
+    /* The telegraph. Deliberately louder than the change it announces - reading
+       this badge in time IS the skill the drill is testing. */
+    .cg-badge-warn {
+        color: #fef3c7; background: rgba(180,83,9,0.55); border-color: rgba(251,191,36,0.75);
+        animation: cgTell 0.42s ease-in-out infinite alternate;
+    }
+    @keyframes cgTell { from { opacity: 0.62; } to { opacity: 1; } }
+    .cg.reduced .cg-badge-warn { animation: none; opacity: 1; }
+    .cg-badge-live { color: #fecaca; background: rgba(127,29,29,0.5); border-color: rgba(248,113,113,0.4); }
 
     .cg-bar { position: relative; height: 76px; margin: 6px 0 14px; }
     .cg-bar-track {
@@ -826,7 +963,11 @@
         position: absolute; top: 50%; height: 44px; transform: translateY(-50%);
         background: var(--acc-soft); border: 1px solid var(--acc-line);
         border-radius: 8px; box-shadow: inset 0 0 14px rgba(168,85,247,0.14);
-        transition: left 0.12s ease, width 0.25s ease, border-color 0.4s ease, background 0.4s ease;
+        /* NO transition on `left`. The slide is driven frame-by-frame from the
+           rAF loop now, and a CSS transition on top of that lags the drawn zone
+           behind the one being scored - which is the exact unfairness the slide
+           was added to remove. */
+        transition: width 0.25s ease, border-color 0.4s ease, background 0.4s ease;
     }
     .cg-zone.tele { background: rgba(245,158,11,0.16); border-color: rgba(245,158,11,0.45); }
     .cg-zone-mid {
@@ -958,7 +1099,7 @@
 
     /* ---------- global reduced-motion guard ---------- */
     @media (prefers-reduced-motion: reduce) {
-        .cg-stage.shake, .cg-msg, .cg-msg.hot { animation: none !important; }
+        .cg-stage.shake, .cg-msg, .cg-msg.hot, .cg-badge-warn { animation: none !important; }
         .cg-zone, .cg-ring-fg, .cg-tilt-fill { transition-duration: 0.6s; }
     }
 </style>

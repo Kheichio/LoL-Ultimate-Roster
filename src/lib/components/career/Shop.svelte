@@ -18,6 +18,7 @@
         shopSections, priceLabel, weeklyIncome, activeBuffs,
         activeSponsors, availableSponsors, MAX_ACTIVE_SPONSORS,
         buyGear, buyConsumable, useConsumable, buyLifestyle, buyPerk, signSponsor,
+        buyTrade, buyMonument,
     } from '../../career/economy.js';
 
     // -- live view model ----------------------------------------------------
@@ -31,7 +32,13 @@
     $: openDeals  = new Set(availableSponsors($career).map(d => d.id));
     $: slotsFull  = deals.length >= MAX_ACTIVE_SPONSORS;
 
-    let tab = 'gear';
+    /** Which section opens first. Only the render harness ever passes it -- the
+     *  shell mounts this component bare. It exists because `tab` is local
+     *  state, so an SSR pass could only ever exercise the gear arm and every
+     *  other section's markup shipped untested. */
+    export let initialTab = 'gear';
+
+    let tab = initialTab;
 
     function go(id) {
         if (tab === id) return;
@@ -93,6 +100,8 @@
     }
     function onBuyLifestyle(id)      { report(buyLifestyle(id)); }
     function onBuyPerk(id)           { report(buyPerk(id)); }
+    function onBuyTrade(id)          { report(buyTrade(id)); }
+    function onBuyMonument(id)       { report(buyMonument(id)); }
     function onSignSponsor(id)       { report(signSponsor(id)); }
 
     // -- formatting helpers -------------------------------------------------
@@ -192,7 +201,11 @@
     function tabMeta(s) {
         if (s.id === 'gear') {
             const owned = s.items.reduce((n, c) => n + c.ownedTier, 0);
-            return `${owned}/${s.items.length * 5}`;
+            // Summed from each category's own maxTier rather than a literal 5,
+            // so adding a category with a different ladder length cannot make
+            // this quietly wrong.
+            const total = s.items.reduce((n, c) => n + (Number(c.maxTier) || 0), 0);
+            return `${owned}/${total}`;
         }
         if (s.id === 'consumables') {
             const held = s.items.reduce((n, i) => n + i.held, 0);
@@ -201,8 +214,27 @@
         if (s.id === 'lifestyle' || s.id === 'perks') {
             return `${s.items.filter(i => i.owned).length}/${s.items.length}`;
         }
+        if (s.id === 'exchange') {
+            return s.score > 0 ? `+${s.score} score` : '';
+        }
         if (s.id === 'sponsors') return `${deals.length}/${MAX_ACTIVE_SPONSORS}`;
         return '';
+    }
+
+    /** Perks in board order, split into their groups. Twenty-four cards in one
+     *  undifferentiated grid is a list you scroll past; three labelled bands is
+     *  a board you read. Groups with no items are dropped, so a future regroup
+     *  never leaves an empty heading behind. */
+    function perkBands(sec) {
+        const groups = Array.isArray(sec && sec.groups) ? sec.groups : [];
+        const items = Array.isArray(sec && sec.items) ? sec.items : [];
+        const bands = groups
+            .map(g => ({ ...g, items: items.filter(i => i.group === g.id) }))
+            .filter(b => b.items.length);
+        const claimed = new Set(bands.flatMap(b => b.items.map(i => i.id)));
+        const rest = items.filter(i => !claimed.has(i.id));
+        if (rest.length) bands.push({ id: 'other', name: 'Other', note: '', items: rest });
+        return bands;
     }
 
     /** Cheapest deal still out of reach - used for the sponsor empty state. */
@@ -484,29 +516,107 @@
                         </p>
                     </div>
                 {/if}
-                <div class="perm-grid">
-                    {#each activeSec.items as perk (perk.id)}
-                        <article class="pcard pcard-legacy" class:pcard-owned={perk.owned}>
+                {#each perkBands(activeSec) as band (band.id)}
+                    <div class="band-head">
+                        <span class="side-label">{band.name}</span>
+                        <span class="band-n">{band.items.filter(i => i.owned).length}/{band.items.length}</span>
+                        {#if band.note}<span class="band-note">{band.note}</span>{/if}
+                    </div>
+                    <div class="perm-grid band-grid">
+                        {#each band.items as perk (perk.id)}
+                            <article class="pcard pcard-legacy" class:pcard-owned={perk.owned}>
+                                <header class="p-head">
+                                    <span class="p-ico" aria-hidden="true">{perk.icon}</span>
+                                    <span class="p-id">
+                                        <span class="p-name">{perk.name}</span>
+                                        <span class="p-meta">
+                                            <span class="p-cost p-lp">{priceLabel(perk)}</span>
+                                            {#if perk.requires}<span class="p-req">Chained</span>{/if}
+                                        </span>
+                                    </span>
+                                    {#if perk.owned}<span class="pill pill-on">Unlocked</span>{/if}
+                                </header>
+                                <p class="p-desc">{perk.desc}</p>
+                                <ul class="eff-list">
+                                    {#each effectLines(perk.effect) as line, i (i)}
+                                        <li>{line}</li>
+                                    {/each}
+                                </ul>
+                                {#if perk.owned}
+                                    <button class="buy buy-owned" disabled>Unlocked for good</button>
+                                {:else if perk.locked}
+                                    <button class="buy buy-off" disabled>{perk.lockReason || 'Locked'}</button>
+                                {:else}
+                                    <button class="buy buy-lp" on:click={() => onBuyPerk(perk.id)}>Unlock &middot; {priceLabel(perk)}</button>
+                                {/if}
+                            </article>
+                        {/each}
+                    </div>
+                {/each}
+
+            <!-- ============ LEGACY EXCHANGE ============ -->
+            {:else if activeSec.id === 'exchange'}
+                <div class="band-head">
+                    <span class="side-label">Trades</span>
+                    <span class="band-note">Repeatable. Every purchase makes the next one dearer.</span>
+                </div>
+                <div class="perm-grid band-grid">
+                    {#each activeSec.trades as item (item.id)}
+                        <article class="pcard pcard-legacy">
                             <header class="p-head">
-                                <span class="p-ico" aria-hidden="true">{perk.icon}</span>
+                                <span class="p-ico" aria-hidden="true">{item.icon}</span>
                                 <span class="p-id">
-                                    <span class="p-name">{perk.name}</span>
-                                    <span class="p-meta"><span class="p-cost p-lp">{priceLabel(perk)}</span></span>
+                                    <span class="p-name">{item.name}</span>
+                                    <span class="p-meta">
+                                        <span class="p-cost p-lp">{priceLabel(item)}</span>
+                                        <span class="p-req">then {item.nextCost} LP</span>
+                                    </span>
                                 </span>
-                                {#if perk.owned}<span class="pill pill-on">Unlocked</span>{/if}
+                                {#if item.bought > 0}
+                                    <span class="c-held" title="Times taken">x{item.bought}</span>
+                                {/if}
                             </header>
-                            <p class="p-desc">{perk.desc}</p>
-                            <ul class="eff-list">
-                                {#each effectLines(perk.effect) as line, i (i)}
-                                    <li>{line}</li>
+                            <p class="p-desc">{item.desc}</p>
+                            <div class="chips">
+                                {#each effectChips(item) as ch, i (i)}
+                                    <span class="chip" class:chip-bad={ch.bad}>{ch.text}</span>
                                 {/each}
-                            </ul>
-                            {#if perk.owned}
-                                <button class="buy buy-owned" disabled>Unlocked for good</button>
-                            {:else if perk.locked}
-                                <button class="buy buy-off" disabled>{perk.lockReason || 'Locked'}</button>
+                            </div>
+                            {#if item.locked}
+                                <button class="buy buy-off" disabled>{item.lockReason || 'Locked'}</button>
                             {:else}
-                                <button class="buy buy-lp" on:click={() => onBuyPerk(perk.id)}>Unlock &middot; {priceLabel(perk)}</button>
+                                <button class="buy buy-lp" on:click={() => onBuyTrade(item.id)}>Take &middot; {priceLabel(item)}</button>
+                            {/if}
+                        </article>
+                    {/each}
+                </div>
+
+                <div class="band-head">
+                    <span class="side-label">Monuments</span>
+                    <span class="band-n">+{activeSec.score} score</span>
+                    <span class="band-note">No mechanical effect at all. This is the number you are remembered by.</span>
+                </div>
+                <div class="perm-grid band-grid">
+                    {#each activeSec.monuments as item (item.id)}
+                        <article class="pcard pcard-legacy" class:pcard-owned={item.owned}>
+                            <header class="p-head">
+                                <span class="p-ico" aria-hidden="true">{item.icon}</span>
+                                <span class="p-id">
+                                    <span class="p-name">{item.name}</span>
+                                    <span class="p-meta">
+                                        <span class="p-cost p-lp">{priceLabel(item)}</span>
+                                        <span class="p-req">+{item.score} legacy score</span>
+                                    </span>
+                                </span>
+                                {#if item.owned}<span class="pill pill-on">Standing</span>{/if}
+                            </header>
+                            <p class="p-desc">{item.desc}</p>
+                            {#if item.owned}
+                                <button class="buy buy-owned" disabled>It is already there</button>
+                            {:else if item.locked}
+                                <button class="buy buy-off" disabled>{item.lockReason || 'Locked'}</button>
+                            {:else}
+                                <button class="buy buy-lp" on:click={() => onBuyMonument(item.id)}>Commission &middot; {priceLabel(item)}</button>
                             {/if}
                         </article>
                     {/each}
@@ -874,6 +984,24 @@
         grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
         gap: 12px;
     }
+
+    /* Band headings. Twenty-four perk cards in one grid is a wall; three
+       labelled bands is a board. The heading row wraps rather than truncating
+       so the note is never cut in half on a narrow screen. */
+    .band-head {
+        display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+        margin-top: 22px;
+    }
+    .band-head:first-child { margin-top: 0; }
+    .band-head .side-label { margin-bottom: 0; color: #64748b; }
+    .band-n {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 10px; font-weight: 800; color: #fbbf24;
+        padding: 2px 7px; border-radius: 5px;
+        background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.24);
+    }
+    .band-note { font-size: 10.5px; color: #4a5b76; }
+    .band-grid { margin-top: 10px; }
     .pcard {
         display: flex; flex-direction: column; gap: 10px;
         background: rgba(12, 16, 28, 0.5);

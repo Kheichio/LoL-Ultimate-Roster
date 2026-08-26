@@ -717,6 +717,13 @@ const SINGLE_ROT = [
     ['proficiency-is-null',      c => ({ ...c, player: { ...c.player, proficiency: null } })],
     ['proficiency-dead-id',      c => ({ ...c, player: { ...c.player, proficiency: { no_such_champ: 12 } } })],
     ['proficiency-is-array',     c => ({ ...c, player: { ...c.player, proficiency: [1, 2, 3] } })],
+    // career.club: the one place an AI roster is allowed to have a history, and
+    // therefore the one AI roster a hand-edited save can break.
+    ['club-is-null',             c => ({ ...c, club: null })],
+    ['club-is-array',            c => ({ ...c, club: [1, 2] })],
+    ['club-roster-holds-junk',   c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0.4, roster: { MID: null, TOP: 'nope', JNG: {} }, changes: [null, {}] } })],
+    ['club-momentum-is-nonsense', c => ({ ...c, club: { teamId: c.player.clubId, momentum: 'very high', roster: {}, changes: [] } })],
+    ['club-belongs-to-another',  c => ({ ...c, club: { teamId: 'org_that_no_longer_exists', momentum: -1, roster: { TOP: { name: 'Ghost', role: 'TOP', rating: 91 } }, changes: [{ year: 2027, role: 'TOP', outName: 'X', inName: 'Ghost', reason: 'cut' }] } })],
 ];
 const SINGLE_STATES = [];
 for (const [label, fn] of SINGLE_ROT) {
@@ -752,6 +759,119 @@ for (const st of [...STATES, ...SINGLE_STATES]) {
     }
     applyState(st.snap);
     await render('CareerShell', COMPONENT_DIR + 'CareerShell.svelte', {}, st.name, { minText: 120 });
+}
+
+// ---------------------------------------------------------------------------
+//  SHOP TABS
+//  `tab` is component-local, so the loop above only ever renders the gear arm
+//  and every other section's markup was shipping untested. Each section is
+//  rendered against the workhorse state and against both damaged saves, which
+//  is where an unknown gear / lifestyle / perk id and a rotten inventory live.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- SHOP TABS -------------------------------------------');
+const SHOP_TABS = ['gear', 'consumables', 'lifestyle', 'perks', 'exchange', 'sponsors'];
+for (const st of [S_MID, S_HOSTILE, S_ROTTEN, S_RETIRED, S_PRECOMP]) {
+    for (const tab of SHOP_TABS) {
+        applyState(st.snap);
+        await render('Shop(' + tab + ')', COMPONENT_DIR + 'Shop.svelte',
+            { initialTab: tab }, st.name, { minText: 120 });
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  BRACKET VIEW
+//  A child of Calendar rather than a routed screen, so it gets no coverage from
+//  the SCREENS loop. It owns every degenerate bracket shape the engine can
+//  write, which makes it exactly the component worth driving directly.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- BRACKET VIEW ----------------------------------------');
+{
+    const BV = COMPONENT_DIR + 'BracketView.svelte';
+
+    // Whatever the real states happen to be carrying.
+    for (const st of [...STATES, ...SINGLE_STATES]) {
+        applyState(st.snap);
+        await render('BracketView', BV, {
+            bracket: st.snap.season ? st.snap.season.bracket : null,
+            myId: st.snap.player ? st.snap.player.clubId : null,
+            myName: 'Your club',
+            myAccent: '#3b82f6',
+        }, st.name, { minText: 60 });
+    }
+
+    // Hand-built shapes the engine can produce but no state happens to hold.
+    const SHAPES = [
+        ['bv-null', null],
+        ['bv-undefined', undefined],
+        ['bv-empty-object', {}],
+        ['bv-rounds-null', { kind: 'spring_po', rounds: null }],
+        ['bv-rounds-empty', { kind: 'msi', title: 'Mid-Season Invitational', rounds: [] }],
+        ['bv-byes-only', { kind: 'worlds', title: 'World Championship', bestOf: 5, rounds: [], byes: [{ id: 'lck_t1', name: 'T1', accent: '#e2012d', seed: 1 }] }],
+        ['bv-tie-half-null', { kind: 'spring_po', title: 'Spring Playoffs', bestOf: 5, rounds: [{ name: 'Semifinals', ties: [{ id: 't0', a: null, b: { id: 'lec_g2', name: 'G2 Esports', accent: '#ee3a43', seed: 2 }, score: [0, 0], winner: null, bestOf: 5 }] }] }],
+        ['bv-tie-both-null', { kind: 'spring_po', rounds: [{ name: 'Final', ties: [{ id: 't0', a: null, b: null }] }] }],
+        // Duplicate keys. Both shapes are reachable from a hand-edited save:
+        // two ties stamped with the same id, and two byes whose ids do not
+        // resolve (they both come back named "TBD").
+        //
+        // NOTE THAT THESE TWO ARE NOT A REAL GATE. Svelte's SSR compiler
+        // ignores each-block keys entirely and just iterates, so a duplicate key
+        // renders fine here and only throws (dev) or silently reuses the wrong
+        // block (prod) in the browser. They are here so the shapes are on the
+        // record, not because passing proves anything -- keying an each block on
+        // something that can collide has to be caught by reading.
+        ['bv-duplicate-tie-ids', { kind: 'spring_po', title: 'Spring Playoffs', bestOf: 5, rounds: [{ name: 'Semifinals', ties: [
+            { id: 'same', a: { id: 'lec_g2', name: 'G2', accent: '#ee3a43' }, b: { id: 'lec_fnc', name: 'Fnatic', accent: '#ff5900' }, score: [3, 0], winner: 'lec_g2', bestOf: 5 },
+            { id: 'same', a: { id: 'lec_vit', name: 'Vitality', accent: '#ffdd00' }, b: { id: 'lec_kc', name: 'KC', accent: '#00b2ff' }, score: [1, 3], winner: 'lec_kc', bestOf: 5 },
+        ] }] }],
+        ['bv-duplicate-tbd-byes', { kind: 'worlds', title: 'World Championship', bestOf: 5, byes: ['ghost_a', 'ghost_b'], rounds: [{ name: 'Quarterfinals', ties: [
+            { id: 'q0', a: { id: 'lec_g2', name: 'G2', accent: '#ee3a43' }, b: null, score: [0, 0], winner: null, bestOf: 5 },
+        ] }] }],
+        ['bv-scores-garbage', { kind: 'summer_po', title: 'Summer Playoffs', bestOf: 5, rounds: [{ name: 'Final', ties: [{ id: 't0', a: { id: 'lec_g2', name: 'G2', accent: '#ee3a43' }, b: { id: 'lec_fnc', name: 'Fnatic', accent: '#ff5900' }, score: ['x', null], winner: 'lec_g2', bestOf: 5 }] }] }],
+        ['bv-dead-team-ids', { kind: 'msi', rounds: [{ name: 'Final', ties: [{ id: 't0', a: 'org_deleted', b: 'also_gone', score: [3, 1], winner: 'org_deleted', bestOf: 5 }] }] }],
+        ['bv-finished', {
+            kind: 'worlds', year: 2029, title: 'World Championship', bestOf: 5, done: true,
+            myPlacement: 1,
+            champion: { id: 'lec_g2', name: 'G2 Esports', accent: '#ee3a43' },
+            runnerUp: { id: 'lck_t1', name: 'T1', accent: '#e2012d' },
+            byes: [],
+            rounds: [
+                { name: 'Quarterfinals', ties: [
+                    { id: 'q0', a: { id: 'lec_g2', name: 'G2 Esports', accent: '#ee3a43', seed: 1 }, b: { id: 'lcs_c9', name: 'Cloud9', accent: '#00a1e1', seed: 8 }, score: [3, 0], winner: 'lec_g2', bestOf: 5 },
+                    { id: 'q1', a: { id: 'lck_t1', name: 'T1', accent: '#e2012d', seed: 2 }, b: { id: 'lpl_jdg', name: 'JDG', accent: '#c8102e', seed: 7 }, score: [3, 2], winner: 'lck_t1', bestOf: 5 },
+                ] },
+                { name: 'Final', ties: [
+                    { id: 'f0', a: { id: 'lec_g2', name: 'G2 Esports', accent: '#ee3a43', seed: 1 }, b: { id: 'lck_t1', name: 'T1', accent: '#e2012d', seed: 2 }, score: [3, 2], winner: 'lec_g2', bestOf: 5 },
+                ] },
+            ],
+        }],
+        // A live sixteen-team draw carrying byes AND an unplayed tie belonging
+        // to the player -- the shape the old inline panel drew as a four-team
+        // bracket because it never looked at `byes`.
+        ['bv-live-with-byes', {
+            kind: 'worlds', year: 2030, title: 'World Championship', bestOf: 5, done: false,
+            champion: null, runnerUp: null, myPlacement: null,
+            byes: [
+                { id: 'lck_t1', name: 'T1', accent: '#e2012d', seed: 1 },
+                { id: 'lpl_blg', name: 'Bilibili Gaming', accent: '#1f8fff', seed: 2 },
+            ],
+            rounds: [{ name: 'Quarterfinals', ties: [
+                { id: 'w0', a: { id: 'lec_g2', name: 'G2 Esports', accent: '#ee3a43', seed: 3 }, b: { id: 'lcs_tl', name: 'Team Liquid', accent: '#0a1723', seed: 6 }, score: [3, 1], winner: 'lec_g2', bestOf: 5 },
+                { id: 'w1', a: { id: 'lec_vit', name: 'Team Vitality', accent: '#ffdd00', seed: 4 }, b: { id: 'lcp_cfo', name: 'CTBC Flying Oyster', accent: '#f0a500', seed: 5 }, score: [0, 0], winner: null, bestOf: 5 },
+            ] }],
+        }],
+    ];
+
+    for (const [label, shape] of SHAPES) {
+        applyState(S_MID.snap);
+        await render('BracketView', BV, {
+            bracket: shape,
+            myId: 'lec_vit',
+            myName: 'Team Vitality',
+            myAccent: '#ffdd00',
+        }, label, { minText: 60 });
+    }
 }
 
 // ---------------------------------------------------------------------------
