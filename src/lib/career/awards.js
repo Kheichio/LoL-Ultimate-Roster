@@ -1330,12 +1330,20 @@ export function awardHistoryByYear(c) {
     const byYear = new Map();
 
     for (const a of rows) {
-        if (!a) continue;
+        // `if (!a)` is not enough: a hand-edited save (and a board document
+        // written by a client that encoded the array wrong) can hold a number or
+        // a bare string here, and every one of those is truthy with no `.id`, so
+        // `a.name || def.name || a.id` resolves to undefined and the screen
+        // prints the literal word. An award that is not an object is not an
+        // award; drop it rather than render a nameless row.
+        if (!a || typeof a !== 'object' || Array.isArray(a)) continue;
         const def = AWARD_BY_ID[a.id] || {};
         const year = num(a.year);
         const entry = {
             id: a.id,
-            name: a.name || def.name || a.id,
+            // Last resort is a word, not the id: an award row with no id at all
+            // is renderable, and 'undefined' is not a name.
+            name: a.name || def.name || a.id || 'Award',
             icon: a.icon || def.icon || '\u{1F3C5}',
             tier: a.tier || def.tier || 'minor',
             legacyPoints: num(a.legacyPoints ?? def.legacyPoints),

@@ -229,6 +229,11 @@ const A  = await load('/src/lib/career/awards.js');
 const EV = await load('/src/lib/career/events.js');
 const G  = await load('/src/lib/career/engine.js');
 const ST = await load('/src/lib/stores/career.js');
+// The pure half of the global career board. Loaded here, with the rest, so the
+// fixtures below are built by the SAME module instance the components import --
+// board.js memoises nothing, but sanitizeDossier() -> reifyCareer() ends in
+// hydrateForeignCareer(), and that has to be the SSR graph's career store.
+const B  = await load('/src/lib/career/board.js');
 
 function readStore(s) {
     let v = null;
@@ -747,6 +752,16 @@ const SCREENS = [
     ['Shop',       COMPONENT_DIR + 'Shop.svelte'],
     ['Transfers',  COMPONENT_DIR + 'Transfers.svelte'],
     ['Profile',    COMPONENT_DIR + 'Profile.svelte'],
+    // The global board. Rendered with NO props, i.e. exactly the way CareerShell
+    // mounts it: previewRows stays null and onMount never runs under SSR, so
+    // boardState is still `idle` and this is the ANSWERED-AND-EMPTY arm. The
+    // loading / error / offline arms are unreachable from here for the same
+    // reason and are driven off the real store in the CAREER BOARD VIEWS block.
+    //
+    // CareerDossier is deliberately NOT in this list: it takes a required `c`
+    // and the loop passes {}, so it would be tested against one shape it never
+    // receives in production. It gets its own direct-drive block instead.
+    ['CareerBoard', COMPONENT_DIR + 'CareerBoard.svelte'],
     ['CreatePlayer', COMPONENT_DIR + 'CreatePlayer.svelte'],
 ];
 
@@ -777,6 +792,194 @@ for (const st of [S_MID, S_HOSTILE, S_ROTTEN, S_RETIRED, S_PRECOMP]) {
         await render('Shop(' + tab + ')', COMPONENT_DIR + 'Shop.svelte',
             { initialTab: tab }, st.name, { minText: 120 });
     }
+}
+
+// ---------------------------------------------------------------------------
+//  CAREER BOARD VIEWS
+//  Same problem the SHOP TABS block solves: `view`, `sort` and the row list are
+//  all component-local, so the SCREENS loop above only ever compiles the
+//  signed-out, nothing-loaded arm and the entire table, the filters and the
+//  dossier view ship untested.
+//
+//  The fixtures are REAL. Each one is a state the harness already built, run
+//  through the actual publish path -- buildBoardDocs() -> sanitizeRow() /
+//  sanitizeDossier() -- so what the template renders is byte-for-byte the
+//  document Firestore would hold, not a hand-written approximation of one.
+//  That is the whole point: the board's failure mode is a FOREIGN document
+//  rendering `undefined`, and a hand-built fixture would be too tidy to catch it.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- CAREER BOARD VIEWS ----------------------------------');
+const BOARD_FIXTURES = [];
+{
+    const CB = COMPONENT_DIR + 'CareerBoard.svelte';
+
+    // A mid career, both damaged saves, a retired one and an unsigned rookie.
+    // The damaged pair matter most: buildBoardDocs is the first thing in the
+    // app that has to survive them without producing a null-bearing document.
+    for (const st of [S_MID, S_HOSTILE, S_ROTTEN, S_RETIRED, S_PRECOMP]) {
+        const uid = 'u_' + st.name;
+        const docs = safe('buildBoardDocs(' + st.name + ')',
+            () => B.buildBoardDocs(st.snap, { uid, displayName: 'Tester', slot: 1 }), null);
+        if (!docs) {
+            fail('wrong', 'src/lib/career/board.js',
+                'buildBoardDocs() returned null for a created career (' + st.name + ')',
+                'state: ' + st.name + ' -> created=' + (st.snap && st.snap.created),
+                'Only an uncreated career may return null; a created one that cannot be published is silently unpublishable.',
+                'board|buildnull|' + st.name);
+            continue;
+        }
+        const row = safe('sanitizeRow(' + st.name + ')', () => B.sanitizeRow(uid, docs.row), null);
+        const dossier = safe('sanitizeDossier(' + st.name + ')', () => B.sanitizeDossier(uid, docs.profile), null);
+        if (!row) continue;
+        if (!dossier) {
+            fail('wrong', 'src/lib/career/board.js',
+                'sanitizeDossier() rejected a profile this build just wrote (' + st.name + ')',
+                'state: ' + st.name + ' -> blob ' + String(docs.blob || '').length + ' chars',
+                'encodeBlob and reifyCareer disagree; a published career would open as an unreadable record.',
+                'board|dossiernull|' + st.name);
+        }
+        BOARD_FIXTURES.push({ name: st.name, row, dossier, blobLen: String(docs.blob || '').length });
+    }
+
+    const ALL_ROWS = BOARD_FIXTURES.map(f => f.row);
+    console.log('  fixtures: ' + BOARD_FIXTURES.map(f => f.name + '(' + f.blobLen + 'b)').join(', '));
+
+    // (view x sort). `sort` picks the copy under the tab bar and nothing else,
+    // but it is also the one prop the harness can steer, and a tab whose hint
+    // string is missing would print "undefined" under the table.
+    for (const s of B.BOARD_SORTS) {
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB, {
+            initialView: 'list', initialSort: s.key, previewRows: ALL_ROWS,
+        }, 'board-list-' + s.key, { minText: 120 });
+
+        applyState(S_MID.snap);
+        await render('CareerBoard(dossier)', CB, {
+            initialView: 'dossier', initialSort: s.key,
+            previewRows: ALL_ROWS,
+            previewDossier: BOARD_FIXTURES.length ? BOARD_FIXTURES[0].dossier : null,
+        }, 'board-dossier-' + s.key, { minText: 120 });
+    }
+
+    // One dossier view per fixture, so the retired career, the unsigned rookie
+    // and both rotted saves each get drawn through CareerDossier in situ.
+    for (const f of BOARD_FIXTURES) {
+        applyState(S_MID.snap);
+        await render('CareerBoard(dossier)', CB, {
+            initialView: 'dossier', initialSort: 'earnedScore',
+            previewRows: [f.row], previewDossier: f.dossier,
+        }, 'board-dossier-of-' + f.name, { minText: 120 });
+    }
+
+    // The EMPTY board: the answer came back and nobody has published. Distinct
+    // from loading and from offline, and the only one of the three reachable
+    // from props alone -- the other two are driven off boardState below.
+    applyState(S_MID.snap);
+    await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: [] },
+        'board-empty', { minText: 120 });
+
+    // A row list that is not rows at all. normRow() is supposed to push every
+    // one of these back through sanitizeRow rather than dereference it.
+    applyState(S_MID.snap);
+    await render('CareerBoard(list)', CB, {
+        initialView: 'list',
+        previewRows: [null, undefined, {}, 'nope', 7, [], { handle: 5, teamName: null },
+            { ...(ALL_ROWS[0] || {}), earnedScore: null, wins: NaN, losses: undefined, updatedAt: Infinity }],
+    }, 'board-junk-rows', { minText: 120 });
+
+    // The dossier view with no dossier: the document failed to arrive and the
+    // ranking row is all that is left. This is the fallback panel.
+    applyState(S_MID.snap);
+    await render('CareerBoard(dossier)', CB, {
+        initialView: 'dossier', previewRows: ALL_ROWS.length ? [ALL_ROWS[0]] : [], previewDossier: null,
+    }, 'board-dossier-unavailable', { minText: 120 });
+
+    // ... and with neither. previewRows [] means the harness still suppresses
+    // the query, so this is the dossier arm with nothing behind it at all.
+    applyState(S_MID.snap);
+    await render('CareerBoard(dossier)', CB, {
+        initialView: 'dossier', previewRows: [], previewDossier: null,
+    }, 'board-dossier-nothing', { minText: 120 });
+
+    // A dossier object that is NOT career-shaped. The component guards on
+    // `previewDossier.player`, so this must fall through to the panel above
+    // rather than reach CareerDossier.
+    applyState(S_MID.snap);
+    await render('CareerBoard(dossier)', CB, {
+        initialView: 'dossier', previewRows: ALL_ROWS, previewDossier: { nope: true },
+    }, 'board-dossier-not-a-career', { minText: 120 });
+
+    // Bogus prop values, the way a future caller would get them wrong.
+    applyState(S_MID.snap);
+    await render('CareerBoard(list)', CB, {
+        initialView: 'not_a_view', initialSort: 'not_a_sort', previewRows: ALL_ROWS,
+    }, 'board-bogus-props', { minText: 120 });
+
+    // ---- every boardState status ------------------------------------
+    //  onMount never runs under SSR, so the screen above can only ever be the
+    //  answered-and-empty arm: `loading`, `error` and `offline` are branches no
+    //  prop can reach. They are also the three a player is most likely to see
+    //  first, and each of them owes written copy rather than a blank panel --
+    //  which is the whole reason those states are in the MARKUP and not
+    //  assembled in script.
+    //
+    //  The store comes through ssrLoadModule, so this is the same writable the
+    //  component subscribes to. It is put back to its published default at the
+    //  end: everything after this block would otherwise render against whatever
+    //  status was left behind, including CareerShell(screen=board).
+    const CBS = await load('/src/lib/stores/careerBoard.js');
+    const BOARD_DEFAULT = { status: 'idle', error: '', fetchedAt: 0, sort: B.BOARD_SORTS[0].key };
+    const STATUSES = [
+        ['idle', { status: 'idle', error: '', fetchedAt: 0 }],
+        ['loading', { status: 'loading', error: '', fetchedAt: 0 }],
+        ['loading-after-a-sync', { status: 'loading', error: '', fetchedAt: Date.now() - 5 * 60000 }],
+        ['ready-empty', { status: 'ready', error: '', fetchedAt: Date.now() - 90 * 1000 }],
+        ['offline', { status: 'offline', error: 'This browser cannot reach the board.', fetchedAt: 0 }],
+        ['error', { status: 'error', error: 'The service is unavailable right now.', fetchedAt: 0 }],
+        // A status this build has never heard of, and an error that is not a
+        // string. Both are what a future store revision looks like from here.
+        ['unknown-status', { status: 'weird', error: 7, fetchedAt: 'soon' }],
+    ];
+    for (const [label, patch] of STATUSES) {
+        CBS.boardState.set({ ...BOARD_DEFAULT, ...patch });
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: [] },
+            'board-state-' + label, { minText: 120 });
+
+        // ... and the same status with rows already in hand, because the table
+        // wins over every one of these branches and the header does not.
+        CBS.boardState.set({ ...BOARD_DEFAULT, ...patch });
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: ALL_ROWS },
+            'board-state-' + label + '-with-rows', { minText: 120 });
+    }
+    CBS.boardState.set({ ...BOARD_DEFAULT });
+
+    // The signed-in half of "Your entry": three slot cards, a published row, and
+    // the denial panel. currentUser and myBoardRow are plain writables, so the
+    // whole panel is reachable without a network stub. Both are put back.
+    const AUTH = await load('/src/lib/stores/auth.js');
+    const MY_ROW = ALL_ROWS.length ? { ...ALL_ROWS[0], uid: 'me', isMe: true } : null;
+    const MINE = [
+        ['signed-out', null, null],
+        ['signed-in-unpublished', { uid: 'me', displayName: 'Tester', email: 'x@y.z' }, null],
+        ['signed-in-published', { uid: 'me', displayName: 'Tester', email: 'x@y.z' }, MY_ROW],
+        // A published row that resolves to no slot and no careerId -- the shape
+        // an entry written by an older client leaves behind.
+        ['signed-in-row-has-no-slot', { uid: 'me', displayName: 'Tester', email: 'x@y.z' },
+            MY_ROW ? { ...MY_ROW, slot: 0, careerId: '' } : null],
+        ['signed-in-user-is-junk', { nope: true }, MY_ROW],
+    ];
+    for (const [label, user, row] of MINE) {
+        AUTH.currentUser.set(user);
+        CBS.myBoardRow.set(row);
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: ALL_ROWS },
+            'board-mine-' + label, { minText: 120 });
+    }
+    AUTH.currentUser.set(null);
+    CBS.myBoardRow.set(null);
 }
 
 // ---------------------------------------------------------------------------
@@ -871,6 +1074,159 @@ console.log('---- BRACKET VIEW ----------------------------------------');
             myName: 'Team Vitality',
             myAccent: '#ffdd00',
         }, label, { minText: 60 });
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  CAREER DOSSIER
+//  A child of CareerBoard rather than a routed screen -- the same position
+//  BracketView holds under Calendar -- so it gets no coverage at all from the
+//  SCREENS loop, and Profile only ever drives it with mine=true. This block is
+//  the ONLY place the stranger arm is exercised.
+//
+//  EVERY SHAPE IS RENDERED TWICE. Once through the real transport
+//  (buildBoardDocs -> sanitizeDossier), which is what a downloaded career
+//  actually is, and once RAW, with the sanitiser bypassed entirely. The second
+//  pass is the one that matters: sanitizeDossier is a single function and the
+//  day somebody adds a second caller that forgets it, the component is the last
+//  thing standing between a hostile document and Card.svelte's unguarded
+//  card.name.slice(0, 2).
+//
+//  What this is really testing is BAD_TOKENS. Every reader in awards.js opens
+//  `const st = c || snapshot()`, so a dropped guard does not throw -- it prints
+//  the VIEWER'S own numbers under a stranger's handle, or `undefined` where a
+//  field never arrived. A crash is the easy failure here; a confident wrong
+//  number is the expensive one, and the literal-token check is what catches the
+//  `d.field || 0` half of it.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- CAREER DOSSIER --------------------------------------');
+{
+    const CD = COMPONENT_DIR + 'CareerDossier.svelte';
+    const AK = Array.isArray(K.ATTR_KEYS) ? K.ATTR_KEYS : ['mec', 'lne', 'map', 'tmf', 'cmp', 'ldr', 'chp', 'knw'];
+
+    /** state 3, deep-copied, with exactly one thing broken. Built off a REAL
+     *  career for the same reason SINGLE_ROT is: a hand-written stub has no
+     *  history, no awards and no club, so it never reaches the panels that
+     *  actually dereference things. */
+    const bust = (fn) => { const x = clone(S_MID.snap); fn(x); return x; };
+    const fill = (v) => AK.reduce((m, k) => { m[k] = v; return m; }, {});
+
+    /** The shape as it would arrive off the wire: encoded by the publisher and
+     *  decoded by the reader. Anything the encoder will not take comes back
+     *  null, which is itself a prop value the component has to render. */
+    function throughBoard(label, shape) {
+        if (!shape || typeof shape !== 'object' || Array.isArray(shape)) return null;
+        const raw = { ...shape, created: true };
+        const docs = safe('buildBoardDocs(' + label + ')',
+            () => B.buildBoardDocs(raw, { uid: 'u_cd', displayName: 'Tester', slot: 1 }), null);
+        if (!docs) return null;
+        return safe('sanitizeDossier(' + label + ')', () => B.sanitizeDossier('u_cd', docs.profile), null);
+    }
+
+    const fxRetired = BOARD_FIXTURES.find(f => f.name === S_RETIRED.name);
+    const fxRookie = BOARD_FIXTURES.find(f => f.name === S_PRECOMP.name);
+
+    const SHAPES = [
+        // Not a career at all. `c` is a prop with a default of null, so every
+        // one of these is reachable from a caller that guessed wrong.
+        ['cd-null', null],
+        ['cd-undefined', undefined],
+        ['cd-empty-object', {}],
+        ['cd-array', []],
+        ['cd-string', 'a career'],
+
+        // The player object, missing or hostile.
+        ['cd-no-player', (() => { const x = clone(S_MID.snap); delete x.player; return x; })()],
+        ['cd-player-null', bust(x => { x.player = null; })],
+        ['cd-player-is-array', bust(x => { x.player = []; })],
+        ['cd-attrs-missing', bust(x => { delete x.player.attrs; delete x.player.potential; })],
+        ['cd-attrs-are-strings', bust(x => { x.player.attrs = fill('sixty'); x.player.potential = fill('ninety'); })],
+        ['cd-attrs-are-nan', bust(x => { x.player.attrs = fill(NaN); x.player.potential = fill(NaN); })],
+
+        // Enum fields that no longer resolve. calcOVR() returns 0 on an
+        // unresolvable role by design, so this is the state the dossier reports
+        // an honest zero for rather than inventing a rating.
+        ['cd-role-unknown', bust(x => { x.player.role = 'NOT_A_ROLE'; })],
+        ['cd-region-bogus', bust(x => { x.player.region = 'ATLANTIS'; })],
+        ['cd-club-id-dead', bust(x => { x.player.clubId = 'org_that_no_longer_exists'; })],
+
+        // Collections.
+        ['cd-history-holds-null', bust(x => { x.history = [null]; })],
+        ['cd-history-not-array', bust(x => { x.history = 'fifteen seasons'; })],
+        ['cd-awards-garbage', bust(x => { x.awards = [1, 'x', null]; })],
+        ['cd-proficiency-is-array', bust(x => { x.player.proficiency = ['ahri', 'orianna']; })],
+        ['cd-traits-null', bust(x => { x.player.traits = null; })],
+        ['cd-club-is-array', bust(x => { x.club = [1, 2]; })],
+        // A roster seat with a name and nothing else. This is the shape that
+        // already crashed Card.svelte once -- card.quality.toLowerCase() on a
+        // seat that has no quality.
+        ['cd-roster-half-card', bust(x => {
+            x.club = { teamId: x.player.clubId, momentum: 0.3, roster: { MID: { name: 'x' } }, changes: [] };
+        })],
+
+        // Strings a remote document can carry. The 5000-char handle proves no
+        // layout depends on a bounded one; the bidi override proves nothing
+        // remote reaches an attribute unescaped.
+        ['cd-handle-5000-chars', bust(x => { x.player.handle = 'A'.repeat(5000); })],
+        ['cd-handle-bidi-override', bust(x => {
+            // U+202E RLO, U+202D LRO, U+200B ZWSP, built from code points so this
+            // file stays ASCII (see the header). cleanText() strips all three.
+            const RLO = String.fromCharCode(0x202E), LRO = String.fromCharCode(0x202D), ZWSP = String.fromCharCode(0x200B);
+            x.player.handle = RLO + 'gnitaehc' + LRO + ZWSP + '<b>x</b>';
+        })],
+
+        // Numbers out of every sane range, both directions.
+        ['cd-everything-negative', bust(x => {
+            x.player.age = -30; x.player.startAge = -13; x.player.form = -100;
+            x.player.hype = -5; x.player.chemistry = -50; x.player.valueMult = -3;
+            x.player.attrs = fill(-40); x.player.potential = fill(-40);
+            x.time = { year: -2027, week: -9 };
+            x.money = { gold: -1000, followers: -1, legacy: -900 };
+            x.soloq = { mmr: -1200, peakMMR: -1200, games: -10, wins: -4, losses: -6 };
+            x.totals = { games: -60, wins: -30, losses: -30, kills: -1, deaths: -1, assists: -1, mvps: -1, pentakills: -1, ratingSum: -400, peakOVR: -80 };
+        })],
+        ['cd-infinity', bust(x => {
+            x.player.age = Infinity; x.player.startAge = -Infinity; x.player.hype = Infinity;
+            x.player.attrs = fill(Infinity); x.player.potential = fill(Infinity);
+            x.time = { year: Infinity, week: Infinity };
+            x.money = { gold: Infinity, followers: Infinity, legacy: Infinity };
+            x.soloq = { mmr: Infinity, peakMMR: Infinity, games: Infinity, wins: Infinity, losses: Infinity };
+            x.totals = { games: Infinity, wins: Infinity, losses: Infinity, kills: Infinity, deaths: Infinity, assists: Infinity, mvps: Infinity, pentakills: Infinity, ratingSum: Infinity, peakOVR: Infinity };
+        })],
+
+        // And the two shapes the screen is FOR: a finished Hall of Legends
+        // career and a thirteen-year-old who has never been signed. Taken from
+        // the board fixtures so they are the decoded documents, not snapshots.
+        ['cd-well-formed-retired', fxRetired ? fxRetired.dossier : clone(S_RETIRED.snap)],
+        ['cd-well-formed-rookie', fxRookie ? fxRookie.dossier : clone(S_PRECOMP.snap)],
+    ];
+
+    for (const [label, shape] of SHAPES) {
+        // RAW -- the sanitiser bypassed.
+        applyState(S_MID.snap);
+        await render('CareerDossier(raw)', CD, { c: shape, mine: false, remote: null },
+            label + '-raw', { minText: 120 });
+
+        // ... and the same shape as a real downloaded document.
+        const clean = throughBoard(label, shape);
+        applyState(S_MID.snap);
+        await render('CareerDossier(via board)', CD, { c: clean, mine: false, remote: null },
+            label + '-sanitized', { minText: 120 });
+    }
+
+    // The remote-figures arm. `remote` overrides four displayed numbers, and a
+    // row whose fields went missing must not print undefined where the score is.
+    if (fxRetired) {
+        applyState(S_MID.snap);
+        await render('CareerDossier(remote)', CD, {
+            c: fxRetired.dossier, mine: false, remote: B.remoteFiguresFrom(fxRetired.row),
+        }, 'cd-remote-figures', { minText: 120 });
+
+        applyState(S_MID.snap);
+        await render('CareerDossier(remote)', CD, {
+            c: fxRetired.dossier, mine: false, remote: B.remoteFiguresFrom(B.sanitizeRow('u_x', {})),
+        }, 'cd-remote-empty-row', { minText: 120 });
     }
 }
 

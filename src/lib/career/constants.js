@@ -1326,4 +1326,7 @@ export const CAREER_SCREENS = [
     { id: 'shop',      name: 'Shop',      icon: '\u{1F6D2}' },
     { id: 'transfers', name: 'Transfers', icon: '\u{1F4DD}' },
     { id: 'profile',   name: 'Profile',   icon: '\u{1F464}' },
+    // The globe is deliberately unlike the seven above it: at <=620px
+    // CareerShell hides .ctab-t entirely, so the emoji IS the tab.
+    { id: 'board',     name: 'Legends',   icon: '\u{1F30D}' },
 ];

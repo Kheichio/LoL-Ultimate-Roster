@@ -370,6 +370,40 @@ export function careerSlotSummary(slot) {
     };
 }
 
+/**
+ * One slot's raw save, or null. Does NOT hydrate, does NOT switch slot, does
+ * NOT write.
+ *
+ * loadFromSlot() returns a fresh JSON.parse, so a caller physically cannot
+ * reach the live store object through here — which is the entire point. The
+ * career leaderboard publisher reads through this function, so mutating the
+ * player's career from board code is impossible rather than merely forbidden.
+ */
+export function careerSlotRaw(slot) {
+    const raw = loadFromSlot(SAVE_KEY, slot);
+    return (raw && raw.created) ? raw : null;
+}
+
+/**
+ * hydrate() for a career that arrived over the network, for DISPLAY ONLY.
+ *
+ * hydrate is pure — it merges over blankCareer(), clamps, and writes neither
+ * the store nor storage — which makes it the right normaliser for a stranger's
+ * career, and means a downloaded career goes through the exact same
+ * fractional-preserving fixAttrs, TRAIT_BY_ID filter and proficiency filter
+ * that importCareerSlots() already trusts.
+ *
+ * It must NEVER be followed by a save. Do not reach this through initCareer()
+ * (which calls career.set and would replace the viewer's own career) or through
+ * importCareerSlots() (which writes localStorage).
+ *
+ * NOTE: hydrate does not sanitise player.handle and does not filter nulls out
+ * of history/awards. career/board.js does both before calling this.
+ */
+export function hydrateForeignCareer(raw) {
+    return hydrate(raw);
+}
+
 /** Merge a loaded save over the blank shape so new fields added in later
  *  versions never come back undefined on an old save. */
 function hydrate(raw) {

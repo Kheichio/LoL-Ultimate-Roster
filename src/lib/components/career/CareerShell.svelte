@@ -15,6 +15,8 @@
         careerOVR, careerPotOVR, currentTeam, currentPhase, soloRank,
         initCareer, flushCareer, saveCareer,
     } from '../../stores/career.js';
+    import { maybeAutoPublish } from '../../stores/careerBoard.js';
+    import { activeSlot } from '../../utils/storage.js';
     import {
         CAREER_SCREENS, REGION_BY_ID, ROLE_BY_ID, ENERGY_MAX, HEALTH_MAX,
     } from '../../career/constants.js';
@@ -31,6 +33,7 @@
     import Shop from './Shop.svelte';
     import Transfers from './Transfers.svelte';
     import Profile from './Profile.svelte';
+    import CareerBoard from './CareerBoard.svelte';
     import MatchDay from './MatchDay.svelte';
     import CareerOverlay from './CareerOverlay.svelte';
 
@@ -43,6 +46,30 @@
     // footer spacing does not apply here.
     const autoSave = setInterval(() => saveCareer(), 60 * 1000);
     onDestroy(() => { clearInterval(autoSave); flushCareer(); });
+
+    // Keep a PUBLISHED board entry current, scoped to real career EVENTS rather
+    // than to the store as a whole. history.length increments exactly once per
+    // split close, so this fires at a split close and at retirement and nowhere
+    // else -- never on a gold grant, never on a week tick, never on a view.
+    //
+    // It lives here because CareerShell is the one place initCareer() has
+    // provably run, and because putting it in engine.js or awards.js would drag
+    // Firebase into the career subsystem, which today imports nothing from auth
+    // or Firebase at all.
+    //
+    // maybeAutoPublish() is itself a no-op unless the account already has a
+    // published row whose careerId matches this save, so nothing is ever put on
+    // the board without an explicit first press.
+    let _pubSig = '';
+    $: {
+        const sig = $career.created
+            ? ($career.history.length + ':' + ($career.flags.retired ? 1 : 0))
+            : '';
+        if (sig && sig !== _pubSig) {
+            _pubSig = sig;
+            maybeAutoPublish($career, activeSlot('career'));
+        }
+    }
 
     $: p = $career.player;
     $: region = REGION_BY_ID[p.region] || REGION_BY_ID.LEC;
@@ -197,6 +224,8 @@
                         <Transfers />
                     {:else if $careerScreen === 'profile'}
                         <Profile />
+                    {:else if $careerScreen === 'board'}
+                        <CareerBoard />
                     {:else}
                         <Hub />
                     {/if}

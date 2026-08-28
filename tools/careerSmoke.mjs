@@ -214,6 +214,14 @@ const A = await load('lib/career/awards.js');
 const EV = await load('lib/career/events.js');
 const G = await load('lib/career/engine.js');
 const ST = await load('lib/stores/career.js');
+// The career leaderboard. board.js is the PURE half -- no network, no store
+// writes -- so building the two published documents out of a finished career is
+// safe to do here, and it is the only way to measure what a real career
+// actually publishes. AC carries the bounds those documents are validated
+// against; a bound that is too tight denies the write, the client's catch
+// swallows it, and an honest career never appears for anyone.
+const BD = await load('lib/career/board.js');
+const AC = await load('lib/utils/anticheat.js');
 
 // svelte store read without importing svelte's get (keeps the dep surface tiny)
 function readStore(s) {
@@ -1148,6 +1156,41 @@ function runCareer(cfg, label) {
         }
     }
 
+    // ---- board entry -----------------------------------------------------
+    //  The two documents this career would publish to the global career board,
+    //  built the same way stores/careerBoard.js builds them, so the sizes and
+    //  the margins reported later are the ones a real player would send.
+    //  buildBoardDocs is pure -- it reads `end`, writes nothing and cannot reach
+    //  a store -- and the try/catch is only so a throw inside it cannot cost us
+    //  the whole career's results.
+    const boardDocs = (() => {
+        try { return BD.buildBoardDocs(end, { uid: 'smoke', displayName: 'Smoke', slot: 1 }); }
+        catch (e) { return null; }
+    })();
+    // The UNCLAMPED truth behind the fields buildBoardDocs clamps on the way
+    // out. Bounds-checking the built row alone can never fail -- every field
+    // went through bounded() -- so the only way to see a rail actually bite a
+    // real career is to compare what it PUBLISHED against what it WAS.
+    const boardRaw = (() => {
+        try {
+            const aw = Array.isArray(end.awards) ? end.awards : [];
+            return {
+                age: Math.round(Number(end.player.age) || 0),
+                years: A.careerYears(end),
+                games: Math.round(Number(end.totals.games) || 0),
+                wins: Math.round(Number(end.totals.wins) || 0),
+                losses: Math.round(Number(end.totals.losses) || 0),
+                earnedScore: A.earnedLegacyScore(end),
+                boughtScore: E.monumentScore(end),
+                peakOVR: A.peakOVR(end),
+                peakMMR: Math.round(Number(end.soloq.peakMMR) || 0),
+                worlds: aw.filter(a => a && a.id === 'worlds_champ').length,
+                titles: aw.filter(a => a && (a.id === 'worlds_champ' || a.id === 'msi_champ' || a.id === 'regional_champ')).length,
+                trophies: Array.isArray(end.trophies) ? end.trophies.filter(Boolean).length : 0,
+            };
+        } catch (e) { return null; }
+    })();
+
     return {
         label, cfg, retired, weeks,
         ovrByYear,
@@ -1162,6 +1205,16 @@ function runCareer(cfg, label) {
             try { return JSON.stringify({ ...end, pendingMatch: null }).length; }
             catch (e) { return 0; }
         })(),
+        // The board documents and what they weigh on the wire. Measured with
+        // .length, which is what stores/careerBoard.js preflights against
+        // BOARD_ROW_BYTES_MAX / BOARD_BLOB_BYTES_MAX before it writes.
+        boardDocs,
+        boardRaw,
+        boardRowBytes: (() => {
+            try { return boardDocs ? JSON.stringify(boardDocs.row).length : 0; }
+            catch (e) { return 0; }
+        })(),
+        boardBlobBytes: (boardDocs && typeof boardDocs.blob === 'string') ? boardDocs.blob.length : 0,
         traits: Array.isArray(end.player.traits) ? end.player.traits.slice() : [],
         proficiency: (end.player.proficiency && typeof end.player.proficiency === 'object')
             ? { ...end.player.proficiency } : {},
@@ -1578,6 +1631,242 @@ console.log(`  role changes           : ${stats.roleChanges}`);
             `worst trimmed career ${kb(worstTrim)}, x3 = ${kb(worstTrim * 3)}`,
             'Trim more in exportCareerSlots (CLOUD_NEWS_KEEP), or split careers into their own document.',
             'cloudsize');
+    }
+}
+// The global career board. Every published career travels as two documents --
+// a 25-field ranking ROW and a JSON dossier BLOB -- and both are validated by
+// hand-published Firestore rules whose every literal is mirrored by
+// CAREER_BOUNDS in anticheat.js.
+//
+// A bound that is too TIGHT fails completely invisibly in production: the rule
+// denies the write, the client's catch swallows it, and an honest player's
+// career simply never appears, for anyone, with no error anywhere. Nothing in
+// the game would ever report it. So this block does two things a pass/fail line
+// cannot: it asserts that no real career trips a rail, and it PRINTS THE
+// TIGHTEST MARGIN to every rail whether or not anything failed, so a limit
+// creeping toward a real career is visible BEFORE it fires.
+{
+    const kb = n => (n / 1024).toFixed(1) + 'kb';
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const withDocs = results.filter(r => r && r.boardDocs && r.boardDocs.row);
+
+    for (const r of results) {
+        if (!r.boardDocs || !r.boardDocs.row) {
+            fail('crash', 'src/lib/career/board.js',
+                'a finished career produced no board documents',
+                `${r.label}: buildBoardDocs() returned null or threw for a created, retired career`,
+                'buildBoardDocs returns null only for a career with created !== true; anything else is a throw inside it.',
+                'boarddocs');
+        }
+    }
+
+    if (!withDocs.length) {
+        console.log('  board entry            : no career produced a board document');
+    } else {
+        // ---- size -------------------------------------------------------
+        const rowBytes = withDocs.map(r => Number(r.boardRowBytes) || 0);
+        const blobBytes = withDocs.map(r => Number(r.boardBlobBytes) || 0);
+        const worstRow = Math.max(...rowBytes);
+        const worstBlob = Math.max(...blobBytes);
+        console.log(`  board row bytes        : ${worstRow} worst, ${Math.round(mean(rowBytes))} mean`
+            + `  (cap ${BD.BOARD_ROW_BYTES_MAX}, ${((worstRow / BD.BOARD_ROW_BYTES_MAX) * 100).toFixed(0)}% used)`);
+        console.log(`  board dossier bytes    : ${worstBlob} worst, ${Math.round(mean(blobBytes))} mean`
+            + `  (cap ${BD.BOARD_BLOB_BYTES_MAX}, ${((worstBlob / BD.BOARD_BLOB_BYTES_MAX) * 100).toFixed(0)}% used)`);
+        console.log(`  one ${BD.BOARD_LIMIT}-row board page  : ${kb(worstRow * BD.BOARD_LIMIT)} at the worst measured row`
+            + `, + ${kb(worstBlob)} for each dossier opened`);
+
+        for (const r of withDocs) {
+            if (r.boardRowBytes > BD.BOARD_ROW_BYTES_MAX) {
+                fail('wrong', 'src/lib/career/board.js',
+                    'a real career builds a board row over BOARD_ROW_BYTES_MAX',
+                    `${r.label}: ${r.boardRowBytes} bytes against a ${BD.BOARD_ROW_BYTES_MAX} budget`,
+                    'The row is a fixed 25 fields, so this means a string field grew; re-check CAREER_STR_MAX.',
+                    'boardrowbytes');
+            }
+            if (r.boardBlobBytes > BD.BOARD_BLOB_BYTES_MAX) {
+                fail('wrong', 'src/lib/career/board.js',
+                    'a real career builds a dossier blob over BOARD_BLOB_BYTES_MAX',
+                    `${r.label}: ${r.boardBlobBytes} bytes against a ${BD.BOARD_BLOB_BYTES_MAX} budget`,
+                    'encodeBlob trims awards, then history, then proficiency; one of those loops stopped short.',
+                    'boardblobbytes');
+            }
+        }
+
+        // ---- every bounded field ----------------------------------------
+        //  Note what this can and cannot catch on its own: buildBoardDocs puts
+        //  every field through bounded(), so the built row is inside the bounds
+        //  BY CONSTRUCTION. The check below is therefore cheap insurance against
+        //  a field going missing or non-integer -- the second loop, comparing
+        //  the published number against the unclamped truth, is the one that can
+        //  actually see a rail bite a real career.
+        const track = new Map();
+        const note = (field, v, label) => {
+            const t = track.get(field) || { lo: Infinity, hi: -Infinity, loLabel: '-', hiLabel: '-' };
+            if (v < t.lo) { t.lo = v; t.loLabel = label; }
+            if (v > t.hi) { t.hi = v; t.hiLabel = label; }
+            track.set(field, t);
+        };
+
+        for (const r of withDocs) {
+            const row = r.boardDocs.row;
+            for (const field of Object.keys(AC.CAREER_BOUNDS)) {
+                const b = AC.CAREER_BOUNDS[field];
+                const v = row[field];
+                if (typeof v !== 'number' || !Number.isFinite(v)) {
+                    fail('crash', 'src/lib/career/board.js',
+                        `board row field "${field}" is missing or not a finite number`,
+                        `${r.label}: ${field} = ${JSON.stringify(v)}`,
+                        'Every field the rules name must exist on the row; a missing one denies the whole write.',
+                        'boardfield|' + field);
+                    continue;
+                }
+                if (!Number.isInteger(v)) {
+                    fail('wrong', 'src/lib/career/board.js',
+                        `board row field "${field}" is not an integer`,
+                        `${r.label}: ${field} = ${v}`,
+                        'Every numeric rail in firestore.rules is `v is int`; a fractional field is denied outright.',
+                        'boardint|' + field);
+                }
+                if (v < b.min || v > b.max) {
+                    fail('wrong', 'src/lib/utils/anticheat.js',
+                        `board row field "${field}" fell outside CAREER_BOUNDS`,
+                        `${r.label}: ${field} = ${v}, bound ${b.min}..${b.max}`,
+                        `Raise CAREER_BOUNDS.${field} in anticheat.js AND the matching literal in firestore.rules -- they are asserted to agree.`,
+                        'boardbound|' + field);
+                }
+                note(field, v, r.label);
+            }
+        }
+
+        // ---- did a rail actually bite? -----------------------------------
+        //  The published figure against what the career really was. A difference
+        //  here means a clamp fired: the board is showing a number the player
+        //  did not earn, which is the quiet half of a bound being too tight.
+        for (const r of withDocs) {
+            if (!r.boardRaw) continue;
+            const row = r.boardDocs.row;
+            for (const field of Object.keys(r.boardRaw)) {
+                const was = Math.round(Number(r.boardRaw[field]) || 0);
+                const pub = Number(row[field]);
+                if (!Number.isFinite(pub) || pub === was) continue;
+                const b = AC.CAREER_BOUNDS[field];
+                fail('wrong', 'src/lib/utils/anticheat.js',
+                    `the published board row understates "${field}" -- a bound or a rail clamped a real career`,
+                    `${r.label}: the career's ${field} is ${was}, the row publishes ${pub}`
+                    + (b ? ` (bound ${b.min}..${b.max})` : ''),
+                    `Raise CAREER_BOUNDS.${field} in anticheat.js AND firestore.rules, or loosen the cross-field rail that clamped it in buildBoardDocs.`,
+                    'boardclamp|' + field);
+            }
+        }
+
+        // ---- cross-field rails -------------------------------------------
+        //  The same rails firestore.rules enforces, evaluated against a real
+        //  career rather than quoted. Slack is how much further a career could
+        //  have gone before the write was denied.
+        const RAILS = [
+            { id: 'ovr <= peakOVR',                  slack: d => d.peakOVR - d.ovr },
+            { id: 'years <= age - 12',               slack: d => (d.age - 12) - d.years },
+            { id: 'wins + losses <= games',          slack: d => d.games - (d.wins + d.losses) },
+            { id: 'games <= years * 60 + 60',        slack: d => (d.years * 60 + 60) - d.games },
+            { id: 'earnedScore <= years*4000 + 400', slack: d => (d.years * 4000 + 400) - d.earnedScore },
+            { id: 'worlds <= years',                 slack: d => d.years - d.worlds },
+        ];
+        const railRows = RAILS.map(rl => ({ id: rl.id, slack: Infinity, label: '-' }));
+
+        for (const r of withDocs) {
+            const row = r.boardDocs.row;
+            RAILS.forEach((rl, i) => {
+                const s = rl.slack(row);
+                if (!Number.isFinite(s)) return;
+                if (s < railRows[i].slack) { railRows[i].slack = s; railRows[i].label = r.label; }
+                if (s < 0) {
+                    fail('wrong', 'src/lib/career/board.js',
+                        `a real career trips the cross-field rail "${rl.id}"`,
+                        `${r.label}: slack ${s} on ${rl.id} -- row ${JSON.stringify({
+                            age: row.age, years: row.years, games: row.games, wins: row.wins,
+                            losses: row.losses, ovr: row.ovr, peakOVR: row.peakOVR,
+                            earnedScore: row.earnedScore, worlds: row.worlds,
+                        })}`,
+                        'Loosen the rail in firestore.rules and the matching clamp in buildBoardDocs; a denied write is silent.',
+                        'boardrail|' + rl.id);
+                }
+            });
+
+            // finishedScore is exactly derived, and the rules enforce the
+            // derivation -- which is what makes the "Completed" sort a free
+            // single-field orderBy. Get it wrong and every retired career is
+            // denied, silently, forever.
+            const okFinished = row.retired
+                ? row.finishedScore === row.earnedScore
+                : row.finishedScore === -1;
+            if (!okFinished) {
+                fail('wrong', 'src/lib/career/board.js',
+                    'the finishedScore derivation does not hold for a real career',
+                    `${r.label}: retired=${row.retired} finishedScore=${row.finishedScore} earnedScore=${row.earnedScore}`,
+                    'finishedScore must be earnedScore when retired and exactly -1 otherwise.',
+                    'boardfinished');
+            }
+        }
+
+        // ---- the margin table --------------------------------------------
+        const marginRows = Object.keys(AC.CAREER_BOUNDS).map(field => {
+            const b = AC.CAREER_BOUNDS[field];
+            const t = track.get(field) || { lo: 0, hi: 0, loLabel: '-', hiLabel: '-' };
+            const span = b.max - b.min;
+            return {
+                field, b,
+                lo: t.lo, hi: t.hi, hiLabel: t.hiLabel,
+                capGap: b.max - t.hi,
+                floorGap: t.lo - b.min,
+                used: span > 0 ? (t.hi - b.min) / span : 1,
+            };
+        }).sort((a, b2) => b2.used - a.used);
+
+        // A few caps are not judgement calls at all -- they ARE an engine
+        // constant, and a real career reaching one is the game working rather
+        // than a rail about to lock somebody out. Marked with a star, and
+        // DERIVED rather than listed, so that raising ATTR_MAX without touching
+        // CAREER_BOUNDS drops the star and turns that zero back into an alarm.
+        const HARD = {
+            age:     ['RETIREMENT_AGE_FORCED', K.RETIREMENT_AGE_FORCED],
+            ovr:     ['ATTR_MAX', K.ATTR_MAX],
+            peakOVR: ['ATTR_MAX', K.ATTR_MAX],
+            peakMMR: ['MMR_MAX', K.MMR_MAX],
+        };
+        const hardOf = (m) => (HARD[m.field] && HARD[m.field][1] === m.b.max) ? HARD[m.field][0] : '';
+
+        console.log('  tightest margin to every rail (worst of ' + withDocs.length + ' careers). A cap that a real');
+        console.log('  career can reach is a silent lockout, so headroom is the number to watch:');
+        console.log('      ' + 'field'.padEnd(14) + 'bound'.padEnd(13)
+            + 'lowest'.padStart(8) + 'highest'.padStart(9)
+            + 'headroom'.padStart(10) + 'floor'.padStart(8) + 'used'.padStart(7)
+            + '  worst career');
+        for (const m of marginRows) {
+            console.log('      ' + (m.field + (hardOf(m) ? '*' : '')).padEnd(14)
+                + `${m.b.min}..${m.b.max}`.padEnd(13)
+                + String(m.lo).padStart(8)
+                + String(m.hi).padStart(9)
+                + String(m.capGap).padStart(10)
+                + String(m.floorGap).padStart(8)
+                + ((m.used * 100).toFixed(0) + '%').padStart(7)
+                + '  ' + String(m.hiLabel).slice(0, 30));
+        }
+        {
+            const starred = marginRows.filter(m => hardOf(m));
+            if (starred.length) {
+                console.log('      * cap IS an engine constant ('
+                    + starred.map(m => `${m.field} = ${hardOf(m)} ${m.b.max}`).join(', ')
+                    + '), so 0 headroom there is the game working, not a lockout.');
+            }
+        }
+
+        console.log('  cross-field rails, slack at the tightest career (0 = sitting exactly on the rail;');
+        console.log('  wins+losses <= games is 0 by construction, every other 0 is worth a look):');
+        for (const rl of railRows) {
+            console.log('      ' + rl.id.padEnd(34)
+                + (Number.isFinite(rl.slack) ? String(rl.slack) : '-').padStart(10)
+                + '  ' + String(rl.label).slice(0, 30));
+        }
     }
 }
 // Champion select and what it taught the player. A run where nobody ever picks,

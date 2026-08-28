@@ -6,8 +6,10 @@ import { showToast } from './toasts.js';
 export const currentUser = writable(null);
 export const authLoading = writable(false);
 
-// Listen for auth changes
-if (window.fbAuth) {
+// Listen for auth changes. `typeof window` first: this runs on IMPORT, and a
+// bare `window.fbAuth` throws outside a browser, taking down every module that
+// imports currentUser (stores/careerBoard.js and the whole board UI).
+if (typeof window !== 'undefined' && window.fbAuth) {
     window.fbAuth.onAuthStateChanged(user => {
         currentUser.set(user);
     });

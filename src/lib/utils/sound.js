@@ -1,5 +1,8 @@
 let _ctx = null;
-let _muted = localStorage.getItem('lur_sound_muted') === '1';
+// Module scope, so this runs on IMPORT. Unguarded it makes every module that
+// transitively reaches sound.js unloadable outside a browser — which is most of
+// the career mode, and every headless tool that touches it.
+let _muted = typeof localStorage !== 'undefined' && localStorage.getItem('lur_sound_muted') === '1';
 
 function ctx() {
     if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
