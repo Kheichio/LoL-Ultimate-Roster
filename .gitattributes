@@ -1,2 +1,17 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Auto detect text files and perform LF normalization.
+#
+# `text=auto` alone only guarantees LF in the STORED blob. Checkout still honours
+# each machine's core.autocrlf, which the Windows Git installer sets to `true`,
+# so a fresh clone lands CRLF on disk and VS Code warns:
+#
+#   "This file uses 'LF' line endings, but Git is configured to convert them to
+#    'CRLF' the next time the file is checked out."
+#
+# That warning is harmless -- Git normalizes back to LF on commit either way, so
+# it never produces diff noise. `eol=lf` pins the WORKING TREE to LF too, which
+# makes the result identical on every machine and silences it for everyone.
+#
+# Safe here specifically: the entire tree is already LF, and there are no
+# .bat/.cmd/.ps1/.sh files that would want CRLF. Add an exception line if one is
+# ever introduced.
+* text=auto eol=lf
