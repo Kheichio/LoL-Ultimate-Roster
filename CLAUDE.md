@@ -269,6 +269,58 @@ told about the friend they climbed with at fourteen. Helpers in `events.js`: `ag
 `agedBetween`, and `onBigStage`, which confirms a real bracket or fixture rather than just a
 playoff-shaped calendar week.
 
+### The career leaderboard
+A global board of other people's careers: browse, then open a full dossier — their player card,
+their club roster cards, their season-by-season team history and their performance stats.
+
+- **Two public collections**, `careerBoard/{uid}` (a 25-field ranking row, ~440 B) and
+  `careerBoardProfiles/{uid}` (`{ v, careerId, blob, updatedAt }`). ONE DOC PER UID, never per
+  uid+slot: the path IS the ownership proof, so no rule ever parses a doc id, and one row per
+  account bounds the collection at the number of registered users. **The published slot is a
+  FIELD.** Two TOP-LEVEL collections rather than a parent + subcollection, because deleting a
+  parent document does NOT delete its subcollection and Unpublish would orphan the dossier.
+- **Rank on `earnedLegacyScore`, never `legacyScore`.** The monument ladder is 4,350 renewable
+  legacy points for +2,600 score, and careers retire holding 618-6,531 LP unspent — ranking on the
+  total would put the top of the board up for sale. The field is NAMED `earnedScore` so no future
+  reader can wire the purchasable number into the rank by accident; `boughtScore` rides along and
+  is displayed, never summed. Same reason `hallOfLegendsEligible()` runs on the earned figure.
+- **IDs travel, names do not.** Team, award, perk, monument, champion and trait names are all
+  re-resolved locally from ids (the `anticheat.validateCard()` idiom), and no colour is ever
+  published — so a fabricated org renders as "Unknown Org" and no remote string can reach a
+  `style=` attribute. The corollary: those ids being permanent is now load-bearing for OTHER
+  PEOPLE'S documents, which no code here can migrate.
+- **The dossier is a JSON STRING** because rules cannot ITERATE a variable-length list — a list
+  bound caps the row COUNT while letting each row carry a 100kb string. A string's `size()` is the
+  only hard BYTE bound the language has. Same trick as `careers` in `saves/{uid}`.
+- **Board code performs ZERO storage writes.** Opt-in is DERIVED by comparing the published row's
+  `careerId` to `careerFingerprint(save)` — hashed over `handle|startAge|path|region` ONLY, because
+  `changeRole()` and `switchChampion()` rewrite role/champion/playstyle mid-career and a
+  fingerprint that flipped would tell a published player they were unpublished. The publisher reads
+  through `careerSlotRaw()`, a fresh `JSON.parse`, so it *physically cannot* reach the live store.
+  `boardCheck` lints for every write identifier by call site.
+- **`boardOVR()` for publishing, `calcOVR()` for display.** `calcOVR` returns 0 on an unresolvable
+  role, which the `ovr >= 1` rule would deny with the failure swallowed — so the row uses
+  `boardOVR`, which floors at 1 and falls back to MID. The DOSSIER must not: on a role-rotted save
+  that turns an honest "Unknown / 0" into a confident "Academy Prospect" with an invented rating.
+- **`Profile.svelte` is a two-line wrapper over `CareerDossier.svelte`** (`c`, `mine`, `remote`),
+  which is what gives a stranger's profile the same 42-state `careerRender` coverage the owner's
+  has. Every awards.js reader is `c || snapshot()`, so calling one with a bare `c` renders the
+  VIEWER'S own numbers under a stranger's handle — they all take the guarded `c0`, and
+  `boardCheck` section 7 lints for it.
+- `careerBoard.js` may import `auth.js` and `career.js`; **`career.js` must NEVER import
+  `board.js` or `careerBoard.js`** or careerRender's Vite SSR module graph breaks.
+- Every sort is a single-field `orderBy`, so **no composite index is ever needed**. Adding a
+  `.where()` beside an `.orderBy()` on a different field would change that.
+
+**Publishing firestore.rules** — there is no CLI and no firebase.json, so the rules are pasted into
+the Firebase console by hand. **Copy them from the file, not from a terminal.** Pasting through a
+terminal mangles the text and produces a cascade of `Unexpected '&&'` and `Missing a closing '`
+errors on lines that are pure comment — and the reported line numbers land on code that is known
+good, which sends you hunting in the wrong place. `firestore.rules.minimal` is the comment-free
+form that was actually published; `boardCheck` asserts the two agree on every literal. When adding
+a row field later, `keys().size() <= 25` makes it a TWO-STAGE deploy: re-publish the rules by hand
+FIRST, then ship the client, or every write is denied and swallowed.
+
 **Verifying career changes** — `npm run build` passing proves very little here:
 - `node tools/careerSmoke.mjs --seed 42` — plays full 12-24 year careers headlessly with ~30
   invariants asserted every week. Seeded, so failures reproduce. Also asserts the trait system
@@ -294,6 +346,24 @@ playoff-shaped calendar week.
   predates slots is still there. Also isolation both ways, device prefs staying global, scoped
   delete and wipe, both stores round-tripping across a switch (which is what proves
   `resetGameStores()` actually resets), and that the picker's summary readers never switch slot.
+- `node tools/boardCheck.mjs` — the global career leaderboard (`career/board.js`,
+  `stores/careerBoard.js`, `CareerBoard.svelte`, `CareerDossier.svelte`), which nothing else covers.
+  Seeded; `--seed` reproduces. Seven sections, and the first is the one that matters most:
+  **firestore.rules is published BY HAND in the console, so drift is the default state** — every
+  `inRange`, `size()` cap and `in [...]` list is parsed out of the rules as TEXT and compared field
+  by field to `CAREER_BOUNDS` / `CAREER_STR_MAX` / `CAREER_ENUMS`. A rules bound TIGHTER than the
+  client clamp denies the write, the catch swallows it, and an honest career never appears for
+  anybody with no error anywhere. It also pins the field set (`hasAll` + `keys().size()` must equal
+  the real `buildBoardDocs` output, and every key a helper dereferences must appear in its own
+  `hasAll` — the live defect in `validLeaderboardEntry`, four named and seven read), drives three
+  real careers and **prints the tightest margin per bound**, pushes ~40 rot shapes through
+  `sanitizeRow`/`sanitizeDossier`/`safeSeatCard`, proves the blob trim loop fires while `at2`/`tp`
+  keep the uncapped counts, and asserts that publishing leaves localStorage and the career store
+  **byte-identical** with exactly two writes in the order profile-then-row. Section 7 lints board
+  code for save-writing call sites and lints `CareerDossier` for any awards.js reader called with a
+  bare `c` — every one of those falls through to `c || snapshot()` and would print the VIEWER'S own
+  numbers under a stranger's handle. The lint patterns carry their own positive/negative controls,
+  because a lint that matches nothing looks exactly like a clean codebase.
 - `node tools/careerRender.mjs` — Vite SSR-renders all 21 career components against 42 game
   states (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
   check that exercises the Svelte templates. Note two extra loops beyond the screens matrix: the

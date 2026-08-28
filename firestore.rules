@@ -2,10 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Leaderboard ──────────────────────────────────────────────
-    // Public read: anyone — including logged-out visitors — can view the
-    // global leaderboard. Writes stay locked to the owning user and are
-    // validated so inflated stats can't reach the board.
+    // ---- Leaderboard (Ultimate Roster) ----
+    // Public read: anyone, logged-out visitors included, can view the global
+    // leaderboard. Writes stay locked to the owning user and are validated so
+    // inflated stats cannot reach the board.
     match /leaderboard/{userId} {
       allow read: if true;
 
@@ -14,28 +14,65 @@ service cloud.firestore {
         && validLeaderboardEntry(request.resource.data);
     }
 
-    // ── Cloud Saves ───────────────────────────────────────────────
+    // ---- Career leaderboard (Ultimate Career) ----
+    // ONE DOC PER UID, never one per uid plus slot: the path IS the ownership
+    // proof, so no rule ever parses a doc id, and one row per account bounds
+    // this collection at the number of registered users. The published save
+    // slot is a FIELD.
+    //
+    // Two TOP-LEVEL collections, not a parent plus subcollection: deleting a
+    // parent document does NOT delete its subcollection in Firestore, so
+    // removing an entry from the board would silently orphan the dossier.
+    //
+    // create plus update, and NOT write: a bare write also covers delete, and
+    // on a delete request.resource is null, so calling a validator on it errors
+    // and the rule denies. That is the bug the leaderboard block has today,
+    // where nobody can take their own entry off the board.
+    match /careerBoard/{userId} {
+      allow read: if true;
+
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && validCareerRow(request.resource.data);
+
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ---- Career dossier ----
+    // The full record, fetched ONLY when a board row is opened. The payload is
+    // a JSON string because rules cannot iterate a variable-length list: a list
+    // bound caps the row COUNT while letting each row carry a huge string. The
+    // size of a string is the only hard BYTE bound this language can express.
+    match /careerBoardProfiles/{userId} {
+      allow read: if true;
+
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && validCareerDossier(request.resource.data);
+
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ---- Cloud saves ----
     // Strictly personal: only the owner can read or write their save.
     match /saves/{userId} {
       allow read, write: if request.auth != null
         && request.auth.uid == userId;
     }
 
-    // ── Friendships ───────────────────────────────────────────────
-    // One edge doc per pair (id = the two uids sorted and joined by "_").
-    // Only the two participants can see or change the edge.
+    // ---- Friendships ----
+    // One edge doc per pair, id being the two uids sorted and joined by an
+    // underscore. Only the two participants can see or change the edge.
     match /friendships/{pairId} {
       allow read: if request.auth != null
         && request.auth.uid in resource.data.users;
 
-      // Create a pending request: you must be one of the two users and the requester.
       allow create: if request.auth != null
         && request.auth.uid in request.resource.data.users
         && request.resource.data.users.size() == 2
         && request.resource.data.requester == request.auth.uid
         && request.resource.data.status == 'pending';
 
-      // Accept/decline/cancel/unfriend: either participant may update or delete.
       allow update, delete: if request.auth != null
         && request.auth.uid in resource.data.users;
     }
@@ -43,21 +80,148 @@ service cloud.firestore {
     // Everything else is denied by default.
   }
 
-  // ── Leaderboard validation helper ────────────────────────────
+  // ---- Leaderboard validation helper ----
+  // There is deliberately no totalBE guard here. This file must mirror what is
+  // actually PUBLISHED in the Firebase console, and the published rules have
+  // never carried one. Both writers already clamp totalBE client-side, so
+  // adding a totalBE range check is safe for current builds, but it would deny
+  // a cached older client that predates the field, and that failure is
+  // swallowed and invisible. Add it only deliberately.
   function validLeaderboardEntry(d) {
     return d.keys().hasAll(['displayName', 'totalPower', 'trophies', 'updatedAt'])
-      // Numeric range guards — mirrors anticheat.js BOUNDS
-      && d.totalPower  is int && d.totalPower  >= 0  && d.totalPower  <= 145
-      && d.trophies    is int && d.trophies    >= 0  && d.trophies    <= 100000
+      && d.totalPower is int && d.totalPower >= 0 && d.totalPower <= 145
+      && d.trophies is int && d.trophies >= 0 && d.trophies <= 100000
       && d.managerLevel is int && d.managerLevel >= 1 && d.managerLevel <= 1000
-      && d.rawPower    is int && d.rawPower    >= 0  && d.rawPower    <= 99
-      && d.totalBE     is number && d.totalBE  >= 0  && d.totalBE    <= 50000000
-      // Timestamps must be recent (within 10 min of server time) to prevent replay
+      && d.rawPower is int && d.rawPower >= 0 && d.rawPower <= 99
       && d.updatedAt is int
       && d.updatedAt > (request.time.toMillis() - 600000)
       && d.updatedAt <= request.time.toMillis()
-      // String fields must be strings
       && d.displayName is string && d.displayName.size() <= 64
-      && d.teamName    is string && d.teamName.size()    <= 64;
+      && d.teamName is string && d.teamName.size() <= 64;
+  }
+
+  // ---- Career board validation ----
+  // Every literal below is mirrored by CAREER_BOUNDS, CAREER_STR_MAX and
+  // CAREER_ENUMS in src/lib/utils/anticheat.js, and tools/boardCheck.mjs parses
+  // BOTH files and fails if they disagree. These rules are published BY HAND,
+  // with no CLI and no firebase.json, so drift is the default state.
+  //
+  // A bound that is too TIGHT fails silently and permanently: the write is
+  // denied, the client catch swallows it, and an honest career never appears
+  // for anyone, with no error anywhere. tools/careerSmoke.mjs asserts every
+  // bound against real 12 to 24 year simulated careers and prints the tightest
+  // margin per field.
+  //
+  // Notes on the row fields:
+  //   keys().size() turns hasAll into a hasOnly. Without it a client can staple
+  //     anything up to the 1MiB document limit onto a doc that otherwise
+  //     validates, and every reader downloads it 50 times per board load. It
+  //     also makes adding a field later a TWO-STAGE deploy: re-publish these
+  //     rules by hand FIRST, then ship the client.
+  //   teamId is an ID, never a name and never a colour. The reader re-resolves
+  //     it locally, so a fabricated org renders as an unknown org and no remote
+  //     string can reach a style attribute. Empty string when unsigned.
+  //   earnedScore is EARNED legacy only. boughtScore is the monument ladder:
+  //     4350 legacy points, a renewable currency, for 2600 score. Ranking on
+  //     the total would put the top of the board up for sale, which is why the
+  //     game gates the Hall of Legends on the earned figure too.
+  //   earnedScore capped at years times 4000 plus 400 is the rail that stops a
+  //     fourteen year old claiming a Hall of Legends score, a band starting at
+  //     8000.
+  //   finishedScore is exactly derived and the derivation is enforced, so the
+  //     completed-careers sort is a free single-field orderBy with nothing to
+  //     fake. Written as a comparison against false rather than with a negation
+  //     so a hand-typed file cannot mis-parse it.
+  //   trophies has an absolute cap only. A per-year trophy rail is the likeliest
+  //     silent lockout: it holds every major AND legendary award, and a dominant
+  //     career can take a dozen in one year.
+  //   updatedAt is checked against the SERVER clock but written with a client
+  //     timestamp, so a device more than 10 minutes out can never publish.
+  //
+  // Measured maxima behind the absolute caps. careerSmoke's "board entry" block
+  // builds the real published row out of every simulated career and prints the
+  // tightest margin to every rail; re-measure there rather than guessing.
+  //   node tools/careerSmoke.mjs --seed 42 --careers 12 --years 22
+  //   966 games, 21913 earned legacy, 160 trophies, 47 titles, 6 Worlds,
+  //   a 380-byte row and a 5957-byte dossier.
+  // The caps a real career already sits ON are age 38, ovr/peakOVR 99 and
+  // peakMMR 4000 -- each of those IS an engine constant, not a judgement call.
+  function inRange(v, lo, hi) {
+    return v is int && v >= lo && v <= hi;
+  }
+
+  function freshTimestamp(t) {
+    return t is int
+      && t > (request.time.toMillis() - 600000)
+      && t <= request.time.toMillis();
+  }
+
+  function validCareerRowKeys(d) {
+    return d.keys().hasAll(['v', 'careerId', 'slot', 'handle', 'displayName', 'role', 'region', 'teamId', 'retired', 'hallOfLegends', 'age', 'years', 'ovr', 'peakOVR', 'peakMMR', 'games', 'wins', 'losses', 'earnedScore', 'boughtScore', 'finishedScore', 'titles', 'worlds', 'trophies', 'updatedAt'])
+      && d.keys().size() <= 25;
+  }
+
+  function validCareerRowIdentity(d) {
+    return inRange(d.v, 1, 9)
+      && d.careerId is string && d.careerId.size() >= 4 && d.careerId.size() <= 16
+      && inRange(d.slot, 1, 3)
+      && d.handle is string && d.handle.size() > 0 && d.handle.size() <= 16
+      && d.displayName is string && d.displayName.size() <= 64
+      && d.role in ['TOP', 'JNG', 'MID', 'ADC', 'SUP']
+      && d.region in ['LCK', 'LPL', 'LEC', 'LCS', 'LCP']
+      && d.teamId is string && d.teamId.size() <= 32
+      && d.retired is bool
+      && d.hallOfLegends is bool;
+  }
+
+  function validCareerRowRating(d) {
+    return inRange(d.age, 13, 38)
+      && inRange(d.years, 1, 26)
+      && d.years <= d.age - 12
+      && inRange(d.ovr, 1, 99)
+      && inRange(d.peakOVR, 1, 99)
+      && d.ovr <= d.peakOVR
+      && inRange(d.peakMMR, 0, 4000);
+  }
+
+  function validCareerRowRecord(d) {
+    return inRange(d.games, 0, 3000)
+      && inRange(d.wins, 0, 3000)
+      && inRange(d.losses, 0, 3000)
+      && d.wins + d.losses <= d.games
+      && d.games <= d.years * 60 + 60;
+  }
+
+  function validCareerRowHonours(d) {
+    return inRange(d.earnedScore, 0, 70000)
+      && inRange(d.boughtScore, 0, 2600)
+      && d.earnedScore <= d.years * 4000 + 400
+      && d.finishedScore is int
+      && ((d.retired == true && d.finishedScore == d.earnedScore) || (d.retired == false && d.finishedScore == -1))
+      && inRange(d.titles, 0, 200)
+      && inRange(d.worlds, 0, 26)
+      && d.worlds <= d.years
+      && inRange(d.trophies, 0, 300);
+  }
+
+  function validCareerRow(d) {
+    return validCareerRowKeys(d)
+      && validCareerRowIdentity(d)
+      && validCareerRowRating(d)
+      && validCareerRowRecord(d)
+      && validCareerRowHonours(d)
+      && freshTimestamp(d.updatedAt);
+  }
+
+  // A 22-year career compacts to about 9kb. 24000 is comfortable headroom and
+  // still a hard wall. The client re-parses and re-clamps the blob regardless,
+  // so these rules bound its SIZE and never its contents.
+  function validCareerDossier(d) {
+    return d.keys().hasAll(['v', 'careerId', 'blob', 'updatedAt'])
+      && d.keys().size() <= 4
+      && inRange(d.v, 1, 9)
+      && d.careerId is string && d.careerId.size() >= 4 && d.careerId.size() <= 16
+      && d.blob is string && d.blob.size() > 0 && d.blob.size() <= 24000
+      && freshTimestamp(d.updatedAt);
   }
 }
