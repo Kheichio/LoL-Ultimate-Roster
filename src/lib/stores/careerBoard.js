@@ -178,11 +178,12 @@ function isOffline(e) {
  * loud, which is precisely how the roster board's blanket catch hides them.
  */
 const DENIED_MESSAGE =
-    'The server refused the publish. Either the career board rules have not been published '
-    + 'in the Firebase console yet, or this device\'s clock is more than 10 minutes off — the '
-    + 'board checks freshness against the SERVER clock but stamps the write with your device\'s time.'
-    + ' Check the browser console for the exact error and the refused document — if you see '
-    + 'ERR_BLOCKED_BY_CLIENT there, it is an ad blocker and not the rules at all.';
+    'The server refused the publish, which almost always means the career board rules have not '
+    + 'been published in the Firebase console yet. Firestore denies every collection it has no rule '
+    + 'for, and this board writes two of its own — careerBoard and careerBoardProfiles. Open the '
+    + 'Firebase console, go to Firestore Database → Rules, paste in firestore.rules.minimal from '
+    + 'the project, publish, and try again. The browser console has the exact error and the refused '
+    + 'document; if you see ERR_BLOCKED_BY_CLIENT there instead, it is an ad blocker, not the rules.';
 
 /**
  * AD BLOCKERS ARE NAMED FIRST, ON PURPOSE.

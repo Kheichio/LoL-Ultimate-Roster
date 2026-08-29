@@ -154,21 +154,25 @@ export const CAREER_STR_MAX = {
     handle: 16, displayName: 64, teamId: 32, careerId: 16, blob: 24000,
 };
 
-// These must stay identical, IN ORDER, to ROLE_IDS / REGION_IDS in career
-// constants and to the `in [...]` lists in firestore.rules — boardCheck asserts
-// all three against each other. Adding a region is therefore a TWO-STAGE deploy,
-// exactly like adding a row field: re-publish the rules in the Firebase console
-// FIRST, then ship the client. Ship it the other way round and every publish
-// from a player in the new region is denied and the error swallowed.
+// CLIENT-SIDE ONLY. These must stay identical, IN ORDER, to ROLE_IDS /
+// REGION_IDS in career constants — normRole()/normRegion() in career/board.js
+// fall back through them on both write and read, so an unknown value renders as
+// a safe default instead of reaching the DOM.
+//
+// firestore.rules NO LONGER ENUMERATES EITHER. It caps their length and nothing
+// more, which is what makes adding a role or a region a client-only change:
+// under the old enum, shipping a new region before hand-publishing the rules
+// denied every publish from anyone who picked it, silently and for ever.
 export const CAREER_ENUMS = {
     role:   ['TOP', 'JNG', 'MID', 'ADC', 'SUP'],
     region: ['LCK', 'LPL', 'LEC', 'LCS', 'LCP', 'CBLOL'],
 };
 
-// hasAll(<these many names>) + keys().size() <= <this> is what makes the rules'
-// field set CLOSED. Without the cap a client can staple anything up to the 1MiB
-// document limit onto a doc that otherwise validates, and every reader then
-// downloads it 50 times on every board load.
+// keys().size() <= <this> is what makes the rules' field set CLOSED. Without the
+// cap a client can staple anything up to the 1MiB document limit onto a doc that
+// otherwise validates, and every reader then downloads it 50 times on every
+// board load. Adding a row field is still a two-stage deploy for that reason —
+// re-publish the rules by hand FIRST, then ship the client.
 export const CAREER_ROW_KEYS = 25;
 export const CAREER_DOSSIER_KEYS = 4;
 

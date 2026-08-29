@@ -316,18 +316,27 @@ their club roster cards, their season-by-season team history and their performan
 the Firebase console by hand. **Copy them from the file, not from a terminal.** Pasting through a
 terminal mangles the text and produces a cascade of `Unexpected '&&'` and `Missing a closing '`
 errors on lines that are pure comment — and the reported line numbers land on code that is known
-good, which sends you hunting in the wrong place. `firestore.rules.minimal` is the comment-free
-form that was actually published. **`boardCheck` only ever reads `firestore.rules`** — nothing in
-`tools/` opens `.minimal`, so the file that actually gets pasted into the console is the one with no
-automated coverage. Diff the two by hand (strip `//` comments and blank lines; they should be equal
-line for line) after touching either. When adding
-a row field later, `keys().size() <= 25` makes it a TWO-STAGE deploy: re-publish the rules by hand
-FIRST, then ship the client, or every write is denied and swallowed. **Adding a ROLE or a REGION is
-the same two-stage deploy** — `d.region in [...]` is a closed list, so a client that offers Brazil
-before the rules know the word publishes nothing for anyone who picks it, silently. The CBLOL
-addition is the worked example: `CAREER_ENUMS` in `anticheat.js`, `REGION_IDS` in career
-`constants.js` and both rules files must agree, in order, and `boardCheck` section 1 fails if they
-drift.
+good, which sends you hunting in the wrong place. `firestore.rules.minimal` is the comment-free form
+that is actually pasted, and `boardCheck` now asserts the two files are identical once comments and
+blank lines are stripped — a check that did not exist while this file claimed it did.
+
+**Firestore denies any collection it has no rule for.** That is the first thing to suspect when a
+publish is refused: the career board writes two collections of its own (`careerBoard`,
+`careerBoardProfiles`), and until the rules naming them are live in the console, every publish is a
+`permission-denied` no amount of client work can fix.
+
+**The career rules are deliberately thin.** They bound what a document COSTS a reader — `keys().size()`,
+a type check on every field, a length cap on every string — plus one absolute ceiling on `earnedScore`
+because that is what the board ranks on. They used to carry twenty-five numeric ranges, six
+cross-field rails, two enums and a ten-minute clock window, each mirrored by hand into `anticheat.js`;
+every one was a way for an honest career to be denied silently and permanently the moment the two
+drifted a single literal, which for a hand-pasted file is the default state. Values are re-clamped by
+`sanitizeRow()` on READ, which is where they have to be clamped anyway. `boardCheck` section 1 now
+asserts those rails and enums stay GONE, so the complexity cannot creep back in.
+
+Consequences worth knowing: **adding a role or a region is now a client-only change** (no enum to
+mirror), but **adding a row FIELD is still a TWO-STAGE deploy** — `keys().size() <= 25` and the
+per-field type checks mean a new field is denied until the rules are re-published by hand first.
 
 **Verifying career changes** — `npm run build` passing proves very little here:
 - `node tools/careerSmoke.mjs --seed 42` — plays full 12-24 year careers headlessly with ~30
@@ -357,13 +366,15 @@ drift.
 - `node tools/boardCheck.mjs` — the global career leaderboard (`career/board.js`,
   `stores/careerBoard.js`, `CareerBoard.svelte`, `CareerDossier.svelte`), which nothing else covers.
   Seeded; `--seed` reproduces. Seven sections, and the first is the one that matters most:
-  **firestore.rules is published BY HAND in the console, so drift is the default state** — every
-  `inRange`, `size()` cap and `in [...]` list is parsed out of the rules as TEXT and compared field
-  by field to `CAREER_BOUNDS` / `CAREER_STR_MAX` / `CAREER_ENUMS`. A rules bound TIGHTER than the
-  client clamp denies the write, the catch swallows it, and an honest career never appears for
-  anybody with no error anywhere. It also pins the field set (`hasAll` + `keys().size()` must equal
-  the real `buildBoardDocs` output, and every key a helper dereferences must appear in its own
-  `hasAll` — the live defect in `validLeaderboardEntry`, four named and seven read), drives three
+  **firestore.rules is published BY HAND in the console, so drift is the default state.** It asserts
+  the two rules files match each other, that every string cap in the rules is **at or above** the
+  client clamp in `CAREER_STR_MAX` (only that direction — a rules cap *below* the client's denies a
+  legal value for ever, silently, while one above is simply never reached), that the `earnedScore`
+  ceiling is not below the client clamp, and that the removed rails, enums and clock window have not
+  crept back. It pins the field set from the TYPE CHECKS rather than a `hasAll` — the rules deny on
+  dereferencing a key a document lacks, so `d.handle is string` *is* the requirement — and both
+  directions are checked: every published field must be typed, and no rule may read a field the
+  client never sends. It drives three
   real careers and **prints the tightest margin per bound**, pushes ~40 rot shapes through
   `sanitizeRow`/`sanitizeDossier`/`safeSeatCard`, proves the blob trim loop fires while `at2`/`tp`
   keep the uncapped counts, and asserts that publishing leaves localStorage and the career store

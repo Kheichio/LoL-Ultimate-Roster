@@ -257,60 +257,67 @@ function rulesBody(name) {
     return null;
 }
 
-const ROW_HELPERS = [
-    'validCareerRowKeys', 'validCareerRowIdentity', 'validCareerRowRating',
-    'validCareerRowRecord', 'validCareerRowHonours', 'validCareerRow',
-];
-for (const fn of ROW_HELPERS.concat(['validCareerDossier', 'inRange', 'freshTimestamp'])) {
+for (const fn of ['validCareerRow', 'validCareerDossier']) {
     truthy('rules define ' + fn + '()', rulesBody(fn) !== null,
         'The published rules and this harness must describe the same document.');
 }
 
-const ROW_SRC = ROW_HELPERS.map(rulesBody).filter(Boolean).join('\n');
+const ROW_SRC = rulesBody('validCareerRow') || '';
 const DOSSIER_SRC = rulesBody('validCareerDossier') || '';
-
-// ---- numeric bounds --------------------------------------------------------
-function inRangeBounds(src) {
-    const out = {};
-    const re = /inRange\(\s*d\.([A-Za-z0-9_]+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/g;
-    let m;
-    while ((m = re.exec(src))) out[m[1]] = { min: Number(m[2]), max: Number(m[3]) };
-    return out;
-}
-
-const rulesBounds = inRangeBounds(ROW_SRC);
-
-// finishedScore is bounded by DERIVATION rather than by inRange: it is either
-// -1 or exactly earnedScore. That is what makes the "Completed" sort a free
-// single-field orderBy with nothing to fake, so the derivation clause is
-// checked here as the source of its bounds rather than treated as a gap.
-const DERIVATION = '(d.retired == true && d.finishedScore == d.earnedScore) '
-    + '|| (d.retired == false && d.finishedScore == -1)';
 const rowFlat = ROW_SRC.replace(/\s+/g, ' ');
-const hasDerivation = rowFlat.includes(DERIVATION.replace(/\s+/g, ' '));
-truthy('finishedScore is derived, not merely ranged', hasDerivation,
-    'Without the derivation clause "Completed" is a sortable field a client can set to anything.');
-truthy('finishedScore is declared an int', rowFlat.includes('d.finishedScore is int'));
-if (hasDerivation && rulesBounds.earnedScore) {
-    rulesBounds.finishedScore = { min: -1, max: rulesBounds.earnedScore.max, derived: true };
+
+// ---- THE SIMPLIFICATION MUST NOT CREEP BACK --------------------------------
+//  These rules deliberately hold NO numeric ranges beyond the ranked field, no
+//  cross-field rails, no enums and no clock window. Every one of those was a way
+//  for an honest career to be denied silently and permanently the moment this
+//  hand-pasted file drifted a literal from the client. Re-adding one without
+//  re-reading that history is the regression this section exists to stop.
+const BANNED = [
+    ['a cross-field rail (years vs age)',   /d\.years\s*<=\s*d\.age/],
+    ['a cross-field rail (record)',         /d\.wins\s*\+\s*d\.losses/],
+    ['a cross-field rail (games vs years)', /d\.games\s*<=\s*d\.years/],
+    ['a cross-field rail (score vs years)', /d\.earnedScore\s*<=\s*d\.years/],
+    ['a cross-field rail (worlds vs years)', /d\.worlds\s*<=\s*d\.years/],
+    ['a finishedScore derivation',          /d\.finishedScore\s*==\s*d\.earnedScore/],
+    ['a role or region enum',               /\bin\s*\[\s*'/],
+    ['a clock-freshness window',            /request\.time\.toMillis/],
+];
+for (const [what, re] of BANNED) {
+    falsy('the career rules carry no ' + what, re.test(ROW_SRC + '\n' + DOSSIER_SRC),
+        'It denies honest careers silently when it drifts, and the client already clamps and '
+        + 'sanitises this. See the comment above validCareerRow in firestore.rules.');
 }
+truthy('rules no longer define freshTimestamp()', rulesBody('freshTimestamp') === null,
+    'Nothing in the career rules uses it any more; leaving it defined invites its return.');
 
-const jsBounds = AC.CAREER_BOUNDS;
-const rulesFields = Object.keys(rulesBounds).sort();
-const jsFields = Object.keys(jsBounds).sort();
+// ---- the one range that is kept --------------------------------------------
+//  earnedScore is the field the board RANKS on, so it keeps an absolute ceiling.
+//  It must sit at or ABOVE the client clamp: a rules cap below the client's is
+//  the silent lockout this whole rewrite is about.
+const earnedCap = /d\.earnedScore\s*<=\s*(\d+)/.exec(rowFlat);
+truthy('the ranked field carries an absolute ceiling', !!earnedCap,
+    'Without it a single write tops the board for ever.');
+if (earnedCap) {
+    truthy('the earnedScore ceiling is not below the client clamp ('
+        + AC.CAREER_BOUNDS.earnedScore.max + ')',
+    Number(earnedCap[1]) >= AC.CAREER_BOUNDS.earnedScore.max,
+    'A rules cap under the client clamp denies an honest maxed career, silently and for ever.');
+}
+truthy('the ranked field cannot go negative', /d\.earnedScore\s*>=\s*0/.test(rowFlat));
 
-eq('every bounded field is in both files', rulesFields.join(','), jsFields.join(','),
-    'A field bounded in one file and not the other is exactly the drift this check exists for. '
-    + 'A rules bound with no JS clamp denies honest writes; a JS clamp with no rules bound is unenforced.');
-
-for (const f of jsFields) {
-    const r = rulesBounds[f];
-    if (!r) continue;
-    const j = jsBounds[f];
-    const tag = r.derived ? ' (derived)' : '';
-    eq('bound ' + f + '.min agrees' + tag, r.min, j.min,
-        'firestore.rules is published by hand, so it is the half that drifts.');
-    eq('bound ' + f + '.max agrees' + tag, r.max, j.max);
+// ---- the two rules files must not drift from each other --------------------
+//  firestore.rules.minimal is the artifact that actually gets pasted into the
+//  console. CLAUDE.md claimed this check existed for a long time before it did.
+const MINIMAL_PATH = path.join(ROOT, 'firestore.rules.minimal');
+truthy('firestore.rules.minimal exists', fs.existsSync(MINIMAL_PATH));
+if (fs.existsSync(MINIMAL_PATH)) {
+    const strip = (s) => s.split(/\r?\n/)
+        .map(l => l.replace(/\/\/.*$/, '').trim())
+        .filter(Boolean).join('\n');
+    eq('firestore.rules and .minimal are identical modulo comments',
+        strip(fs.readFileSync(MINIMAL_PATH, 'utf8')), strip(RULES),
+        'The .minimal file is what gets published. If it drifts, the console runs rules nothing '
+        + 'in this repo has ever checked.');
 }
 
 // ---- string caps -----------------------------------------------------------
@@ -331,79 +338,38 @@ function sizeCaps(src) {
 const rulesCaps = { ...sizeCaps(ROW_SRC), ...sizeCaps(DOSSIER_SRC) };
 const jsCaps = AC.CAREER_STR_MAX;
 
-eq('every capped string is in both files',
-    Object.keys(rulesCaps).sort().join(','), Object.keys(jsCaps).sort().join(','),
-    'cleanText() caps by code point on the client; the rules cap by size(). Both lists must name the same fields.');
-
+// ONE DIRECTION ONLY. A rules cap ABOVE the client clamp is harmless -- the
+// client simply never sends a string that long. A rules cap BELOW it denies a
+// legal handle for ever, silently. So this asserts >=, not equality, and the
+// rules are free to carry caps for fields the client has no clamp for (role,
+// region) without that reading as drift.
 for (const f of Object.keys(jsCaps)) {
+    truthy('the rules cap ' + f, rulesCaps[f] !== undefined,
+        'An uncapped string field is an unbounded document every reader downloads.');
     if (rulesCaps[f] === undefined) continue;
-    eq('string cap ' + f + ' agrees', rulesCaps[f], jsCaps[f],
-        'A rules cap below the client cap denies a legal handle forever, silently.');
+    truthy('rules cap ' + f + ' (' + rulesCaps[f] + ') is not below the client clamp (' + jsCaps[f] + ')',
+        rulesCaps[f] >= jsCaps[f],
+        'A rules cap below the client cap denies a legal value for ever, silently.');
 }
 
-// careerId also carries a MINIMUM in the rules, which careerFingerprint() pads
-// to. Nothing on the JS side declares it, so it is pinned here.
-const idMin = /d\.careerId\.size\(\)\s*>=\s*(\d+)/.exec(ROW_SRC);
-truthy('careerId carries a minimum length in the rules', !!idMin);
-if (idMin) {
-    const probe = B.careerFingerprint({ player: { handle: 'x', startAge: 13, path: 'precomp', region: 'LEC' } });
-    truthy('careerFingerprint clears the careerId minimum (' + idMin[1] + ')',
-        probe.length >= Number(idMin[1]) && probe.length <= jsCaps.careerId,
-        'A short hash would be denied on every publish, silently.');
-}
+// Every string the client actually publishes has to be capped by something.
+truthy('the rules cap role', rulesCaps.role !== undefined);
+truthy('the rules cap region', rulesCaps.region !== undefined);
 
-// ---- enums -----------------------------------------------------------------
-function enumLists(src) {
-    const out = {};
-    const re = /d\.([A-Za-z0-9_]+)\s+in\s+\[([^\]]*)\]/g;
-    let m;
-    while ((m = re.exec(src))) {
-        out[m[1]] = m[2].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
-    }
-    return out;
-}
+// careerId no longer carries a MINIMUM: a short hash was a silent denial and
+// the fingerprint is padded anyway. Assert the minimum is gone so it cannot
+// return, and that the fingerprint still fits the cap.
+falsy('careerId carries no minimum length', /d\.careerId\.size\(\)\s*>=/.test(ROW_SRC + DOSSIER_SRC),
+    'It denied every publish for any career whose hash rounded short.');
+const probeId = B.careerFingerprint({ player: { handle: 'x', startAge: 13, path: 'precomp', region: 'LEC' } });
+truthy('careerFingerprint fits the careerId cap', probeId.length <= jsCaps.careerId);
 
-const rulesEnums = enumLists(ROW_SRC);
-eq('the same fields are enumerated in both files',
-    Object.keys(rulesEnums).sort().join(','), Object.keys(AC.CAREER_ENUMS).sort().join(','));
-for (const f of Object.keys(AC.CAREER_ENUMS)) {
-    eq('enum ' + f + ' agrees', (rulesEnums[f] || []).join(','), AC.CAREER_ENUMS[f].join(','),
-        'A role or region the rules do not list is a career that can never publish.');
-}
-// And the enums have to be the real game constants, not a stale copy.
+// ---- the client's own enums are still the real game constants --------------
+//  These no longer appear in the rules at all. They remain the CLIENT clamp
+//  that normRole()/normRegion() fall back through, so they still have to track
+//  the game -- but a new region is now a client-only change.
 eq('CAREER_ENUMS.role is the real role list', AC.CAREER_ENUMS.role.join(','), K.ROLE_IDS.join(','));
 eq('CAREER_ENUMS.region is the real region list', AC.CAREER_ENUMS.region.join(','), K.REGION_IDS.join(','));
-
-// ---- cross-field rails -----------------------------------------------------
-//  board.js applies each of these as a CLAMP so an honest save is never denied
-//  for tripping one. If a rail is dropped from the rules the clamp becomes
-//  cosmetic; if one is added without a matching clamp, honest careers vanish.
-const RAILS = [
-    'd.years <= d.age - 12',
-    'd.ovr <= d.peakOVR',
-    'd.wins + d.losses <= d.games',
-    'd.games <= d.years * 60 + 60',
-    'd.earnedScore <= d.years * 4000 + 400',
-    'd.worlds <= d.years',
-];
-for (const rail of RAILS) {
-    truthy('rules carry the rail  ' + rail, rowFlat.includes(rail),
-        'career/board.js clamps to this rail before publishing; the two must agree.');
-}
-
-// ---- the freshness window --------------------------------------------------
-const fresh = rulesBody('freshTimestamp') || '';
-const freshMs = /request\.time\.toMillis\(\)\s*-\s*(\d+)/.exec(fresh);
-truthy('the freshness window is a literal', !!freshMs);
-if (freshMs) {
-    eq('the freshness window is 10 minutes', Number(freshMs[1]), 10 * 60 * 1000,
-        'updatedAt is stamped with the DEVICE clock and checked against the SERVER clock, '
-        + 'so this number is how far a player\'s clock may be out before publishing breaks.');
-    const cbText = fs.readFileSync(path.join(ROOT, 'src', 'lib', 'stores', 'careerBoard.js'), 'utf8');
-    truthy('the denied-publish message quotes the same window',
-        /10 minutes/.test(cbText),
-        'The only way a player diagnoses a clock skew denial is that sentence.');
-}
 
 // ---- anticheat.js stays parseable -----------------------------------------
 const ACTEXT = fs.readFileSync(path.join(ROOT, 'src', 'lib', 'utils', 'anticheat.js'), 'utf8');
@@ -416,10 +382,16 @@ falsy('anticheat.js still has zero imports', /^\s*import\s/m.test(ACTEXT),
 // ===========================================================================
 section('field-set parity');
 
-function hasAllList(src) {
-    const m = /hasAll\(\s*\[([^\]]*)\]\s*\)/.exec(src);
-    if (!m) return null;
-    return m[1].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+//  There is no hasAll any more. The TYPE CHECKS are the field list: rules deny
+//  when they dereference a key a document does not carry, so `d.handle is
+//  string` requires handle exactly as hasAll used to -- and unlike hasAll it
+//  cannot name a field it never actually checks.
+function typedKeys(src) {
+    const out = new Set();
+    const re = /d\.([A-Za-z0-9_]+)\s+is\s+(?:int|string|bool|number|float|list|map|timestamp)/g;
+    let m;
+    while ((m = re.exec(src))) out.add(m[1]);
+    return [...out].sort();
 }
 
 function keysCap(src) {
@@ -427,13 +399,8 @@ function keysCap(src) {
     return m ? Number(m[1]) : null;
 }
 
-const rowList = hasAllList(rulesBody('validCareerRowKeys') || '');
-const rowCap = keysCap(rulesBody('validCareerRowKeys') || '');
-const dosList = hasAllList(DOSSIER_SRC);
+const rowCap = keysCap(ROW_SRC);
 const dosCap = keysCap(DOSSIER_SRC);
-
-truthy('the row rules name a field list', Array.isArray(rowList));
-truthy('the dossier rules name a field list', Array.isArray(dosList));
 
 // A REAL published document, not a hand-typed list.
 const sampleRaw = ST.blankCareer();
@@ -445,27 +412,27 @@ truthy('buildBoardDocs produced a sample document', !!sampleDocs);
 const rowKeys = sampleDocs ? Object.keys(sampleDocs.row) : [];
 const profKeys = sampleDocs ? Object.keys(sampleDocs.profile) : [];
 
-eq('the row field list matches the published row EXACTLY',
-    (rowList || []).join(','), rowKeys.join(','),
-    'hasAll names what must be present; the row object is what is sent. Same members, same order.');
-eq('the dossier field list matches the published dossier EXACTLY',
-    (dosList || []).join(','), profKeys.join(','));
+eq('every published row field is type-checked, and no others',
+    typedKeys(ROW_SRC).join(','), rowKeys.slice().sort().join(','),
+    'A field the rules never type-check is an unbounded value on a document every reader '
+    + 'downloads; a field the rules check but the client never sends denies every publish.');
+eq('every published dossier field is type-checked, and no others',
+    typedKeys(DOSSIER_SRC).join(','), profKeys.slice().sort().join(','));
 
-eq('the row keys() cap equals the list length', rowCap, (rowList || []).length,
-    'hasAll + keys().size() is what makes the shape CLOSED. A cap above the list length lets a '
-    + 'client staple arbitrary fields onto a valid document, and every reader downloads it 50 '
-    + 'times per board load.');
-eq('the dossier keys() cap equals the list length', dosCap, (dosList || []).length);
+eq('the row keys() cap equals the real field count', rowCap, rowKeys.length,
+    'keys().size() is what makes the shape CLOSED. A cap above the field count lets a client '
+    + 'staple arbitrary fields onto a valid document, and every reader downloads it 50 times '
+    + 'per board load.');
+eq('the dossier keys() cap equals the real field count', dosCap, profKeys.length);
 
 eq('CAREER_ROW_KEYS agrees with the rules cap', AC.CAREER_ROW_KEYS, rowCap);
 eq('CAREER_DOSSIER_KEYS agrees with the rules cap', AC.CAREER_DOSSIER_KEYS, dosCap);
 eq('the row really is that many fields', rowKeys.length, AC.CAREER_ROW_KEYS);
 eq('the dossier really is that many fields', profKeys.length, AC.CAREER_DOSSIER_KEYS);
 
-// ---- every dereferenced key must be named ---------------------------------
-//  This is the live defect in validLeaderboardEntry: it names four keys in
-//  hasAll and reads seven, so a document missing managerLevel/rawPower/teamName
-//  validates against a rule that then reads them.
+// ---- every dereferenced key must actually be published ---------------------
+//  Rules deny when they read a key the document does not carry, so a rule that
+//  dereferences a field the client never sends denies EVERY publish, for ever.
 function derefKeys(src) {
     const out = new Set();
     const re = /d\.([A-Za-z0-9_]+)/g;
@@ -475,17 +442,18 @@ function derefKeys(src) {
 }
 
 for (const k of derefKeys(ROW_SRC)) {
-    truthy('row rules read a named key: ' + k, (rowList || []).includes(k),
-        'A helper that reads a key its hasAll never named passes documents that do not contain it.');
+    truthy('row rules only read a published key: ' + k, rowKeys.includes(k),
+        'Reading a key the client does not send denies every publish, silently.');
 }
 for (const k of derefKeys(DOSSIER_SRC)) {
-    truthy('dossier rules read a named key: ' + k, (dosList || []).includes(k));
+    truthy('dossier rules only read a published key: ' + k, profKeys.includes(k));
 }
 
 // The roster leaderboard is a different collection and out of scope for this
 // harness, but the same parse can see its defect, so it is reported.
 const lbSrc = rulesBody('validLeaderboardEntry') || '';
-const lbList = hasAllList(lbSrc) || [];
+const lbHasAll = /hasAll\(\s*\[([^\]]*)\]\s*\)/.exec(lbSrc);
+const lbList = lbHasAll ? lbHasAll[1].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean) : [];
 const lbMissing = derefKeys(lbSrc).filter(k => !lbList.includes(k));
 if (lbMissing.length) {
     note('validLeaderboardEntry (roster board, out of scope) names ' + lbList.length

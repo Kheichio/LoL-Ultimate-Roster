@@ -101,127 +101,63 @@ service cloud.firestore {
   }
 
   // ---- Career board validation ----
-  // Every literal below is mirrored by CAREER_BOUNDS, CAREER_STR_MAX and
-  // CAREER_ENUMS in src/lib/utils/anticheat.js, and tools/boardCheck.mjs parses
-  // BOTH files and fails if they disagree. These rules are published BY HAND,
-  // with no CLI and no firebase.json, so drift is the default state.
+  // THESE RULES BOUND WHAT A PUBLISHED DOCUMENT COSTS THE PEOPLE WHO READ IT --
+  // its field count and the length of every string in it -- and almost nothing
+  // else. Every field is type-checked so nothing unbounded can be smuggled in;
+  // only the one field the board actually RANKS on carries a range.
   //
-  // A bound that is too TIGHT fails silently and permanently: the write is
-  // denied, the client catch swallows it, and an honest career never appears
-  // for anyone, with no error anywhere. tools/careerSmoke.mjs asserts every
-  // bound against real 12 to 24 year simulated careers and prints the tightest
-  // margin per field.
+  // This block used to enforce twenty-five numeric ranges, six cross-field
+  // rails (years <= age - 12, wins + losses <= games, games <= years * 60 + 60,
+  // earnedScore <= years * 4000 + 400, worlds <= years, and a finishedScore
+  // derivation), two enums and a ten-minute clock-freshness window -- all
+  // mirrored BY HAND into anticheat.js. Every one of those was a way for an
+  // honest career to be denied silently and permanently the moment this file
+  // and the client disagreed about a single literal, and this file is pasted
+  // into the console by hand, so disagreeing is its default state. It bought
+  // very little: this is a vanity board for a single-player mode, sanitizeRow()
+  // in career/board.js re-clamps every value on READ, and every id is
+  // re-resolved locally so no remote string reaches the DOM.
   //
-  // Notes on the row fields:
-  //   keys().size() turns hasAll into a hasOnly. Without it a client can staple
-  //     anything up to the 1MiB document limit onto a doc that otherwise
-  //     validates, and every reader downloads it 50 times per board load. It
-  //     also makes adding a field later a TWO-STAGE deploy: re-publish these
-  //     rules by hand FIRST, then ship the client.
-  //   teamId is an ID, never a name and never a colour. The reader re-resolves
-  //     it locally, so a fabricated org renders as an unknown org and no remote
-  //     string can reach a style attribute. Empty string when unsigned.
-  //   earnedScore is EARNED legacy only. boughtScore is the monument ladder:
-  //     4350 legacy points, a renewable currency, for 2600 score. Ranking on
-  //     the total would put the top of the board up for sale, which is why the
-  //     game gates the Hall of Legends on the earned figure too.
-  //   earnedScore capped at years times 4000 plus 400 is the rail that stops a
-  //     fourteen year old claiming a Hall of Legends score, a band starting at
-  //     8000.
-  //   finishedScore is exactly derived and the derivation is enforced, so the
-  //     completed-careers sort is a free single-field orderBy with nothing to
-  //     fake. Written as a comparison against false rather than with a negation
-  //     so a hand-typed file cannot mis-parse it.
-  //   trophies has an absolute cap only. A per-year trophy rail is the likeliest
-  //     silent lockout: it holds every major AND legendary award, and a dominant
-  //     career can take a dozen in one year.
-  //   updatedAt is checked against the SERVER clock but written with a client
-  //     timestamp, so a device more than 10 minutes out can never publish.
+  // What is left cannot drift. `is int` does not go stale when a bound is
+  // retuned. A generous string cap cannot deny a legal handle. There is no
+  // enum, so ADDING A ROLE OR A REGION NO LONGER NEEDS A RULES DEPLOY -- which
+  // is what made the sixth region a two-stage release.
   //
-  // Measured maxima behind the absolute caps. careerSmoke's "board entry" block
-  // builds the real published row out of every simulated career and prints the
-  // tightest margin to every rail; re-measure there rather than guessing.
-  //   node tools/careerSmoke.mjs --seed 42 --careers 12 --years 22
-  //   966 games, 21913 earned legacy, 160 trophies, 47 titles, 6 Worlds,
-  //   a 380-byte row and a 5957-byte dossier.
-  // The caps a real career already sits ON are age 38, ovr/peakOVR 99 and
-  // peakMMR 4000 -- each of those IS an engine constant, not a judgement call.
-  function inRange(v, lo, hi) {
-    return v is int && v >= lo && v <= hi;
-  }
-
-  function freshTimestamp(t) {
-    return t is int
-      && t > (request.time.toMillis() - 600000)
-      && t <= request.time.toMillis();
-  }
-
-  function validCareerRowKeys(d) {
-    return d.keys().hasAll(['v', 'careerId', 'slot', 'handle', 'displayName', 'role', 'region', 'teamId', 'retired', 'hallOfLegends', 'age', 'years', 'ovr', 'peakOVR', 'peakMMR', 'games', 'wins', 'losses', 'earnedScore', 'boughtScore', 'finishedScore', 'titles', 'worlds', 'trophies', 'updatedAt'])
-      && d.keys().size() <= 25;
-  }
-
-  function validCareerRowIdentity(d) {
-    return inRange(d.v, 1, 9)
-      && d.careerId is string && d.careerId.size() >= 4 && d.careerId.size() <= 16
-      && inRange(d.slot, 1, 3)
-      && d.handle is string && d.handle.size() > 0 && d.handle.size() <= 16
-      && d.displayName is string && d.displayName.size() <= 64
-      && d.role in ['TOP', 'JNG', 'MID', 'ADC', 'SUP']
-      && d.region in ['LCK', 'LPL', 'LEC', 'LCS', 'LCP', 'CBLOL']
-      && d.teamId is string && d.teamId.size() <= 32
-      && d.retired is bool
-      && d.hallOfLegends is bool;
-  }
-
-  function validCareerRowRating(d) {
-    return inRange(d.age, 13, 38)
-      && inRange(d.years, 1, 26)
-      && d.years <= d.age - 12
-      && inRange(d.ovr, 1, 99)
-      && inRange(d.peakOVR, 1, 99)
-      && d.ovr <= d.peakOVR
-      && inRange(d.peakMMR, 0, 4000);
-  }
-
-  function validCareerRowRecord(d) {
-    return inRange(d.games, 0, 3000)
-      && inRange(d.wins, 0, 3000)
-      && inRange(d.losses, 0, 3000)
-      && d.wins + d.losses <= d.games
-      && d.games <= d.years * 60 + 60;
-  }
-
-  function validCareerRowHonours(d) {
-    return inRange(d.earnedScore, 0, 70000)
-      && inRange(d.boughtScore, 0, 2600)
-      && d.earnedScore <= d.years * 4000 + 400
-      && d.finishedScore is int
-      && ((d.retired == true && d.finishedScore == d.earnedScore) || (d.retired == false && d.finishedScore == -1))
-      && inRange(d.titles, 0, 200)
-      && inRange(d.worlds, 0, 26)
-      && d.worlds <= d.years
-      && inRange(d.trophies, 0, 300);
-  }
-
+  // Two things are still worth enforcing:
+  //   keys().size() is what stops a client stapling a megabyte onto a document
+  //     that every reader then downloads fifty times per board load.
+  //   earnedScore has an absolute ceiling because it is the ranked field. A
+  //     real 24-year career retires around 22000; 70000 is headroom, not a rail.
+  //
+  // The string caps must never fall BELOW the client's own clamps in
+  // CAREER_STR_MAX -- a rules cap tighter than the client's is the silent
+  // lockout this rewrite exists to remove. boardCheck asserts that direction.
   function validCareerRow(d) {
-    return validCareerRowKeys(d)
-      && validCareerRowIdentity(d)
-      && validCareerRowRating(d)
-      && validCareerRowRecord(d)
-      && validCareerRowHonours(d)
-      && freshTimestamp(d.updatedAt);
+    return d.keys().size() <= 25
+      && d.v is int && d.slot is int && d.age is int && d.years is int
+      && d.ovr is int && d.peakOVR is int && d.peakMMR is int
+      && d.games is int && d.wins is int && d.losses is int
+      && d.boughtScore is int && d.finishedScore is int
+      && d.titles is int && d.worlds is int && d.trophies is int
+      && d.updatedAt is int
+      && d.earnedScore is int && d.earnedScore >= 0 && d.earnedScore <= 70000
+      && d.retired is bool
+      && d.hallOfLegends is bool
+      && d.careerId is string && d.careerId.size() <= 16
+      && d.handle is string && d.handle.size() <= 16
+      && d.displayName is string && d.displayName.size() <= 64
+      && d.teamId is string && d.teamId.size() <= 32
+      && d.role is string && d.role.size() <= 8
+      && d.region is string && d.region.size() <= 16;
   }
 
-  // A 22-year career compacts to about 9kb. 24000 is comfortable headroom and
-  // still a hard wall. The client re-parses and re-clamps the blob regardless,
-  // so these rules bound its SIZE and never its contents.
+  // A 24-year career compacts to about 8kb. The client re-parses and re-clamps
+  // the blob on read regardless, so this bounds its SIZE and never its contents.
   function validCareerDossier(d) {
-    return d.keys().hasAll(['v', 'careerId', 'blob', 'updatedAt'])
-      && d.keys().size() <= 4
-      && inRange(d.v, 1, 9)
-      && d.careerId is string && d.careerId.size() >= 4 && d.careerId.size() <= 16
-      && d.blob is string && d.blob.size() > 0 && d.blob.size() <= 24000
-      && freshTimestamp(d.updatedAt);
+    return d.keys().size() <= 4
+      && d.v is int
+      && d.updatedAt is int
+      && d.careerId is string && d.careerId.size() <= 16
+      && d.blob is string && d.blob.size() > 0 && d.blob.size() <= 24000;
   }
 }
