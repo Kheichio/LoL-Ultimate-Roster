@@ -6,6 +6,9 @@
     import { showToast } from '../../stores/toasts.js';
     import { TIER_ORDER, ALL_SPECIAL, getEffectiveRating } from '../../utils/cards.js';
     import { recentUpdates } from '../../utils/updates.js';
+    // The full log lives on the main menu now, not in a tab. openUpdates('game')
+    // remembers to come back here rather than to the title screen.
+    import { openUpdates } from '../../stores/menu.js';
 
     const recentUpds = recentUpdates(3);
 
@@ -263,16 +266,16 @@
 
             <!-- Updates -->
             <div class="panel" style="padding: 16px;">
-                <button class="panel-label panel-label-link cyan" on:click={() => switchTab('updates')}>Latest Updates →</button>
+                <button class="panel-label panel-label-link cyan" on:click={() => openUpdates('game')}>Latest Updates →</button>
                 <div class="update-list">
                     {#each recentUpds as note}
-                        <button class="update-row" on:click={() => switchTab('updates')}>
+                        <button class="update-row" on:click={() => openUpdates('game')}>
                             <span class="update-ver">{note.ver}</span>
                             <span class="update-text"><strong class="update-headline">{note.title}</strong> — {note.summary}</span>
                         </button>
                     {/each}
                 </div>
-                <button class="panel-link" on:click={() => switchTab('updates')}>View all updates →</button>
+                <button class="panel-link" on:click={() => openUpdates('game')}>View all updates →</button>
             </div>
         </div>
 

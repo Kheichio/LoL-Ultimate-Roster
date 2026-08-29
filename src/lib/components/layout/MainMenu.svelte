@@ -3,7 +3,10 @@
     import {
         menuScreen, selectedMode, GAMEMODES, MORE_GAMES, openMenu,
         setBootIntent, takeBootIntent, currentSlot,
+        openUpdates, closeUpdates, updatesReturn,
     } from '../../stores/menu.js';
+    import UpdateLog from './UpdateLog.svelte';
+    import { UPDATES } from '../../utils/updates.js';
     import { showAuthPanel, openConfirmModal } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { playSound } from '../../utils/sound.js';
@@ -278,6 +281,24 @@
                 {/each}
             </div>
 
+            <!-- The changelog. It sits on the title screen rather than inside
+                 Ultimate Roster because it describes the whole product, and a
+                 player should not have to load a save to find out what changed. -->
+            <button class="uplink" on:click={() => { playSound('click'); openUpdates('menu'); }}>
+                <span class="uplink-ico" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 4.5h14v15H5z" />
+                        <path d="M8.5 9h7M8.5 12.5h7M8.5 16h4" />
+                    </svg>
+                </span>
+                <span class="uplink-txt">
+                    <span class="uplink-name">Update Log</span>
+                    <span class="uplink-blurb">{UPDATES[0].title}</span>
+                </span>
+                <span class="uplink-ver">{UPDATES[0].ver}</span>
+            </button>
+
             <!-- Other Studio8Heads titles. Deliberately quieter than the gamemode
                  buttons so it never competes with the primary choice. -->
             <section class="more">
@@ -387,6 +408,22 @@
             </p>
 
             <button class="slot-back" on:click={backToMenu}>Back</button>
+        </div>
+
+    {:else if $menuScreen === 'updates'}
+        <!-- ══════════════ UPDATE LOG ══════════════ -->
+        <div class="stage stage-updates">
+            <p class="eyebrow">What's new</p>
+            <h2 class="slot-h">Update Log</h2>
+            <p class="slot-sub">Every patch, in full. The newest release is at the top.</p>
+
+            <!-- .stage centres and shrink-wraps its children; the timeline needs
+                 the full column. -->
+            <div class="uplog-wrap"><UpdateLog /></div>
+
+            <button class="slot-back" on:click={closeUpdates}>
+                {$updatesReturn === 'game' ? 'Back to Ultimate Roster' : 'Back'}
+            </button>
         </div>
 
     {:else if $menuScreen === 'loading'}
@@ -644,6 +681,59 @@
     .mode-arrow :global(svg) { width: 16px; height: 16px; }
     .mode:hover .mode-arrow { color: var(--accent); transform: translateX(3px); }
     .mode-soon .mode-desc { color: #4c5c76; }
+
+    /* ═══════════ UPDATE LOG LINK ═══════════ */
+    /* Sits between the gamemodes and the external links: louder than an outbound
+       link, quieter than a mode button, because it is product news rather than a
+       thing you came here to play. */
+    .uplink {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        width: 100%;
+        padding: 13px 16px;
+        margin-bottom: 26px;
+        border-radius: 12px;
+        text-align: left;
+        font-family: inherit;
+        cursor: pointer;
+        background: rgba(15, 23, 42, 0.34);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+        transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .uplink:hover {
+        background: rgba(20, 30, 51, 0.5);
+        border-color: rgba(6, 182, 212, 0.4);
+    }
+    .uplink-ico {
+        flex-shrink: 0;
+        width: 32px; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        color: #06b6d4;
+    }
+    .uplink-ico :global(svg) { width: 19px; height: 19px; }
+    .uplink-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .uplink-name {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 13px; font-weight: 700; color: #cbd5e1;
+    }
+    .uplink-blurb {
+        font-size: 11px; color: #5b6d8a; line-height: 1.5;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .uplink-ver {
+        margin-left: auto;
+        flex-shrink: 0;
+        font-size: 10px; font-weight: 900; letter-spacing: 0.5px;
+        color: #06b6d4;
+        background: rgba(6, 182, 212, 0.1);
+        border: 1px solid rgba(6, 182, 212, 0.18);
+        padding: 3px 10px; border-radius: 6px;
+    }
+
+    /* ═══════════ UPDATE LOG SCREEN ═══════════ */
+    .stage-updates { max-width: 880px; }
+    .uplog-wrap { width: 100%; margin-bottom: 10px; }
 
     /* ═══════════ MORE GAMES ═══════════ */
     .more { width: 100%; margin-bottom: 26px; }

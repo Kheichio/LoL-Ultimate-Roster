@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { activeSlot } from '../utils/storage.js';
 
 // === Main Menu / Gamemode shell ===
@@ -9,6 +9,8 @@ import { activeSlot } from '../utils/storage.js';
 //   'menu'    → the main menu (title, login, gamemode buttons)
 //   'slots'   → the save slot picker for the gamemode just chosen
 //   'loading' → the gamemode loading screen animation
+//   'updates' → the changelog. It describes the whole product, not one gamemode,
+//               so it sits out here where it can be read without loading a save.
 //   'game'    → Ultimate Roster (App renders the normal Header + TabContent shell)
 //   'career'  → Ultimate Career (App renders CareerShell instead)
 export const menuScreen = writable('menu');
@@ -100,5 +102,26 @@ export function openMenu() {
 export function openSlots(modeId) {
     selectedMode.set(modeId);
     menuScreen.set('slots');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  UPDATE LOG
+//  Reachable from the title screen AND from the Home page inside Ultimate
+//  Roster, so Back has to know which one it came from: sending a player who was
+//  mid-session back to the title screen instead of to their game would read as
+//  the app dropping them. The roster shell stays mounted the whole time (App
+//  only hides it), so returning to 'game' costs nothing and loses no tab state.
+// ─────────────────────────────────────────────────────────────────────────
+export const updatesReturn = writable('menu');
+
+export function openUpdates(from = 'menu') {
+    updatesReturn.set(from === 'game' ? 'game' : 'menu');
+    menuScreen.set('updates');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+}
+
+export function closeUpdates() {
+    menuScreen.set(get(updatesReturn) === 'game' ? 'game' : 'menu');
     if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
 }

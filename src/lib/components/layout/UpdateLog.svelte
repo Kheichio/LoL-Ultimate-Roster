@@ -1,62 +1,38 @@
 <script>
+    // The changelog timeline. It lives at SHELL level rather than inside a
+    // gamemode: the update log describes the whole product, so a player should
+    // not have to load a save to read it. MainMenu renders it as its own screen.
     import { UPDATES } from '../../utils/updates.js';
-    import { switchTab } from '../../stores/ui.js';
 </script>
 
-<section class="updates">
-    <div class="up-head">
-        <div>
-            <h2 class="up-title">Update Log</h2>
-            <p class="up-desc">Every patch, in full. The newest release is at the top.</p>
-        </div>
-        <button class="up-guide-link" on:click={() => switchTab('guide')}>Game Guide →</button>
-    </div>
-
-    <div class="up-timeline">
-        {#each UPDATES as note, i}
-            <article class="up-entry" class:up-entry-latest={i === 0}>
-                <div class="up-marker">
-                    <span class="up-dot"></span>
-                    {#if i < UPDATES.length - 1}<span class="up-line"></span>{/if}
+<div class="up-timeline">
+    {#each UPDATES as note, i}
+        <article class="up-entry" class:up-entry-latest={i === 0}>
+            <div class="up-marker">
+                <span class="up-dot"></span>
+                {#if i < UPDATES.length - 1}<span class="up-line"></span>{/if}
+            </div>
+            <div class="up-body">
+                <div class="up-entry-head">
+                    <span class="up-ver">{note.ver}</span>
+                    {#if i === 0}<span class="up-latest-tag">Latest</span>{/if}
+                    <h3 class="up-entry-title">{note.title}</h3>
                 </div>
-                <div class="up-body">
-                    <div class="up-entry-head">
-                        <span class="up-ver">{note.ver}</span>
-                        {#if i === 0}<span class="up-latest-tag">Latest</span>{/if}
-                        <h3 class="up-entry-title">{note.title}</h3>
-                    </div>
-                    <p class="up-summary">{note.summary}</p>
-                    {#if note.details && note.details.length}
-                        <ul class="up-details">
-                            {#each note.details as line}
-                                <li class="up-detail">{line}</li>
-                            {/each}
-                        </ul>
-                    {/if}
-                </div>
-            </article>
-        {/each}
-    </div>
-</section>
+                <p class="up-summary">{note.summary}</p>
+                {#if note.details && note.details.length}
+                    <ul class="up-details">
+                        {#each note.details as line}
+                            <li class="up-detail">{line}</li>
+                        {/each}
+                    </ul>
+                {/if}
+            </div>
+        </article>
+    {/each}
+</div>
 
 <style>
-    .updates { max-width: 820px; margin: 0 auto; padding-bottom: 48px; }
-
-    .up-head {
-        display: flex; align-items: flex-end; justify-content: space-between;
-        gap: 16px; flex-wrap: wrap; margin-bottom: 28px;
-    }
-    .up-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
-    .up-desc { font-size: 12px; color: #64748b; margin-top: 3px; }
-    .up-guide-link {
-        font-size: 11px; font-weight: 800; color: #93c5fd;
-        background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.15);
-        padding: 8px 14px; border-radius: 10px; cursor: pointer; transition: all 0.12s; white-space: nowrap;
-    }
-    .up-guide-link:hover { background: rgba(59,130,246,0.16); color: #bfdbfe; }
-
-    /* Timeline */
-    .up-timeline { display: flex; flex-direction: column; }
+    .up-timeline { display: flex; flex-direction: column; text-align: left; }
     .up-entry { display: grid; grid-template-columns: 22px 1fr; gap: 16px; }
 
     .up-marker { position: relative; display: flex; flex-direction: column; align-items: center; padding-top: 6px; }

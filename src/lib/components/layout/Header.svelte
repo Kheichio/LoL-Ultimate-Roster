@@ -133,10 +133,11 @@
         { id: 'friends', label: 'Friends' },
     ];
 
+    // The update log is NOT here: it moved out to the main menu, where it can be
+    // read without loading a save. The Home page island links to it.
     const subTabs = [
         { id: 'welcome', label: 'Welcome' },
         { id: 'guide', label: 'Guide' },
-        { id: 'updates', label: 'Updates' },
         { id: 'trade', label: 'Trade' },
     ];
 
