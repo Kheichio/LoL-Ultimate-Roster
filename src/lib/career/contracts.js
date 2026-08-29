@@ -21,6 +21,7 @@ import {
 import {
     calcOVR, calcPotentialOVR, deservedStatus, statusInfo, weeklySalaryFor,
     marketValueFor, SCOUT_MMR_GATE, clamp, clampAttr, emptyAttrs, fmtGold,
+    rankFromMMR,
 } from './ratings.js';
 import {
     career, matchState, absWeek, addNews, grantGold, saveCareer,
@@ -104,26 +105,99 @@ const HOME_REGION_CALL_RATE = 1.25;
  *  bench spot, and below 68 they will not promise anything at all. */
 const T1_STARTER_FLOOR = 72;
 
-/** An unsigned prospect needs Diamond (SCOUT_MMR_GATE) AND a real rating before
- *  an academy calls. A well-trained pre-comp player clears 50 at about 15. */
-const ACADEMY_OVR_GATE = 50;
-/** The ladder half of the academy gate, for a player with no club at all. Same
- *  number as the out-of-window scouting trigger on purpose: an academy that will
- *  phone you unprompted and one that will sign you in the window are looking at
- *  the same evidence. */
-const ACADEMY_MMR_GATE = SCOUT_MMR_GATE;
+// ---------------------------------------------------------------------------
+//  SIGNING STANDARDS, PER CLUB
+//
+//  A tier used to be one number: every academy in the world wanted exactly the
+//  same rating and exactly the same rank, and the open circuit asked for more
+//  than some academies did. Both were wrong. T1 Academy and the bottom of the
+//  LCS Challengers scene are twenty-seven strength points apart and should not
+//  be reading the same CV, and an amateur side that is WEAKER than the player
+//  has no business turning them away.
+//
+//  So the gate is derived from the club: `base` is what the weakest club in the
+//  tier asks, and it climbs with that club's own strength up to `swing`. The
+//  measured bands are tier 1 59-88 (median 75), tier 2 43-70 (median 59),
+//  tier 3 38-58 (median 50) -- `ref` is the anchor each tier scales from.
+//
+//  It is DETERMINISTIC. signingBlock() is called once per club on every
+//  reactive render of the transfer screen, so a gate that rolled a random
+//  number would flicker a club in and out of your list while you looked at it.
+//  The jitter is hashed from the club id and the YEAR: two academies of equal
+//  strength still differ, and a club that passed on you last winter can have
+//  moved its bar by the next one.
+// ---------------------------------------------------------------------------
 
-/** Signing an open-circuit side is the intended way off UNSIGNED_SOFT_CAP, so
- *  it must not be free: Platinum and a rating that is genuinely amateur-level
- *  first. Anything cheaper and the pre-comp path becomes strictly dominant. */
-const AMATEUR_OVR_GATE = 48;
-// RE-PRICED when the solo-queue floor moved to Gold. 1600 used to need about
-// OVR 61; under soloTargetFor() it is reachable at ~46, which is BELOW
-// AMATEUR_OVR_GATE — the MMR half of this gate would have quietly stopped
-// binding at all and opened the open-circuit route a year and a half early.
-// 2000 restores the old effective bar (~60). Nothing errors when a gate goes
-// dead, which is exactly why this needed re-deriving rather than leaving.
-const AMATEUR_MMR_GATE = 2000;
+/** ACADEMY (tier 2). 60 and Platinum is the floor the weakest academy asks;
+ *  the strongest ask about eight points and five hundred MMR more. */
+const ACADEMY_OVR_GATE = 60;
+const ACADEMY_MMR_GATE = 1600;          // Platinum IV (RANK_TIERS floor)
+
+/** OPEN CIRCUIT (tier 3). Deliberately BELOW the academy bar and below where it
+ *  used to sit (48 / 2000 -- Emerald, which was above the academy MMR gate for
+ *  anyone already on a roster). These are the weakest organised teams in the
+ *  mode; a side rated 38 asking for a 48-rated player was the open circuit
+ *  gatekeeping harder than the league above it. */
+const AMATEUR_OVR_GATE = 40;
+const AMATEUR_MMR_GATE = 1250;          // Gold IV-ish
+
+/** Per-tier scaling. `ref` is the weakest club in the band, so the base IS the
+ *  floor and every club climbs from it; `swing` caps the total climb. */
+const GATE_SCALE = {
+    2: { ref: 43, ovrPer: 0.30, mmrPer: 19, ovrSwing: 8, mmrSwing: 520 },
+    3: { ref: 38, ovrPer: 0.28, mmrPer: 17, ovrSwing: 6, mmrSwing: 350 },
+};
+
+/** Deterministic jitter, so two clubs of identical strength are not identical.
+ *  Local copy of the same hash awards.js and teams.js each keep. */
+function gateHash(str) {
+    let h = 2166136261;
+    const s = String(str);
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) / 4294967296;
+}
+
+/** The rank a gate MMR actually names, so the refusal tells the player what to
+ *  go and do rather than quoting a number the ladder never shows them. */
+function rankNameFor(mmr) {
+    try {
+        const r = rankFromMMR(mmr);
+        return (r && (r.label || r.name)) || 'a higher rank';
+    } catch (e) {
+        return 'a higher rank';
+    }
+}
+
+/**
+ * What THIS club asks for, as { ovr, mmr }. Pure, cheap, and never touches the
+ * card database -- `strength` is the written number on the team record, not a
+ * derived roster read.
+ */
+function clubGate(c, team, tier) {
+    const base = tier === 2
+        ? { ovr: ACADEMY_OVR_GATE, mmr: ACADEMY_MMR_GATE }
+        : { ovr: AMATEUR_OVR_GATE, mmr: AMATEUR_MMR_GATE };
+    const sc = GATE_SCALE[tier];
+    if (!sc) return base;
+
+    const strength = Number(team && team.strength);
+    const over = Number.isFinite(strength) ? Math.max(0, strength - sc.ref) : 0;
+    const year = Math.round(Number(c && c.time && c.time.year) || 0);
+    // -1..1, stable for a club within a season.
+    const j = gateHash(`${(team && team.id) || '?'}:${year}`) * 2 - 1;
+
+    // The base is a FLOOR, not a midpoint. 60 and Platinum is the stated
+    // minimum for an academy, so the jitter is only ever allowed to push a club
+    // above it -- otherwise the weakest academy in the world plus an unlucky
+    // hash would quietly sign a 58-rated player and the rule would not hold.
+    return {
+        ovr: Math.max(base.ovr, Math.round(base.ovr + Math.min(sc.ovrSwing, over * sc.ovrPer) + j * 2)),
+        mmr: Math.max(base.mmr, Math.round(base.mmr + Math.min(sc.mmrSwing, over * sc.mmrPer) + j * 110)),
+    };
+}
 
 /** Two rounds of haggling per offer. A third is just savescumming. */
 const MAX_NEGOTIATIONS = 2;
@@ -639,26 +713,30 @@ export function signingBlock(c, team) {
         return { blocked: true, reason: `A main roster does not carry a ${ovr} rated player. Get to ${T1_STARTER_FLOOR - 6}.` };
     }
 
-    // (c) ACADEMY. Used to have no gate at all inside the transfer window, so an
-    // academy would offer at any rating. A player already on an amateur roster is
-    // exempt from the solo-queue half: his evidence is the open circuit now.
+    // (c) ACADEMY. Both halves now apply whatever your situation — an academy
+    // wants a rating AND a rank, and 60 / Platinum is what the WEAKEST of them
+    // asks. The solo-queue half used to be skipped for anyone already on an
+    // amateur roster; it no longer is, because the bar it now checks is
+    // Platinum rather than Diamond and a player on the open circuit is past it.
     if (tier === 2) {
-        if (ovr < ACADEMY_OVR_GATE) {
-            return { blocked: true, reason: `Academies start looking at ${ACADEMY_OVR_GATE}. You are ${ovr}.` };
+        const g = clubGate(c, t, 2);
+        if (ovr < g.ovr) {
+            return { blocked: true, reason: `${t.name} are looking at ${g.ovr} rated players. You are ${ovr}.` };
         }
-        if (!p.clubId && mmr < ACADEMY_MMR_GATE) {
-            return { blocked: true, reason: 'They want to see it on the ladder first.' };
+        if (mmr < g.mmr) {
+            return { blocked: true, reason: `${t.name} want to see ${rankNameFor(g.mmr)} on the ladder first.` };
         }
     }
 
-    // (e) OPEN CIRCUIT.
+    // (e) OPEN CIRCUIT. The weakest teams in the mode, and priced like it.
     if (tier === 3) {
         if (p.clubId) return { blocked: true, reason: 'You are already at a club. Nobody drops to the open circuit.' };
-        if (ovr < AMATEUR_OVR_GATE) {
-            return { blocked: true, reason: `Even an open-circuit roster wants ${AMATEUR_OVR_GATE}. You are ${ovr}.` };
+        const g = clubGate(c, t, 3);
+        if (ovr < g.ovr) {
+            return { blocked: true, reason: `Even ${t.name} want ${g.ovr}. You are ${ovr}.` };
         }
-        if (mmr < AMATEUR_MMR_GATE) {
-            return { blocked: true, reason: 'Climb a bit further and they will take a look.' };
+        if (mmr < g.mmr) {
+            return { blocked: true, reason: `${t.name} want to see ${rankNameFor(g.mmr)} on the ladder first.` };
         }
     }
 

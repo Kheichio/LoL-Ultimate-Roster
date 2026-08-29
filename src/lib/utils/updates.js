@@ -10,6 +10,23 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.1',
+        title: 'Combo Drill Fixed & Clubs That Set Their Own Standards',
+        summary: 'The new Mechanics drill was genuinely unplayable — the approach rings never moved and the targets never appeared. That is fixed, the circles are much smaller and the ring closes far more slowly. Academies and amateur sides now each set their own signing bar instead of every club in a tier wanting the same thing.',
+        details: [
+            'FIXED (critical) — the Combo Execution drill did not work. The approach ring was drawn once when a target spawned and then never redrawn, so it never actually closed, and because a target fades in from nothing on the frame it is born, every circle rendered fully transparent and stayed that way. There was nothing on screen to time against. It now animates properly: the ring shrinks onto the circle and you hit it as they meet, which is what the drill was always meant to be.',
+            'FIXED — the drill was calling you early when you were on time. Your press was scored against the last drawn frame rather than the actual moment you clicked, and because that reading is always a fraction behind, every hit was judged as up to a sixteenth of a second earlier than it really was — consistently, in the same direction, on a window a twentieth of a second wide. Timing is read straight off the clock now, so a press on the beat is scored as a press on the beat.',
+            'FIXED — the ring was thinnest at the exact moment you needed to read it. Scaling a circle scales its outline too, so the ring was drawn thick and obvious while it was still far away and faded to a hairline as it closed. It now holds its weight all the way in and firms up into the beat, and the target itself lights up for the final stretch.',
+            'CHANGED — the circles are much smaller. They were sized at nearly a third of the field across, with the ring opening at three times that, so two overlapping targets covered most of the board. They are now about a fifth of that area.',
+            'CHANGED — the drill is a lot slower. The ring takes 1.85 seconds to close on Basic instead of 1.2, and the gap between targets went from 0.95s to 1.55s, so a new player gets a proper look at the cue before it matters. Advanced and Elite were slowed by the same proportion, and the run-in before the first target is longer.',
+            'BALANCE — the timing windows were re-derived after the slowdown. A session that would have been worth an average result before is still worth exactly an average result now, at all three difficulties, so nothing about the change quietly made Mechanics cheaper to train than every other attribute.',
+            'CHANGED — amateur (tier 3) sides will now sign much weaker players. They are the weakest organised teams in the game and were asking for a higher rating than some academies, which made no sense: the open circuit was gatekeeping harder than the league above it. They now look at players from around 40 rated and Gold, rather than 48 and Emerald.',
+            'CHANGED — academies (tier 2) now want a minimum of 60 rated and Platinum before they will talk to you. That is a real step up from the old bar, and it makes the amateur circuit the genuine first rung rather than something you skip past.',
+            'NEW — every club sets its own standard. A tier used to be a single number: every academy in the world wanted exactly the same rating and the same rank. Now the bar climbs with the club\'s own strength, so BLG Junior asks for 69 while INTZ Academy asks for 62, and two clubs of equal strength still differ slightly. Standards also shift between seasons, so a club that passed on you last winter may not next time.',
+            'CLEARER — a club that will not sign you now says so in its own name and quotes its own numbers ("BLG Junior are looking at 69 rated players. You are 60"), instead of a single generic line that was the same for every club in the tier.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.0',
         title: 'Ultimate Career — The Season Overhaul',
         summary: 'The biggest Ultimate Career update yet: a league table that is finally a real competition, tournaments that last as long as their window, First Stand, fearless draft, Bo3 regular seasons, a burnout system, contract terminations, a brand-new Mechanics minigame, and a career path that starts where a real one does.',

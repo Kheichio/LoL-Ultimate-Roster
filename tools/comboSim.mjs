@@ -346,6 +346,93 @@ for (const lvl of [1, 2, 3]) {
         t.wPerfect * 1000 >= 25, `wPerfect ${Math.round(t.wPerfect * 1000)}ms`);
 }
 
+// 10. THE ANIMATION IS REACTIVE. This is a lint for a bug that actually
+//     shipped and made the drill unplayable rather than merely mistuned.
+//
+//     Svelte only re-evaluates a template expression when a variable the
+//     expression NAMES has changed. The first cut drew the ring with
+//     `scale({ringScale(t)})` -- which names `ringScale` and `t`, but not
+//     `clock` -- so the ring was computed once per target and then frozen, and
+//     because the fade-in is 0 on the frame a target is born, every target
+//     rendered at opacity 0 and stayed invisible. There was nothing on screen
+//     to time against, and no harness could see it: SSR only ever renders the
+//     intro screen, and the scoring maths was perfectly correct throughout.
+//
+//     So: the field must iterate a list derived in a reactive statement, and
+//     that statement must name the clock.
+{
+    const src = fs.readFileSync(COMPONENT, 'utf8');
+    const each = src.match(/\{#each\s+([A-Za-z_$][\w$]*)\s+as\s/);
+    const eachName = each ? each[1] : null;
+    ok('the target list rendered by the field is a derived one, not raw state',
+        !!eachName && eachName !== 'live',
+        eachName ? `{#each ${eachName} as ...}` : 'no {#each} found in the field');
+
+    const derived = eachName
+        ? src.match(new RegExp('\\$:\\s*' + eachName + '\\s*=([\\s\\S]{0,400}?);\\n'))
+        : null;
+    ok('that list is built by a reactive statement that names `clock`',
+        !!derived && /\bclock\b/.test(derived[1]),
+        derived ? 'found, clock ' + (/\bclock\b/.test(derived[1]) ? 'named' : 'MISSING') : 'no `$: <list> =` statement');
+
+    // Positive control: the pattern this lint rejects must actually be
+    // rejectable, or a passing lint means nothing.
+    const controlBad = '{#each live as t (t.key)}';
+    ok('the lint would reject the shape that shipped broken',
+        /\{#each\s+live\s+as\s/.test(controlBad), 'control string');
+
+    // And nothing may still be calling the old per-target helpers from markup.
+    const strayCall = src.match(/(?:scale|opacity):?\s*\{?\s*ring(?:Scale|Fade)\s*\(/);
+    ok('no template expression calls a per-target ring helper directly',
+        !strayCall, strayCall ? strayCall[0] : '');
+
+    // THE ANIMATION CONTRACT, evaluated from the component's own formula rather
+    // than restated here. The drill's entire promise is "hit it when the ring
+    // meets the circle", which is only true if the ring is exactly ON the circle
+    // at the hit moment and nowhere near it at spawn. Restating the maths in
+    // this file would test the copy, so the real block is lifted and run.
+    const body = src.match(/\$: shown = live\.map\(t => \{([\s\S]*?)\n    \}\);/);
+    const ringStart = Number((src.match(/const RING_START = ([0-9.]+)/) || [])[1]);
+    const fadeIn = Number((src.match(/const FADE_IN = ([0-9.]+)/) || [])[1]);
+    if (!body || !Number.isFinite(ringStart) || !Number.isFinite(fadeIn)) {
+        ok('the ring formula can be read out of the component', false,
+            'no `$: shown = live.map(...)` / RING_START / FADE_IN found');
+    } else {
+        const c01 = (v) => Math.max(0, Math.min(1, v));
+        // eslint-disable-next-line no-new-func
+        const evalShown = new Function('t', 'clock', 'D', 'RING_START', 'FADE_IN', 'c01', body[1]);
+        const D = tiers[1];
+        const target = { born: 10, hitAt: 10 + D.approach };
+        const at = (clk) => evalShown(target, clk, D, ringStart, fadeIn, c01);
+
+        const atBeat = at(target.hitAt);
+        ok('the ring is exactly on the circle at the beat',
+            Math.abs(atBeat.scale - 1) < 1e-9, `scale ${atBeat.scale}`);
+
+        const atSpawn = at(target.born);
+        ok('the ring opens at its full size when the target spawns',
+            Math.abs(atSpawn.scale - ringStart) < 1e-9, `scale ${atSpawn.scale} vs RING_START ${ringStart}`);
+
+        ok('the ring keeps closing right through the approach',
+            at(target.born + D.approach * 0.25).scale > at(target.born + D.approach * 0.75).scale,
+            'quarter-way ring must be larger than three-quarter-way');
+
+        ok('a target is invisible on the frame it is born and fully faded in later',
+            atSpawn.fade === 0 && at(target.born + D.approach * fadeIn).fade === 1,
+            `fade ${atSpawn.fade} -> ${at(target.born + D.approach * fadeIn).fade}`);
+
+        // The apparent thickness is border-width * scale, and it must not
+        // collapse at the moment the player is reading it.
+        const apparent = (clk) => { const s = at(clk); return Number(s.bw) * s.scale; };
+        ok('the ring does not thin out as it closes',
+            apparent(target.hitAt) >= apparent(target.born),
+            `${apparent(target.born).toFixed(2)}px at spawn -> ${apparent(target.hitAt).toFixed(2)}px at the beat`);
+
+        ok('the target lights up before the beat, not after it',
+            at(target.hitAt - 0.01).near === true && at(target.born).near === false);
+    }
+}
+
 console.log('');
 if (bad) {
     console.log(`  ${bad} FAILURE(S)`);
