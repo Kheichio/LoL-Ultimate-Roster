@@ -10,6 +10,18 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.2',
+        title: 'Seasons Stay With The Club You Played Them For',
+        summary: 'Transferring used to hand your season to your new club: the record was wiped to 0-0, the placement came from a league you had not played in, and your trophies were re-credited to a team you had never played a game for.',
+        details: [
+            'FIXED (critical) — a season is now filed under the club you actually played it for. The transfer window opens before the summer split is written into your history, so signing elsewhere in the offseason handed the whole season to your new club — which had played none of it. Your record showed 0-0 under their name.',
+            'FIXED — the same thing happened in spring, and worse, because academies will call you mid-season. A move any time between your last league game and the split being written down wiped the record of a season you had already played.',
+            'FIXED — honours now stay with the club you won them at. A regional title or a domestic double won with one team was being re-credited to whichever team you had just signed for, so your trophy cabinet named the wrong club and your old team showed nothing for a season they won.',
+            'FIXED — the league placement on a finished season is read from the table you actually played in, rather than from your new club\'s division.',
+            'NOTE — promotion is not a transfer. Being promoted from an academy to the main team still files that split under the academy, because that is where you played it. Your history reads as the two separate seasons it was.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.1',
         title: 'Combo Drill Fixed & Clubs That Set Their Own Standards',
         summary: 'The new Mechanics drill was genuinely unplayable — the approach rings never moved and the targets never appeared. That is fixed, the circles are much smaller and the ring closes far more slowly. Academies and amateur sides now each set their own signing bar instead of every club in a tier wanting the same thing.',

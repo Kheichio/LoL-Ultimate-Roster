@@ -266,6 +266,7 @@ function fail(severity, file, symptom, evidence, suggestedFix, dedupeKey) {
 
 let CTX = { label: '?', week: 0, year: 0, cfg: null };
 const FIRST_CLUB = new Map();   // career label -> tier of the first club actually joined
+const SPLIT_CLUB = new Map();   // "label|year|split" -> club the split was PLAYED for
 function ctxLine() {
     return `[${CTX.label}] year ${CTX.year} week ${CTX.week}`;
 }
@@ -453,7 +454,20 @@ function assertInvariants(c, tally) {
     // with its own division is a game played under the wrong rules -- and it
     // would be invisible, because a Bo1 and a Bo3 both just resolve to a W.
     {
-        const club = c.player.clubId ? K.teamById(c.player.clubId) : null;
+        // THE SEASON'S club, not the player's. A transfer in the window leaves
+        // the finished schedule in place (deliberately -- see ensureSeason), so
+        // reading player.clubId here compares last season's LCK Bo3 rows against
+        // the LEC side the player has just signed for and reports a format bug
+        // that is really just a move.
+        const seasonClub = (c.season && c.season.clubId) || null;
+        // ...and only while that schedule is still the player's OWN. Between a
+        // move and the next drawing phase the block legitimately holds the old
+        // club's fixtures (or, after signing out of free agency, the free
+        // agent's) waiting to be redrawn at week 5 or week 20. Those rows are
+        // not wrong, they are simply not this player's any more.
+        const club = (seasonClub && seasonClub === c.player.clubId)
+            ? K.teamById(seasonClub)
+            : null;
         if (club) {
             const want = K.regularBestOf(club.region, club.tier);
             for (const f of (c.season && c.season.schedule) || []) {
@@ -462,7 +476,9 @@ function assertInvariants(c, tally) {
                 if (got !== want) {
                     fail('wrong', 'src/lib/career/teams.js',
                         'a league fixture carries the wrong match format',
-                        `${ctxLine()} -> ${club.region} tier ${club.tier} wants Bo${want}, row "${f.id}" is Bo${got || 'unset'}`,
+                        `${ctxLine()} -> ${club.region} tier ${club.tier} wants Bo${want}, row "${f.id}" is Bo${got || 'unset'}`
+                        + `  [season.clubId=${(c.season && c.season.clubId) || 'null'}, player.clubId=${c.player.clubId || 'null'},`
+                        + ` stamp=${(c.season && c.season.stamp) || 'none'}, phase=${K.phaseForWeek(c.time.week).id}]`,
                         'generateSchedule must stamp regularBestOf(region, tier) onto every league row.',
                         'boformat|' + club.region + '|' + club.tier);
                 }
@@ -491,6 +507,38 @@ function assertInvariants(c, tally) {
     if (c.player.clubId && !FIRST_CLUB.has(CTX.label)) {
         const t = K.teamById(c.player.clubId);
         FIRST_CLUB.set(CTX.label, t ? Number(t.tier) || 0 : Number(c.player.clubTier) || 0);
+    }
+
+    // ---- who a split was actually PLAYED for -------------------------------
+    // Recorded live, on any week where a league fixture of this split has been
+    // played, and compared against the history row at the end of the career.
+    //
+    // The transfer window (weeks 36-40) opens BEFORE closeSplit('summer') runs
+    // at the year rollover, so a season could be — and was — filed under a club
+    // the player had never played a game for, with its record zeroed and its
+    // trophies re-credited. Nothing else in this harness looks at whose name is
+    // on a history row.
+    {
+        // ONLY while the regular season is actually being played.
+        //
+        // Two different things move a player after the last league game and
+        // before the split is banked, and recording through either of them
+        // makes this check agree with whatever the engine did instead of
+        // testing it:
+        //   * the transfer window (36-40), the bug this exists to catch;
+        //   * PROMOTION, which runs inside closeSplit() itself -- so at weeks
+        //     17-19 the spring split is already closed, season.split still says
+        //     'spring', and player.clubId is the main team the academy player
+        //     was just promoted to. That is correct engine behaviour and filing
+        //     spring under the academy is right.
+        const ph = K.phaseForWeek(c.time.week).id;
+        const inPlay = ph === 'spring' || ph === 'summer';
+        const played = ((c.season && c.season.schedule) || [])
+            .some(f => f && f.played && f.kind !== 'bracket');
+        if (inPlay && played && c.player.clubId) {
+            const key = `${CTX.label}|${c.time.year}|${c.season.split}`;
+            SPLIT_CLUB.set(key, c.player.clubId);
+        }
     }
 
     if (COND.on) {
@@ -1321,6 +1369,29 @@ function runCareer(cfg, label) {
         if (w + l >= 10) {
             countedSplits++;
             if (w === 0 || l === 0) extremeSplits++;
+        }
+
+        // ---- the split is filed under the club that PLAYED it --------------
+        const key = `${label}|${h.year}|${h.split}`;
+        const playedFor = SPLIT_CLUB.get(key);
+        if (playedFor && h.teamId && h.teamId !== playedFor) {
+            const nm = id => { const t = K.teamById(id); return t ? t.name : String(id); };
+            fail('wrong', 'src/lib/career/engine.js',
+                'a season was filed under a club that never played it',
+                `${label} -> ${h.year} ${h.split} played for ${nm(playedFor)}, filed under ${nm(h.teamId)} (${h.w}-${h.l})`,
+                'closeSplit must file the row under season.clubId (the club the season was drawn for), '
+                + 'not player.clubId -- the transfer window opens before the summer split is banked.',
+                'histclub');
+        }
+        // A split whose games were played but whose record came out empty is the
+        // other half of the same bug: ensureSeason rebuilding during the
+        // offseason zeroed a finished season before it was written down.
+        if (playedFor && w + l === 0) {
+            fail('wrong', 'src/lib/career/engine.js',
+                'a season that was played was recorded as 0-0',
+                `${label} -> ${h.year} ${h.split} under ${h.teamName}`,
+                'ensureSeason must not redraw the season block during the offseason.',
+                'histempty');
         }
     }
 

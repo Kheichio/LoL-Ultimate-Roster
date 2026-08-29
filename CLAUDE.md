@@ -289,6 +289,35 @@ thirds of a career — it now reads `>= 5`, because a Bo5 is only ever a knockou
 implies anything. Measured against an all-Bo1 control: Bo3 moves the mean match rating +0.04, from
 the series-win bonus alone, against a 7.6 hard-fail line.
 
+### A season belongs to the club that played it
+`season.clubId` / `season.clubTier` are stamped by `ensureSeason()` when the fixture list is drawn,
+and `closeSplit()` files the history row, the league placement and every award under **that**, never
+under `player.clubId`.
+
+The two are not the same thing, because a split is BANKED long after its last game: spring closes at
+the MSI boundary (week 17) and summer inside `rolloverYear()` (week 40→1), while the transfer window
+is weeks 36-40 and academies call an amateur-rostered player all year. Reading the live club credited
+a whole season, its placement and its trophies to a club the player had never played a game for.
+
+**`ensureSeason()` only redraws in `preseason`, `spring` and `summer`.** The stamp carries the club
+id so a transfer redraws the fixture list, which is right while games remain and destructive once
+they do not — a move in the playoffs or the window rebuilt the block and zeroed a finished season
+*before* it was written down. Measured: a 13-8 summer filed as **"0-0, G2 Esports"** for a player who
+never played for them, with `regional_champ` and `domestic_double` re-credited to the new club.
+
+Consequences worth knowing:
+- Between a move and the next drawing phase the block legitimately holds the **old** club's fixtures
+  (or a free agent's — the stamp reads `year:split:free`). Those rows are not wrong, they are simply
+  not the player's any more, so anything validating a schedule must first check
+  `season.clubId === player.clubId` and skip when it does not.
+- **Promotion runs inside `closeSplit()`**, so at weeks 17-19 the spring split is already closed,
+  `season.split` still says `spring`, and `player.clubId` is the main team the academy player was
+  just promoted to. Filing spring under the academy is correct.
+- `careerSmoke` asserts both halves (`histclub`, `histempty`) by recording which club a split was
+  played for during `spring`/`summer` weeks only, and comparing it to the history row at retirement.
+  Both fired on the first run; `histclub` then caught a *second* case in spring that the first fix
+  had missed.
+
 ### Tournaments last as long as their window
 `openBracket()` used to run the entire tournament on the phase-change tick: a player who reached the
 final played a quarter, a semi and a final — fifteen games of Bo5 — inside week 14, and weeks 15-16

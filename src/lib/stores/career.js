@@ -122,6 +122,12 @@ export function blankCareer() {
 
         season: {
             split: 'spring',         // 'spring' | 'summer'
+            // The club this season is being played FOR, stamped when the season
+            // is drawn. closeSplit files the split under this rather than under
+            // player.clubId, because the transfer window opens before the summer
+            // split is banked -- see ensureSeason / closeSplit.
+            clubId: null,
+            clubTier: null,
             wins: 0, losses: 0,
             gameWins: 0, gameLosses: 0,
             schedule: [],            // [{ id, week, phase, opponentId, home, played, won, score, myRating }]

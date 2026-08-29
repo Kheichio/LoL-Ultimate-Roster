@@ -1221,6 +1221,27 @@ export function ensureSeason() {
         && !scheduleMatchesDivision(c);
     if (c.season.stamp === stamp && scheduleOf(c).length && !stale) return c.season;
 
+    // ONLY REDRAW IN A PHASE THAT ACTUALLY HAS LEAGUE FIXTURES.
+    //
+    // The stamp carries the club id so that a transfer redraws the fixture
+    // list, which is right while there are still games to play and destructive
+    // once there are not. A split is BANKED at its close -- spring at the MSI
+    // boundary, summer inside rolloverYear() -- and both of those happen well
+    // after the last league game. Every phase in between is one where a move
+    // used to silently zero the season that had just been played:
+    //
+    //   * transfer in the playoffs (14-16) -> spring rebuilt, then closeSplit
+    //     ('spring') filed 0-0 under the new club at week 17
+    //   * transfer in the window (36-40)   -> the same for summer at rollover
+    //
+    // Measured before this guard: a 13-8 summer filed as "0-0 G2 Esports" for a
+    // player who had never played a game for them, trophies re-credited too.
+    // careerSmoke asserts both halves now (`histclub` / `histempty`).
+    //
+    // Preseason draws the spring list early, which is why it is in the set.
+    const DRAWING_PHASES = new Set(['preseason', 'spring', 'summer']);
+    if (!DRAWING_PHASES.has(phaseForWeek(num(c.time.week, 1)).id)) return c.season;
+
     // A bracket belonging to the phase the calendar is in right now was opened
     // for this moment, not for the split being drawn. MSI is the case that
     // matters: it starts under spring's stamp and sits in summer's, so the
@@ -1246,6 +1267,12 @@ export function ensureSeason() {
             ...x.season,
             split,
             stamp,
+            // WHOSE season this is. Written once, when the season is drawn, so
+            // that closeSplit and the awards can file the split under the club
+            // it was actually played at rather than whoever the player happens
+            // to be contracted to by the time the split is banked.
+            clubId: x.player.clubId || null,
+            clubTier: x.player.clubTier || null,
             schedule: keepRows.length ? [...schedule, ...keepRows] : schedule,
             standings,
             wins: 0, losses: 0, gameWins: 0, gameLosses: 0,
@@ -2020,18 +2047,35 @@ function closeSplit(splitId) {
     const c = snap();
     if (!c || !c.created) return;
 
-    const rows = safe(() => leagueTable(c), []);
+    // THE CLUB THIS SPLIT BELONGS TO, which is not necessarily the one the
+    // player is at now. closeSplit('summer') runs inside rolloverYear(), and the
+    // transfer window is weeks 36-40 -- BEFORE it. Filing the split under
+    // player.clubId credited a whole season, its placement and its trophies to a
+    // club the player had not played a single game for.
+    //
+    // The season block records its own club when it is drawn, so use that and
+    // fall back only for a save written before it did.
+    const seasonClubId = (c.season && c.season.clubId) || c.player.clubId || null;
+    const seasonClubTier = (c.season && c.season.clubTier) || c.player.clubTier || null;
+
+    // The table has to be read as that club too, or a player who moved leagues
+    // gets their old season's placement out of their new division's table.
+    const tableCtx = seasonClubId === c.player.clubId
+        ? c
+        : { ...c, player: { ...c.player, clubId: seasonClubId, clubTier: seasonClubTier } };
+
+    const rows = safe(() => leagueTable(tableCtx), []);
     const mine = rows.find(r => r && r.isMine) || null;
-    const awards = safe(() => endOfSplitAwards(c, rows), []);
+    const awards = safe(() => endOfSplitAwards(tableCtx, rows), []);
     if (awards.length) safe(() => grantAwards(awards), '');
 
-    const team = c.player.clubId ? teamById(c.player.clubId) : null;
+    const team = seasonClubId ? teamById(seasonClubId) : null;
     let row = null;
     career.update(x => {
         row = {
             year: num(x.time.year, DEFAULT_START_YEAR),
             split: splitId,
-            teamId: x.player.clubId || null,
+            teamId: seasonClubId,
             teamName: team ? team.name : 'Unsigned',
             w: num(x.season.wins, 0),
             l: num(x.season.losses, 0),
@@ -2317,6 +2361,11 @@ export function rolloverYear() {
             ...x.season,
             split: 'spring',
             stamp: '',
+            // Cleared with the rest of it: the new year's season belongs to
+            // whichever club draws it, and a stale id here would file the
+            // FOLLOWING spring under last year's team.
+            clubId: null,
+            clubTier: null,
             wins: 0, losses: 0, gameWins: 0, gameLosses: 0,
             schedule: [],
             standings: {},
