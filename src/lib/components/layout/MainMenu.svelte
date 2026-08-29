@@ -334,7 +334,7 @@
                     Playing as a guest. <button class="linkish" on:click={() => showAuthPanel.set(true)}>Log in</button> to sync your club to the cloud.
                 {/if}
             </p>
-            <p class="build">Beta 1.6.8.1 Public Build</p>
+            <p class="build">Beta 1.6.9.2 Public Build</p>
         </div>
 
     {:else if $menuScreen === 'slots' && slotMode}
@@ -413,6 +413,19 @@
     {:else if $menuScreen === 'updates'}
         <!-- ══════════════ UPDATE LOG ══════════════ -->
         <div class="stage stage-updates">
+            <!-- The way out sits at the TOP: this page is as long as the game's
+                 whole history, so a button under the last release is a button
+                 nobody scrolls back to. -->
+            <div class="up-topbar">
+                <button class="up-back" on:click={closeUpdates}>
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M10 3L5 8l5 5" />
+                    </svg>
+                    {$updatesReturn === 'game' ? 'Back to Ultimate Roster' : 'Back'}
+                </button>
+            </div>
+
             <p class="eyebrow">What's new</p>
             <h2 class="slot-h">Update Log</h2>
             <p class="slot-sub">Every patch, in full. The newest release is at the top.</p>
@@ -420,10 +433,6 @@
             <!-- .stage centres and shrink-wraps its children; the timeline needs
                  the full column. -->
             <div class="uplog-wrap"><UpdateLog /></div>
-
-            <button class="slot-back" on:click={closeUpdates}>
-                {$updatesReturn === 'game' ? 'Back to Ultimate Roster' : 'Back'}
-            </button>
         </div>
 
     {:else if $menuScreen === 'loading'}
@@ -733,7 +742,32 @@
 
     /* ═══════════ UPDATE LOG SCREEN ═══════════ */
     .stage-updates { max-width: 880px; }
-    .uplog-wrap { width: 100%; margin-bottom: 10px; }
+    .uplog-wrap { width: 100%; }
+
+    /* Left-aligned inside a stage that centres everything else, so it reads as
+       navigation rather than as part of the page's own heading block. */
+    .up-topbar { width: 100%; display: flex; margin-bottom: 22px; }
+    .up-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 9px 16px 9px 12px;
+        border-radius: 10px;
+        font-family: inherit;
+        font-size: 12px; font-weight: 700;
+        color: #94a3b8;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(51, 65, 85, 0.4);
+        cursor: pointer;
+        transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+    }
+    .up-back:hover {
+        color: #e2e8f0;
+        border-color: rgba(71, 85, 105, 0.65);
+        background: rgba(20, 30, 51, 0.6);
+    }
+    .up-back svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .up-back:hover svg { color: #60a5fa; }
 
     /* ═══════════ MORE GAMES ═══════════ */
     .more { width: 100%; margin-bottom: 26px; }

@@ -1,11 +1,30 @@
 // Shared source for the changelog surfaces.
 //
-// The Home page shows a short preview (the newest few, `summary` only) and the dedicated
-// Updates tab shows the full list with every `details` bullet — both read from here, so a
-// release is described in one place instead of being copy-pasted into the Home island.
+// The Home page shows a short preview (the newest few, `summary` only) and the main menu's
+// Update Log screen shows the full list with every `details` bullet — both read from here,
+// so a release is described in one place instead of being copy-pasted into the Home island.
 // (The Guide tab keeps its own FAQ-style "Update Log" section.) Newest first.
+//
+// UPDATES[0] is also the version the main menu prints on its Update Log link, so the top
+// entry and the two "Public Build" badges in App.svelte / MainMenu.svelte move together.
 
 export const UPDATES = [
+    {
+        ver: 'Beta 1.6.9.2',
+        title: 'Brazil — CBLOL Cards & a Sixth Career Region',
+        summary: '678 new Brazilian cards covering thirteen seasons of CBLOL, Brazil added as a playable Ultimate Career region with ten real clubs, and the update log moved out to the main menu where you can read it without loading a save.',
+        details: [
+            'NEW CARDS — 678 of them, covering every Split 2 the Brazilian league has ever played: CBLOL 2014 through 2024, the 2025 season it spent merged into the LTA as "LTA South", and CBLOL 2026. That is 112 team rosters across 34 organisations, from the KaBuM! side that beat Alliance at Worlds 2014 to the LOUD team that reached the 2022 group stage. Every player is rated to how that specific split actually went — the final table sets a team\'s level and individual performance separates the players inside it.',
+            'ONE REGION, NOT TWO — 2025 was branded LTA South for a single season before the CBLOL name came back in 2026. It is the same league, so all thirteen seasons sit under one 🇧🇷 CBLOL filter in the Archive instead of being split across two tabs you would have to check separately.',
+            'A MINOR REGION THAT READS LIKE ONE — Brazilian cards top out at 90 and exactly one reaches it: Tinowns, on the 2022 LOUD side. The region\'s average sits below every major league, and the early years are rated as the semi-professional scene they actually were, so a 2014 card and a 2024 card are not pretending to be the same standard.',
+            'NEW — Brazil in Ultimate Career: a sixth region on the "Which scene raised you?" screen, with ten main-league clubs (LOUD, Los Grandes, FURIA, Vivo Keyd Stars, RED Canids Kalunga, paiN Gaming, Fluxo W7M, Leviatán, KaBuM! and INTZ) and eight academy sides. Every club fields its real roster, pulled from the new cards.',
+            'WHAT BRAZIL COSTS YOU — the joint-largest starting attribute bonus in the game and the loudest crowd in the world, against the worst wages anywhere and the weakest clubs in the mode. You will be a star at home; getting the rest of the world to notice you is the hard part.',
+            'MOVED — the Update Log (this page) now lives on the main menu instead of being a tab inside Ultimate Roster, so you can read what changed without loading a save. The Home page\'s "Latest Updates" island still opens it and brings you straight back to your game.',
+            'FIXED (Career) — contract offers no longer name a player from a completely unrelated club as the man you would be replacing. A sloppy name match meant Cloud9 could list LOUD\'s roster, Nongshim RedForce could list RED Canids\', and paiN Gaming could list GAM Esports\'.',
+            'FIXED (Career) — your club can no longer be cut from an international tournament it had just qualified for. Winning your league and then being told you were "in the draw" while the whole event simulated without you was possible in any region and permanent in the weakest ones: a Brazilian or Asia-Pacific side never once reached MSI.',
+            'FIXED (Career) — the "Played All Five Regions" milestone still counted to five when there are now six, so it was paying out to careers that had skipped one entirely. It counts every region now, whatever the number.',
+        ],
+    },
     {
         ver: 'Beta 1.6.8.1',
         title: 'Ultimate Career — The Legends Board',
