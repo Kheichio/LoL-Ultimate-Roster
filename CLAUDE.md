@@ -261,6 +261,107 @@ only the club the player actually plays for:
   snapshot it entered with — otherwise a signing whose tenure just ran out is announced as retired and
   then replaced again in the same week, and priced against the dead card.
 
+### The season is a real competition, not a backdrop
+Four things used to make the league table fiction, and they are fixed together because
+each one hides the others.
+
+- **There is ONE fixture list per division per split.** `teams.divisionRounds(c)` is a circle-method
+  double round robin seeded by `hash32('rr:'+region+':'+tier+':'+year+':'+split)`, so it is stable
+  across page loads. `generateSchedule()` is a PROJECTION of it and `simulateAIWeek()` plays the
+  pairs the player is not in. Before this, every other club's games were invented on the spot with
+  fresh random pairings each week, one club sat out whenever the pool was odd, and the simulation
+  ran in all 40 weeks while fixtures existed in 18.
+- **The player's result is MIRRORED** onto the opponent in `completeMatch` — league rows only, never
+  bracket ties. Without it every opponent silently lost the two games a season they played the
+  player. The `rows[i].played` guard is the idempotency proof; do not add a second one.
+- **The player's own table row is counted off the SCHEDULE**, excluding `kind === 'bracket'`.
+  `season.wins` counts playoff, MSI and Worlds games too, and MSI is carried into summer, so
+  reading it put the player several games ahead of a division that had played the same fixtures.
+- Measured: a 70%-win-rate player used to seed 7th on 18 games against AI sides on 23-26 and miss
+  the cut. `regional_champ` rose 63→76 and `split_mvp` **12→65** when this landed.
+
+**Match format is per region.** `constants.regularBestOf(regionId, tier)` — LCK, LPL and LCP play a
+Bo3 regular season, LEC, LCS and CBLOL a Bo1, and **tier 3 is always Bo1** because the amateur
+circuit is scrims. A series is ONE row in the table however many games it took. When this was added,
+`match.stakesBonus()` still fired its clutch-perk arm on `bestOf >= 3`, which would have paid every
+owner of the clutch perks their full knockout premium in every ordinary league game across two
+thirds of a career — it now reads `>= 5`, because a Bo5 is only ever a knockout and a Bo3 no longer
+implies anything. Measured against an all-Bo1 control: Bo3 moves the mean match rating +0.04, from
+the series-win bonus alone, against a 7.6 hard-fail line.
+
+### Tournaments last as long as their window
+`openBracket()` used to run the entire tournament on the phase-change tick: a player who reached the
+final played a quarter, a semi and a final — fifteen games of Bo5 — inside week 14, and weeks 15-16
+were empty. Rounds are now pinned to weeks.
+
+- `bracket.window` and `bracket.totalRounds` are written at open and persisted, so a save reloaded
+  mid-tournament resumes on the right week. `roundWeekFor()` spreads rounds across the window with
+  the FINAL always on its last week.
+- `stepBracket(force)` refuses a round whose week has not arrived; `tickBracket()` in `advanceWeek`
+  knocks on the door each week. **`force` is not optional garnish** — `handlePhaseChange` calls
+  `forceFinishBracket()` when the calendar leaves a bracket phase, because an unfinished summer
+  bracket never awards the championship points that decide who goes to Worlds.
+- **The field must fit its window**: `openBracket` trims to `2^(window weeks)`, and a club that
+  qualified takes the last slot rather than being cut after the news post said it was going. This
+  trims nothing today — `runInternational` already caps Worlds at 16 and MSI at 8 — but those caps
+  are hand-written numbers in a different function from the window they must agree with, and a field
+  one team too big silently doubles up a round with no other symptom.
+
+### First Stand
+A sixth event, weeks **2-4**, taking the tail of preseason rather than a slot in mid-season. That is
+both the safe choice and the accurate one: the real tournament runs in March, and carving it out of
+preseason means **no phase after week 4 moves**, so no existing save wakes up inside a different
+phase than it went to sleep in.
+
+- The field is **one club per region** — the champions and nobody else — which is what keeps it from
+  being MSI with the same names three weeks early.
+- **The berth is won in a different year from the one it is played in.** You qualify by winning the
+  summer, and play it the following February. `season.qualified` cannot carry that (`rolloverYear`
+  empties the whole season block), so it lives on `flags.firstStandBerth` and names the YEAR it is
+  good for rather than being a boolean that would qualify a club forever.
+- `first_stand_champ` is deliberately **major, not legendary**, and priced under MSI at 95 LP / 200
+  legacy weight. Six champions in February is not the whole world in October.
+- Adding an event means adding its id to EVERY phase list: `KNOCKOUT_PHASES`, `INTL_PHASES` and
+  `PHASE_PAY`/`CP_TABLE` in match.js, `BIG_STAGE` and `INTL_PHASES` in events.js, `SERIES_PHASES` in
+  Hub.svelte, and the `leftBracketPhase` set in engine.js.
+
+### Event qualification is a model, not two chips
+`teams.eventQualification(c)` returns every event with a status (`won`, `out`, `live`, `in`, `chase`,
+`missed`, `locked`) and a detail line that says what is actually required and how close you are —
+"5th of 10 - inside the cut", "Berth banked for 2029", "Club qualified - you are 16, minimum 17".
+It replaced two hardcoded chips, one of which read "Championship points" for Worlds, **which has
+never been the rule** (Worlds is top two of the summer bracket). `teams.tournamentNow(c)` drives the
+banner and reads the LIVE BRACKET rather than the calendar, so a player whose club did not qualify
+is never told they are at Worlds. Both are pure reads and both are wrapped at the call site.
+
+### The training drills
+Eight minigames, one per attribute, wired by `ATTRS[].game` → `MinigameHost`. Each returns a
+`score01` that `training.scoreFactor()` turns into a gain multiplier, and **0.50 is the contract**:
+it is exactly 1.0x, so every drill must be tuned so a competent session lands there. A drill that
+scores generously trains its attribute faster than the rest for reasons the player can never see,
+which is why the three tuned ones each have a simulator (`comboSim`, `clutchSim`, `waveSim`).
+
+**MEC is `ComboGame`** — targets appear around a field inside an approach ring that shrinks onto
+them, and you hit each one as the ring lands. It replaced a last-hit timing bar that trained a
+single axis and could be played by watching one pixel; MEC is *"raw hands — combo execution,
+dodging skillshots"*, so the drill is aim and rhythm together. Input is the target itself or
+Space/Z/X for the nearest, which is also the accessible path.
+
+Readability is not difficulty — the same lesson ClutchGame was rebuilt around. The ring lands
+*exactly* on the circle edge, targets fade in rather than appearing under the cursor, and the number
+shows the order. **The way to make this drill harder is `wPerfect`, never hiding anything.**
+
+### The question bank rots
+`KnowledgeGame`'s bank is the only content in the mode that can become **wrong** rather than merely
+stale: League's objectives, timers and season systems get rebuilt most years. It was last checked
+against **patch V26.17 (26 August 2026)**, and three shipped questions were wrong by then — the
+first minion wave spawns at **0:30**, not 1:05; buff camps at **0:55**, not 1:30; and "a wave every
+30 seconds" now needs scoping to laning, since waves accelerate to 25s at 14:00 and 20s at 30:00.
+
+Verify against the League wiki, never from memory — the 2026 season removed **Feats of Strength**
+entirely (V26.01) and added **Role Quests** and **Faelights**, and Atakhan's Voracious/Ruinous forms
+were removed in V25.09. Anything written from recall about those would have been confidently wrong.
+
 ### Age-gated events
 An event's `when` gate is the ONLY filter between the pool and the popup. Copy that references a
 past age, a life stage, a club, or a stage appearance must gate on `player.age` / `isSigned` / real
@@ -348,7 +449,14 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   career, from `flags.rosterMoves` — `club.changes` is wiped by a transfer and cannot be the lifetime
   count) and **`legacy economy`** (perks owned, LP unspent, board cost). Both carry inertness
   assertions: a roster system that never moves a seat and a momentum that never leaves zero are
-  wired-and-dead, which is the failure this file exists to catch.
+  wired-and-dead, which is the failure this file exists to catch. It also prints **`tournament
+  calendar`** (which weeks each bracket occupied) and **`regular season format`** (Bo1 vs Bo3
+  club-weeks, and the mean games per series), both with their own inertness assertions: a bracket
+  that only ever occupies one week is a spread that never fires, a run with no Bo3 at all means the
+  region table has gone flat, and an event missing from the calendar line entirely — First Stand
+  especially, whose berth survives a year rollover on a flag — is an event nobody can play.
+  It asserts the league table can never drift more than one week's games out of step, which is the
+  check whose absence let a 45-vs-18 table ship.
 - `node tools/eventCheck.mjs` — the in-match decision pools (`matchEvents.js`). That file opens
   with a page of authoring discipline that was, until this existed, enforced entirely by a comment:
   3-or-4 options, a safest and a greedy play at least 0.12 of difficulty apart, safest averaging
@@ -390,6 +498,11 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   component-local, so every section but `gear` used to ship untested), and **BracketView is driven
   directly** against a dozen hand-built bracket shapes because it is a child of Calendar and gets no
   coverage from the screens loop. Only crashes fail the build; `wrong`/`warning` print and exit 0.
+  States `4c-at-a-tournament` / `4d-tournament-won` are hand-built rather than driven, because the
+  driven playoff state only reaches a live bracket if the club made the cut that run — so the
+  tournament banner and the `live`/`won` qualification chips could go permanently unrendered with
+  nothing saying so. `--dump` writes every render to `tools/.render-dump/` and is how to confirm
+  markup actually appears rather than trusting that a state exists.
 - `node tools/championCheck.mjs` — validates the 173-champion signature list and the playstyle fit
   rule in `constants.js`
   (`--list` prints the pool per role). Catches the three ways that data fails *silently*: an
@@ -401,6 +514,25 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   unpickable, and that a playstyle's blurb never names a champion the fit rule rejects. That last
   check is what caught the Frontline Tank being unable to pick Ornn or Sion. It has one known
   standing warning: `sup_roam` names Pyke, whose archetype really is closer to a lane bully.
+- `node tools/comboSim.mjs` — calibration gate for the MEC drill (**ComboGame**, the osu-style
+  target/approach-ring drill that replaced the last-hit timing bar). Parses `CFG`/`VALUE`/`SCORE_W`
+  straight out of the component and simulates the real scoring against six press-error profiles.
+  **The timing windows are identical at all three tiers on purpose**: every drill in the mode is
+  normalised so a competent session scores ~0.50, and the tier's reward is `baseGain`, not a fatter
+  score — tightening windows on top of more targets, a faster ring and a shorter gap would make
+  Elite pay *less* than Basic for the same hands. The first cut shipped 55/105/170ms windows at
+  Basic, which put a competent session at **0.76 — a 1.63x multiplier for turning up**, and would
+  have made MEC by far the cheapest attribute in the mode to max. Nothing but this file would have
+  caught it. Note it deliberately does NOT copy clutchSim's "near-perfect lands in 0.70-0.90" rule:
+  ClutchGame has irreducible interference and a pure timing drill has none, so headroom is asserted
+  where real players actually sit (`strong` must land 0.60-0.82) rather than by capping a flawless
+  session below what it earned.
+- `node tools/quizCheck.mjs` — validates the KNW question bank (`KnowledgeGame`), whose every
+  failure mode is silent: a duplicated question just appears twice, a repeated option renders two
+  identical buttons one of which scores wrong, a three-option question simply offers three. Also
+  enforces the distribution, because `buildRound()` draws EVENLY across the five categories — a thin
+  category repeats every session while a fat one is barely seen. `--list` prints the bank by
+  category.
 - `node tools/clutchSim.mjs` — calibration gate for the CMP composure drill (ClutchGame). Parses
   the tuning table straight out of the component (a calibration that quotes numbers the component
   no longer has is worse than none) and simulates the real scoring maths. Asserts that skill pays at

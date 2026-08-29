@@ -106,8 +106,8 @@ function gamesOf(c) { return Number(c?.totals?.games) || 0; }
 function phaseIdOf(c) { return phaseForWeek(c?.time?.week || 1).id; }
 function flagOf(c, key) { return !!(c?.flags && c.flags[key]); }
 
-const BIG_STAGE = ['spring_po', 'summer_po', 'msi', 'worlds'];
-const INTL_PHASES = ['msi', 'worlds'];
+const BIG_STAGE = ['spring_po', 'summer_po', 'first_stand', 'msi', 'worlds'];
+const INTL_PHASES = ['first_stand', 'msi', 'worlds'];
 
 /** This season's fixtures. Shape, from blankCareer() in stores/career.js and
  *  written by engine.js pushSchedule()/completeMatch():
@@ -2172,10 +2172,25 @@ function weightedPick(pool) {
  * the caller can pass it straight back into applyEventOption(), or null on the
  * two weeks in three where nothing happens.
  */
-export function rollWeeklyEvent(c) {
+export function rollWeeklyEvent(c, opts) {
     const state = c || snapshot();
     if (!state || !state.created || state.flags?.retired) return null;
     ensureEventLog(state);
+
+    // A named event, demanded rather than rolled for. Burnout uses this to put
+    // the crisis event in front of a player who needs it: its escape branches
+    // are already written, and behind the ordinary weekly chance somebody in
+    // real trouble might simply never see them. Skips the roll and the cooldown
+    // but NOT the `when` gate — an event whose own conditions do not hold is
+    // still the wrong event.
+    const forceId = opts && typeof opts.forceId === 'string' ? opts.forceId : '';
+    if (forceId) {
+        const forced = EVENT_POOL.find(e => e && e.id === forceId);
+        if (!forced) return null;
+        if (typeof forced.when === 'function' && !forced.when(state)) return null;
+        return forced;
+    }
+
     if (Math.random() >= WEEKLY_EVENT_CHANCE) return null;
     const pool = eligibleEvents(state);
     if (!pool.length) return null;

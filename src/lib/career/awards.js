@@ -228,32 +228,40 @@ export const AWARD_DEFS = [
     },
     {
         id: 'regional_champ', name: 'Regional Champion', icon: '\u{1F3C6}',
-        tier: 'major', legacyPoints: 60,
+        tier: 'major', legacyPoints: 60, cabinet: 'domestic',
         desc: 'Won your league. The banner goes up whether you play again or not.',
     },
     {
         id: 'domestic_double', name: 'Domestic Double', icon: '\u{1F4AB}',
-        tier: 'major', legacyPoints: 45, perYear: true,
+        tier: 'major', legacyPoints: 45, perYear: true, cabinet: 'domestic',
         desc: 'Spring and summer in the same year. Nobody else got a turn.',
     },
     {
         id: 'msi_champ', name: 'MSI Champion', icon: '\u{1F30D}',
-        tier: 'legendary', legacyPoints: 150,
+        tier: 'legendary', legacyPoints: 150, cabinet: 'intl',
         desc: 'Mid-Season Invitational. The first proof that your region travels.',
     },
     {
+        // Deliberately MAJOR rather than legendary, and priced under MSI. First
+        // Stand is six champions in February, not the whole world in October,
+        // and a career that wins it should still have something left to chase.
+        id: 'first_stand_champ', name: 'First Stand Champion', icon: '\u{1F94B}',
+        tier: 'major', legacyPoints: 95, cabinet: 'intl',
+        desc: 'First Stand. Six regional champions in February and you were the last one standing.',
+    },
+    {
         id: 'worlds_finalist', name: 'Worlds Finalist', icon: '\u{1F3DF}',
-        tier: 'major', legacyPoints: 120,
+        tier: 'major', legacyPoints: 120, cabinet: 'worlds',
         desc: 'You reached the last stage of the year and came second on it.',
     },
     {
         id: 'worlds_champ', name: 'World Champion', icon: '\u{1F451}',
-        tier: 'legendary', legacyPoints: 400,
+        tier: 'legendary', legacyPoints: 400, cabinet: 'worlds',
         desc: 'The Summoner\'s Cup. Everything before this was a rehearsal.',
     },
     {
         id: 'golden_road', name: 'Golden Road', icon: '\u{1F308}',
-        tier: 'legendary', legacyPoints: 500, once: true,
+        tier: 'legendary', legacyPoints: 500, once: true, cabinet: 'intl',
         desc: 'Spring, MSI, summer and Worlds in a single calendar year. Almost nobody does this.',
     },
     {
@@ -289,6 +297,82 @@ export const AWARD_DEFS = [
 ];
 
 export const AWARD_BY_ID = AWARD_DEFS.reduce((m, a) => { m[a.id] = a; return m; }, {});
+
+// ---------------------------------------------------------------------------
+//  THE TROPHY CABINET
+//  `c.trophies` is a flat list of every MAJOR and LEGENDARY award, which mixes
+//  real silverware with individual honours and drops the four minor ones
+//  entirely. The cabinet is a VIEW over `c.awards` instead — the richer
+//  superset, carrying the split and the club each one was won with.
+//
+//  It is a view and NEVER a grant path, so it cannot disagree with
+//  earnedLegacyScore(). Shelf order is display order.
+// ---------------------------------------------------------------------------
+export const TROPHY_SHELVES = [
+    { id: 'worlds',   name: 'World Championship',  accent: '#eab308' },
+    { id: 'intl',     name: 'International',       accent: '#2dd4bf' },
+    { id: 'domestic', name: 'Domestic',            accent: '#a855f7' },
+    { id: 'personal', name: 'Individual Honours',  accent: '#a78bfa' },
+];
+
+/**
+ * Group a career's honours into shelves and plates. Six regional titles are ONE
+ * plate with a count and six dated wins, not six identical chips — that is the
+ * difference between a cabinet and the wall of chips this replaces.
+ *
+ * Safe on a stranger's career: every name, icon and tier is re-resolved from
+ * AWARD_BY_ID and the club from teamById(), so nothing off the wire is trusted.
+ * An unknown id keeps its stored name and lands on the personal shelf rather
+ * than vanishing, so the plate count can never disagree with the trophy count.
+ */
+export function trophyCabinet(c) {
+    const rows = Array.isArray(c && c.awards) ? c.awards.filter(Boolean) : [];
+    const byId = new Map();
+
+    for (const a of rows) {
+        const def = AWARD_BY_ID[a && a.id] || null;
+        const id = (a && a.id) || 'unknown';
+        if (!byId.has(id)) {
+            byId.set(id, {
+                id,
+                name: def ? def.name : (typeof a.name === 'string' && a.name ? a.name : 'Honour'),
+                icon: def ? def.icon : '\u{1F3C5}',
+                tier: def ? def.tier : 'minor',
+                shelf: (def && def.cabinet) || 'personal',
+                count: 0,
+                wins: [],
+            });
+        }
+        const plate = byId.get(id);
+        plate.count++;
+        const team = a.teamId ? teamById(a.teamId) : null;
+        plate.wins.push({
+            year: Number(a.year) || null,
+            split: a.split || null,
+            splitName: SPLIT_NAME[a.split] || '',
+            teamId: a.teamId || null,
+            teamName: team ? team.name : (a.teamId ? 'Unknown Org' : ''),
+            // A constant, never a colour from the wire.
+            teamAccent: team ? team.accent : '#475569',
+        });
+    }
+
+    for (const plate of byId.values()) {
+        plate.wins.sort((x, y) => (y.year || 0) - (x.year || 0));
+    }
+
+    const order = { legendary: 0, major: 1, minor: 2 };
+    return TROPHY_SHELVES.map(shelf => {
+        const plates = [...byId.values()]
+            .filter(p => p.shelf === shelf.id)
+            .sort((a, b) => (order[a.tier] ?? 3) - (order[b.tier] ?? 3) || b.count - a.count);
+        return {
+            ...shelf,
+            plates,
+            total: plates.reduce((s, p) => s + p.count, 0),
+        };
+    });
+}
 
 const SPLIT_NAME = { spring: 'Spring', summer: 'Summer' };
 
@@ -655,6 +739,14 @@ export function endOfSplitAwards(c, table) {
     if (msi === 'champion' && !hasAwardInYear(st, 'msi_champ', year)) {
         out.push(makeAward('msi_champ', year, split, teamId));
     }
+    // First Stand is played in weeks 2-4 and this runs at the spring close in
+    // week 17, by which time season.bracket has been replaced twice over. It
+    // reads because finishBracket also writes season.results, which survives the
+    // bracket being swapped out and is only cleared by rolloverYear.
+    const fstand = bracketResult(st, 'first_stand');
+    if (fstand === 'champion' && !hasAwardInYear(st, 'first_stand_champ', year)) {
+        out.push(makeAward('first_stand_champ', year, split, teamId));
+    }
     const wlds = bracketResult(st, 'worlds');
     if (wlds === 'champion' && !hasAwardInYear(st, 'worlds_champ', year)) {
         out.push(makeAward('worlds_champ', year, split, teamId));
@@ -937,6 +1029,7 @@ export const LEGACY_WEIGHTS = {
     golden_road: 500,
     msi_champ: 350,
     worlds_finalist: 300,
+    first_stand_champ: 200,
     poty: 120,
     regional_champ: 100,
     split_mvp: 60,

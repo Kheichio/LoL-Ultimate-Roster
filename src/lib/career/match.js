@@ -85,13 +85,13 @@ const ASSIST_LEAN = { TOP: 0.15, JNG: 0.45, MID: 0.25, ADC: 0.25, SUP: 0.70 };
 
 // Phase payout multipliers. Worlds pays triple a regular season game.
 const PHASE_PAY = {
-    preseason: 0.5, spring: 1.0, spring_po: 1.8, msi: 2.4,
+    preseason: 0.5, first_stand: 2.1, spring: 1.0, spring_po: 1.8, msi: 2.4,
     summer: 1.1, summer_po: 2.0, worlds: 3.0, offseason: 0.4,
 };
 
 // Championship points are a season currency here, not a real Riot formula.
 const CP_TABLE = {
-    preseason: 0, spring: 10, spring_po: 40, msi: 30,
+    preseason: 0, first_stand: 25, spring: 10, spring_po: 40, msi: 30,
     summer: 12, summer_po: 55, worlds: 70, offseason: 0,
 };
 
@@ -118,6 +118,26 @@ const PERSONAL_FAIL_SCALE = 0.60;
 const FORM_SWING = 0.12;        // +/- 0.06 across the whole form range
 const COMPOSURE_SWING = 0.18;   // only while the team is behind
 const BIAS_SWING = 0.16;        // playing to your identity, or against it
+
+// Condition. BOTH are penalties that fade, and that shape is measured, not
+// assumed: morale across a simulated run means 93 out of 100, because fifteen
+// things push it up (a match win alone is +12, twice a week) and almost nothing
+// pushes it down. A term CENTRED on a neutral value would therefore have been a
+// near-constant bonus on every game in the mode — it measured at +0.09 on the
+// mean match rating, against a hard fail at 7.6.
+//
+// Written as floors instead, both are mathematically incapable of raising the
+// mean, and both bite exactly when the thing they measure has gone wrong. That
+// is what "more impactful" has to mean for a meter that normally sits near max:
+// not a bigger bonus for being fine, a real cost for not being.
+//
+// Health also compounds with an existing rule — under 55 you lose 20% of your
+// chance of being picked at all — which is intended: a broken player plays less
+// often AND worse when he does.
+const MORALE_SWING = 0.14;
+const MORALE_FLOOR_AT = 75;
+const HEALTH_SWING = 0.16;
+const HEALTH_FLOOR_AT = 70;
 // Signature champion. This used to be a flat 0.06 that applied in every single
 // game, which made it the weakest term in the engine and something the player
 // never had a reason to think about. It is now drafted for (see rollDraft) and
@@ -150,8 +170,8 @@ const WHEN_MISS = -0.07;        // ...and the price for the ones that do not
 // ---------------------------------------------------------------------------
 const CLUTCH_BONUS_CAP = 0.25;
 const INTL_BONUS_CAP = 0.15;
-const KNOCKOUT_PHASES = new Set(['spring_po', 'summer_po', 'msi', 'worlds']);
-const INTL_PHASES = new Set(['msi', 'worlds']);
+const KNOCKOUT_PHASES = new Set(['spring_po', 'summer_po', 'first_stand', 'msi', 'worlds']);
+const INTL_PHASES = new Set(['first_stand', 'msi', 'worlds']);
 
 // ---------------------------------------------------------------------------
 //  DRAFT
@@ -169,8 +189,32 @@ const DRAFT_TARGETING = 0.22;        // a top org scouts and bans what you are k
 const POCKET_COMFORT = 0.45;         // a prepared second pick keeps some of the comfort
 const OFFSCRIPT_PENALTY = -0.035;    // playing something you do not really know
 
+/** However many signatures you own, the draft still gets to take one off you
+ *  sometimes. Without this ceiling a three-signature player never goes
+ *  off-script, and off-script is the only place CHP is punished at all. */
+const DRAFT_SIGNATURE_CAP = 0.90;
+
 /** Champions offered in champion select. Three is a choice; four is a menu. */
 export const DRAFT_OPTIONS = 3;
+
+/**
+ * Every champion this player is trusted on, first pick first.
+ *
+ * `player.champion` is the original and is never merged away — it is what
+ * board.js publishes, what CareerDossier renders and what championCheck
+ * validates. The extras ride alongside it and are unlocked by the Second and
+ * Third Signature legacy perks.
+ */
+export function signatureIds(c) {
+    const p = (st(c) || {}).player || {};
+    const out = [];
+    const push = (id) => {
+        if (typeof id === 'string' && CHAMPION_BY_ID[id] && !out.includes(id)) out.push(id);
+    };
+    push(p.champion);
+    if (Array.isArray(p.extraChampions)) for (const id of p.extraChampions) push(id);
+    return out;
+}
 
 // ---------------------------------------------------------------------------
 //  MATCHUP AND PROFICIENCY
@@ -445,6 +489,14 @@ const DRAFT_LINES = {
         'Nothing you wanted survived. You are improvising on stage.',
         'They read your whole pool. What is left is not really yours.',
     ],
+    // Fearless: nobody banned you off it, you simply cannot play it twice in one
+    // series. Saying "banned" here would be a lie the player can check.
+    fearless: [
+        'Already played it this series. Fearless means you find something else.',
+        'Your pick is spent. Whatever comes next has to be a different one.',
+        'Used in an earlier game, so it is off the board for the rest of the series.',
+        'Fearless draft. The comfortable one went in game one and it is not coming back.',
+    ],
 };
 
 /**
@@ -456,24 +508,49 @@ const DRAFT_LINES = {
  * a top org is off-script roughly a third of the time; an 80-CHP player almost
  * never is, because there is always another pick they can actually play.
  */
-export function rollDraft(c, oppStrength) {
+export function rollDraft(c, oppStrength, usedChampions = []) {
     const state = st(c);
     const p = (state && state.player) || {};
-    const champ = CHAMPION_BY_ID[p.champion] || null;
+    // FEARLESS: everything already locked in this series is off the board.
+    const used = new Set(Array.isArray(usedChampions) ? usedChampions.filter(Boolean) : []);
+    const fresh = (ch) => !!ch && !used.has(ch.id);
+
+    const sigIds = signatureIds(state);
+    // Only the signatures that survive the series rule can still be "your pick".
+    const sigChamps = sigIds.map(id => CHAMPION_BY_ID[id]).filter(ch => ch && fresh(ch));
+    const champ = sigChamps[0] || null;
 
     const chp = clamp(num(p.attrs && p.attrs.chp, 40), 1, 99);
     const chpFactor = (chp - 50) / 100;                       // about -0.5 .. +0.5
     const targeting = clamp((num(oppStrength, 55) - 55) / 45, 0, 1) * DRAFT_TARGETING;
 
-    const pSignature = clamp(
+    const pSignatureOne = clamp(
         DRAFT_SIGNATURE_BASE + chpFactor * DRAFT_CHP_ON_SIGNATURE - targeting,
         0.20, 0.88,
     );
+    // Every extra signature is another champion they have to ban. Independent
+    // bans, so the chance at least one survives is 1 - (1-p)^n: 0.62 / 0.86 /
+    // 0.95 at the base rate, which is precisely what "a third pick nobody can
+    // ban you off" claims on the shop card.
+    //
+    // CAPPED at 0.90 on purpose. Left uncapped, a three-signature player almost
+    // never goes off-script, and off-script is the ONLY place OFFSCRIPT_PENALTY
+    // and the whole "CHP is punished here and nowhere else" design actually
+    // bite — careerSmoke fails outright if any of the three outcomes stops
+    // occurring.
+    const pSignature = sigChamps.length > 1
+        ? Math.min(DRAFT_SIGNATURE_CAP, 1 - Math.pow(1 - pSignatureOne, sigChamps.length))
+        : pSignatureOne;
     const pocketShare = clamp(DRAFT_POCKET_BASE + chpFactor * DRAFT_CHP_ON_POCKET, 0.15, 0.92);
 
+    // A signature already played this series cannot be the signature outcome —
+    // and the reason matters for the copy. Being banned off it and having played
+    // it in game two are different sentences, and DRAFT_LINES only knows how to
+    // say the first one.
+    const sigSpent = sigIds.length > 0 && sigChamps.length === 0;
     const r = Math.random();
     let outcome;
-    if (r < pSignature) outcome = 'signature';
+    if (!sigSpent && r < pSignature) outcome = 'signature';
     else if (r < pSignature + (1 - pSignature) * pocketShare) outcome = 'pocket';
     else outcome = 'offscript';
 
@@ -496,13 +573,22 @@ export function rollDraft(c, oppStrength) {
     const take = (ch) => {
         if (ch && !options.some(o => o.id === ch.id)) options.push(ch);
     };
-    if (outcome === 'signature') take(champ);
+    // On a surviving signature, which one got through is itself a roll — with
+    // three of them the draft is genuinely negotiating with you.
+    const survivor = outcome === 'signature' && sigChamps.length ? pick(sigChamps) : null;
+    if (outcome === 'signature') take(survivor);
     // Off-script means banned out of everything you actually play, so the three
     // come from the whole role rather than from your style pool.
-    const source = outcome === 'offscript'
+    // EVERY source is filtered through `fresh`, including both fallbacks. The
+    // `(source.length ? source : rolePool)` fallback below is the easy one to
+    // miss: unfiltered, it silently backfills game four from a pool that still
+    // contains the champions already played, and the symptom is a repeat with no
+    // error anywhere.
+    const source = (outcome === 'offscript'
         ? rolePool.filter(ch => !stylePool.some(s => s.id === ch.id))
-        : bank.filter(ch => !champ || ch.id !== champ.id);
-    const shuffled = (source.length ? source : rolePool).slice();
+        : bank.filter(ch => !sigIds.includes(ch.id))
+    ).filter(fresh);
+    const shuffled = (source.length ? source : rolePool.filter(fresh)).slice();
     for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         const t = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = t;
@@ -511,23 +597,41 @@ export function rollDraft(c, oppStrength) {
         if (options.length >= DRAFT_OPTIONS) break;
         take(ch);
     }
-    // Last resort so champion select can never be empty.
-    for (const ch of rolePool) {
+    for (const ch of rolePool.filter(fresh)) {
         if (options.length >= DRAFT_OPTIONS) break;
         take(ch);
+    }
+
+    // POOL DRAIN. Returning fewer than DRAFT_OPTIONS is a hard careerSmoke
+    // failure and would leave champion select half-empty, so the series rule is
+    // the thing that gives way — not the screen. Unreachable at Bo5 with today's
+    // 26-56 champion role pools; it becomes reachable if bestOf ever grows or
+    // CHAMPIONS shrinks, and then it must degrade rather than break.
+    const exhausted = options.length < DRAFT_OPTIONS;
+    if (exhausted) {
+        for (const ch of rolePool) {
+            if (options.length >= DRAFT_OPTIONS) break;
+            take(ch);
+        }
     }
 
     return {
         outcome,
         // The name is only ever shown, never read back for maths.
-        champion: outcome === 'signature' && champ ? champ.name : null,
-        line: pick(DRAFT_LINES[outcome]),
+        champion: survivor ? survivor.name : null,
+        // WHY you are not on your signature. A fearless-spent pick is not a ban,
+        // and DRAFT_LINES only knows how to say "banned".
+        reason: outcome === 'signature' ? null : (sigSpent ? 'fearless' : 'ban'),
+        line: (outcome !== 'signature' && sigSpent)
+            ? pick(DRAFT_LINES.fearless)
+            : pick(DRAFT_LINES[outcome]),
 
         // Champion select proper. `picked` stays null until the player chooses;
         // the match engine refuses to resolve a decision before it is set.
         options: options.map(ch => ch.id),
         enemyId: enemy ? enemy.id : null,
         counter,
+        fearlessExhausted: exhausted,
         picked: null,
     };
 }
@@ -558,7 +662,10 @@ export function draftOption(c, match, championId) {
     return {
         id: championId,
         champion: mine,
-        isSignature: !!(mine && p.champion === mine.id),
+        // Any of your signatures, not just the first — otherwise a second pick
+        // never shows the Signature chip in champion select or on the locked-in
+        // strip, which is most of what "it does not work" looked like.
+        isSignature: !!(mine && signatureIds(state).includes(mine.id)),
         games,
         proficiency: prof,
         band: proficiencyBand(prof),
@@ -569,6 +676,16 @@ export function draftOption(c, match, championId) {
         matchupSwing: matchupSwingFor(matchup, prof),
         proficiencySwing: (prof - PROFICIENCY_NEUTRAL) * PROFICIENCY_SWING,
     };
+}
+
+/** Is the club currently resting this player for burnout? Read off the save
+ *  rather than imported from engine.js, which already imports this file. */
+function burnoutBenchedNow(state) {
+    const b = state && state.flags && state.flags.burnout;
+    const until = Number(b && b.benchedUntil) || 0;
+    if (!until) return false;
+    const t = (state && state.time) || {};
+    return until > (Number(t.year) || 0) * 40 + (Number(t.week) || 1);
 }
 
 /** A losing lane hurts less the better you know the champion. A winning one is
@@ -595,10 +712,13 @@ export function chooseDraft(match, championId) {
  *  pocket pick keeps nearly all of the comfort instead of under half of it. */
 function draftComfort(match, state) {
     const o = match && match.draft && match.draft.outcome;
-    if (o === 'pocket') {
-        const extra = num(perkEffects(state).extraChampion, 0);
-        return extra > 0 ? clamp(POCKET_COMFORT + 0.45 * extra, POCKET_COMFORT, 1) : POCKET_COMFORT;
-    }
+    // POCKET_COMFORT is flat. `extraChampion` used to widen it here, which was
+    // the whole of what the Second and Third Signature perks did — a scalar on
+    // one third of games, invisible on every screen. Those perks now buy real
+    // signature picks (see signatureIds/rollDraft); paying them here as well
+    // would be paying twice, and the mean match rating has very little headroom
+    // against careerSmoke's 7.6 hard fail.
+    if (o === 'pocket') return POCKET_COMFORT;
     if (o === 'offscript') return 0;
     return 1;
 }
@@ -668,8 +788,14 @@ export function buildMatch(c, opts = {}) {
         usedIds: drawn.usedIds,
         eventIndex: 0,
 
+        // FEARLESS. Every champion locked in so far THIS SERIES, threaded
+        // exactly the way usedIds already threads decision events. Never
+        // persisted — matchState is deliberately not part of the save — so a
+        // reload cannot arrive holding a half-used set.
+        usedChampions: [],
+
         // Champion select for game one. Re-rolled every game in finishGame().
-        draft: plays ? rollDraft(state, teamStrength(oppTeam, year)) : null,
+        draft: plays ? rollDraft(state, teamStrength(oppTeam, year), []) : null,
 
         timeline: [],
         gameLog: [],
@@ -725,6 +851,24 @@ export function successChance(c, match, option, event) {
 
     // Form. A player in crisis misses plays a red hot version of himself makes.
     chance += ((clamp(num(p.form, 50), 0, 100) - 50) / 100) * FORM_SWING;
+
+    // MORALE. Wanting to be there reached a match only through form before this
+    // — 28 points of form baseline across morale's whole range, worth about 3pp
+    // of a single decision. Now a slump costs directly, and only a slump does.
+    const morale = clamp(num(p.morale, 50), 0, 100);
+    if (morale < MORALE_FLOOR_AT) {
+        chance -= ((MORALE_FLOOR_AT - morale) / MORALE_FLOOR_AT) * MORALE_SWING;
+    }
+
+    // HEALTH, and it is a PENALTY THAT FADES, never a bonus. A player at 3
+    // health used to play exactly as well as one at 100 the moment he got on
+    // stage. Zero at HEALTH_FLOOR_AT and above, so it is mathematically
+    // incapable of pushing the mean rating up — which is why health gets this
+    // shape and morale gets the centred one.
+    const health = clamp(num(p.health, 100), 0, 100);
+    if (health < HEALTH_FLOOR_AT) {
+        chance -= ((HEALTH_FLOOR_AT - health) / HEALTH_FLOOR_AT) * HEALTH_SWING;
+    }
 
     // Composure only shows up when the game is going badly. That is the point
     // of the attribute and it is the only place it gets to prove it.
@@ -788,16 +932,23 @@ export function successChance(c, match, option, event) {
 
 /**
  * The clutch / international premium for this particular game, 0 when none
- * applies. A knockout is any bracket phase OR any series long enough to be one -
- * `bestOf` catches a tie the schedule labelled unusually, and the phase set
- * catches a Bo1 group game at Worlds.
+ * applies. A knockout is any bracket PHASE; the phase set is what catches a Bo1
+ * group game at Worlds, and the Bo5 arm catches a tie the schedule labelled
+ * unusually.
+ *
+ * IT USED TO READ `bestOf >= 3`, WHICH IS NOW WRONG. Korea, China and the
+ * Pacific play a Bo3 regular season, so that arm would hand every owner of the
+ * clutch perks their full knockout premium in every ordinary league game — a
+ * flat rating rise across two thirds of a career, paid for nothing, straight at
+ * careerSmoke's 7.6 mean-rating failure line. A Bo5 is only ever a knockout;
+ * a Bo3 no longer implies anything at all.
  */
 function stakesBonus(state, match) {
     if (!match) return 0;
     const perks = perkEffects(state);
     const phase = String(match.phase || '');
     let bonus = 0;
-    if (KNOCKOUT_PHASES.has(phase) || num(match.bestOf, 1) >= 3) {
+    if (KNOCKOUT_PHASES.has(phase) || num(match.bestOf, 1) >= 5) {
         bonus += clamp(num(perks.clutchBonus, 0), 0, CLUTCH_BONUS_CAP);
     }
     if (INTL_PHASES.has(phase)) {
@@ -1008,9 +1159,18 @@ export function finishGame(c, match) {
     const need = winsNeeded(match.bestOf);
     const over = seriesScore[0] >= need || seriesScore[1] >= need;
 
+    // FEARLESS. Banked on what was LOCKED IN, never on player.champion — the
+    // same rule the proficiency line above states, for the same reason.
+    const prevUsed = Array.isArray(match.usedChampions) ? match.usedChampions : [];
+    const lockedIn = match.draft && match.draft.picked;
+    const usedChampions = (lockedIn && !prevUsed.includes(lockedIn))
+        ? prevUsed.concat([lockedIn])
+        : prevUsed.slice();
+
     let next = {
         ...match,
         seriesScore,
+        usedChampions,
         gameLog: match.gameLog.concat([game]),
         done: over,
     };
@@ -1029,9 +1189,11 @@ export function finishGame(c, match) {
             queue: drawn.queue,
             usedIds: drawn.usedIds,
             eventIndex: 0,
-            // Every game drafts again. Losing your pick in game three of a Bo5
-            // is the whole reason this is rolled per game and not per series.
-            draft: match.playerPlays ? rollDraft(state, match.oppStrength) : null,
+            // Every game drafts again, and now it drafts against everything
+            // already played this series. Losing your pick in game three of a
+            // Bo5 is still the reason this is per game and not per series; being
+            // unable to play it twice is the reason it takes the used set.
+            draft: match.playerPlays ? rollDraft(state, match.oppStrength, usedChampions) : null,
         };
     }
 
@@ -1120,7 +1282,12 @@ export function finishMatch(c, match) {
         ));
     } else {
         formDelta = won ? 0 : -1;
-        moraleDelta = -(4 + randInt(0, 3));
+        // Watching from the bench costs morale — unless the club is the one that
+        // took you out of the rotation to recover. Charging that player for
+        // every game he was told not to play would out-run the relief the bench
+        // exists to give, and the "rest and come back" weeks would leave him
+        // worse than they found him.
+        moraleDelta = burnoutBenchedNow(state) ? 0 : -(4 + randInt(0, 3));
     }
 
     // Money. A win bonus, scaled by the stage and by how much the club is
@@ -1205,9 +1372,31 @@ function autoPick(c, match, event) {
     return best;
 }
 
+/**
+ * Champion select, answered by the game rather than the player.
+ *
+ * quickSim used to skip this entirely, and the consequences were invisible: with
+ * `draft.picked` left null, successChance falls back to `p.champion`, the
+ * proficiency and matchup terms are both skipped, and finishGame banks no
+ * proficiency at all. Roughly half of every career's games are simmed, so half
+ * of every career silently bypassed three mechanics — and fearless draft, which
+ * keys off what was locked in, would have quietly done nothing in any of them.
+ */
+function autoDraft(state, match) {
+    if (!draftPending(match)) return match;
+    const opts = Array.isArray(match.draft.options) ? match.draft.options : [];
+    let best = null, bestScore = -Infinity;
+    for (const id of opts) {
+        const o = draftOption(state, match, id);
+        const score = num(o.matchupSwing, 0) + num(o.proficiencySwing, 0) + (o.isSignature ? 0.001 : 0);
+        if (score > bestScore) { bestScore = score; best = id; }
+    }
+    return best ? chooseDraft(match, best) : match;
+}
+
 export function quickSim(c, opts = {}) {
     const state = st(c);
-    let match = buildMatch(state, opts);
+    let match = autoDraft(state, buildMatch(state, opts));
 
     let guard = 0;
     while (!isMatchOver(match) && guard++ < 40) {
@@ -1221,6 +1410,11 @@ export function quickSim(c, opts = {}) {
             }
         }
         match = finishGame(state, match).match;
+        // Every game after the first drafts again, so the sim has to answer
+        // again — otherwise fearless would apply to hand-played series only and
+        // the same fixture would play differently depending on which button was
+        // pressed.
+        match = autoDraft(state, match);
     }
 
     return finishMatch(state, match);

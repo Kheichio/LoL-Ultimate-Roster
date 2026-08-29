@@ -24,7 +24,7 @@
     import { playSound } from '../../utils/sound.js';
 
     import {
-        ACTIVITIES, NEWS_TYPES, CLUB_TIERS, teamById,
+        ACTIVITIES, ACTIVITY_GROUPS, NEWS_TYPES, CLUB_TIERS, teamById,
     } from '../../career/constants.js';
     import {
         statusInfo, fmtGold, fmtRecord, fmtKDA, ordinal,
@@ -38,7 +38,7 @@
     import BracketView from './BracketView.svelte';
     import {
         ensureSeason, weekSummary, canAdvanceWeek, doActivity,
-        startFixture, simFixture, advanceWeek, benchOrStart,
+        startFixture, simFixture, advanceWeek, benchOrStart, activityGate,
     } from '../../career/engine.js';
 
     // ---------------------------------------------------------------
@@ -58,7 +58,7 @@
     //  safe reads - engine calls are wrapped so one bad derived value
     //  never blanks the screen the player lives on
     // ---------------------------------------------------------------
-    const SERIES_PHASES = ['spring_po', 'summer_po', 'msi', 'worlds'];
+    const SERIES_PHASES = ['spring_po', 'summer_po', 'first_stand', 'msi', 'worlds'];
 
     function fallbackSummary(c, phase) {
         const fx = (c.season.schedule || []).filter(f => f.week === c.time.week);
@@ -212,13 +212,28 @@
     $: actionsLeft = Number.isFinite(summary.actionsLeft) ? summary.actionsLeft : c.weekly.actionsLeft;
     $: actionsMax = Number.isFinite(summary.actionsMax) ? summary.actionsMax : c.weekly.actionsMax;
 
+    // ONE gate, shared with engine.doActivity(). This used to re-derive three
+    // rules inline, which meant every new rule had to be written twice or the
+    // screen and the engine would disagree about what is legal.
     $: activities = ACTIVITIES.map(a => {
-        let reason = '';
-        if (actionsLeft < 1) reason = 'No activity slots left this week.';
-        else if (a.needsClub && !p.clubId) reason = 'Needs a club - this unlocks when you sign.';
-        else if (a.energy > 0 && p.energy < a.energy) reason = 'Not enough energy. Rest first.';
-        return { act: a, disabled: !!reason, reason };
+        // 'train' is legal here and routed to the Training screen by the engine,
+        // so it is gated on everything EXCEPT the engine's own redirect.
+        const g = safeGate(c, a);
+        return { act: a, disabled: !g.ok, reason: g.reason };
     });
+
+    $: activityGroups = ACTIVITY_GROUPS
+        .map(g => ({ ...g, rows: activities.filter(e => (e.act.group || 'practice') === g.id) }))
+        .filter(g => g.rows.length);
+
+    function safeGate(career, a) {
+        try {
+            const g = activityGate(career, a);
+            return g && typeof g === 'object' ? g : { ok: true, reason: '' };
+        } catch (e) {
+            return { ok: false, reason: 'Unavailable.' };
+        }
+    }
 
     $: weekLog = (Array.isArray(c.weekly.log) ? c.weekly.log : [])
         .filter(e => e && typeof e === 'object');
@@ -466,34 +481,44 @@
                 </span>
             </div>
 
-            <div class="acts">
-                {#each activities as entry (entry.act.id)}
-                    {@const a = entry.act}
-                    <button
-                        class="act"
-                        class:act-off={entry.disabled}
-                        class:act-flash={flash && flash.id === a.id}
-                        style="--a:{a.accent}"
-                        on:click={() => runActivity(entry)}
-                        disabled={entry.disabled || busy}
-                        aria-label="{a.name} - {entry.disabled ? entry.reason : a.desc}"
-                    >
-                        <div class="act-top">
-                            <span class="act-ico" aria-hidden="true">{a.icon}</span>
-                            <span class="act-name">{a.name}</span>
-                            <span class="act-cost" class:gain={a.energy < 0}>
-                                {a.energy < 0 ? '+' + Math.abs(a.energy) : '-' + a.energy} EN
-                            </span>
-                        </div>
-                        <span class="act-desc">{a.desc}</span>
-                        {#if entry.disabled}
-                            <span class="act-block">{entry.reason}</span>
-                        {:else if a.id === 'train'}
-                            <span class="act-go">Opens the training room &#x2192;</span>
-                        {/if}
-                    </button>
-                {/each}
-            </div>
+            {#each activityGroups as grp (grp.id)}
+                <div class="act-group">
+                    <p class="act-group-h"><span>{grp.name}</span></p>
+                    <div class="acts">
+                        {#each grp.rows as entry (entry.act.id)}
+                            {@const a = entry.act}
+                            <button
+                                class="act"
+                                class:act-off={entry.disabled}
+                                class:act-flash={flash && flash.id === a.id}
+                                style="--a:{a.accent}"
+                                on:click={() => runActivity(entry)}
+                                disabled={entry.disabled || busy}
+                                aria-label="{a.name} - {entry.disabled ? entry.reason : a.desc}"
+                            >
+                                <div class="act-top">
+                                    <span class="act-ico" aria-hidden="true">{a.icon}</span>
+                                    <span class="act-name">{a.name}</span>
+                                    <span class="act-cost" class:gain={a.energy < 0}>
+                                        {a.energy < 0 ? '+' + Math.abs(a.energy) : '-' + a.energy} EN
+                                    </span>
+                                </div>
+                                <span class="act-desc">{a.desc}</span>
+                                <span class="act-tags">
+                                    {#if a.gold}<span class="act-tag act-tag-gold">{a.gold} gold</span>{/if}
+                                    {#if a.once}<span class="act-tag">once a week</span>{/if}
+                                    {#if a.minAge}<span class="act-tag">{a.minAge}+</span>{/if}
+                                </span>
+                                {#if entry.disabled}
+                                    <span class="act-block">{entry.reason}</span>
+                                {:else if a.id === 'train'}
+                                    <span class="act-go">Opens the training room &#x2192;</span>
+                                {/if}
+                            </button>
+                        {/each}
+                    </div>
+                </div>
+            {/each}
 
             {#if flash}
                 <div class="flash" role="status">{flash.text}</div>
@@ -985,6 +1010,27 @@
         grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
         gap: 10px;
     }
+
+    /* Fourteen activities against a three-slot week needs sections, or the
+       board reads as one undifferentiated wall of buttons. */
+    .act-group + .act-group { margin-top: 16px; }
+    .act-group-h {
+        display: flex; align-items: center; gap: 12px;
+        margin-bottom: 9px;
+        font-size: 9px; font-weight: 800; letter-spacing: 2px;
+        text-transform: uppercase; color: #475569;
+    }
+    .act-group-h::after {
+        content: ''; flex: 1; height: 1px; background: rgba(51, 65, 85, 0.35);
+    }
+    .act-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .act-tag {
+        font-size: 8.5px; font-weight: 800; letter-spacing: 0.5px;
+        text-transform: uppercase; color: #64748b;
+        background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.4);
+        padding: 2px 6px; border-radius: 5px;
+    }
+    .act-tag-gold { color: #eab308; border-color: rgba(234, 179, 8, 0.28); }
     .act {
         display: flex; flex-direction: column; gap: 7px;
         text-align: left;

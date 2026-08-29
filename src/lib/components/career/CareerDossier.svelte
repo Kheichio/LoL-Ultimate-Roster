@@ -42,7 +42,7 @@
     import {
         MILESTONES, claimedMilestoneIds, awardHistoryByYear, AWARD_BY_ID,
         legacyScore, earnedLegacyScore, legacyTier, LEGACY_TIER_BANDS, peakOVR, careerYears,
-        canRetire,
+        canRetire, trophyCabinet,
     } from '../../career/awards.js';
     import { clubRosterFor, ROSTER_SLOTS, clubMomentum, clubBlock } from '../../career/teams.js';
     import { boardDBReady } from '../../career/board.js';
@@ -229,6 +229,9 @@
         .filter(Boolean)
         .slice()
         .sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
+    // c0, never c — a bare `c` here would fall through to snapshot() and print
+    // the VIEWER'S own cabinet under a stranger's handle.
+    $: cabinet = (() => { try { return trophyCabinet(c0) || []; } catch (e) { return []; } })();
     // The published row carries the TRUE count; a downloaded dossier's trophy
     // list is rebuilt from an award list that may have been trimmed to fit.
     $: trophyCount = remote ? remote.trophyCount : trophies.length;
@@ -1133,15 +1136,44 @@
                 </div>
             {:else}
                 {#if trophies.length}
-                    <div class="shelf">
-                        {#each trophies as tr, i (tr.id + '-' + tr.year + '-' + i)}
-                            <div class="troph" style="--k:{toneOf(tr.kind)}" title="{tr.name} &#183; {tr.year}">
-                                <span class="troph-ico" aria-hidden="true">{tr.icon || '\u{1F3C6}'}</span>
-                                <span class="troph-n">{tr.name}</span>
-                                <span class="troph-y">{tr.year}</span>
+                    <!-- THE CABINET. Grouped by honour rather than one chip per
+                         win, so six regional titles read as one plate with six
+                         dated wins instead of six identical chips. Built from
+                         the awards list, which is the only place the split and
+                         the club survive - and it works for a stranger's career
+                         because every name, icon and colour is re-resolved
+                         locally. -->
+                    {#each cabinet as sh (sh.id)}
+                        {#if sh.total > 0}
+                            <div class="cab">
+                                <p class="cab-h" style="--k:{sh.accent}">
+                                    <span>{sh.name}</span>
+                                    <span class="cab-ct">{sh.total}</span>
+                                </p>
+                                <div class="shelf">
+                                    {#each sh.plates as pl (pl.id)}
+                                        <div class="troph" style="--k:{toneOf(pl.tier)}"
+                                             title="{pl.name}{pl.count > 1 ? ` ×${pl.count}` : ''}">
+                                            <span class="troph-ico" aria-hidden="true">{pl.icon}</span>
+                                            <span class="troph-n">{pl.name}</span>
+                                            {#if pl.count > 1}<span class="troph-x">&#215;{pl.count}</span>{/if}
+                                            <span class="troph-w">
+                                                {#each pl.wins.slice(0, 4) as w, i (w.year + '-' + i)}
+                                                    <span class="troph-win">
+                                                        {w.year}{#if w.splitName}&nbsp;{w.splitName}{/if}{#if w.teamName}
+                                                            <span class="troph-team">{w.teamName}</span>{/if}
+                                                    </span>
+                                                {/each}
+                                                {#if pl.wins.length > 4}
+                                                    <span class="troph-win troph-more">+{pl.wins.length - 4} more</span>
+                                                {/if}
+                                            </span>
+                                        </div>
+                                    {/each}
+                                </div>
                             </div>
-                        {/each}
-                    </div>
+                        {/if}
+                    {/each}
                 {/if}
 
                 {#if trophiesUnlisted > 0}
@@ -1680,6 +1712,35 @@
     .t-s { font-size: 10px; font-weight: 600; color: #4a5b76; }
 
     /* ---------- HONOURS ---------- */
+    .cab { margin-bottom: 16px; }
+    .cab-h {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+        font-size: 9px; font-weight: 800; letter-spacing: 1.8px;
+        text-transform: uppercase; color: var(--k);
+    }
+    .cab-h::after {
+        content: ''; flex: 1; height: 1px;
+        background: color-mix(in srgb, var(--k) 22%, transparent);
+    }
+    .cab-ct {
+        font-size: 9px; font-weight: 800; color: #64748b;
+        background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.4);
+        padding: 1px 7px; border-radius: 5px; letter-spacing: 0;
+    }
+    .troph-x {
+        font-size: 10px; font-weight: 900; color: var(--k);
+        background: color-mix(in srgb, var(--k) 16%, transparent);
+        padding: 1px 5px; border-radius: 4px;
+    }
+    .troph-w { display: flex; flex-wrap: wrap; gap: 4px; }
+    .troph-win {
+        font-size: 9px; font-weight: 700; color: #64748b;
+        background: rgba(2, 6, 23, 0.45); padding: 2px 6px; border-radius: 5px;
+        white-space: nowrap;
+    }
+    .troph-team { color: #475569; font-weight: 600; }
+    .troph-more { color: #475569; font-style: italic; }
+
     .shelf { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
     .troph {
         display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 10px; max-width: 100%;

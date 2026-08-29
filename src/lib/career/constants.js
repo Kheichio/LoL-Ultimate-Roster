@@ -15,7 +15,7 @@ export const CAREER_SAVE_VERSION = 1;
 // ─────────────────────────────────────────────────────────────────────────
 export const ATTRS = [
     {
-        key: 'mec', name: 'Mechanics', abbr: 'MEC', color: '#ef4444', game: 'lasthit',
+        key: 'mec', name: 'Mechanics', abbr: 'MEC', color: '#ef4444', game: 'combo',
         desc: 'Raw hands. Last-hitting under pressure, combo execution, dodging skillshots.',
     },
     {
@@ -105,35 +105,35 @@ export const REGIONS = [
         blurb: 'The most disciplined scene on earth. Brutal solo queue, obsessive fundamentals, no patience for sloppy play.',
         mods: { lne: 4, cmp: 3, knw: 2, mec: 1, ldr: -1, chp: -3, map: 0, tmf: -1 },
         difficulty: 1.15, salaryMult: 1.05, hypeMult: 0.9, scoutMult: 1.10,
-        trainingMult: 1.10,
+        trainingMult: 1.10, regularBestOf: 3,
     },
     {
         id: 'LPL', name: 'China', league: 'LPL', flag: '\u{1F1E8}\u{1F1F3}', accent: '#ef4444',
         blurb: 'Chaos as a system. Every lane fights on cooldown and the highest mechanical ceiling in the world lives here.',
         mods: { mec: 5, tmf: 4, chp: 1, cmp: -4, map: -1, lne: 0, knw: -1, ldr: 0 },
         difficulty: 1.15, salaryMult: 1.20, hypeMult: 1.0, scoutMult: 1.05,
-        trainingMult: 1.05,
+        trainingMult: 1.05, regularBestOf: 3,
     },
     {
         id: 'LEC', name: 'Europe', league: 'LEC', flag: '\u{1F1EA}\u{1F1FA}', accent: '#22d3ee',
         blurb: 'Draft-first, personality-first. Weird picks win here, and the region exports more shotcallers than any other.',
         mods: { chp: 4, ldr: 3, knw: 2, mec: -2, lne: -1, cmp: 0, map: 1, tmf: -2 },
         difficulty: 1.00, salaryMult: 1.00, hypeMult: 1.15, scoutMult: 1.00,
-        trainingMult: 1.00,
+        trainingMult: 1.00, regularBestOf: 1,
     },
     {
         id: 'LCS', name: 'North America', league: 'LCS', flag: '\u{1F1FA}\u{1F1F8}', accent: '#f59e0b',
         blurb: 'The money is real and so is the content. The league is softer, so international results count double for your reputation.',
         mods: { tmf: 2, cmp: 2, knw: 1, chp: 1, lne: -3, map: -1, mec: -1, ldr: 0 },
         difficulty: 0.88, salaryMult: 1.30, hypeMult: 1.25, scoutMult: 0.90,
-        trainingMult: 0.92,
+        trainingMult: 0.92, regularBestOf: 1,
     },
     {
         id: 'LCP', name: 'Asia-Pacific', league: 'LCP', flag: '\u{1F30F}', accent: '#14b8a6',
         blurb: 'The underdog circuit. Smaller salaries, faster promotions, and a real path to a starting seat before you turn seventeen.',
         mods: { map: 3, ldr: 2, tmf: 1, chp: 1, mec: -2, knw: -1, lne: 0, cmp: 0 },
         difficulty: 0.82, salaryMult: 0.75, hypeMult: 0.85, scoutMult: 1.20,
-        trainingMult: 0.96,
+        trainingMult: 0.96, regularBestOf: 3,
     },
     {
         id: 'CBLOL', name: 'Brazil', league: 'CBLOL', flag: '\u{1F1E7}\u{1F1F7}', accent: '#22c55e',
@@ -152,12 +152,31 @@ export const REGIONS = [
         // None of the three can carry a region's compensation.
         mods: { tmf: 4, chp: 3, mec: 2, ldr: 1, cmp: -2, map: -2, knw: -1, lne: 0 },
         difficulty: 0.78, salaryMult: 0.68, hypeMult: 1.35, scoutMult: 1.12,
-        trainingMult: 0.96,
+        trainingMult: 0.96, regularBestOf: 1,
     },
 ];
 
 export const REGION_IDS = REGIONS.map(r => r.id);
 export const REGION_BY_ID = REGIONS.reduce((m, r) => { m[r.id] = r; return m; }, {});
+
+/**
+ * The regular-season match format of a region's league, which is a real and
+ * visible difference between them: Korea, China and the Pacific play Bo3 every
+ * week, Europe, NA and Brazil play Bo1.
+ *
+ * TIER 3 IS ALWAYS Bo1. The amateur circuit is scrims — a Bo3 there would be
+ * three games of consequence-free practice, and the tier exists precisely
+ * because it has no consequences.
+ *
+ * A series is still ONE row in the league table, win or lose, exactly like the
+ * real leagues score it. Anything reading a fixture for a games count must read
+ * `score`, never the row itself.
+ */
+export function regularBestOf(regionId, tier) {
+    if (Math.round(Number(tier) || 1) >= 3) return 1;
+    const bo = Math.round(Number((REGION_BY_ID[regionId] || {}).regularBestOf) || 1);
+    return bo >= 3 ? 3 : 1;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 //  PLAYSTYLES
@@ -838,6 +857,10 @@ export const START_PATHS = [
         potentialBonus: 8,     // the reward for starting early
         startGold: 250,
         startHype: 0,
+        // Gold IV. Both paths start on the rank their own equilibrium holds --
+        // see SOLOQ_FLOOR_MMR. Starting above it only produces a visible demotion
+        // every fortnight for the first two months.
+        startMMR: 1250,
         signed: false,
         trainingMult: 0.82,    // no coach, no facility — cheaper to do, worse per rep
         weeklyActions: 4,      // school and nothing else, so more free time
@@ -871,6 +894,7 @@ export const START_PATHS = [
         potentialBonus: 0,
         startGold: 1200,
         startHype: 400,
+        startMMR: 1950,   // Platinum I, this path's own equilibrium
         signed: true,
         trainingMult: 1.00,
         weeklyActions: 3,
@@ -1001,7 +1025,15 @@ export const ROLE_KEY_ATTR_WEIGHT = 0.14;
 export const WEEKS_PER_YEAR = 40;
 
 export const PHASES = [
-    { id: 'preseason', name: 'Preseason',        short: 'PRE', from: 1,  to: 4,  accent: '#64748b', desc: 'Rosters lock, bootcamps run, nothing counts yet.' },
+    { id: 'preseason', name: 'Preseason',        short: 'PRE', from: 1,  to: 1,  accent: '#64748b', desc: 'Rosters lock, bootcamps run, nothing counts yet.' },
+    // FIRST STAND takes the tail of preseason rather than a slot in mid-season,
+    // and that is both the safe choice and the accurate one: the real tournament
+    // runs in March, at the very top of the year, before the splits have decided
+    // anything. Carving it out of weeks 2-4 means NO phase after week 4 moves,
+    // so no existing save wakes up inside a different phase than it went to
+    // sleep in. The field is the reigning champion of each region, which is the
+    // closest thing this calendar has to "the winners of the first splits".
+    { id: 'first_stand', name: 'First Stand',    short: 'FST', from: 2,  to: 4,  accent: '#f472b6', desc: 'Six champions, one week of the year that belongs to nobody else.' },
     { id: 'spring',    name: 'Spring Split',     short: 'SPR', from: 5,  to: 13, accent: '#22c55e', desc: 'Nine weeks of regular season. Two games a week.' },
     { id: 'spring_po', name: 'Spring Playoffs',  short: 'SPO', from: 14, to: 16, accent: '#3b82f6', desc: 'Top six. Best-of-five, double elimination.' },
     { id: 'msi',       name: 'Mid-Season Invitational', short: 'MSI', from: 17, to: 19, accent: '#2dd4bf', desc: 'The first international test of the year.' },
@@ -1029,46 +1061,107 @@ export const ACTIVITIES = [
     {
         id: 'train', name: 'Training Drill', icon: '\u{1F3AF}', accent: '#3b82f6', energy: 24,
         desc: 'Run a drill and raise one attribute. This is the only thing that permanently moves your rating.',
-        needsClub: false,
+        needsClub: false, group: 'practice',
     },
     {
         id: 'soloq', name: 'Solo Queue', icon: '\u{1F3AE}', accent: '#22c55e', energy: 18,
         desc: 'Grind the ladder. Small all-round gains, ranked progress and a trickle of followers.',
-        needsClub: false,
+        needsClub: false, group: 'practice',
     },
     {
         id: 'scrim', name: 'Scrim Block', icon: '\u{2694}', accent: '#f59e0b', energy: 22,
         desc: 'Practise with the roster. Builds teamfighting, shotcalling and team chemistry.',
-        needsClub: true,
+        needsClub: true, group: 'practice',
     },
     {
         id: 'vod', name: 'VOD Review', icon: '\u{1F4FC}', accent: '#a855f7', energy: 10,
         desc: 'Study replays. Cheap, reliable game knowledge and map awareness.',
-        needsClub: false,
+        needsClub: false, group: 'practice',
     },
     {
         id: 'stream', name: 'Stream', icon: '\u{1F3A5}', accent: '#ec4899', energy: 15,
         desc: 'Go live. Gold and followers now, at the cost of practice time.',
-        needsClub: false,
+        needsClub: false, group: 'business',
     },
     {
         id: 'media', name: 'Media & Content', icon: '\u{1F4F0}', accent: '#22d3ee', energy: 8,
         desc: 'Interviews, photoshoots, a podcast nobody asked for. Hype up, morale volatile.',
-        needsClub: false,
+        needsClub: false, group: 'business',
     },
     {
         id: 'gym', name: 'Gym & Physio', icon: '\u{1F9BE}', accent: '#14b8a6', energy: 12,
         desc: 'Wrists, back, sleep. Repairs health and lowers injury risk for weeks to come.',
-        needsClub: false,
+        needsClub: false, group: 'body',
     },
     {
         id: 'rest', name: 'Rest Day', icon: '\u{1F634}', accent: '#64748b', energy: -50,
         desc: 'Do nothing on purpose. Restores energy and morale, and nothing else.',
+        needsClub: false, group: 'body',
+    },
+
+    // ── Condition ────────────────────────────────────────────────────────
+    // Before these, Rest Day was the only morale option AND the only energy
+    // option, so it was never a choice; and the Gym was the only health one.
+    // Nothing on the board was a decision between morale and health.
+    //
+    // `once` is per week and needs weekly.did; `gold` is spent AFTER the slot
+    // and BEFORE the energy, and a failed spend must bail (see doActivity).
+    {
+        id: 'friends', name: 'Day Off With Friends', icon: '\u{1F37B}', accent: '#f472b6', energy: -20,
+        gold: 120, once: true, group: 'body',
+        desc: 'People who do not care what your KDA was. Restores morale properly, and some energy with it.',
         needsClub: false,
+    },
+    {
+        id: 'therapy', name: 'Sports Psychologist', icon: '\u{1F9E0}', accent: '#a78bfa', energy: 6,
+        gold: 450, once: true, minAge: 15, group: 'body',
+        desc: 'An hour with someone whose job is the part of this that is not mechanics. The reliable way out of a bad run.',
+        needsClub: false,
+    },
+    {
+        id: 'recover', name: 'Recovery Week', icon: '\u{1FA79}', accent: '#2dd4bf', energy: -35,
+        once: true, group: 'body',
+        desc: 'Physio, sleep, no scrims. Repairs real damage at the cost of match sharpness.',
+        needsClub: false,
+        // Only offered when it would actually do something. Shown DISABLED with
+        // this reason rather than hidden — a button nobody has ever seen is a
+        // button nobody finds when they need it.
+        when: (c) => (Number(c?.player?.health) || 100) < 70
+            || (Number(c?.flags?.burnout?.weeks) || 0) > 0,
+        whenReason: 'For when you are carrying an injury or burning out.',
+    },
+
+    // ── Business ─────────────────────────────────────────────────────────
+    {
+        id: 'fans', name: 'Fan Event', icon: '\u{1F44B}', accent: '#fb923c', energy: 10,
+        minAge: 14, group: 'business',
+        desc: 'A signing queue and a room that likes you. Reliable followers and a lift, where Media is a coin flip.',
+        needsClub: false,
+    },
+    {
+        id: 'sponsorday', name: 'Sponsor Day', icon: '\u{1F4BC}', accent: '#eab308', energy: 12,
+        minAge: 16, once: true, group: 'business',
+        desc: 'A shoot, a stack of cards to sign, and a cheque. Nobody enjoys it.',
+        needsClub: false,
+    },
+    {
+        id: 'coach1on1', name: 'One-on-One With The Coach', icon: '\u{1F5E3}', accent: '#60a5fa', energy: 8,
+        once: true, group: 'practice',
+        desc: 'Your VODs, their notes, an hour of being told the truth. Buys real standing in the room.',
+        needsClub: true,
     },
 ];
 
 export const ACTIVITY_BY_ID = ACTIVITIES.reduce((m, a) => { m[a.id] = a; return m; }, {});
+
+/** Fourteen activities against a three-slot week is too many undifferentiated
+ *  buttons, so the Hub renders them in labelled sections. Order is the order
+ *  they appear on screen. */
+export const ACTIVITY_GROUPS = [
+    { id: 'practice', name: 'Practice',  blurb: 'Where rating comes from.' },
+    { id: 'body',     name: 'Condition', blurb: 'Energy, health, and wanting to be here.' },
+    { id: 'business', name: 'Business',  blurb: 'Money, followers, and the parts of the job that are not the game.' },
+];
 
 export const ENERGY_MAX = 100;
 export const HEALTH_MAX = 100;
@@ -1096,6 +1189,35 @@ export const RANK_TIERS = [
 export const MMR_MAX = 4000;
 
 // ─────────────────────────────────────────────────────────────────────────
+//  WHERE SOLO QUEUE SETTLES
+//  doSoloQueue() drifts the player toward a target derived from OVR, and that
+//  target — not the starting number — is what a career's rank actually is.
+//  It used to be `(ovr - 35) * 62` floored at 300, so a fresh 33-OVR prospect
+//  targeted Iron I: the career started in Bronze and DEMOTED its way down to
+//  Iron over its first six ranked weeks, then sat there until OVR 54.
+//
+//  Two segments now, joined at OVR 74. Above the joint nothing changes at all —
+//  which is the point: SCOUT_MMR_GATE, Master/Grandmaster/Challenger and the
+//  ms_challenger milestone all live up there and must not move. Below it the
+//  line runs from Gold IV at a fresh prospect's rating up to the joint.
+//
+//  IRON, BRONZE and SILVER are now legacy tiers, reachable only by an old save
+//  or a run of bad event rolls. Do NOT delete them — rankFromMMR() is called on
+//  peakMMR values published by OTHER PEOPLE'S board documents.
+export const SOLOQ_FLOOR_MMR = RANK_TIERS.find(t => t.id === 'GOLD').floorMMR;  // 1200
+export const SOLOQ_FLOOR_OVR = 32;    // a freshly created pre-competitive prospect
+export const SOLOQ_JOINT_OVR = 74;    // above this the old curve is untouched
+
+/** The MMR an OVR settles at. Continuous at the joint by construction. */
+export function soloTargetFor(ovr) {
+    const v = Number(ovr) || 0;
+    const hiAt = (o) => (o - 35) * 62;
+    if (v >= SOLOQ_JOINT_OVR) return Math.min(MMR_MAX, hiAt(v));
+    const slope = (hiAt(SOLOQ_JOINT_OVR) - SOLOQ_FLOOR_MMR) / (SOLOQ_JOINT_OVR - SOLOQ_FLOOR_OVR);
+    return Math.max(SOLOQ_FLOOR_MMR, Math.min(MMR_MAX, SOLOQ_FLOOR_MMR + (v - SOLOQ_FLOOR_OVR) * slope));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  CLUB TIERS
 //  Tier 3 is where a pre-comp prospect starts (amateur / open circuit),
 //  tier 2 is academy & challengers, tier 1 is the main league.
@@ -1108,6 +1230,29 @@ export const CLUB_TIERS = {
 
 // Weekly club training sessions by tier — the debut path's main constraint.
 export const CLUB_TRAINING_SLOTS = { 1: 3, 2: 2, 3: 1 };
+
+// ─────────────────────────────────────────────────────────────────────────
+//  AGE GATES
+//  Rating was the only thing standing between a thirteen-year-old and a
+//  main-league roster, and rating is reachable young: signing ANY club — an
+//  amateur Discord stack included — makes environmentCap() return ATTR_MAX, so
+//  the unsigned soft cap stops throttling the moment a prospect is on a roster.
+//  A well-trained fifteen-year-old could clear the 66 eligibility bar.
+//
+//  Keyed per tier rather than one MAIN_LEAGUE_MIN_AGE so "academies from 14"
+//  later is a single literal. Read them with Number() — team.tier arrives as a
+//  string on a rotted save and a string key is a silent pass.
+//
+//  These gate SIGNING and PROMOTION, never STAYING: a save where a fifteen-year
+//  -old already holds a tier-1 seat is grandfathered. A gate that released them
+//  would destroy an in-progress career on load.
+export const MIN_AGE_BY_TIER = { 1: 16, 2: 13, 3: 13 };
+
+/** Worlds and MSI only. The domestic playoff bracket is deliberately NOT gated:
+ *  "major tournaments" reads as the internationals, and pulling a fifteen-year
+ *  -old academy starter out of his own league's postseason is not what was
+ *  asked for. Do not "finish" this gate by adding runPlayoffs(). */
+export const MIN_AGE_INTERNATIONAL = 17;
 
 // Attribute soft cap while unsigned. Above this, training gains are throttled
 // hard: you genuinely need a professional environment to get to the top.
@@ -1307,12 +1452,23 @@ export function teamById(id) { return _TEAM_INDEX[id] || null; }
 // ─────────────────────────────────────────────────────────────────────────
 //  SQUAD STATUS
 // ─────────────────────────────────────────────────────────────────────────
+//  `moraleTarget` is where sitting in this seat pulls your morale, and
+//  `moralePull` is the most it may move in one week. A PULL, never a flat
+//  subtraction: a benched player converges on 34 and stops there, where a flat
+//  -4 a week would take him to zero in nine weeks and hold him there for ever.
+//  That distinction is the whole difference between pressure and a trap, and it
+//  matters more now that burnout reads the same meter.
+//
+//  This replaces a `moraleDrift` field that was declared here and read by
+//  NOTHING in the entire mode — repurposing it was safe for exactly that reason.
+//  Do NOT rename a status ID: those are persisted on the save like champion and
+//  trait ids. The fields inside are free.
 export const SQUAD_STATUS = {
-    star:     { id: 'star',     name: 'Franchise Player', accent: '#eab308', playChance: 1.00, moraleDrift:  1 },
-    starter:  { id: 'starter',  name: 'Starter',          accent: '#22c55e', playChance: 0.95, moraleDrift:  0 },
-    rotation: { id: 'rotation', name: 'Rotation',         accent: '#3b82f6', playChance: 0.55, moraleDrift: -1 },
-    sub:      { id: 'sub',      name: 'Substitute',       accent: '#f59e0b', playChance: 0.20, moraleDrift: -2 },
-    benched:  { id: 'benched',  name: 'Benched',          accent: '#ef4444', playChance: 0.05, moraleDrift: -4 },
+    star:     { id: 'star',     name: 'Franchise Player', accent: '#eab308', playChance: 1.00, moraleTarget: 72, moralePull: 3 },
+    starter:  { id: 'starter',  name: 'Starter',          accent: '#22c55e', playChance: 0.95, moraleTarget: 62, moralePull: 3 },
+    rotation: { id: 'rotation', name: 'Rotation',         accent: '#3b82f6', playChance: 0.55, moraleTarget: 52, moralePull: 3 },
+    sub:      { id: 'sub',      name: 'Substitute',       accent: '#f59e0b', playChance: 0.20, moraleTarget: 44, moralePull: 3 },
+    benched:  { id: 'benched',  name: 'Benched',          accent: '#ef4444', playChance: 0.05, moraleTarget: 34, moralePull: 3 },
 };
 
 // ─────────────────────────────────────────────────────────────────────────

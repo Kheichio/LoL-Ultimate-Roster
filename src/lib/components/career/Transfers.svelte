@@ -63,6 +63,9 @@
     $: renewalOnTable = renewalLive || renewal;
 
     $: scouts = interestedTeams(c, 10);
+    /** An open-circuit roster is not a contract. Leaving one is free, and the
+     *  screen must not threaten a penalty that does not exist. */
+    $: amateurClub = Number(c.player.clubTier) === 3;
     $: yearsLeft = contractYearsLeft(c);
     $: finalYear = signed && yearsLeft <= 0;
     $: statusLine = contractStatusLine(c);
@@ -637,18 +640,30 @@
 
                         <div class="dz">
                             <div class="dz-copy">
-                                <h4 class="dz-h">Agree a release</h4>
-                                <p class="dz-p">
-                                    The contract is torn up today. No club, no wage, no scrim block, and your training
-                                    is throttled again by the unsigned soft cap of {UNSIGNED_SOFT_CAP}. Morale drops.
-                                    Rival offers already on the table survive &#x2014; your club's does not.
-                                </p>
+                                <h4 class="dz-h">{amateurClub ? 'Walk away' : 'Agree a release'}</h4>
+                                {#if amateurClub}
+                                    <p class="dz-p">
+                                        Nobody at open-circuit level holds anybody to anything. Leaving costs no morale
+                                        and no goodwill &#x2014; but your training goes back under the unsigned soft cap
+                                        of {UNSIGNED_SOFT_CAP} until somebody else signs you.
+                                    </p>
+                                {:else}
+                                    <p class="dz-p">
+                                        The contract is torn up today. No club, no wage, no scrim block, and your training
+                                        is throttled again by the unsigned soft cap of {UNSIGNED_SOFT_CAP}. Morale drops.
+                                        Rival offers already on the table survive &#x2014; your club's does not.
+                                    </p>
+                                {/if}
                             </div>
                             {#if confirmMode === 'release'}
                                 <div class="dz-confirm">
                                     <button class="b b-danger" on:click={doRelease}>Tear it up</button>
                                     <button class="b b-ghost" on:click={() => (confirmMode = null)}>Cancel</button>
                                 </div>
+                            {:else if amateurClub}
+                                <!-- No contract to tear up at open-circuit level, so
+                                     no danger styling and no confirmation step. -->
+                                <button class="b b-ghost" on:click={() => { playSound('click'); doRelease(); }}>Leave the team</button>
                             {:else}
                                 <button class="b b-warn" on:click={() => { playSound('click'); confirmMode = 'release'; }}>Terminate contract</button>
                             {/if}
@@ -738,13 +753,23 @@
                                     <span class="meta-dot">&#x00B7;</span> Strength {Math.round(row.team.strength)}
                                 </span>
                             </div>
-                            <div class="sc-int">
-                                <div class="sc-bar" aria-hidden="true">
-                                    <div class="sc-fill" style="width:{Math.max(2, row.interest)}%; background:{band.color}"></div>
+                            {#if row.blocked}
+                                <!-- They rate you and still cannot sign you. Saying
+                                     so is the whole point: a club that silently
+                                     never calls reads as the game being broken. -->
+                                <div class="sc-int sc-blocked">
+                                    <span class="sc-block-lbl">Cannot sign you</span>
+                                    <span class="sc-block-why">{row.blockReason}</span>
                                 </div>
-                                <span class="sc-num" style="color:{band.color}">{row.interest}</span>
-                                <span class="sc-lbl">{band.label}</span>
-                            </div>
+                            {:else}
+                                <div class="sc-int">
+                                    <div class="sc-bar" aria-hidden="true">
+                                        <div class="sc-fill" style="width:{Math.max(2, row.interest)}%; background:{band.color}"></div>
+                                    </div>
+                                    <span class="sc-num" style="color:{band.color}">{row.interest}</span>
+                                    <span class="sc-lbl">{band.label}</span>
+                                </div>
+                            {/if}
                         </div>
                     {/each}
                 </div>
@@ -1052,6 +1077,13 @@
     .sc-fill { height: 100%; border-radius: 4px; }
     .sc-num { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 800; line-height: 1; }
     .sc-lbl { font-size: 8.5px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #3f5069; }
+
+    .sc-blocked { align-items: flex-end; text-align: right; gap: 3px; }
+    .sc-block-lbl {
+        font-size: 8.5px; font-weight: 800; letter-spacing: 0.6px;
+        text-transform: uppercase; color: #f59e0b;
+    }
+    .sc-block-why { font-size: 10px; color: #56688a; line-height: 1.45; max-width: 230px; }
 
     /* ============ ROLE CHANGE ============ */
     .locked { display: flex; align-items: flex-start; gap: 14px; padding: 18px; }

@@ -16,7 +16,7 @@ import {
     REGION_BY_ID, ROLE_BY_ID, PLAYSTYLES, PLAYSTYLE_BY_ID, CHAMPION_BY_ID,
     CLUB_TIERS, SQUAD_STATUS, PHASES, ATTR_KEYS, ATTR_MIN, ATTR_MAX,
     phaseForWeek, teamById, allTeams, championsForRole, championsForStyle,
-    championFit,
+    championFit, MIN_AGE_BY_TIER, PROFICIENCY_SIGNATURE_HEAD_START,
 } from './constants.js';
 import {
     calcOVR, calcPotentialOVR, deservedStatus, statusInfo, weeklySalaryFor,
@@ -28,7 +28,7 @@ import {
 import { teamsInRegion, allTeamsForPlayer, teamStrength, cardTagsFor } from './teams.js';
 // economy.js imports constants/ratings/stores/utils and nothing from here, so
 // this direction is the safe one. Do NOT import contracts.js from economy.js.
-import { perkEffects, lifestyleEffects, buffValue } from './economy.js';
+import { perkEffects, lifestyleEffects, buffValue, signatureSlots } from './economy.js';
 import { getDB, getEffectiveRating, getEra } from '../utils/cards.js';
 import { showToast } from '../stores/toasts.js';
 import { playSound } from '../utils/sound.js';
@@ -78,6 +78,27 @@ function startingChemistry(c, base) {
 /** Turn a club down twice and they stop asking -- permanently. */
 const REJECTIONS_BEFORE_BLACKLIST = 2;
 
+/**
+ * Where you are from, priced. Read by scoutInterest().
+ *
+ * These are deliberately a matched pair rather than one signed number: for a
+ * long time only the penalty existed, so a home club and an amateur side both
+ * simply went un-penalised and "home region" meant nothing at all.
+ *
+ * Kept SEPARATE from REGION_BY_ID.scoutMult, which multiplies at the end of the
+ * same function. That value is the DESTINATION league's recruiting aggression
+ * (the LCP raids academies, the LCS waits for a highlight reel); folding home
+ * preference into it would make one number mean two different things.
+ */
+const HOME_REGION_BONUS = 8;         // your league watched you climb
+const FOREIGN_REGION_PENALTY = -14;  // an import slot has to be worth spending
+const FOREIGN_FAME_REFUND = 9;       // and fame is what buys it back
+
+/** Home clubs also CALL sooner, which is a different thing from paying more.
+ *  Applied to the per-week offer roll, never to the wage: buildOffer() derives
+ *  eagerness from `interest`, so putting this in the roll keeps money honest. */
+const HOME_REGION_CALL_RATE = 1.25;
+
 /** The headline rule of the whole mode: nobody walks into a main-league
  *  starting seat under 72. Below it a tier-1 club will only ever promise a
  *  bench spot, and below 68 they will not promise anything at all. */
@@ -86,12 +107,23 @@ const T1_STARTER_FLOOR = 72;
 /** An unsigned prospect needs Diamond (SCOUT_MMR_GATE) AND a real rating before
  *  an academy calls. A well-trained pre-comp player clears 50 at about 15. */
 const ACADEMY_OVR_GATE = 50;
+/** The ladder half of the academy gate, for a player with no club at all. Same
+ *  number as the out-of-window scouting trigger on purpose: an academy that will
+ *  phone you unprompted and one that will sign you in the window are looking at
+ *  the same evidence. */
+const ACADEMY_MMR_GATE = SCOUT_MMR_GATE;
 
 /** Signing an open-circuit side is the intended way off UNSIGNED_SOFT_CAP, so
  *  it must not be free: Platinum and a rating that is genuinely amateur-level
  *  first. Anything cheaper and the pre-comp path becomes strictly dominant. */
 const AMATEUR_OVR_GATE = 48;
-const AMATEUR_MMR_GATE = 1600;
+// RE-PRICED when the solo-queue floor moved to Gold. 1600 used to need about
+// OVR 61; under soloTargetFor() it is reachable at ~46, which is BELOW
+// AMATEUR_OVR_GATE — the MMR half of this gate would have quietly stopped
+// binding at all and opened the open-circuit route a year and a half early.
+// 2000 restores the old effective bar (~60). Nothing errors when a gate goes
+// dead, which is exactly why this needed re-deriving rather than leaving.
+const AMATEUR_MMR_GATE = 2000;
 
 /** Two rounds of haggling per offer. A third is just savescumming. */
 const MAX_NEGOTIATIONS = 2;
@@ -332,8 +364,21 @@ export function scoutInterest(c, team) {
     // asset and clubs price that in on top of the growth curve.
     v += age <= 17 ? 6 : age <= 21 ? 3 : age <= 24 ? 0 : age <= 26 ? -5 : age <= 28 ? -11 : -19;
 
-    // Moving region costs you. Fame is what buys an import slot back.
-    if (t.region !== 'ALL' && t.region !== p.region) v += -14 + Math.min(9, fame);
+    // WHERE YOU ARE FROM. Home clubs watched you climb their own solo queue, so
+    // they bid for you first; a foreign roster is spending an import slot and
+    // wants fame in return for it. Both directions are written down because for
+    // a long time only the penalty existed, which made "home" mean nothing more
+    // than "not abroad".
+    //
+    // +8 is deliberately modest. The home-vs-foreign gap is 22 raw points before
+    // fame and about 13 after a famous player buys the import slot back; much
+    // above that and the foreign market closes entirely for anyone without hype,
+    // which is not what prioritising the home region should mean.
+    if (t.region === 'ALL' || t.region === p.region) {
+        v += HOME_REGION_BONUS;
+    } else {
+        v += FOREIGN_REGION_PENALTY + Math.min(FOREIGN_FAME_REFUND, fame);
+    }
 
     // Already contracted somewhere better? They will not waste the call.
     const cur = p.clubId ? resolveTeam(p.clubId) : null;
@@ -362,7 +407,13 @@ export function interestedTeams(c, limit = 8) {
     const n = Math.max(1, Math.round(Number(limit)) || 8);
     return candidatePool(c)
         .filter(t => t.id !== mine)
-        .map(t => ({ team: t, interest: scoutInterest(c, t), tier: t.tier }))
+        .map(t => {
+            // Carried so the screen can say WHY a club that clearly rates the
+            // player is not going to call. Silently omitting them is what makes
+            // an age or first-club rule read as the game being broken.
+            const block = signingBlock(c, t);
+            return { team: t, interest: scoutInterest(c, t), tier: t.tier, blocked: block.blocked, blockReason: block.reason };
+        })
         .filter(row => row.interest > 0)
         .sort((a, b) => b.interest - a.interest || a.team.name.localeCompare(b.team.name))
         .slice(0, n);
@@ -415,9 +466,16 @@ function offerBlurb(c, t, tier, status, region, interest) {
     }
 
     if (tier === 2) lines.push('Academy terms: small money, real coaching, and a route upstairs if you take it.');
-    if (tier === 3) lines.push('Open-circuit terms. Barely a wage, but it is a club, a coach, and a soft cap you no longer have.');
+    if (tier === 3) {
+        lines.push('Open-circuit terms. Barely a wage, but it is a club, a coach, and a soft cap you no longer have.');
+        // The freedom is invisible unless it is written down.
+        lines.push('Walking away from an open-circuit roster costs you nothing, whenever something better calls.');
+    }
     if (region !== p.region) {
         lines.push(`Relocating to ${REGION_BY_ID[region]?.name || region}. New language, new solo queue, no friends.`);
+    } else if (tier <= 2) {
+        // The only place a player ever learns the home-region rule exists.
+        lines.push('They have watched you since you were climbing their own solo queue.');
     }
     if (interest >= 88) lines.push('You are their first choice and they are not hiding it.');
 
@@ -526,23 +584,99 @@ export function pruneExpiredOffers() {
     return dropped;
 }
 
+/**
+ * WHY A CLUB WILL NOT SIGN YOU, as a sentence.
+ *
+ * One predicate, exported, so the transfer screens can print the reason instead
+ * of silently omitting the club. A fourteen-year-old should SEE that a
+ * main-league side rates him and cannot sign him yet — a club that just never
+ * appears reads as the game being broken.
+ *
+ * SCOPED BY flags.everSigned, never by a path test. Academy Debut is exempt by
+ * construction: it signs the player at creation and sets the flag, and its whole
+ * premise is starting on an academy roster at 16. A `path === 'precomp'` test
+ * would also misfire on any save whose flag was lost.
+ *
+ * PURE and cheap — the transfer screen calls this once per club on every
+ * reactive render, so nothing in here may touch the card database.
+ */
+export function signingBlock(c, team) {
+    const t = normTeam(team);
+    const p = c && c.player;
+    if (!p || !t) return { blocked: true, reason: 'No club.' };
+
+    const tier = Number(t.tier) || 1;
+    const ovr = calcOVR(p.attrs, p.role);
+    const mmr = Number(c.soloq?.mmr) || 0;
+    const everSigned = !!(c.flags && c.flags.everSigned);
+
+    // (a) YOUR FIRST CLUB IS ALWAYS AN AMATEUR ONE. Nobody at academy level or
+    // above signs a player with no record at all.
+    if (!everSigned && tier < 3) {
+        return { blocked: true, reason: 'Nobody at this level signs a player with no record. Get on an amateur roster first.' };
+    }
+    // (b) AND IT IS IN YOUR OWN REGION. Vacuous today — the amateur sides are
+    // region 'ALL' — but it is the rule as asked for, and it becomes load-bearing
+    // the moment the open circuit gets regions.
+    if (!everSigned && t.region !== 'ALL' && t.region !== p.region) {
+        return { blocked: true, reason: 'Your first team is a local one. Nobody is flying an unproven player across the world.' };
+    }
+
+    // (f) AGE. Blocked at the OFFER, never by downgrading the status: capping a
+    // fifteen-year-old to a benched tier-1 contract instead of no contract is
+    // worse than the thing being fixed. Read age the way events.js does — a
+    // finite check, not `|| 18`, because a save carrying age 0 read as 18 would
+    // pass every minimum-age gate in the file.
+    const age = Number(p.age);
+    const minAge = Number(MIN_AGE_BY_TIER[tier] || 0);
+    if (Number.isFinite(age) && age < minAge) {
+        return { blocked: true, reason: `Nobody signs a ${age}-year-old to this level. Come back at ${minAge}.` };
+    }
+
+    // (d) MAIN LEAGUE. Six under the starting floor is the absolute limit of
+    // what a main roster will carry as depth.
+    if (tier === 1 && ovr < T1_STARTER_FLOOR - 6) {
+        return { blocked: true, reason: `A main roster does not carry a ${ovr} rated player. Get to ${T1_STARTER_FLOOR - 6}.` };
+    }
+
+    // (c) ACADEMY. Used to have no gate at all inside the transfer window, so an
+    // academy would offer at any rating. A player already on an amateur roster is
+    // exempt from the solo-queue half: his evidence is the open circuit now.
+    if (tier === 2) {
+        if (ovr < ACADEMY_OVR_GATE) {
+            return { blocked: true, reason: `Academies start looking at ${ACADEMY_OVR_GATE}. You are ${ovr}.` };
+        }
+        if (!p.clubId && mmr < ACADEMY_MMR_GATE) {
+            return { blocked: true, reason: 'They want to see it on the ladder first.' };
+        }
+    }
+
+    // (e) OPEN CIRCUIT.
+    if (tier === 3) {
+        if (p.clubId) return { blocked: true, reason: 'You are already at a club. Nobody drops to the open circuit.' };
+        if (ovr < AMATEUR_OVR_GATE) {
+            return { blocked: true, reason: `Even an open-circuit roster wants ${AMATEUR_OVR_GATE}. You are ${ovr}.` };
+        }
+        if (mmr < AMATEUR_MMR_GATE) {
+            return { blocked: true, reason: 'Climb a bit further and they will take a look.' };
+        }
+    }
+
+    return { blocked: false, reason: '' };
+}
+
 function eligibleClub(c, t, ovr, cur, curStrength, midSeasonScout) {
+    if (signingBlock(c, t).blocked) return false;
+
     const p = c.player;
     const str = strengthOf(t);
 
-    // The only offers that reach a player outside the window are academy calls
-    // for an unsigned prospect. Everything else waits for the offseason.
+    // The only offers that reach a player outside the window are academy calls.
+    // WIDENED to include a player already on an amateur roster: without this,
+    // signing an open-circuit side sets clubId, falsifies `scoutable`, and locks
+    // him out of every offer until the next preseason — up to thirty weeks, and
+    // it would read as the amateur signing having ended his career.
     if (midSeasonScout && t.tier !== 2) return false;
-
-    // Six under the starting floor is the absolute limit of what a main roster
-    // will carry as depth.
-    if (t.tier === 1 && ovr < T1_STARTER_FLOOR - 6) return false;
-
-    if (t.tier === 3) {
-        if (p.clubId) return false;                                  // signed players do not drop to the open circuit
-        if (ovr < AMATEUR_OVR_GATE) return false;
-        if ((Number(c.soloq?.mmr) || 0) < AMATEUR_MMR_GATE) return false;
-    }
 
     if (cur) {
         // Under contract you only hear from clubs that are a clear step up.
@@ -568,11 +702,19 @@ export function generateOffers(c) {
     const inWindow = phase === 'offseason' || phase === 'preseason';
     const unsigned = !p.clubId;
 
-    // The one hole in the transfer window: an unsigned kid who has clearly
-    // outgrown solo queue gets a phone call whenever a scout notices, because
-    // academies recruit year-round and a free agent costs nothing to sign.
-    const scoutable = unsigned
-        && (Number(c.soloq?.mmr) || 0) >= SCOUT_MMR_GATE
+    // The one hole in the transfer window: a prospect who has clearly outgrown
+    // where he is gets a phone call whenever a scout notices, because academies
+    // recruit year-round and neither a free agent nor an open-circuit player
+    // costs anything to sign.
+    //
+    // THE TIER-3 HALF IS LOAD-BEARING. Now that an amateur roster is compulsory
+    // as a first club, restricting this to the unsigned would mean signing one
+    // locks the player out of every offer until the next preseason — up to
+    // thirty weeks — and the amateur signing would look like the thing that
+    // ended his career.
+    const onAmateur = Number(p.clubTier) === 3;
+    const scoutable = (unsigned || onAmateur)
+        && (unsigned ? (Number(c.soloq?.mmr) || 0) >= SCOUT_MMR_GATE : true)
         && ovr >= ACADEMY_OVR_GATE;
 
     if (!inWindow && !scoutable) return out;
@@ -611,7 +753,14 @@ export function generateOffers(c) {
 
     for (const row of rows) {
         if (room <= 0) break;
-        if (Math.random() * 100 >= row.interest * rate) continue;
+        // Home clubs get in touch sooner. This is the second half of the
+        // home-region preference and it is deliberately here rather than in
+        // scoutInterest: raising the INTEREST would also raise the wage, the
+        // contract length and the signing bonus, all of which derive from it.
+        // Calling earlier is what "prioritise recruiting you" actually means.
+        const homeRate = (row.team.region === 'ALL' || row.team.region === p.region)
+            ? HOME_REGION_CALL_RATE : 1;
+        if (Math.random() * 100 >= row.interest * rate * homeRate) continue;
         const offer = buildOffer(c, row.team, { interest: row.interest });
         if (!offer) continue;
         out.push(offer);
@@ -730,7 +879,11 @@ export function rejectOffer(offerId) {
     if (!offer) return { ok: false, msg: 'That offer is no longer on the table.' };
 
     const before = (c.player.rejected || {})[offer.teamId] || 0;
-    const count = before + 1;
+    // Open-circuit sides do not hold a grudge, and blacklisting them would be a
+    // real trap: they are the compulsory first rung, there are only six of them
+    // in the world, and turning two down would close the ladder permanently.
+    const amateurOffer = Number(offer.tier) === 3;
+    const count = amateurOffer ? before : before + 1;
     const renewal = !!offer.renewal;
 
     career.update(x => ({
@@ -994,6 +1147,17 @@ export function requestTransfer() {
     const team = resolveTeam(p.clubId);
     const name = team ? team.name : 'your club';
 
+    // Nothing to request at open-circuit level. There is no contract to be
+    // released from and no front office to fall out with, so charging the
+    // chemistry and morale a real request costs would be inventing a penalty
+    // for leaving the club the mode now REQUIRES you to start at.
+    if ((Number(team ? team.tier : p.clubTier) || 0) === 3) {
+        return {
+            ok: true,
+            msg: `You do not need to ask. Walking away from ${name} costs you nothing — take a better offer whenever one comes.`,
+        };
+    }
+
     career.update(x => ({
         ...x,
         player: {
@@ -1020,6 +1184,14 @@ const RELEASE_REASONS = {
     cut:     { hit: 30, type: 'drama',    text: (n) => `${n} cut you. The seat went to somebody cheaper and younger.` },
     expired: { hit: 18, type: 'transfer', text: (n) => `Your contract at ${n} ran out and nobody picked up the phone about a new one.` },
     request: { hit: 10, type: 'transfer', text: (n) => `${n} let you go rather than keep a player who wanted out.` },
+    // Below `cut` because it was telegraphed over three split reviews, above
+    // `mutual` because it was not the player's choice.
+    terminated: { hit: 20, type: 'drama', text: (n) => `${n} tore the contract up early. Three reviews, three answers, and a settlement.` },
+    // An open-circuit roster is five people in a Discord. Walking away from one
+    // costs nothing at all, which is the point of it being the compulsory first
+    // club: it can never be the thing standing between a player and a real offer.
+    amateur: { hit: 0, type: 'transfer', text: (n) => `You told ${n} you were leaving. Nobody at that level holds anybody to anything.` },
+    burnout:    { hit: 22, type: 'drama', text: (n) => `${n} have let you go. Nobody said it out loud, but you have not been right for months.` },
 };
 
 export function releaseFromClub(reason = 'mutual') {
@@ -1029,7 +1201,12 @@ export function releaseFromClub(reason = 'mutual') {
 
     const team = resolveTeam(p.clubId);
     const name = team ? team.name : 'your club';
-    const r = RELEASE_REASONS[reason] || RELEASE_REASONS.mutual;
+    // Leaving an amateur side is free however the caller phrased it. Doing the
+    // substitution HERE means no call site has to know the rule — Transfers.svelte
+    // keeps passing 'mutual'.
+    const tier = Number(team ? team.tier : p.clubTier) || 0;
+    const key = (reason === 'mutual' && tier === 3) ? 'amateur' : reason;
+    const r = RELEASE_REASONS[key] || RELEASE_REASONS.mutual;
     const text = r.text(name);
 
     career.update(x => ({
@@ -1179,6 +1356,12 @@ export function changeRole(newRoleId, newPlaystyleId, newChampionId) {
             role: to.id,
             playstyle: style ? style.id : '',
             champion: champ ? champ.id : '',
+            // The extra signatures were picked for the OLD role and are just as
+            // meaningless here as the first one. Cleared rather than re-derived:
+            // left alone, rollDraft's take() would inject an ADC straight into a
+            // top laner's champion select. The slots survive — they are derived
+            // from the perks — so the player simply re-picks.
+            extraChampions: [],
             attrs: newAttrs,
             potential,
             // Nothing about you is match-sharp in a role you started last week.
@@ -1328,6 +1511,131 @@ export function switchChampion(newChampionId) {
 }
 
 // ---------------------------------------------------------------------------
+//  EXTRA SIGNATURE CHAMPIONS
+//  The Second and Third Signature legacy perks buy a SLOT, and this is where a
+//  champion goes into one. Capacity is derived from the perks by
+//  economy.signatureSlots(); nothing about it is stored.
+//
+//  Priced identically to a re-main (CHP and form, never gold) for the same
+//  reason: chp's only mechanical job is champion select, so widening the pool
+//  you are trusted on has to cost the attribute that decides champion select.
+// ---------------------------------------------------------------------------
+
+/** Champions that could go into a free signature slot. */
+export function designatableChampions(c) {
+    const p = c?.player;
+    if (!p) return [];
+    const held = new Set([p.champion, ...(Array.isArray(p.extraChampions) ? p.extraChampions : [])]);
+    return championsForStyle(p.role, p.playstyle).filter(x => !held.has(x.id));
+}
+
+/** How many slots are filled and how many exist. Read by the Dossier so an
+ *  unused slot is visible — a perk nobody can see is the bug being fixed. */
+export function signatureState(c) {
+    const p = c?.player || {};
+    const extras = Array.isArray(p.extraChampions) ? p.extraChampions.filter(Boolean) : [];
+    const slots = signatureSlots(c);
+    return {
+        slots,
+        used: (p.champion ? 1 : 0) + extras.length,
+        free: Math.max(0, slots - ((p.champion ? 1 : 0) + extras.length)),
+        ids: [p.champion, ...extras].filter(Boolean),
+    };
+}
+
+export function canDesignateSignature(c) {
+    const gate = canSwitchChampion(c);
+    if (!gate.ok) return gate;
+    const s = signatureState(c);
+    if (s.free <= 0) {
+        return {
+            ok: false,
+            reason: s.slots >= 3
+                ? 'All three signature slots are taken. Drop one first.'
+                : 'Second Signature and Third Signature are legacy perks. Buy one to open a slot.',
+        };
+    }
+    if (!designatableChampions(c).length) {
+        return { ok: false, reason: 'There is nothing else your playstyle would let you main.' };
+    }
+    return { ok: true, reason: `${CHAMP_SWITCH_CHP} champion pool and ${CHAMP_SWITCH_FORM} form, the same as re-maining.` };
+}
+
+export function addSignature(championId) {
+    const c = snap();
+    const gate = canDesignateSignature(c);
+    if (!gate.ok) return { ok: false, msg: gate.reason };
+
+    // Same refusal as switchChampion, for the same reason: champion select is
+    // already resolved for the game in progress.
+    if (get(matchState)) {
+        return { ok: false, msg: 'Not in the middle of a series. Finish the match first.' };
+    }
+
+    const to = CHAMPION_BY_ID[championId];
+    if (!to) return { ok: false, msg: 'No such champion.' };
+    if (!designatableChampions(c).some(x => x.id === to.id)) {
+        return { ok: false, msg: `${to.name} is not something your playstyle would let you main.` };
+    }
+
+    career.update(x => {
+        const extras = Array.isArray(x.player.extraChampions) ? x.player.extraChampions.slice() : [];
+        extras.push(to.id);
+        return {
+            ...x,
+            player: {
+                ...x.player,
+                extraChampions: extras.slice(0, 2),
+                attrs: {
+                    ...x.player.attrs,
+                    chp: clamp((Number(x.player.attrs.chp) || 0) - CHAMP_SWITCH_CHP, ATTR_MIN, ATTR_MAX),
+                },
+                form: clamp((x.player.form ?? 50) - CHAMP_SWITCH_FORM, 0, 100),
+                // MAX, never +=. Additive would make re-designating the same
+                // champion a proficiency farm, which is the unbounded-renewable
+                // failure the ceiling budgets exist to prevent.
+                proficiency: {
+                    ...(x.player.proficiency || {}),
+                    [to.id]: Math.max(
+                        Number((x.player.proficiency || {})[to.id]) || 0,
+                        PROFICIENCY_SIGNATURE_HEAD_START,
+                    ),
+                },
+            },
+        };
+    });
+
+    addNews(`${to.name} is a signature pick now. Two champions they have to ban, not one.`, 'training');
+    showToast(`${to.name} added as a signature`, 'info');
+    playSound('pack');
+    saveCareer();
+    return { ok: true, msg: `${to.name} is a signature pick.` };
+}
+
+export function dropSignature(championId) {
+    const c = snap();
+    if (!c || !c.created) return { ok: false, msg: 'No career in progress.' };
+    if (get(matchState)) return { ok: false, msg: 'Not in the middle of a series. Finish the match first.' };
+    const to = CHAMPION_BY_ID[championId];
+    const extras = Array.isArray(c.player?.extraChampions) ? c.player.extraChampions : [];
+    if (!to || !extras.includes(to.id)) {
+        return { ok: false, msg: 'That is not one of your extra signature picks.' };
+    }
+    // Dropping is free. The cost was paid going in, and charging to undo a
+    // purchase the player may have made by accident is not a mechanic.
+    career.update(x => ({
+        ...x,
+        player: {
+            ...x.player,
+            extraChampions: (x.player.extraChampions || []).filter(id => id !== to.id),
+        },
+    }));
+    addNews(`${to.name} is off the signature list.`, 'training');
+    saveCareer();
+    return { ok: true, msg: `${to.name} dropped.` };
+}
+
+// ---------------------------------------------------------------------------
 //  CLUB REVIEW & PROMOTION
 // ---------------------------------------------------------------------------
 
@@ -1387,6 +1695,12 @@ export function clubReview(c) {
     score += (ovr - str) * 2.4;
     score += ((p.chemistry ?? 50) - 50) * 0.12;
     score += (winRate - 0.5) * 20;
+    // Morale's only reader outside training and form. Deliberately small — range
+    // -5.5 to +4.5 where 'concerned' starts at -6 — because a club noticing you
+    // are miserable should nudge the review, never be the thing that cuts you.
+    // Burnout is what cuts you. Note it is NOT in scoutInterest: a scout cannot
+    // see how you feel, and paying more for a sad player makes misery farmable.
+    score += ((p.morale ?? 50) - 55) * 0.10;
     // Academies are patient with teenagers in a way main rosters are not, and
     // impatient with anybody the wrong side of the age curve.
     score += p.age <= 17 ? 8 : p.age <= 19 ? 4 : p.age >= 27 ? -4 : 0;
@@ -1423,7 +1737,126 @@ export function clubReview(c) {
         text += ` Squad status: ${statusInfo(p.status).name}${ARROW}${statusInfo(statusChange).name}.`;
     }
 
-    return { verdict, text, statusChange, score: Math.round(score) };
+    return {
+        verdict, text, statusChange, score: Math.round(score),
+        // Carried so the Club screen can render the strike chip without a
+        // second call. clubReview() is PURE and is re-run on every reactive
+        // render — see recordReview() for why that matters.
+        strikes: num(p.contract && p.contract.strikes, 0),
+        strikesBefore: STRIKES_BEFORE_TERMINATION,
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  EARLY TERMINATION
+//  clubReview() has always produced a complete verdict, and until now nothing
+//  acted on it mid-contract: the ONLY way to be let go was to reach the end of
+//  the deal on a `cutting` verdict, which made a three-year contract unfireable
+//  for two of them however badly it went.
+//
+//  STRIKES LIVE ON THE CONTRACT, NOT THE PLAYER. acceptOffer(), promotionCheck()
+//  and createCareer() each build a fresh contract object, so a transfer, a
+//  renewal and a promotion all reset the count for free — no hook, no cleanup
+//  path anyone can forget to call. Reads must use num(k.strikes, 0): hydrate()
+//  spreads `player` shallowly and never reaches inside `contract`, so on an
+//  existing save the field is simply undefined, and that is the safe direction.
+// ---------------------------------------------------------------------------
+
+const STRIKES_BEFORE_TERMINATION = 3;
+
+/** contracts.js has no num() of its own; every other file in career/ does. */
+function num(v, d = 0) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : d;
+}
+
+/** A stamp for the split just reviewed, so the same split cannot be counted
+ *  twice. closeSplit('summer') runs inside rolloverYear(), which then runs its
+ *  own clubReview — without this every career is fired a year early. */
+function splitStamp(c, split) {
+    return num(c?.time?.year, 0) * 2 + (split === 'summer' ? 1 : 0);
+}
+
+/**
+ * Move the strike counter after a split review. ENGINE ONLY.
+ *
+ * This is deliberately NOT inside clubReview(): the Club screen re-runs that on
+ * every reactive update, so accumulating there would fire the player for opening
+ * a tab. That is the single most dangerous mistake available in this feature and
+ * it would look exactly like a balance problem.
+ */
+export function recordReview(c, split, review) {
+    const p = c?.player;
+    if (!p || !p.contract || !p.clubId) return null;
+    // Leaving an amateur side is free, so being fired by one is not a mechanic.
+    if (num(p.contract.tier, num(p.clubTier, 1)) === 3) return null;
+
+    const stamp = splitStamp(c, split);
+    if (num(p.contract.strikeSplit, -1) === stamp) return null;   // already counted
+
+    const before = num(p.contract.strikes, 0);
+    let delta = 0;
+    if (review.verdict === 'cutting') delta = 2;
+    else if (review.verdict === 'concerned') delta = 1;
+    else if (review.verdict === 'happy' || review.verdict === 'untouchable') delta = -1;
+
+    // Burnout PAUSES the clock rather than clearing it. Being fired for a slump
+    // the mode itself inflicted, in a split where training back is impossible,
+    // fails the "what could the player have done" test. Read defensively so the
+    // two systems can land in either order.
+    const burntOut = (Number(c.flags?.burnout?.weeks) || 0) > 0;
+    if (burntOut && delta > 0) delta = 0;
+
+    const after = clamp(before + delta, 0, STRIKES_BEFORE_TERMINATION);
+
+    career.update(x => ({
+        ...x,
+        player: {
+            ...x.player,
+            contract: { ...x.player.contract, strikes: after, strikeSplit: stamp },
+        },
+    }));
+
+    if (after > before && after < STRIKES_BEFORE_TERMINATION) {
+        const left = STRIKES_BEFORE_TERMINATION - after;
+        addNews(
+            left === 1
+                ? `A second bad review. One more and the contract is torn up in the window.`
+                : `The club have put a warning on your file. ${left} more and they move you on.`,
+            'drama',
+        );
+    }
+    return { before, after };
+}
+
+/**
+ * Tear up a contract that has run out of warnings. Called by the engine right
+ * after recordReview(), and BEFORE offers are generated for the week — otherwise
+ * a strike-three player is handed a renewal by the club firing him.
+ */
+export function enforceContract(c) {
+    const p = c?.player;
+    if (!p || !p.contract || !p.clubId) return null;
+    if (num(p.contract.strikes, 0) < STRIKES_BEFORE_TERMINATION) return null;
+
+    const team = resolveTeam(p.clubId);
+    const name = team ? team.name : 'Your club';
+    // Clubs buy contracts out. Without this a player fired at week 40 has no
+    // income until preseason and no way to buy the things that fix form.
+    const severance = Math.min(Math.round(num(p.contract.salary, 0) * 8), 40000);
+
+    releaseFromClub('terminated');
+    if (severance > 0) grantGold(severance);
+    career.update(x => ({
+        ...x,
+        flags: { ...x.flags, terminations: num(x.flags && x.flags.terminations, 0) + 1 },
+    }));
+
+    addNews(
+        `${name} have terminated your contract. ${severance > 0 ? `${fmtGold(severance)} settlement, and a` : 'A'} phone that is not going to ring for a while.`,
+        'drama',
+    );
+    return { team: name, severance };
 }
 
 /** Academy sides in constants.js carry their parent org's accent colour --
@@ -1467,6 +1900,15 @@ export function promotionEligible(c) {
 
     const parent = parentClubFor(club);
     if (!parent) return fail('No main-league side is attached to this academy.');
+
+    // Before the rating check, so the reason line is the honest one: a
+    // fifteen-year-old is not being told to train harder, he is being told to
+    // wait for a birthday.
+    const age = Number(p.age);
+    const minAge = Number(MIN_AGE_BY_TIER[1] || 0);
+    if (Number.isFinite(age) && age < minAge) {
+        return fail(`Main-league rosters are ${minAge}-and-over. They will move you up the year you turn ${minAge}.`);
+    }
 
     const ovr = calcOVR(p.attrs, p.role);
     const floor = T1_STARTER_FLOOR - 4;   // 68: the lowest rating a main roster will carry as depth

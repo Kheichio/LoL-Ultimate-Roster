@@ -16,7 +16,7 @@
     import { onMount, onDestroy, tick } from 'svelte';
     import { ATTRS, ATTR_BY_KEY } from '../../../career/constants.js';
 
-    import LastHitGame from './LastHitGame.svelte';
+    import ComboGame from './ComboGame.svelte';
     import WaveControlGame from './WaveControlGame.svelte';
     import WardMemoryGame from './WardMemoryGame.svelte';
     import FocusFireGame from './FocusFireGame.svelte';
@@ -34,7 +34,7 @@
 
     // game id (constants.js ATTRS[].game) -> component
     const GAMES = {
-        lasthit: LastHitGame,
+        combo: ComboGame,
         wave: WaveControlGame,
         ward: WardMemoryGame,
         focus: FocusFireGame,

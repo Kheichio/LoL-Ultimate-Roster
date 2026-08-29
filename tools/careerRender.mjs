@@ -599,6 +599,59 @@ ST.career.set(clone(S_PLAYOFF.snap));
 ST.career.update(c => ({ ...c, time: { ...c.time, week: 15 }, season: { ...c.season, bracket: null } }));
 const S_PLAYOFF_NULL = pushState('4b-playoffs-no-bracket', 'playoff phase, season.bracket === null');
 
+// ---- 4c. AT a tournament, with the player's own club in the draw ------------
+// State 4a only reaches this if the club actually made the cut that run, so the
+// tournament banner and the 'live' qualification chip could go permanently
+// unrendered and nothing would say so. This builds the shape by hand: a First
+// Stand semifinal in week 3, the player's club in one of the ties.
+ST.career.set(clone(S_PLAYOFF.snap));
+ST.career.update(c => {
+    const mine = c.player.clubId || 'lec_g2';
+    const me = { id: mine, name: 'Your Club', accent: '#22c55e', seed: 1 };
+    const them = { id: 'lck_t1', name: 'T1', accent: '#e2012d', seed: 4 };
+    const other = { id: 'lpl_jdg', name: 'JD Gaming', accent: '#c8102e', seed: 2 };
+    const other2 = { id: 'lcs_c9', name: 'Cloud9', accent: '#00a1e1', seed: 3 };
+    return {
+        ...c,
+        time: { ...c.time, week: 3 },
+        flags: { ...c.flags, firstStandBerth: c.time.year },
+        season: {
+            ...c.season,
+            bracket: {
+                kind: 'first_stand', year: c.time.year, title: 'First Stand', bestOf: 5,
+                window: { from: 2, to: 4 }, totalRounds: 3,
+                rounds: [
+                    { name: 'Semifinals', week: 3, ties: [
+                        { id: 'fs_r0_t0', a: me, b: them, score: [0, 0], winner: null, bestOf: 5 },
+                        { id: 'fs_r0_t1', a: other, b: other2, score: [2, 1], winner: other.id, bestOf: 5 },
+                    ] },
+                ],
+                byes: [], champion: null, runnerUp: null, myPlacement: null, done: false,
+            },
+        },
+    };
+});
+const S_TOURNEY = pushState('4c-at-a-tournament', 'First Stand week 3, player club live in the semifinal');
+
+// ...and the same tournament finished with the player as champion, which is the
+// banner's other branch and the 'won' chip.
+ST.career.update(c => ({
+    ...c,
+    time: { ...c.time, week: 4 },
+    season: {
+        ...c.season,
+        results: { ...(c.season.results || {}), first_stand: 'champion' },
+        bracket: {
+            ...c.season.bracket,
+            done: true,
+            myPlacement: 1,
+            champion: { id: c.player.clubId || 'lec_g2', name: 'Your Club', accent: '#22c55e' },
+            runnerUp: { id: 'lck_t1', name: 'T1', accent: '#e2012d' },
+        },
+    },
+}));
+pushState('4d-tournament-won', 'First Stand decided, player club champions');
+
 // ---- 5a. offseason, contract in its final year, offers on the table --------
 ST.career.set(clone(S_MID.snap));
 driveWeeks(30, { offers: true, until: (c) => c.time.week >= 37 });
@@ -1472,7 +1525,7 @@ console.log('');
 console.log('---- MINIGAMES -------------------------------------------');
 
 const MINIGAMES = [
-    ['LastHitGame',     'lasthit',   'mec'],
+    ['ComboGame',       'combo',     'mec'],
     ['WaveControlGame', 'wave',      'lne'],
     ['WardMemoryGame',  'ward',      'map'],
     ['FocusFireGame',   'focus',     'tmf'],

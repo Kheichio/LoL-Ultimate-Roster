@@ -265,6 +265,7 @@ function fail(severity, file, symptom, evidence, suggestedFix, dedupeKey) {
 }
 
 let CTX = { label: '?', week: 0, year: 0, cfg: null };
+const FIRST_CLUB = new Map();   // career label -> tier of the first club actually joined
 function ctxLine() {
     return `[${CTX.label}] year ${CTX.year} week ${CTX.week}`;
 }
@@ -372,6 +373,138 @@ function assertInvariants(c, tally) {
             'adjustCondition let a non-number through.')) continue;
         checkRange(`player.${f}`, p[f], 0, 100, 'src/lib/stores/career.js',
             'adjustCondition clamps to 0..cap; something wrote the field directly.', 'crash');
+    }
+
+    // Condition is now a real lever (it reaches successChance directly), so it
+    // needs to be MEASURABLE. Without this block "morale matters more" cannot be
+    // verified at all, and the match-rating mean cannot be attributed.
+    // THE LEAGUE TABLE IS REAL. Every club in a division plays the same fixture
+    // list now, so no two rows may drift apart by more than the games a single
+    // week can add. Before the division round robin existed, a 70%-win-rate
+    // player reached playoff seeding on 18 games against AI sides on 23-26 and
+    // missed the cut -- and nothing in this harness noticed, because nothing
+    // ever compared the rows.
+    {
+        const phaseNow = (c.time && K.phaseForWeek(c.time.week).id) || '';
+        if (phaseNow === 'spring' || phaseNow === 'summer') {
+            const rows = (() => { try { return T.leagueTable(c) || []; } catch (e) { return []; } })();
+            const played = rows.map(r => (Number(r.w) || 0) + (Number(r.l) || 0));
+            if (played.length > 1) {
+                const spread = Math.max(...played) - Math.min(...played);
+                // One week can add at most MATCHES_PER_REG_WEEK to a club, and
+                // the player's own game may not be committed yet, so two weeks
+                // of slack is the honest bound.
+                const bound = K.MATCHES_PER_REG_WEEK * 2;
+                if (spread > bound) {
+                    fail('wrong', 'src/lib/career/teams.js',
+                        'the league table drifted out of step',
+                        `${ctxLine()} -> games played per club range ${Math.min(...played)}..${Math.max(...played)} (spread ${spread}, bound ${bound})`,
+                        'divisionRounds() is the one fixture list; simulateAIWeek must play only its pairs for '
+                        + 'THIS week, and completeMatch must mirror the player result onto the opponent.',
+                        'table-spread');
+                }
+            }
+        }
+    }
+
+    // ---- the tournament CALENDAR -------------------------------------------
+    // A bracket phase owns a multi-week window and its rounds are pinned one per
+    // week. Two failures are silent: rounds sharing a week (a field bigger than
+    // its window -- adding a sixth region did exactly this to Worlds), and a
+    // round landing outside the window entirely.
+    {
+        const b = c.season && c.season.bracket;
+        if (b && Array.isArray(b.rounds) && b.window) {
+            const from = Math.round(Number(b.window.from) || 0);
+            const to = Math.round(Number(b.window.to) || 0);
+            const byWeek = {};
+            for (const r of b.rounds) {
+                const w = Math.round(Number(r && r.week) || 0);
+                if (!w) continue;
+                byWeek[w] = (byWeek[w] || 0) + 1;
+                if (w < from || w > to) {
+                    fail('wrong', 'src/lib/career/engine.js',
+                        'a bracket round is scheduled outside its own phase window',
+                        `${ctxLine()} -> ${b.kind} round "${r.name}" on week ${w}, window ${from}-${to}`,
+                        'roundWeekFor() must clamp every round into the phase window.',
+                        'brwindow|' + b.kind);
+                }
+            }
+            for (const [w, n] of Object.entries(byWeek)) {
+                if (n > 1) {
+                    fail('wrong', 'src/lib/career/engine.js',
+                        'two rounds of one bracket share a week',
+                        `${ctxLine()} -> ${b.kind} has ${n} rounds on week ${w} (window ${from}-${to}, ${b.totalRounds} rounds)`,
+                        'openBracket must trim the field to 2^(window weeks) so one round fits per week.',
+                        'brcollide|' + b.kind);
+                }
+            }
+            stats.bracketWeeks = stats.bracketWeeks || {};
+            const seen = stats.bracketWeeks[b.kind] || new Set();
+            for (const w of Object.keys(byWeek)) seen.add(Number(w));
+            stats.bracketWeeks[b.kind] = seen;
+        }
+    }
+
+    // ---- the regular-season FORMAT -----------------------------------------
+    // Korea, China and the Pacific play a Bo3 league; Europe, NA and Brazil a
+    // Bo1; tier 3 is always Bo1 because the amateur circuit is scrims. The
+    // schedule is what the match engine reads, so a row whose bestOf disagrees
+    // with its own division is a game played under the wrong rules -- and it
+    // would be invisible, because a Bo1 and a Bo3 both just resolve to a W.
+    {
+        const club = c.player.clubId ? K.teamById(c.player.clubId) : null;
+        if (club) {
+            const want = K.regularBestOf(club.region, club.tier);
+            for (const f of (c.season && c.season.schedule) || []) {
+                if (!f || f.kind === 'bracket') continue;
+                const got = Math.round(Number(f.bestOf) || 0);
+                if (got !== want) {
+                    fail('wrong', 'src/lib/career/teams.js',
+                        'a league fixture carries the wrong match format',
+                        `${ctxLine()} -> ${club.region} tier ${club.tier} wants Bo${want}, row "${f.id}" is Bo${got || 'unset'}`,
+                        'generateSchedule must stamp regularBestOf(region, tier) onto every league row.',
+                        'boformat|' + club.region + '|' + club.tier);
+                }
+                // A finished series has to have a legal scoreline for its own
+                // format: a Bo3 is 2-0, 2-1 or the reverse and NEVER 3-2.
+                if (f.played && Array.isArray(f.score) && want > 1) {
+                    const need = Math.floor(want / 2) + 1;
+                    const [a, b] = f.score.map(v => Math.round(Number(v) || 0));
+                    const games = a + b;
+                    if (Math.max(a, b) !== need || games < need || games > want) {
+                        fail('wrong', 'src/lib/career/match.js',
+                            'a finished series has an impossible scoreline for its format',
+                            `${ctxLine()} -> Bo${want} row "${f.id}" ended ${a}-${b}`,
+                            'winsNeeded(bestOf) decides when a series is over; it must agree with the row.',
+                            'boscore|' + want);
+                    }
+                    stats.seriesGames = (stats.seriesGames || 0) + games;
+                    stats.seriesPlayed = (stats.seriesPlayed || 0) + 1;
+                }
+            }
+            stats.regFormat = stats.regFormat || {};
+            stats.regFormat[want] = (stats.regFormat[want] || 0) + 1;
+        }
+    }
+
+    if (c.player.clubId && !FIRST_CLUB.has(CTX.label)) {
+        const t = K.teamById(c.player.clubId);
+        FIRST_CLUB.set(CTX.label, t ? Number(t.tier) || 0 : Number(c.player.clubTier) || 0);
+    }
+
+    if (COND.on) {
+        const mo = Number(p.morale), he = Number(p.health);
+        if (Number.isFinite(mo) && Number.isFinite(he)) {
+            COND.n++;
+            COND.morale += mo;
+            COND.health += he;
+            if (mo < COND.minMorale) COND.minMorale = mo;
+            if (he < COND.minHealth) COND.minHealth = he;
+            if (mo < 30) COND.lowMoraleWeeks++;
+            if (mo > 80) COND.everHigh = true;
+            if (mo < 40) COND.everLow = true;
+        }
     }
     badNum('player.hype', p.hype, 'src/lib/stores/career.js', 'grantFollowers guard.');
     badNum('player.age', p.age, 'src/lib/career/engine.js', 'rolloverYear increments age.');
@@ -602,8 +735,20 @@ function roundTrip() {
 // ---------------------------------------------------------------------------
 //  WEEK DRIVERS
 // ---------------------------------------------------------------------------
+// Condition accumulator, sampled once per player-week by the invariant walker.
+// `on` guards the setup careers the harness builds before the real run.
+// Fearless coverage. A run where usedChampions never exceeds length 1 means the
+// set is threaded but nothing ever reads it -- wired and dead.
+const COND = {
+    on: true, n: 0, morale: 0, health: 0,
+    minMorale: 101, minHealth: 101, lowMoraleWeeks: 0,
+    everHigh: false, everLow: false,
+};
+
 const stats = {
     ratings: [],
+    fearlessSeen: 0,
+    fearlessMax: 0,
     offersSeen: 0,
     offersAccepted: 0,
     matchesPlayedManually: 0,
@@ -676,8 +821,15 @@ function spendActions() {
         }
 
         const c2 = cur();
-        const pool = ['soloq', 'vod', 'stream', 'media', 'gym', 'rest'];
-        if (c2.player.clubId) pool.push('scrim', 'scrim');
+        // EVERY non-training activity id belongs here. This loop is the only
+        // thing in the whole harness that executes an activity's body, so an id
+        // missing from this list ships completely untested — a null club, a NaN
+        // hype or an absent flag inside it would go green.
+        const pool = [
+            'soloq', 'vod', 'stream', 'media', 'gym', 'rest',
+            'friends', 'therapy', 'recover', 'fans', 'sponsorday',
+        ];
+        if (c2.player.clubId) pool.push('scrim', 'scrim', 'coach1on1');
         const act = rpick(pool);
         res = step('engine.doActivity(' + act + ')', () => G.doActivity(act), null);
         if (res && res.ok) {
@@ -744,6 +896,22 @@ function playFixtureManually(f) {
                         `${ctxLine()} -> ${opts.length} options, expected ${M.DRAFT_OPTIONS}`,
                         'rollDraft tops the list up from the role pool; it must never come up short.');
                 }
+                // FEARLESS. The invariant IS the feature: nothing already
+                // locked in this series may be offered again. Without this the
+                // whole thing can regress to stateless rolls with no symptom.
+                const already = Array.isArray(m.usedChampions) ? m.usedChampions : [];
+                for (const id of opts) {
+                    if (already.includes(id)) {
+                        fail('wrong', 'src/lib/career/match.js',
+                            'champion select offered a champion already played this series',
+                            `${ctxLine()} -> "${id}" with used=[${already.join(',')}] at game ${m.game}`,
+                            'rollDraft must filter bank, source AND both fallbacks through the used set.',
+                            'fearless|' + id);
+                    }
+                }
+                if (already.length) stats.fearlessSeen++;
+                stats.fearlessMax = Math.max(stats.fearlessMax || 0, already.length);
+
                 for (const id of opts) {
                     const view = step('match.draftOption', () => M.draftOption(cur(), m, id), null);
                     if (!view || !view.champion) {
@@ -1218,6 +1386,12 @@ function runCareer(cfg, label) {
         traits: Array.isArray(end.player.traits) ? end.player.traits.slice() : [],
         proficiency: (end.player.proficiency && typeof end.player.proficiency === 'object')
             ? { ...end.player.proficiency } : {},
+        // The tier of the FIRST club this career ever joined. Item 12 says it must
+        // be an amateur one for anybody who was not signed at creation.
+        firstClubTier: FIRST_CLUB.get(label) || 0,
+        everSigned: !!(end.flags && end.flags.everSigned),
+        terminations: Number(end.flags && end.flags.terminations) || 0,
+        endStrikes: Number(end.player && end.player.contract && end.player.contract.strikes) || 0,
         breakthroughOVR: Number(end.flags && end.flags.breakthroughOVR) || 0,
         boughtCeilingOVR: Number(end.flags && end.flags.boughtCeilingOVR) || 0,
         // Roster churn and club momentum. club.changes belongs to a CLUB and is
@@ -1586,6 +1760,79 @@ console.log(`  benched appearances    : ${stats.benchedGames}`);
     const share = (n) => total ? ((n / total) * 100).toFixed(1) + '%' : '-';
     console.log(`  champion select        : ${d.signature} signature (${share(d.signature)}) / `
         + `${d.pocket} pocket (${share(d.pocket)}) / ${d.offscript} off-script (${share(d.offscript)})`);
+    // Regular-season format. Both arms must appear: if every division resolves
+    // to Bo1 the region table has gone flat and the Bo3 leagues are a comment,
+    // and if none does, tier 3 has stopped being scrims.
+    {
+        const rf = stats.regFormat || {};
+        const bo1 = rf[1] || 0, bo3 = rf[3] || 0;
+        const mean = stats.seriesPlayed ? (stats.seriesGames / stats.seriesPlayed) : 0;
+        console.log(`  regular season format  : ${bo1} club-weeks Bo1 / ${bo3} Bo3`
+            // The scoreline check re-reads every finished row every week, so this
+            // is a count of CHECKS, not of distinct series. The mean is a weighted
+            // mean over the same rows and is unaffected.
+            + (stats.seriesPlayed ? `, ${stats.seriesPlayed} series scorelines checked averaging ${mean.toFixed(2)} games` : ''));
+        if (!bo1 || !bo3) {
+            fail('wrong', 'src/lib/career/constants.js',
+                'the regular season has only one match format',
+                `Bo1 club-weeks ${bo1}, Bo3 ${bo3}`,
+                'regularBestOf() must return 3 for LCK/LPL/LCP at tiers 1-2 and 1 everywhere else.',
+                'boflat');
+        }
+        // A Bo3 whose games never vary is a Bo3 that always sweeps, i.e. the
+        // series loop is resolving on the first game.
+        if (stats.seriesPlayed && (mean < 2.05 || mean > 2.95)) {
+            fail('wrong', 'src/lib/career/match.js',
+                'Bo3 series are not going the distance',
+                `${stats.seriesPlayed} series averaged ${mean.toFixed(2)} games`,
+                'A Bo3 should land between 2 and 3 games; a mean pinned to either end means the '
+                + 'series loop is not running per game.',
+                'bomean');
+        }
+    }
+    // Tournament calendar. Inertness matters as much as correctness here: if
+    // every bracket resolves on one week the spread is wired and dead, which is
+    // precisely the state this system was in before rounds had weeks at all.
+    {
+        const bw = stats.bracketWeeks || {};
+        const parts = Object.entries(bw).map(([k, s]) => `${k} ${[...s].sort((a, b) => a - b).join('/')}`);
+        console.log(`  tournament calendar    : ${parts.join('  ') || '(no bracket reached)'}`);
+        const widest = Object.values(bw).reduce((n, s) => Math.max(n, s.size), 0);
+        if (Object.keys(bw).length && widest < 3) {
+            fail('wrong', 'src/lib/career/engine.js',
+                'brackets are not spread across their calendar window',
+                `widest bracket occupied ${widest} week(s)`,
+                'stepBracket must wait for each round\'s week; tickBracket must advance it weekly.',
+                'brflat');
+        }
+        // Inertness per EVENT. Eight careers over 12-24 years each reach all four
+        // of these; an event that never appears is an event nobody can play, and
+        // First Stand in particular hangs off a flag that survives the year
+        // rollover -- exactly the kind of wiring that breaks without a symptom.
+        for (const kind of ['spring_po', 'summer_po', 'msi', 'worlds', 'first_stand']) {
+            if (!bw[kind] || !bw[kind].size) {
+                fail('wrong', 'src/lib/career/engine.js',
+                    `the ${kind} bracket never ran in any career`,
+                    `events reached: ${Object.keys(bw).join(', ') || 'none'}`,
+                    kind === 'first_stand'
+                        ? 'The berth is flags.firstStandBerth, set at a summer title and read the NEXT year; '
+                          + 'rolloverYear must not clear it and runInternational must accept the kind.'
+                        : 'handlePhaseChange must open this bracket when the calendar enters its phase.',
+                    'brmissing|' + kind);
+            }
+        }
+    }
+    console.log(`  fearless draft         : ${stats.fearlessSeen} selects made against a non-empty used set`
+        + `, longest ${stats.fearlessMax} champions spent in one series`);
+    // Inertness, the same argument as roster churn and club momentum: a used set
+    // that never grows past one means the series rule is threaded and dead.
+    if (stats.fearlessMax < 2) {
+        fail('wrong', 'src/lib/career/match.js',
+            'the fearless used-champion set never grew past one',
+            `longest series spend was ${stats.fearlessMax}, over ${stats.draftPicks} picks`,
+            'finishGame must concat match.draft.picked onto usedChampions and pass it to the next '
+            + 'rollDraft. If every series is a Bo1 this is expected -- check a Bo5 is actually reached.');
+    }
     if (!total) {
         fail('wrong', 'src/lib/career/match.js', 'no champion select was ever rolled',
             'buildMatch/finishGame produced no draft on any hand-played game',
@@ -1905,6 +2152,140 @@ console.log(`  role changes           : ${stats.roleChanges}`);
     const mean = a => (a.length ? (a.reduce((s, v) => s + v, 0) / a.length) : 0);
     console.log(`  ceiling earned / bought: +${mean(bt).toFixed(1)} / +${mean(camp).toFixed(1)} mean OVR`
         + ` (budgets ${G.BREAKTHROUGH_CAREER_MAX} / ${E.CEILING_PURCHASE_MAX})`);
+}
+// Condition. Morale and health reach successChance directly now, so these are
+// the numbers that make the match-rating mean attributable — and the two-sided
+// inertness check is the one that matters: a meter that never moves has been
+// flattened by its own pull constants and is a lever in name only.
+{
+    const meanMorale = COND.n ? COND.morale / COND.n : 0;
+    const meanHealth = COND.n ? COND.health / COND.n : 0;
+    console.log(`  condition              : morale mean ${meanMorale.toFixed(1)} (min ${COND.minMorale})`
+        + `, health mean ${meanHealth.toFixed(1)} (min ${COND.minHealth})`
+        + `, ${COND.lowMoraleWeeks} player-weeks under 30 morale`);
+    // The inertness test that matches the mechanic: morale and health both cost
+    // a match only BELOW a floor, so what has to be proven is that a career
+    // actually gets there. If nobody ever drops under the floor, the penalty is
+    // dead code and "morale matters" is a claim with no mechanism behind it.
+    if (COND.minMorale >= 75) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'morale never fell below the level where it costs anything',
+            `lowest morale seen was ${COND.minMorale} over ${COND.n} player-weeks (penalty starts under 75)`,
+            'Either the SQUAD_STATUS pull is too weak against the +12 a match win pays, or a purchased '
+            + 'moraleFloor is pinning the meter. A penalty nobody can reach is not a lever.');
+    }
+    if (COND.minHealth >= 70) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'health never fell below the level where it costs anything',
+            `lowest health seen was ${COND.minHealth} over ${COND.n} player-weeks (penalty starts under 70)`,
+            'injuryRoll and the drill injury risk should both be reachable; check PHYSIO cover is not permanent.');
+    }
+    for (const id of Object.keys(K.SQUAD_STATUS)) {
+        const t = K.SQUAD_STATUS[id];
+        if (!Number.isFinite(t.moraleTarget) || !Number.isFinite(t.moralePull)) {
+            fail('wrong', 'src/lib/career/constants.js',
+                `SQUAD_STATUS.${id} has no usable morale pull`,
+                `moraleTarget=${t.moraleTarget} moralePull=${t.moralePull}`,
+                'A typo here reads as undefined, num() defaults it, and the lever silently turns off.');
+        }
+    }
+}
+// The ladder into the game. A first club that is not an amateur one breaks the
+// rule outright; a career that never signs at all is the PACING regression this
+// change most plausibly causes, and it would otherwise pass every other check.
+{
+    const precomp = results.filter(r => r.cfg && r.cfg.pathId === 'precomp');
+    const debut = results.filter(r => r.cfg && r.cfg.pathId === 'debut');
+    const neverSigned = results.filter(r => !r.everSigned);
+    const badFirst = precomp.filter(r => r.firstClubTier && r.firstClubTier !== 3);
+    console.log(`  first club             : ${precomp.length} precomp (first tier ${[...new Set(precomp.map(r => r.firstClubTier))].sort().join('/')})`
+        + `, ${debut.length} debut, ${neverSigned.length} never signed`);
+    if (badFirst.length) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'a pre-competitive career signed above the open circuit first',
+            badFirst.map(r => `${r.label} -> tier ${r.firstClubTier}`).join('; '),
+            'signingBlock() clause (a) must block tier < 3 while flags.everSigned is false.');
+    }
+    if (neverSigned.length) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'a career finished having never been signed by anybody',
+            neverSigned.map(r => r.label).join('; '),
+            'The amateur ladder is now compulsory, so it must be REACHABLE: check AMATEUR_OVR_GATE / '
+            + 'AMATEUR_MMR_GATE against soloTargetFor(), and that generateOffers still reaches a tier-3 side.');
+    }
+}
+// Solo queue. The ladder is the only progress bar an unsigned career has, and
+// its floor moved from Iron to Gold -- these pin the three things that could
+// silently break: the start rank, the ladder still moving with skill, and the
+// scouting gate staying where it was.
+{
+    const goldIdx = K.RANK_TIERS.findIndex(t => t.id === 'GOLD');
+    for (const p of K.START_PATHS) {
+        const rank = R.rankFromMMR(Number(p.startMMR) || 0);
+        const idx = K.RANK_TIERS.findIndex(t => t.id === rank.tierId);
+        console.log(`  solo queue start       : ${p.name} -> ${rank.label}`);
+        if (idx < goldIdx) {
+            fail('wrong', 'src/lib/career/constants.js',
+                'a start path begins below Gold',
+                `${p.name} starts on ${rank.label} (${p.startMMR} MMR)`,
+                'START_PATHS.startMMR must land at or above SOLOQ_FLOOR_MMR.');
+        }
+        // The start must also be a rank the path can HOLD. Starting above the
+        // equilibrium is the original bug wearing a different number.
+        const settles = K.soloTargetFor(Number(p.baseAttr) || 32);
+        if (Number(p.startMMR) > settles + 400) {
+            fail('wrong', 'src/lib/career/constants.js',
+                'a start path begins on a rank it immediately demotes out of',
+                `${p.name} starts ${p.startMMR} but settles at ${Math.round(settles)}`,
+                'Set startMMR near soloTargetFor(path.baseAttr) or the career demotes every fortnight.');
+        }
+    }
+    let rising = true;
+    for (let o = K.SOLOQ_FLOOR_OVR + 1; o <= 99; o++) {
+        if (K.soloTargetFor(o) <= K.soloTargetFor(o - 1)) rising = false;
+    }
+    if (!rising) {
+        fail('wrong', 'src/lib/career/constants.js', 'the solo queue ladder stopped rewarding skill',
+            'soloTargetFor() is not strictly increasing above the floor',
+            'A flat segment freezes the rank for every OVR in it, and the scout-gate meter never moves.');
+    }
+    const firstAt = (g) => { for (let o = 1; o <= 99; o += 0.1) if (K.soloTargetFor(o) >= g) return o; return 999; };
+    if (firstAt(K.MMR_MAX * 0.8625) > 99) {
+        fail('wrong', 'src/lib/career/constants.js', 'Challenger became unreachable',
+            'no OVR maps to 3450 MMR',
+            'ms_challenger and every retirement peakRank line depend on the top of the curve being reachable.');
+    }
+    const scoutAt = firstAt(R.SCOUT_MMR_GATE);
+    console.log(`  solo queue gates       : scout gate at OVR ${scoutAt.toFixed(1)}, Challenger at OVR ${firstAt(3450).toFixed(1)}`);
+    if (Math.abs(scoutAt - 73.7) > 1.5) {
+        fail('wrong', 'src/lib/career/constants.js', 'the scouting gate moved',
+            `SCOUT_MMR_GATE now needs OVR ${scoutAt.toFixed(1)}, was 73.7`,
+            'The curve is pinned at SOLOQ_JOINT_OVR precisely so everything above it is unchanged.');
+    }
+}
+// Early contract termination. A club that can never fire you is the thing this
+// replaced, so ZERO terminations across every career means the system is wired
+// and dead; more than about 1.5 a career means the mode has become unplayable.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const terms = results.map(r => Number(r.terminations) || 0);
+    const total = terms.reduce((s, v) => s + v, 0);
+    console.log(`  terminations           : ${mean(terms).toFixed(2)} per career (${total} total)`
+        + `, ${mean(results.map(r => Number(r.endStrikes) || 0)).toFixed(2)} strikes carried at the end`);
+    // NOT a failure at zero. This harness drives near-optimal careers -- they
+    // train every week, so ovr outruns the club strength and clubReview returns
+    // 'happy' almost every split. The mechanism is proven separately, by a probe
+    // that builds a deliberately failing career; what this line is here to catch
+    // is the OTHER direction, a mode that fires everybody.
+    if (total === 0) {
+        console.log('                           (none this run -- these careers all review well; '
+            + 'the firing path is proven by the underperformance probe, not here)');
+    } else if (mean(terms) > 1.5) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'clubs are firing players constantly',
+            `${mean(terms).toFixed(2)} terminations per career`,
+            'STRIKES_BEFORE_TERMINATION is too low, or recordReview is counting the same split twice.');
+    }
 }
 // Club momentum and roster churn. Both are balance readouts, but two of them
 // are also inertness checks with a hard line: a roster system that never moves a

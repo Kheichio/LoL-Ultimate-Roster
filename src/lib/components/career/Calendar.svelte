@@ -28,6 +28,7 @@
     import { fmtRecord, ordinal } from '../../career/ratings.js';
     import {
         teamStrength, teamStrengthWithPlayer, winChance, FREE_AGENT_ID,
+        eventQualification, tournamentNow,
     } from '../../career/teams.js';
     import { matchRatingLabel } from '../../career/match.js';
     import BracketView from './BracketView.svelte';
@@ -39,8 +40,12 @@
     // -- local helpers ----------------------------------------------------
     const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
     const SPLIT_NAME = { spring: 'Spring Split', summer: 'Summer Split' };
-    const MSI_PHASE = PHASES.find(p => p.id === 'msi') || PHASES[3];
-    const WLD_PHASE = PHASES.find(p => p.id === 'worlds') || PHASES[6];
+    // One glyph per qualification status. 'chase' is the only one that is a
+    // lock, because it is the only one the player can still do something about.
+    const QUAL_ICON = {
+        won: '\u{1F3C6}', live: '\u{1F534}', in: '✓',
+        chase: '\u{1F512}', out: '✗', missed: '—', locked: '\u{1F6AB}',
+    };
 
     let busy = false;
     let pendingInterview = null;
@@ -66,7 +71,10 @@
     $: region = REGION_BY_ID[c.player.region] || REGION_BY_ID.LEC;
     $: splitLabel = SPLIT_NAME[season.split] || 'Preseason';
     $: schedule = Array.isArray(season.schedule) ? season.schedule : [];
-    $: qualified = season.qualified || {};
+    // Both are pure reads and both are wrapped: a damaged save must not be able
+    // to take the whole season screen down over a status chip.
+    $: quals = (() => { try { return eventQualification(c) || []; } catch (e) { return []; } })();
+    $: tourney = (() => { try { return tournamentNow(c); } catch (e) { return null; } })();
 
     $: myTeamName = $currentTeam ? $currentTeam.name : c.player.handle || 'Free Agent';
     $: myAccent = $currentTeam ? $currentTeam.accent : '#22c55e';
@@ -294,6 +302,48 @@
         </div>
     </div>
 
+    <!-- ============== TOURNAMENT BANNER ==============
+         Only when the club is genuinely in the bracket the calendar is sitting
+         on. A player whose club missed out sees nothing, which is the point:
+         the banner has to MEAN something when it appears. -->
+    {#if tourney}
+        <div class="tbanner" class:tb-done={tourney.done} style="--a:{tourney.accent}">
+            <div class="tb-mark" aria-hidden="true">
+                <span class="tb-pulse"></span>
+                <span class="tb-cup">{tourney.done ? '\u{1F3C6}' : '\u{1F3DF}'}</span>
+            </div>
+            <div class="tb-body">
+                <div class="tb-top">
+                    <span class="tb-title">{tourney.title}</span>
+                    {#if !tourney.done}
+                        <span class="tb-round">{tourney.round}</span>
+                        <span class="tb-of">Round {tourney.roundIndex} of {tourney.totalRounds}</span>
+                        <span class="tb-bo">Best of {tourney.bestOf}</span>
+                    {:else if tourney.placement === 1}
+                        <span class="tb-round tb-win">Champions</span>
+                    {:else if tourney.placement === 2}
+                        <span class="tb-round">Runners-up</span>
+                    {:else if tourney.placement}
+                        <span class="tb-round">Finished {tourney.placement}{tourney.placement === 3 ? 'rd' : 'th'}</span>
+                    {:else}
+                        <span class="tb-round">Eliminated</span>
+                    {/if}
+                </div>
+                <div class="tb-sub">
+                    {#if tourney.done}
+                        The bracket is decided.
+                    {:else}
+                        <span class="tb-vs">vs</span>
+                        <span class="tb-opp" style="--o:{tourney.opponentAccent}">{tourney.opponent}</span>
+                        <span class="tb-when">
+                            &middot; final on week {tourney.lastWeek}
+                        </span>
+                    {/if}
+                </div>
+            </div>
+        </div>
+    {/if}
+
     <!-- ============== SPLIT HEADER ============== -->
     <div class="panel split-panel">
         <div class="sp-left">
@@ -324,20 +374,16 @@
             </div>
 
             <div class="quals">
-                <div class="qual" class:qual-on={!!qualified.msi} style="--a:{MSI_PHASE.accent}">
-                    <span class="q-ico" aria-hidden="true">{qualified.msi ? '\u2713' : '\u{1F512}'}</span>
-                    <span class="q-txt">
-                        <strong>MSI</strong>
-                        <span>{qualified.msi ? 'Qualified' : 'Win the spring split'}</span>
-                    </span>
-                </div>
-                <div class="qual" class:qual-on={!!qualified.worlds} style="--a:{WLD_PHASE.accent}">
-                    <span class="q-ico" aria-hidden="true">{qualified.worlds ? '\u2713' : '\u{1F512}'}</span>
-                    <span class="q-txt">
-                        <strong>Worlds</strong>
-                        <span>{qualified.worlds ? 'Qualified' : 'Championship points'}</span>
-                    </span>
-                </div>
+                {#each quals as q (q.id)}
+                    <div class="qual qual-{q.status}" style="--a:{q.accent}"
+                         title="{q.name} - {q.weeks}">
+                        <span class="q-ico" aria-hidden="true">{QUAL_ICON[q.status] || '\u{1F512}'}</span>
+                        <span class="q-txt">
+                            <strong>{q.short || q.name}</strong>
+                            <span>{q.detail}</span>
+                        </span>
+                    </div>
+                {/each}
             </div>
         </div>
 
@@ -415,6 +461,8 @@
                                         <span class="fx-name">{o.name}</span>
                                         {#if f.kind === 'scrim'}
                                             <span class="fx-kind">scrim</span>
+                                        {:else if Number(f.bestOf) > 1}
+                                            <span class="fx-kind">Bo{Number(f.bestOf)}</span>
                                         {/if}
                                     </span>
 
@@ -675,15 +723,69 @@
         border: 1px solid rgba(51, 65, 85, 0.22);
         min-width: 0;
     }
-    .qual-on {
+    /* Qualified, live and won all light up; chasing, out and missed stay dim.
+       The chip has to read at a glance or it is just four more words. */
+    .qual-in, .qual-live, .qual-won {
         background: color-mix(in srgb, var(--a) 10%, rgba(15, 23, 42, 0.5));
         border-color: color-mix(in srgb, var(--a) 34%, transparent);
     }
+    .qual-live {
+        background: color-mix(in srgb, var(--a) 18%, rgba(15, 23, 42, 0.5));
+        border-color: color-mix(in srgb, var(--a) 55%, transparent);
+    }
+    .qual-won { border-color: color-mix(in srgb, var(--a) 62%, transparent); }
+    .qual-out, .qual-missed { opacity: 0.55; }
     .q-ico { font-size: 12px; opacity: 0.55; flex-shrink: 0; }
-    .qual-on .q-ico { opacity: 1; color: var(--a); }
+    .qual-in .q-ico, .qual-live .q-ico, .qual-won .q-ico { opacity: 1; color: var(--a); }
     .q-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .q-txt strong { font-size: 11px; font-weight: 800; letter-spacing: 0.6px; color: #94a3b8; }
-    .qual-on .q-txt strong { color: var(--a); }
+    .qual-in .q-txt strong, .qual-live .q-txt strong, .qual-won .q-txt strong { color: var(--a); }
+
+    /* ---- tournament banner ---- */
+    .tbanner {
+        display: flex; align-items: center; gap: 14px;
+        padding: 13px 16px; border-radius: 16px;
+        background: linear-gradient(120deg,
+            color-mix(in srgb, var(--a) 22%, rgba(15, 23, 42, 0.86)),
+            rgba(15, 23, 42, 0.86) 65%);
+        border: 1px solid color-mix(in srgb, var(--a) 46%, transparent);
+        box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.5) inset;
+    }
+    .tb-mark { position: relative; flex: 0 0 40px; height: 40px; display: grid; place-items: center; }
+    .tb-cup { font-size: 21px; position: relative; z-index: 1; }
+    .tb-pulse {
+        position: absolute; inset: 0; border-radius: 50%;
+        background: color-mix(in srgb, var(--a) 30%, transparent);
+        animation: tbpulse 2.4s ease-out infinite;
+    }
+    .tb-done .tb-pulse { animation: none; opacity: 0.5; }
+    @keyframes tbpulse {
+        0%   { transform: scale(0.7); opacity: 0.85; }
+        70%  { transform: scale(1.35); opacity: 0; }
+        100% { transform: scale(1.35); opacity: 0; }
+    }
+    /* Respect a reduced-motion preference: the banner still reads without it. */
+    @media (prefers-reduced-motion: reduce) {
+        .tb-pulse { animation: none; opacity: 0.45; }
+    }
+    .tb-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .tb-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .tb-title {
+        font-size: 14px; font-weight: 900; letter-spacing: 0.3px;
+        color: color-mix(in srgb, var(--a) 72%, #f8fafc);
+    }
+    .tb-round {
+        font-size: 10.5px; font-weight: 800; letter-spacing: 0.7px; text-transform: uppercase;
+        padding: 2px 8px; border-radius: 999px;
+        background: color-mix(in srgb, var(--a) 24%, transparent);
+        color: color-mix(in srgb, var(--a) 60%, #e2e8f0);
+    }
+    .tb-win { background: color-mix(in srgb, var(--a) 44%, transparent); color: #f8fafc; }
+    .tb-of, .tb-bo { font-size: 10px; font-weight: 700; color: #64748b; }
+    .tb-sub { font-size: 11px; font-weight: 600; color: #94a3b8; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tb-vs { color: #475569; }
+    .tb-opp { color: var(--o); font-weight: 800; }
+    .tb-when { color: #475569; }
     .q-txt span {
         font-size: 9.5px; font-weight: 600; color: #475569;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

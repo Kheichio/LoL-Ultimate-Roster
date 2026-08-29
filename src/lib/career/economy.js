@@ -581,7 +581,12 @@ export const LIFESTYLE_BY_ID = LIFESTYLE.reduce((m, x) => { m[x.id] = x; return 
 //    ceilingBonus              -> applyPermanentPerk() below (one-off writes)
 //    valueMult                 -> player.valueMult, written by applyPermanentPerk
 //                                and read by ratings.marketValueFor()
-//    extraChampion             -> match.js rollDraft (573)
+//    extraChampion             -> economy.signatureSlots(), which contracts.js
+//                                 addSignature() spends and match.js
+//                                 signatureIds()/rollDraft() reads. It used to
+//                                 point at rollDraft and the real reader was
+//                                 draftComfort, where it widened a comfort
+//                                 scalar and bought no champion at all.
 //    offerBonus                -> contracts.js buildOffer (offerMultiplier)
 //    chemistryBonus            -> contracts.js acceptOffer / promotion
 //    clutchBonus, intlBonus    -> match.js successChance (stakesBonus)
@@ -1146,6 +1151,24 @@ export function unsignedCapFor(c) {
     const own = Number(s && s.player && s.player.softCap);
     if (Number.isFinite(own) && own > 0) return own;
     return UNSIGNED_SOFT_CAP + perkEffects(s).unsignedCapBonus;
+}
+
+/**
+ * How many signature champions this player may hold. One by default, plus one
+ * for each of the Second/Third Signature perks.
+ *
+ * DERIVED, never stored. Capacity comes straight out of `inventory.perks`, so
+ * everyone who already bought these perks gets their slot the instant this
+ * ships — no reconciliation pass, no `flags.perksApplied` bookkeeping, and
+ * nothing to forget when a perk list changes.
+ *
+ * The perks used to be wired to a comfort SCALAR read only on 'pocket' draws
+ * (match.draftComfort), which meant a player could spend 310 and then 430
+ * legacy points and see nothing change on any screen. That was the bug.
+ */
+export function signatureSlots(c) {
+    const extra = Number(perkEffects(st(c)).extraChampion) || 0;
+    return 1 + Math.max(0, Math.min(2, Math.round(extra)));
 }
 
 // ---------------------------------------------------------------------------

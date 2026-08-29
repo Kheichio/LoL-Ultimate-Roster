@@ -138,7 +138,7 @@ const TIER_ATTR_CAP = { 1: UNSIGNED_SOFT_CAP, 2: 89, 3: ATTR_MAX };
 function drill(id, attr, difficulty, name, desc, energy, baseGain, reqOVR, goldCost) {
     return {
         id, attr, difficulty, name, desc,
-        game: ATTR_BY_KEY[attr] ? ATTR_BY_KEY[attr].game : 'lasthit',
+        game: ATTR_BY_KEY[attr] ? ATTR_BY_KEY[attr].game : 'combo',
         energy, baseGain, reqOVR, goldCost,
         attrCap: TIER_ATTR_CAP[difficulty] || ATTR_MAX,
         tierName: DRILL_TIERS[difficulty].name,
@@ -147,9 +147,11 @@ function drill(id, attr, difficulty, name, desc, energy, baseGain, reqOVR, goldC
 }
 
 export const DRILLS = [
-    // -- MECHANICS (lasthit) -------------------------------------------------
-    drill('mec_1', 'mec', 1, 'Last Hit Ladder',
-        'Custom game, no items, escalating waves. Miss two in a row and the count starts over.',
+    // -- MECHANICS (combo) ---------------------------------------------------
+    // Ids are persisted in the weekly log; names are not. Renaming a drill is
+    // safe, renaming an id is not.
+    drill('mec_1', 'mec', 1, 'Reaction Ladder',
+        'Targets on a metronome, faster every set. Hit on the beat, not when you notice the beat.',
         16, 0.62, 0, 0),
     drill('mec_2', 'mec', 2, 'Combo Under Pressure',
         'Full rotation on a moving dummy while the coach calls out a new target every four seconds.',
@@ -285,6 +287,19 @@ function moraleFactor(morale) {
     return 0.85 + clamp(morale, 0, 100) / 100 * 0.27;
 }
 
+/** Burnout's share of the training penalty, read straight off the counter.
+ *  Written defensively so training.js needs no import from engine.js, which
+ *  imports training.js -- the cycle would be real. */
+function burnoutTrainingMult(s) {
+    const weeks = Number(s && s.flags && s.flags.burnout && s.flags.burnout.weeks) || 0;
+    return weeks >= BURNOUT_TRAINING_AT ? BURNOUT_TRAINING_MULT : 1;
+}
+
+/** Mirrors BURNOUT_WARN_2 / BURNOUT_TRAINING_MULT in engine.js. Duplicated
+ *  rather than imported because engine.js already imports this file. */
+const BURNOUT_TRAINING_AT = 4;
+const BURNOUT_TRAINING_MULT = 0.85;
+
 /** Smooth 0.86 -> 1.08 across the energy bar, then a hard cliff: training below
  *  25 energy halves everything. Burning your last drop on another drill is
  *  supposed to be a visibly bad idea, not a slightly worse one. */
@@ -345,6 +360,11 @@ export function trainingMultiplierBreakdown(c) {
         { key: 'morale',    label: 'Morale',                        mult: moraleFactor(p.morale), note: 'Wanting to be there' },
         { key: 'energy',    label: 'Energy',                        mult: energyFactor(p.energy), note: (p.energy || 0) < 25 ? 'Exhausted -- gains halved' : 'Freshness' },
         { key: 'health',    label: 'Health',                        mult: healthFactor(p.health), note: 'Wrists, back, sleep debt' },
+        // Burnout is a VISIBLE row, never a hidden subtraction. A player whose
+        // practice has quietly stopped working and cannot see why has been given
+        // a bug, not a mechanic.
+        { key: 'burnout',   label: 'Burnt out',                     mult: burnoutTrainingMult(s),
+                                                                    note: 'Weeks of not wanting to be here' },
     ].map(row => ({ ...row, mult: round2(row.mult) }));
 }
 

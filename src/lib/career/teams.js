@@ -13,7 +13,8 @@
 import {
     LEAGUES, AMATEUR_TEAMS, REGION_IDS, REGION_BY_ID, ROLE_BY_ID,
     CLUB_TIERS, teamById, phaseForWeek, PHASES,
-    MATCHES_PER_REG_WEEK, REG_SPLIT_WEEKS, DEFAULT_START_YEAR,
+    MATCHES_PER_REG_WEEK, REG_SPLIT_WEEKS, DEFAULT_START_YEAR, regularBestOf,
+    MIN_AGE_INTERNATIONAL,
 } from './constants.js';
 import { calcOVR, clamp, statusInfo } from './ratings.js';
 import { getDB, getEffectiveRating, ratingToQuality, getEra } from '../utils/cards.js';
@@ -33,6 +34,12 @@ export const FREE_AGENT_ID = 'free_agent';
 //  anything that looks random has to be a pure function of ids and years or
 //  the league would reshuffle itself between renders.
 // ---------------------------------------------------------------------------
+/** teams.js has no num() of its own; every other file in career/ does. */
+function num(v, d = 0) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : d;
+}
+
 function hash32(str) {
     let h = 0x811c9dc5;
     const s = String(str);
@@ -850,71 +857,118 @@ function leagueContext(c) {
 // ---------------------------------------------------------------------------
 //  SCHEDULE
 // ---------------------------------------------------------------------------
-const SPLIT_FIXTURES = REG_SPLIT_WEEKS * MATCHES_PER_REG_WEEK;   // 18 per split
+// ---------------------------------------------------------------------------
+//  THE DIVISION FIXTURE LIST
+//
+//  There did not used to be one. generateSchedule() built the PLAYER'S rows and
+//  every other club's games were invented on the spot by simulateAIWeek(), which
+//  drew fresh random pairings each slot, let one club sit out whenever the pool
+//  was odd, and ran in all 40 weeks of the year while fixtures existed in only
+//  18 of them. The player's own results were never mirrored into the table
+//  either. Measured, a 70%-win-rate player reached spring playoff seeding on 18
+//  games against AI sides on 23-26, seeded 7th, and missed the cut.
+//
+//  So the fixture list is now real and shared: one round robin per division per
+//  split, the player's schedule is a PROJECTION of it, and the AI week plays the
+//  pairs the player is not in.
+//
+//  It MUST be a pure function of (division, year, split). Anything random here
+//  reshuffles the league table between page loads, which is the failure the
+//  determinism note at the top of this file exists to prevent.
+// ---------------------------------------------------------------------------
 
-/**
- * The whole fixture list for the current split, in the shape blankCareer()
- * declares. A tier-1 division is nine other clubs across eighteen games, which
- * is a clean double round robin; smaller divisions and the six-team amateur
- * circuit keep cycling extra legs until the calendar is full.
- */
-export function generateSchedule(c) {
+/** Circle-method round robin. Returns one entry per ROUND, in round order. */
+export function divisionRounds(c) {
+    const ctx = leagueContext(c);
+    if (!ctx.teams || ctx.teams.length < 2) return [];
+
     const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
     const split = c?.season?.split === 'summer' ? 'summer' : 'spring';
     const phase = PHASES.find(p => p.id === split) || PHASES[1];
     const startWeek = phase.from;
 
+    // Seeded once per division-season so the fixture order is stable forever but
+    // differs between splits.
+    const ids = shuffleSeeded(
+        ctx.teams.map(t => t.id),
+        hash32('rr:' + ctx.region + ':' + ctx.tier + ':' + year + ':' + split),
+    );
+
+    // Odd field (the amateur circuit is six sides plus the free agent) gets a
+    // bye marker, so every real club still plays the same number of games.
+    const BYE = '__bye__';
+    const list = ids.slice();
+    if (list.length % 2 === 1) list.push(BYE);
+
+    const n = list.length;
+    const half = n / 2;
+    const rounds = [];
+    const legs = 2;                       // home and away
+
+    for (let leg = 0; leg < legs; leg++) {
+        // Rotate all but the first entry; standard circle method.
+        const order = list.slice();
+        for (let r = 0; r < n - 1; r++) {
+            const pairs = [];
+            let bye = null;
+            for (let i = 0; i < half; i++) {
+                const a = order[i];
+                const b = order[n - 1 - i];
+                if (a === BYE) { bye = b; continue; }
+                if (b === BYE) { bye = a; continue; }
+                // Swap sides on the second leg so home and away are even.
+                pairs.push(leg === 0 ? [a, b] : [b, a]);
+            }
+            const round = leg * (n - 1) + r;
+            rounds.push({
+                round,
+                week: startWeek + Math.floor(round / MATCHES_PER_REG_WEEK),
+                slot: round % MATCHES_PER_REG_WEEK,
+                pairs,
+                bye,
+            });
+            // rotate: hold index 0, move the rest one step
+            order.splice(1, 0, order.pop());
+        }
+    }
+    return rounds;
+}
+
+/**
+ * The player's own fixture list — a projection of the division round robin, in
+ * the exact row shape blankCareer() declares and with the same id format, so
+ * nothing downstream that keys on a fixture id has to change.
+ */
+export function generateSchedule(c) {
+    const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
+    const split = c?.season?.split === 'summer' ? 'summer' : 'spring';
     const ctx = leagueContext(c);
     if (!ctx.others.length) return [];
     const kind = ctx.tier >= 3 ? 'scrim' : 'league';
+    const bestOf = regularBestOf(ctx.region, ctx.tier);
+    const myId = ctx.me.id;
 
-    const slots = [];
-    for (let leg = 0; slots.length < SPLIT_FIXTURES && leg < 12; leg++) {
-        const order = shuffleSeeded(ctx.others, hash32('leg:' + ctx.me.id + ':' + year + ':' + split + ':' + leg));
-        for (const t of order) {
-            if (slots.length >= SPLIT_FIXTURES) break;
-            // Alternate the home leg so the fixture list is never lopsided.
-            slots.push({ opponentId: t.id, home: leg % 2 === 0 });
+    const out = [];
+    for (const rd of divisionRounds(c)) {
+        for (const [a, b] of rd.pairs) {
+            if (a !== myId && b !== myId) continue;
+            const week = rd.week;
+            out.push({
+                id: year + '-' + split + '-w' + week + '-g' + (rd.slot + 1),
+                week,
+                phase: phaseForWeek(week).id,
+                opponentId: a === myId ? b : a,
+                home: a === myId,
+                kind,
+                bestOf,
+                played: false,
+                won: null,
+                score: null,
+                myRating: null,
+            });
         }
     }
-
-    dedupeWeeks(slots);
-
-    return slots.map((s, i) => {
-        const week = startWeek + Math.floor(i / MATCHES_PER_REG_WEEK);
-        return {
-            id: year + '-' + split + '-w' + week + '-g' + ((i % MATCHES_PER_REG_WEEK) + 1),
-            week,
-            phase: phaseForWeek(week).id,
-            opponentId: s.opponentId,
-            home: s.home,
-            kind,
-            played: false,
-            won: null,
-            score: null,
-            myRating: null,
-        };
-    });
-}
-
-/** Playing the same club twice inside one week reads as a scheduling bug, so
- *  swap the duplicate out for the first later fixture that does not collide. */
-function dedupeWeeks(slots) {
-    for (let a = 0; a < slots.length; a += MATCHES_PER_REG_WEEK) {
-        const end = Math.min(a + MATCHES_PER_REG_WEEK, slots.length);
-        for (let i = a + 1; i < end; i++) {
-            let clash = false;
-            for (let j = a; j < i; j++) if (slots[j].opponentId === slots[i].opponentId) clash = true;
-            if (!clash) continue;
-            for (let k = end; k < slots.length; k++) {
-                let ok = true;
-                for (let j = a; j < end; j++) if (j !== i && slots[j].opponentId === slots[k].opponentId) ok = false;
-                if (!ok) continue;
-                const tmp = slots[i]; slots[i] = slots[k]; slots[k] = tmp;
-                break;
-            }
-        }
-    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -941,13 +995,17 @@ export function winChance(strengthA, strengthB) {
 }
 
 /**
- * Play out the rest of the division for the current week and hand back a new
- * standings object. The player's own fixtures are left alone -- the match engine
- * records those, including the mirror result for whoever they beat.
+ * Play the rest of the division's fixtures for THIS WEEK and hand back a new
+ * standings object.
  *
- * Pairings are drawn fresh each game slot rather than following a fixed round
- * robin. Every AI club still ends the split on exactly the same number of games
- * as the player, which is all the table needs to be fair.
+ * It now reads the shared round robin rather than inventing pairings, and it
+ * plays only the pairs the player is not in — their own result is mirrored into
+ * the table by engine.completeMatch() when the match is actually finished.
+ *
+ * A week with no round is a week with no league games. That single guard is what
+ * removes the 22 phantom AI-only weeks a year: this used to be called in all 40
+ * weeks of the calendar, including preseason, playoffs, MSI, Worlds and the
+ * offseason, while fixtures only ever existed in 18 of them.
  */
 export function simulateAIWeek(c) {
     const next = {};
@@ -961,25 +1019,30 @@ export function simulateAIWeek(c) {
     const week = Math.round(Number(c?.time?.week) || 1);
     for (const t of ctx.teams) if (!next[t.id]) next[t.id] = { w: 0, l: 0 };
 
-    const mine = (c?.season?.schedule || []).filter(f => f.week === week);
+    const myId = ctx.me.id;
     const strength = {};
-    for (const t of ctx.others) strength[t.id] = teamStrength(t, year);
+    for (const t of ctx.teams) strength[t.id] = teamStrength(t, year);
 
-    for (let slot = 0; slot < MATCHES_PER_REG_WEEK; slot++) {
-        const fixture = mine[slot];
-        const busy = new Set(fixture ? [fixture.opponentId] : []);
-        const pool = ctx.others.filter(t => !busy.has(t.id));
-        const order = shuffleSeeded(pool, hash32('ai:' + ctx.me.id + ':' + year + ':' + week + ':' + slot));
+    // The division's format, resolved the same way the player's own fixtures are
+    // — an AI Bo3 has to be a real Bo3 or the table stops matching the schedule.
+    // A series is still one row in the table: `need` wins takes it, and the
+    // winner banks a single W exactly as the player does.
+    const bestOf = regularBestOf(ctx.region, ctx.tier);
+    const need = Math.floor(bestOf / 2) + 1;
 
-        // An odd pool means one club sits the slot out; over a nine-week split
-        // that costs at most a game or two and never the same club twice.
-        for (let i = 0; i + 1 < order.length; i += 2) {
-            const a = order[i], b = order[i + 1];
-            const aWins = Math.random() < winChance(strength[a.id], strength[b.id]);
-            const win = aWins ? a : b;
-            const lose = aWins ? b : a;
-            next[win.id].w += 1;
-            next[lose.id].l += 1;
+    for (const rd of divisionRounds(c)) {
+        if (rd.week !== week) continue;
+        for (const [a, b] of rd.pairs) {
+            if (a === myId || b === myId) continue;   // the player's own game is not simulated here
+            if (!next[a] || !next[b]) continue;
+            const p = winChance(num(strength[a], 55), num(strength[b], 55));
+            let aw = 0, bw = 0;
+            while (aw < need && bw < need) {
+                if (Math.random() < p) aw++; else bw++;
+            }
+            const aWins = aw > bw;
+            next[aWins ? a : b].w += 1;
+            next[aWins ? b : a].l += 1;
         }
     }
 
@@ -996,11 +1059,25 @@ export function leagueTable(c) {
     const standings = c?.season?.standings || {};
     const myId = ctx.me.id;
 
+    // The player's own row is counted off the SCHEDULE, not off season.wins.
+    // season.wins counts every match the player played — playoff ties, MSI and
+    // Worlds included, and MSI is carried into summer — while every other row
+    // holds league games only. Reading it here put the player several games
+    // ahead of a division that had played the same fixtures, which is the same
+    // class of dishonesty as the table not counting the player's games at all.
+    const mineRec = (() => {
+        const rows = Array.isArray(c?.season?.schedule) ? c.season.schedule : [];
+        let w = 0, l = 0;
+        for (const f of rows) {
+            if (!f || !f.played || f.kind === 'bracket') continue;
+            if (f.won) w++; else l++;
+        }
+        return { w, l };
+    })();
+
     const rows = ctx.teams.map(team => {
         const isMine = team.id === myId;
-        const rec = isMine
-            ? { w: c?.season?.wins || 0, l: c?.season?.losses || 0 }
-            : (standings[team.id] || { w: 0, l: 0 });
+        const rec = isMine ? mineRec : (standings[team.id] || { w: 0, l: 0 });
         const w = Math.max(0, Math.round(rec.w || 0));
         const l = Math.max(0, Math.round(rec.l || 0));
         const played = w + l;
@@ -1017,6 +1094,7 @@ export function leagueTable(c) {
 
     rows.sort((a, b) => (
         b.w - a.w
+        || a.l - b.l
         || b.rate - a.rate
         || b.gd - a.gd
         // Preseason has everyone on 0-0, so fall back to who is actually better
@@ -1030,6 +1108,221 @@ export function leagueTable(c) {
 
 export function playoffSeeds(c) {
     return leagueTable(c).slice(0, 6).map(r => r.team.id);
+}
+
+/** How many league sides make the domestic bracket. */
+export const PLAYOFF_SPOTS = 6;
+
+// ---------------------------------------------------------------------------
+//  EVENT QUALIFICATION
+//  What am I playing for, what do I need, and am I in it right now?
+//
+//  This used to be two hard-coded chips on the season screen reading
+//  "Win the spring split" and "Championship points" -- the second of which was
+//  not even the rule (Worlds is top two of the summer bracket; championship
+//  points have never gated it). Nothing told the player where they sat in the
+//  table, that First Stand existed, that a berth had been banked for NEXT year,
+//  or that they were currently IN a tournament.
+//
+//  It is a pure read over season/flags/table, so a screen can render it and the
+//  engine stays the only thing that writes qualification.
+// ---------------------------------------------------------------------------
+
+/**
+ * Status vocabulary, most-final first: 'won', 'out' (played and eliminated),
+ * 'live' (the calendar is inside it and the club is in it), 'in' (qualified,
+ * not started), 'chase' (still possible), 'missed', 'locked' (too young).
+ */
+export function eventQualification(c) {
+    const season = (c && c.season) || {};
+    const results = season.results || {};
+    const qual = season.qualified || {};
+    const flags = (c && c.flags) || {};
+    const week = Math.round(num(c && c.time && c.time.week, 1));
+    const year = Math.round(num(c && c.time && c.time.year, DEFAULT_START_YEAR));
+    const age = num(c && c.player && c.player.age, 18);
+    const clubId = (c && c.player && c.player.clubId) || null;
+    const bracket = season.bracket || null;
+    const nowPhase = phaseForWeek(week).id;
+    const split = season.split === 'summer' ? 'summer' : 'spring';
+
+    // Where the club actually sits, used for the domestic row's detail line.
+    let rank = 0, tableLen = 0;
+    if (clubId) {
+        const rows = leagueTable(c) || [];
+        tableLen = rows.length;
+        const i = rows.findIndex(r => r && r.team && r.team.id === clubId);
+        rank = i >= 0 ? i + 1 : 0;
+    }
+
+    const ordinal = (n) => {
+        const s = ['th', 'st', 'nd', 'rd'];
+        const v = n % 100;
+        return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+
+    const phaseOf = id => PHASES.find(p => p.id === id) || null;
+
+    // A bracket the player is actually IN, as opposed to one running around
+    // them: `myPlacement` is only written when it finishes, so mid-tournament
+    // the honest test is whether any tie has their club in it.
+    const inBracket = (kind) => {
+        if (!bracket || bracket.kind !== kind || !clubId) return false;
+        for (const r of bracket.rounds || []) {
+            for (const t of r.ties || []) {
+                if ((t.a && t.a.id === clubId) || (t.b && t.b.id === clubId)) return true;
+            }
+        }
+        return (bracket.byes || []).some(b => b && b.id === clubId);
+    };
+
+    const row = (id, name, need) => {
+        const ph = phaseOf(id);
+        const res = results[id];
+        const out = {
+            id, name,
+            short: ph ? ph.short : '',
+            accent: ph ? ph.accent : '#64748b',
+            from: ph ? ph.from : 0,
+            to: ph ? ph.to : 0,
+            weeks: ph ? `Weeks ${ph.from}-${ph.to}` : '',
+            status: 'chase',
+            detail: need,
+            live: false,
+        };
+        if (res === 'champion') { out.status = 'won'; out.detail = 'Champions.'; return out; }
+        if (res) { out.status = 'out'; out.detail = 'Knocked out.'; return out; }
+        if (bracket && bracket.kind === id && inBracket(id)) {
+            out.status = 'live';
+            out.live = nowPhase === id;
+            const r = (bracket.rounds || [])[bracket.rounds.length - 1];
+            out.detail = r ? `In progress - ${r.name}` : 'In progress';
+            return out;
+        }
+        return out;
+    };
+
+    const events = [];
+
+    // --- the domestic bracket, which is the gate for everything else --------
+    {
+        const kind = split === 'summer' ? 'summer_po' : 'spring_po';
+        const r = row(kind, `${split === 'summer' ? 'Summer' : 'Spring'} Playoffs`,
+            `Top ${PLAYOFF_SPOTS} of the table`);
+        if (r.status === 'chase') {
+            if (!clubId) { r.status = 'locked'; r.detail = 'You need a club.'; }
+            else if (week > (phaseOf(kind) || {}).to) { r.status = 'missed'; r.detail = 'Over for this year.'; }
+            else if (rank && rank <= PLAYOFF_SPOTS) {
+                r.status = 'in';
+                r.detail = `${ordinal(rank)} of ${tableLen} - inside the cut`;
+            } else if (rank) {
+                r.detail = `${ordinal(rank)} of ${tableLen} - need top ${PLAYOFF_SPOTS}`;
+            }
+        }
+        events.push(r);
+    }
+
+    // --- First Stand: won LAST summer, played THIS February ------------------
+    {
+        const berth = Math.round(num(flags.firstStandBerth, 0));
+        const r = row('first_stand', 'First Stand', 'Win your regional title');
+        if (r.status === 'chase') {
+            if (berth === year) {
+                if (age < MIN_AGE_INTERNATIONAL) {
+                    r.status = 'locked';
+                    r.detail = `Club qualified - you are ${age}, minimum ${MIN_AGE_INTERNATIONAL}`;
+                } else if (week > (phaseOf('first_stand') || {}).to) {
+                    r.status = 'missed'; r.detail = 'Over for this year.';
+                } else { r.status = 'in'; r.detail = 'Qualified.'; }
+            } else if (berth > year) {
+                r.status = 'in';
+                r.detail = `Berth banked for ${berth}`;
+            } else if (week > (phaseOf('first_stand') || {}).to) {
+                r.detail = 'Win the summer title for next February';
+            }
+        }
+        events.push(r);
+    }
+
+    // --- MSI: spring champions ----------------------------------------------
+    {
+        const r = row('msi', 'Mid-Season Invitational', 'Win the spring playoffs');
+        if (r.status === 'chase') {
+            if (qual.msi) {
+                r.status = age < MIN_AGE_INTERNATIONAL ? 'locked' : 'in';
+                r.detail = age < MIN_AGE_INTERNATIONAL
+                    ? `Club qualified - you are ${age}, minimum ${MIN_AGE_INTERNATIONAL}`
+                    : 'Qualified.';
+            } else if (week > (phaseOf('msi') || {}).to) {
+                r.status = 'missed'; r.detail = 'Over for this year.';
+            }
+        }
+        events.push(r);
+    }
+
+    // --- Worlds: top two of the summer bracket -------------------------------
+    {
+        const r = row('worlds', 'World Championship', 'Reach the summer final');
+        if (r.status === 'chase') {
+            if (qual.worlds) {
+                r.status = age < MIN_AGE_INTERNATIONAL ? 'locked' : 'in';
+                r.detail = age < MIN_AGE_INTERNATIONAL
+                    ? `Club qualified - you are ${age}, minimum ${MIN_AGE_INTERNATIONAL}`
+                    : 'Qualified.';
+            } else if (week > (phaseOf('worlds') || {}).to) {
+                r.status = 'missed'; r.detail = 'Over for this year.';
+            }
+        }
+        events.push(r);
+    }
+
+    return events;
+}
+
+/**
+ * The one-line "you are at a tournament right now" banner, or null. Reads the
+ * live bracket rather than the calendar, so a player whose club did not qualify
+ * is not told they are at Worlds.
+ */
+export function tournamentNow(c) {
+    const season = (c && c.season) || {};
+    const b = season.bracket;
+    const clubId = (c && c.player && c.player.clubId) || null;
+    if (!b || !clubId) return null;
+    const week = Math.round(num(c && c.time && c.time.week, 1));
+    if (b.kind !== phaseForWeek(week).id) return null;
+
+    const rounds = Array.isArray(b.rounds) ? b.rounds : [];
+    const current = rounds[rounds.length - 1] || null;
+    let tie = null;
+    for (const r of rounds) {
+        for (const t of r.ties || []) {
+            if ((t.a && t.a.id === clubId) || (t.b && t.b.id === clubId)) tie = { t, r };
+        }
+    }
+    const onBye = !tie && (b.byes || []).some(x => x && x.id === clubId);
+    if (!tie && !onBye) return null;
+
+    const ph = PHASES.find(p => p.id === b.kind) || null;
+    const opp = tie
+        ? (tie.t.a && tie.t.a.id === clubId ? tie.t.b : tie.t.a)
+        : null;
+    return {
+        kind: b.kind,
+        title: b.title || (ph ? ph.name : 'Tournament'),
+        accent: ph ? ph.accent : '#eab308',
+        round: (tie ? tie.r.name : (current ? current.name : '')) || '',
+        // Which game of the tournament this is, so "Semifinals" has a scale.
+        roundIndex: tie ? rounds.indexOf(tie.r) + 1 : rounds.length,
+        totalRounds: Math.max(rounds.length, Math.round(num(b.totalRounds, rounds.length))),
+        opponent: opp ? opp.name : (onBye ? 'Bye' : 'TBD'),
+        opponentAccent: opp ? opp.accent : '#475569',
+        bestOf: Math.max(1, Math.round(num(b.bestOf, 5))),
+        done: !!b.done,
+        placement: b.done ? (Math.round(num(b.myPlacement, 0)) || null) : null,
+        week,
+        lastWeek: ph ? ph.to : week,
+    };
 }
 
 /**

@@ -21,7 +21,8 @@
 import {
     WEEKS_PER_YEAR, PHASES, phaseForWeek, ACTIVITY_BY_ID, CLUB_TRAINING_SLOTS,
     PATH_BY_ID, REGION_IDS, MMR_MAX, RETIREMENT_AGE_FORCED, ATTR_KEYS,
-    teamById, DEFAULT_START_YEAR, ROLE_BY_ID, ATTR_BY_KEY,
+    teamById, DEFAULT_START_YEAR, ROLE_BY_ID, ATTR_BY_KEY, regularBestOf,
+    MIN_AGE_INTERNATIONAL, soloTargetFor,
 } from './constants.js';
 import {
     clamp, randInt, calcOVR, calcPotentialOVR, statusInfo, decayFor, rankFromMMR,
@@ -42,7 +43,7 @@ import {
 } from './economy.js';
 import {
     pruneExpiredOffers, generateOffers, clubReview, promotionCheck,
-    releaseFromClub,
+    releaseFromClub, recordReview, enforceContract,
 } from './contracts.js';
 import {
     endOfSplitAwards, grantAwards, checkMilestones, grantMilestones, retire,
@@ -51,7 +52,7 @@ import { rollWeeklyEvent, rollInterview } from './events.js';
 import { buildMatch, quickSim, applyMatchResult } from './match.js';
 import {
     career, matchState, careerOverlay, pushOverlay, absWeek, saveCareer, addNews,
-    grantGold, grantFollowers, adjustCondition, applyAttrGain, spendAction,
+    grantGold, spendGold, grantFollowers, adjustCondition, applyAttrGain, spendAction,
     logWeek, raisePotential, addTrait,
 } from '../stores/career.js';
 
@@ -301,6 +302,7 @@ export function startCareerWeek() {
             actionsLeft: actions,
             actionsMax: actions,
             trained: {},
+            did: {},
             clubSlotsLeft: clubSlots,
             log: [],
             stamp,
@@ -323,6 +325,31 @@ export function startCareerWeek() {
     const drift = clamp(Math.round((target - num(c.player.form, 50)) * FORM_PULL), -FORM_MAX_DRIFT, FORM_MAX_DRIFT);
     if (drift !== 0) adjustCondition('form', drift);
 
+    // ---- what the seat does to you -----------------------------------------
+    // Sitting on a bench is its own slow pressure, and a franchise player's seat
+    // is its own slow reassurance. A PULL toward the seat's target, capped per
+    // week, so it converges instead of accumulating — see SQUAD_STATUS.
+    //
+    // ORDER IS LOAD-BEARING: form drift, then this pull, then the floors money
+    // buys. The floor has to be applied LAST or a purchased moraleFloor stops
+    // protecting the thing it promises to protect.
+    // Applies to the UNSIGNED too. Left to the club-only branch, a free agent
+    // grinding solo queue with nobody calling drifted to 90+ and stayed there,
+    // which made the whole meter a constant. UNSIGNED_MORALE_TARGET is the
+    // "nobody has called yet" baseline.
+    // SUPPRESSED while burnout has you benched. The bench target is 34, below
+    // the burnout clear line, so leaving the pull running would hold a recovering
+    // player under the threshold for ever and re-bite him the moment the bench
+    // lifted. tickBurnout() grants its own relief in those weeks instead.
+    if (!burnoutBenched(c)) {
+        const seat = c.player.clubId ? statusInfo(c.player.status) : null;
+        const target = seat ? num(seat.moraleTarget, 55) : UNSIGNED_MORALE_TARGET;
+        const pullCap = seat ? Math.max(0, num(seat.moralePull, 3)) : UNSIGNED_MORALE_PULL;
+        const gap = target - num(c.player.morale, 50);
+        const step = clamp(Math.round(gap * MORALE_PULL_RATE), -pullCap, pullCap);
+        if (step !== 0) adjustCondition('morale', step);
+    }
+
     const moraleFloor = Math.max(num(life.moraleFloor, 0), num(perks.moraleFloor, 0));
     const formFloor = num(perks.formFloor, 0);
     career.update(x => ({
@@ -333,6 +360,12 @@ export function startCareerWeek() {
             form: Math.max(x.player.form, formFloor),
         },
     }));
+
+    // ---- burnout -----------------------------------------------------------
+    // LAST, and after the floors on purpose: a purchased moraleFloor has to be
+    // able to prevent this outright, which is what makes the psych retainer a
+    // real thing to have bought rather than a number on a shop card.
+    safe(() => tickBurnout(), null);
 
     // ---- money -------------------------------------------------------------
     const income = weeklyIncome(snap());
@@ -434,6 +467,261 @@ function physioActive(c) {
     return num(c.flags && c.flags.physioUntil, 0) > absWeek(c);
 }
 
+/** A recovery week buys longer cover than a gym session. */
+const RECOVERY_PHYSIO_WEEKS = 6;
+
+// How hard the seat pulls morale each week. Fifteen things in this mode push
+// morale UP (a match win alone is +12) and almost nothing pushed it down, so
+// before this the meter measured at a mean of 93 out of 100 and was a lever in
+// name only. The pull has to be strong enough to matter against that, and being
+// a PULL rather than a subtraction is what stops it becoming a spiral.
+const MORALE_PULL_RATE = 0.5;
+const UNSIGNED_MORALE_TARGET = 52;
+const UNSIGNED_MORALE_PULL = 4;
+
+// ---------------------------------------------------------------------------
+//  BURNOUT
+//  Low morale left unmanaged, and the only thing in the mode that takes a seat
+//  away without the club having decided anything about your ability.
+//
+//  THE THRESHOLD IS SET WHERE THE SEAT PULL ACTUALLY REACHES. Morale measures at
+//  a mean of 93 across a simulated run, so a threshold pulled out of the air is
+//  dead code. The SQUAD_STATUS targets are what make this reachable: a BENCHED
+//  player converges on 34 and a SUB on 44, so 40 is the line that means "being
+//  benched for a long time burns you out, being a rotation player does not".
+//  That is the mechanic, stated as a number.
+//
+//  CLEAR is 10 above BITE deliberately — an 8-to-10 point hysteresis band stops
+//  a player oscillating on the line from flickering in and out of a crisis.
+const BURNOUT_MORALE = 40;
+const BURNOUT_CLEAR = 50;
+const BURNOUT_WARN_1 = 2;      // weeks -> first warning
+const BURNOUT_WARN_2 = 4;      // weeks -> second warning, and the training penalty starts
+const BURNOUT_BITE = 6;        // weeks -> it takes something
+const BURNOUT_BENCH_WEEKS = 3;
+/** Morale back per benched week. Has to clear the bench's own gravity — the
+ *  benched seat target is 34 and the no-show penalty is up to -6 — or the
+ *  "rest and come back" weeks would leave the player worse than they started. */
+const BURNOUT_BENCH_RELIEF = 7;
+/** What a burnt-out player's training is worth. Shown as a row in the training
+ *  breakdown, never subtracted invisibly. */
+export const BURNOUT_TRAINING_MULT = 0.85;
+
+/** Activities that cannot themselves hurt you. Everything else rolls for it. */
+const NO_INJURY_ACTIVITIES = new Set(['rest', 'gym', 'recover', 'therapy', 'friends']);
+
+/**
+ * THE ONE GATE. Every rule about whether an activity can be done this week
+ * lives here, and both callers use it: doActivity() enforces it and the Hub
+ * renders the reason.
+ *
+ * They used to be two lists — three rules written out inline in engine.js and
+ * the same three again in Hub.svelte. Adding gold, an age, a once-a-week limit
+ * and a conditional to only one of them is how you ship a button that renders
+ * enabled and then fails on click, or worse, one that renders disabled for a
+ * perfectly legal action.
+ */
+export function activityGate(c, act) {
+    const deny = (reason) => ({ ok: false, reason });
+    if (!c || !c.created) return deny('No career in progress.');
+    if (c.flags && c.flags.retired) return deny('You are retired. Enjoy it.');
+    if (!act) return deny('That is not something you can do this week.');
+
+    if (num(c.weekly && c.weekly.actionsLeft, 0) < 1) return deny('No activity slots left this week.');
+    if (act.needsClub && !c.player.clubId) return deny(`${act.name} needs a club. Get signed first.`);
+
+    const minAge = num(act.minAge, 0);
+    const age = Number(c.player.age);
+    if (minAge && Number.isFinite(age) && age < minAge) {
+        return deny(`Not until you are ${minAge}.`);
+    }
+
+    if (act.once && activityDone(c, act.id)) return deny(`${act.name} is once a week, and you have had it.`);
+
+    if (typeof act.when === 'function' && !safe(() => act.when(c), true)) {
+        return deny(act.whenReason || 'Not something you need right now.');
+    }
+
+    const gold = num(act.gold, 0);
+    if (gold > 0 && num(c.money && c.money.gold, 0) < gold) {
+        return deny(`${act.name} costs ${fmtGold(gold)}.`);
+    }
+
+    const cost = num(act.energy, 0);
+    if (cost > 0 && num(c.player.energy, 0) < cost) {
+        return deny(`Not enough energy -- ${act.name} costs ${cost}.`);
+    }
+
+    return { ok: true, reason: '' };
+}
+
+/** Has this once-a-week activity already been used this week? */
+function activityDone(c, id) {
+    const did = c && c.weekly && c.weekly.did;
+    return !!(did && typeof did === 'object' && did[id]);
+}
+
+function markActivityDone(id) {
+    career.update(x => ({
+        ...x,
+        weekly: {
+            ...x.weekly,
+            did: { ...(x.weekly && typeof x.weekly.did === 'object' && x.weekly.did ? x.weekly.did : {}), [id]: true },
+        },
+    }));
+}
+
+/** The burnout block, type-checked. Every reader goes through here so a rotted
+ *  save can never reach a comparison against a string. */
+export function burnoutOf(c) {
+    const b = c && c.flags && typeof c.flags.burnout === 'object' && !Array.isArray(c.flags.burnout)
+        ? c.flags.burnout : null;
+    const n = (v) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x > 0 ? x : 0; };
+    return b
+        ? { weeks: n(b.weeks), strikes: n(b.strikes), benchedUntil: n(b.benchedUntil), peak: n(b.peak) }
+        : { weeks: 0, strikes: 0, benchedUntil: 0, peak: 0 };
+}
+
+/** True while the club has taken the player out of the firing line. */
+export function burnoutBenched(c) {
+    return burnoutOf(c).benchedUntil > absWeek(c);
+}
+
+/** Is the training penalty live? Read by training.js for the visible row. */
+export function burnoutBiting(c) {
+    return burnoutOf(c).weeks >= BURNOUT_WARN_2;
+}
+
+/**
+ * One week of the burnout clock. Runs at the END of startCareerWeek, AFTER the
+ * morale floors, so a purchased moraleFloor genuinely prevents it — the psych
+ * retainer at 42 makes burnout structurally impossible, which is a legible thing
+ * to have bought.
+ *
+ * THE TELEGRAPH IS THE FEATURE. Two warnings and a visible training penalty
+ * before anything is taken, and every escape reachable from the Hub in the week
+ * the first warning fires: the Psychologist activity, the psych_session
+ * consumable, the forced quit_thought event, a Rest Day, or simply playing well.
+ */
+function tickBurnout() {
+    const c = snap();
+    if (!c || !c.created || (c.flags && c.flags.retired)) return;
+
+    const b = burnoutOf(c);
+    const morale = num(c.player.morale, 50);
+    const write = (patch) => career.update(x => ({
+        ...x, flags: { ...x.flags, burnout: { ...burnoutOf(x), ...patch } },
+    }));
+
+    // Relief while benched. The bench target is 34, which is UNDER the clear
+    // line, so without this the benched player never recovers and re-bites for
+    // ever — the trap this mechanic must not become.
+    if (burnoutBenched(c)) {
+        adjustCondition('morale', BURNOUT_BENCH_RELIEF);
+        write({ weeks: 0 });
+        return;
+    }
+
+    // THE WEEK THE BENCH LIFTS. Coming back off it still under the threshold
+    // would restart the counter immediately and walk the player straight into
+    // the second bite — the spiral this mechanic must not be. Three weeks out of
+    // the rotation is supposed to have worked, so it does: morale comes back
+    // above the clear line, once, and the bench is closed out.
+    if (b.benchedUntil > 0) {
+        write({ benchedUntil: 0, weeks: 0 });
+        if (morale < BURNOUT_CLEAR) adjustCondition('morale', BURNOUT_CLEAR - morale);
+        addNews('Back in the rotation, and it feels survivable again.', 'system');
+        return;
+    }
+
+    if (morale >= BURNOUT_CLEAR) {
+        if (b.weeks > 0) {
+            write({ weeks: 0 });
+            if (b.weeks >= BURNOUT_WARN_1) addNews('Feeling like yourself again. Whatever that was, it has passed.', 'system');
+        }
+        return;
+    }
+    if (morale >= BURNOUT_MORALE) return;   // in the hysteresis band: hold, do not count
+
+    const weeks = b.weeks + 1;
+    write({ weeks, peak: Math.max(b.peak, weeks) });
+
+    if (weeks === BURNOUT_WARN_1) {
+        addNews('You are not enjoying this. Two weeks of it now, and it is starting to show in the room.', 'drama');
+        logWeek('Struggling', 'Morale has been low for two weeks', '#ef4444');
+        return;
+    }
+    if (weeks === BURNOUT_WARN_2) {
+        addNews('Four weeks. Practice is not going in, and everyone can see it. Do something about this.', 'drama');
+        logWeek('Burning out', `Training is worth ${Math.round(BURNOUT_TRAINING_MULT * 100)}% while this lasts`, '#ef4444');
+        // Force the crisis event. Its three branches are already written and two
+        // of them are real escapes; behind the ordinary 0.32 weekly roll a player
+        // in trouble might simply never see it.
+        safe(() => rollWeeklyEvent(snap(), { forceId: 'quit_thought' }), null);
+        return;
+    }
+    if (weeks < BURNOUT_BITE) return;
+
+    // Benching a player from a competition that is not running is punishment
+    // with no mechanical content. The counter keeps running; the bite waits.
+    if (phaseForWeek(num(c.time.week, 1)).id === 'offseason') return;
+
+    bite(c, b);
+}
+
+function bite(c, b) {
+    const write = (patch) => career.update(x => ({
+        ...x, flags: { ...x.flags, burnout: { ...burnoutOf(x), ...patch } },
+    }));
+
+    // An unsigned player has no seat to lose and no contract to tear up. Ending
+    // a fourteen-year-old's career because a meter ran low is exactly the
+    // "career that ends without warning" this must never be.
+    if (!c.player.clubId) {
+        addNews('You have not wanted to queue in weeks. Nobody is going to make you, which is its own problem.', 'drama');
+        write({ weeks: BURNOUT_WARN_2 });   // hold at the penalty, never escalate
+        return;
+    }
+
+    const team = teamById(c.player.clubId);
+    const name = team ? team.name : 'The club';
+
+    if (b.strikes < 1) {
+        career.update(x => ({ ...x, player: { ...x.player, status: 'benched' } }));
+        write({ weeks: 0, strikes: 1, benchedUntil: absWeek(c) + BURNOUT_BENCH_WEEKS });
+        addNews(
+            `${name} have taken you out of the rotation for ${BURNOUT_BENCH_WEEKS} weeks to get your head right. `
+            + 'The seat is still yours if you come back from this.',
+            'drama',
+        );
+        logWeek('Benched', 'Burnout — out of the rotation', '#ef4444');
+        return;
+    }
+
+    // Second bite: the club stops waiting. Routed through the same termination
+    // path item 18 built, so there is one way a contract ends for cause.
+    write({ weeks: 0, strikes: 2 });
+    safe(() => releaseFromClub('burnout'), null);
+    career.update(x => ({
+        ...x, flags: { ...x.flags, terminations: num(x.flags && x.flags.terminations, 0) + 1 },
+    }));
+    // THERE IS NO THIRD ESCALATION. No forced retirement, ever.
+}
+
+/** Take weeks off the burnout counter. */
+function relieveBurnout(weeks) {
+    const n = Math.max(0, Math.round(Number(weeks) || 0));
+    if (!n) return;
+    career.update(x => {
+        const b = x.flags && typeof x.flags.burnout === 'object' && x.flags.burnout ? x.flags.burnout : null;
+        if (!b) return x;
+        return {
+            ...x,
+            flags: { ...x.flags, burnout: { ...b, weeks: Math.max(0, (Number(b.weeks) || 0) - n) } },
+        };
+    });
+}
+
 /**
  * The shared health check. Called after any activity that puts hours on the
  * wrists, and available to anything else that needs the same numbers.
@@ -470,9 +758,14 @@ function doSoloQueue(c) {
     const games = randInt(4, 6);
     const ovr = calcOVR(c.player.attrs, c.player.role);
     const mmr = clamp(num(c.soloq.mmr, 300), 0, MMR_MAX);
-    // The ladder the player's rating actually belongs on. 72 OVR lands near
-    // Diamond I, 85 near Grandmaster, 95 in Challenger.
-    const targetMMR = clamp((ovr - 35) * 62, 300, MMR_MAX);
+    // The ladder this rating actually belongs on — see soloTargetFor(). A fresh
+    // prospect settles at Gold IV rather than Iron I; 74 OVR is Diamond IV, 85
+    // near Grandmaster, 95 in Challenger, all unchanged.
+    //
+    // Deliberately NOT clamped on the WRITE below: an existing Iron save has to
+    // CLIMB out through the ordinary promotion line, not be yanked to Gold the
+    // first time it queues.
+    const targetMMR = soloTargetFor(ovr);
     const p = clamp(1 / (1 + Math.pow(10, (mmr - targetMMR) / 320)), 0.14, 0.86);
 
     let wins = 0;
@@ -599,45 +892,143 @@ function doRest(c) {
     return ok(`Did nothing on purpose. ${detail}.`, detail);
 }
 
+// ---------------------------------------------------------------------------
+//  CONDITION ACTIVITIES
+//  The morale and health half of the week. Deliberately NOT scaled by the
+//  lifestyle training bonus the way restRecovery() is: a rich veteran already
+//  buys a morale FLOOR, and scaling these too would make managing the meter
+//  free for exactly the players who least need it, which is how the whole
+//  condition layer went inert in the first place.
+// ---------------------------------------------------------------------------
+
+function doFriends(c) {
+    const morale = randInt(9, 14);
+    adjustCondition('morale', morale);
+    adjustCondition('health', 2);
+    adjustCondition('form', -2);
+    const detail = `+${morale} morale, +20 energy, -2 form`;
+    logWeek('Day Off With Friends', detail, '#f472b6');
+    return ok(`A day with people who do not care what your KDA was. ${detail}.`, detail);
+}
+
+function doTherapy(c) {
+    adjustCondition('morale', 16);
+    adjustCondition('form', 3);
+    // The burnout escape hatch. Two weeks off the counter is what makes a bad
+    // run recoverable by a decision rather than by waiting.
+    relieveBurnout(2);
+    const detail = '+16 morale, +3 form, burnout eased';
+    logWeek('Sports Psychologist', detail, '#a78bfa');
+    return ok(`An hour on the parts of this that are not mechanics. ${detail}.`, detail);
+}
+
+function doRecover(c) {
+    const health = randInt(18, 24);
+    adjustCondition('health', health);
+    adjustCondition('morale', 4);
+    adjustCondition('form', -6);
+    career.update(x => ({
+        ...x,
+        flags: { ...x.flags, physioUntil: absWeek(x) + RECOVERY_PHYSIO_WEEKS },
+    }));
+    const detail = `+${health} health, +35 energy, -6 form, injury risk halved for ${RECOVERY_PHYSIO_WEEKS} weeks`;
+    logWeek('Recovery Week', detail, '#2dd4bf');
+    return ok(`No scrims, no ranked, a lot of sleep. ${detail}.`, detail);
+}
+
+function doFans(c) {
+    const reach = Math.sqrt(Math.max(0, num(c.player.hype, 0)));
+    const followers = Math.round((900 + reach * 2) * followerMultiplier(c));
+    grantFollowers(followers);
+    adjustCondition('morale', 5);
+    // Standing in the room, for a player who has one. chemistry is not one of
+    // adjustCondition's four meters, so it is written directly.
+    if (c.player.clubId) {
+        career.update(x => ({
+            ...x,
+            player: { ...x.player, chemistry: clamp(num(x.player.chemistry, 50) + 1, 0, 100) },
+        }));
+    }
+    const detail = `+${fmtFollowers(followers)} followers, +5 morale`;
+    logWeek('Fan Event', detail, '#fb923c');
+    return ok(`A signing queue and a room that likes you. ${detail}.`, detail);
+}
+
+function doSponsorDay(c) {
+    const reach = Math.sqrt(Math.max(0, num(c.player.hype, 0)));
+    const gold = Math.round((250 + reach * 6) * followerMultiplier(c));
+    grantGold(gold);
+    adjustCondition('morale', -3);
+    adjustCondition('form', -1);
+    const detail = `+${fmtGold(gold)} gold, -3 morale`;
+    logWeek('Sponsor Day', detail, '#eab308');
+    return ok(`A shoot, a stack of cards, and a cheque. ${detail}.`, detail);
+}
+
+function doCoach1on1(c) {
+    adjustCondition('morale', 6);
+    // Chemistry is the real payload: clubReview() already reads it at 0.12 a
+    // point and benchOrStart() at 0.08, so this is a seat-security lever with
+    // no new readers at all.
+    career.update(x => ({
+        ...x,
+        player: { ...x.player, chemistry: clamp(num(x.player.chemistry, 50) + 6, 0, 100) },
+    }));
+    const gained = applyGainTable(c, { knw: 0.12, ldr: 0.10, cmp: 0.08 }, 1);
+    const detail = `+6 chemistry, +6 morale${gained.length ? `, ${gained.slice(0, 2).join(', ')}` : ''}`;
+    logWeek('One-on-One With The Coach', detail, '#60a5fa');
+    return ok(`Your VODs, their notes, an hour of being told the truth. ${detail}.`, detail);
+}
+
 /**
  * Spend one activity slot. `train` is deliberately not handled here -- a drill
  * runs through a minigame and training.completeDrill() owns that whole flow.
  */
 export function doActivity(activityId, payload) {
     const before = snap();
-    if (!before || !before.created) return no('No career in progress.');
-    if (before.flags && before.flags.retired) return no('You are retired. Enjoy it.');
-
     const act = ACTIVITY_BY_ID[activityId];
     if (!act) return no('That is not something you can do this week.');
     if (activityId === 'train') return no('Training drills are run from the Training screen.');
-    if (num(before.weekly.actionsLeft, 0) < 1) return no('No activity slots left this week.');
-    if (act.needsClub && !before.player.clubId) return no(`${act.name} needs a club. Get signed first.`);
+
+    const gate = activityGate(before, act);
+    if (!gate.ok) return no(gate.reason);
 
     const cost = num(act.energy, 0);
-    if (cost > 0 && num(before.player.energy, 0) < cost) {
-        return no(`Not enough energy -- ${act.name} costs ${cost}.`);
-    }
+    const gold = num(act.gold, 0);
 
     if (!spendAction(1)) return no('No activity slots left this week.');
+    // Slot, then gold, then energy — and BAIL if the gold fails. Reversed, a
+    // purchase the player cannot afford still eats the slot. Same order and the
+    // same bail as completeDrill().
+    if (gold > 0 && !spendGold(gold)) return no(`${act.name} costs ${fmtGold(gold)} and you do not have it.`);
     if (cost > 0) adjustCondition('energy', -cost);
+    if (act.once) markActivityDone(activityId);
 
     const c = snap();
     let res;
     switch (activityId) {
-        case 'soloq':  res = doSoloQueue(c); break;
-        case 'scrim':  res = doScrim(c); break;
-        case 'vod':    res = doVod(c); break;
-        case 'stream': res = doStream(c); break;
-        case 'media':  res = doMedia(c); break;
-        case 'gym':    res = doGym(c); break;
-        case 'rest':   res = doRest(c); break;
-        default:       res = ok(`${act.name} done.`, '');
+        case 'soloq':     res = doSoloQueue(c); break;
+        case 'scrim':     res = doScrim(c); break;
+        case 'vod':       res = doVod(c); break;
+        case 'stream':    res = doStream(c); break;
+        case 'media':     res = doMedia(c); break;
+        case 'gym':       res = doGym(c); break;
+        case 'rest':      res = doRest(c); break;
+        case 'friends':   res = doFriends(c); break;
+        case 'therapy':   res = doTherapy(c); break;
+        case 'recover':   res = doRecover(c); break;
+        case 'fans':      res = doFans(c); break;
+        case 'sponsorday': res = doSponsorDay(c); break;
+        case 'coach1on1': res = doCoach1on1(c); break;
+        // An activity with no case here would silently do NOTHING while
+        // charging a slot, the gold and the energy. careerSmoke asserts every
+        // id has a case for exactly that reason.
+        default:          res = ok(`${act.name} done.`, '');
     }
 
-    // Hours on the hands carry a risk; the two activities that exist to repair
-    // the player obviously do not.
-    if (activityId !== 'rest' && activityId !== 'gym') {
+    // Hours on the hands carry a risk; the activities that exist to repair the
+    // player obviously do not.
+    if (!NO_INJURY_ACTIVITIES.has(activityId)) {
         const hurt = injuryRoll(snap());
         if (hurt.injured) res = ok(`${res.msg} You felt something go in your wrist afterwards.`, res.detail);
     }
@@ -655,8 +1046,22 @@ export function doActivity(activityId, payload) {
  *  the same result object. */
 const _committed = new Set();
 
-function bestOfFor(fixture) {
-    return Math.max(1, Math.round(num(fixture && fixture.bestOf, 1)));
+/**
+ * A fixture's format. The row carries it, but a save written before the regular
+ * season had a format does not — and rebuilding the schedule to add the field
+ * would throw away a half-played split for a purely cosmetic difference. So a
+ * league row with no `bestOf` resolves its region's format instead. Brackets
+ * always write theirs explicitly, so they fall through to 1 only if malformed.
+ */
+function bestOfFor(fixture, c) {
+    const raw = Math.round(num(fixture && fixture.bestOf, 0));
+    if (raw >= 1) return Math.max(1, raw);
+    if (!fixture || fixture.kind === 'bracket') return 1;
+    const st = c || snap();
+    const club = st && st.player && st.player.clubId ? teamById(st.player.clubId) : null;
+    const region = (club && club.region) || (st && st.player && st.player.region) || null;
+    const tier = club ? club.tier : num(st && st.player && st.player.clubTier, 3);
+    return regularBestOf(region, tier);
 }
 
 /** Build the live match for a fixture and hand it to the match screen. */
@@ -671,7 +1076,7 @@ export function startFixture(fixtureId) {
         id: f.id,
         opponentId: f.opponentId,
         phase: f.phase || phaseForWeek(f.week).id,
-        bestOf: bestOfFor(f),
+        bestOf: bestOfFor(f, c),
         label: f.label || phaseName(f.phase || phaseForWeek(f.week).id),
     });
     if (!m) return null;
@@ -695,7 +1100,7 @@ export function simFixture(fixtureId) {
         id: f.id,
         opponentId: f.opponentId,
         phase: f.phase || phaseForWeek(f.week).id,
-        bestOf: bestOfFor(f),
+        bestOf: bestOfFor(f, c),
         label: f.label || phaseName(f.phase || phaseForWeek(f.week).id),
     });
     if (!result) return null;
@@ -725,15 +1130,38 @@ export function completeMatch(result) {
         const rows = scheduleOf(c);
         const i = rows.findIndex(f => f && f.id === result.id);
         if (i < 0 || rows[i].played) return c;
+        const row = rows[i];
         const next = rows.slice();
         next[i] = {
-            ...next[i],
+            ...row,
             played: true,
             won: !!result.won,
             score: Array.isArray(result.score) ? result.score.slice() : null,
             myRating: result.played === false ? null : num(result.rating, 0),
         };
-        return { ...c, season: { ...c.season, schedule: next } };
+
+        // THE MIRROR. Whoever the player just played has to have that game on
+        // their own record, or every opponent silently loses the two games a
+        // season they play against the player and the table is fiction. The
+        // `rows[i].played` guard above is the idempotency proof — do not add a
+        // second one.
+        //
+        // LEAGUE ROWS ONLY. applyMatchResult is also reached for bracket ties
+        // and for results with no schedule row at all; standings must move for
+        // division games and nothing else.
+        let standings = c.season.standings;
+        if (row.kind !== 'bracket' && row.opponentId) {
+            const prev = (standings && standings[row.opponentId]) || { w: 0, l: 0 };
+            standings = {
+                ...standings,
+                [row.opponentId]: {
+                    w: num(prev.w, 0) + (result.won ? 0 : 1),
+                    l: num(prev.l, 0) + (result.won ? 1 : 0),
+                },
+            };
+        }
+
+        return { ...c, season: { ...c.season, schedule: next, standings } };
     });
 
     matchState.set(null);
@@ -761,13 +1189,37 @@ export function completeMatch(result) {
  * current schedule was drawn for, so this only rebuilds when one of those
  * three actually changed.
  */
+/** Do the stored league rows look like the ones this division would generate?
+ *  Compared on WEEK+OPPONENT rather than on ids, because a played row keeps its
+ *  id but a rebuilt list must not throw away results the player already earned
+ *  in a matching fixture. */
+function scheduleMatchesDivision(c) {
+    const stored = scheduleOf(c).filter(f => f && f.kind !== 'bracket');
+    if (!stored.length) return true;
+    const wanted = safe(() => generateSchedule(c), []) || [];
+    if (wanted.length !== stored.length) return false;
+    const key = (f) => `${f.week}:${f.opponentId}`;
+    const want = new Set(wanted.map(key));
+    return stored.every(f => want.has(key(f)));
+}
+
 export function ensureSeason() {
     const c = snap();
     if (!c || !c.created) return null;
 
     const split = splitForWeek(num(c.time.week, 1));
     const stamp = `${c.time.year}:${split}:${c.player.clubId || 'free'}`;
-    if (c.season.stamp === stamp && scheduleOf(c).length) return c.season;
+
+    // MIXED-SCHEME GUARD. divisionRounds() is a pure function of (division,
+    // year, split) and does not read season.schedule, so a save written by the
+    // old player-centric generator would have its stored fixtures play against a
+    // round list that never contained them — the player could be handed a league
+    // game in a week the division gives them a bye. If the stored rows do not
+    // match the fixture list this division would produce now, rebuild once.
+    const stale = c.season.stamp === stamp
+        && scheduleOf(c).length
+        && !scheduleMatchesDivision(c);
+    if (c.season.stamp === stamp && scheduleOf(c).length && !stale) return c.season;
 
     // A bracket belonging to the phase the calendar is in right now was opened
     // for this moment, not for the split being drawn. MSI is the case that
@@ -985,7 +1437,18 @@ function runRosterChurn() {
     //    would be priced against the dead card's rating rather than the
     //    incumbent who now actually holds the seat.
     const live = safe(() => clubRosterFor({ ...c, club: { ...block, teamId: clubId, roster } }), {}) || {};
+
+    //    Reading post-expiry is necessary but NOT sufficient. clubRosterFor()
+    //    REFILLS a seat whose override step 1 just deleted, from the derived
+    //    roster -- so the expired seat comes back looking like an ordinary
+    //    incumbent and is a perfectly good candidate for step 3 to churn again.
+    //    That produces the two-entries-for-one-seat-in-one-offseason the comment
+    //    above says it prevents. A seat that has already moved this year is out.
+    const movedThisYear = new Set(
+        changes.filter(ch => ch && ch.year === year).map(ch => ch.role)
+    );
     const ranked = seats
+        .filter(role => !movedThisYear.has(role))
         .map(role => ({ role, card: live[role] || null }))
         .filter(x => x.card)
         .sort((a, b) => {
@@ -1099,6 +1562,40 @@ function roundLabel(count) {
     return 'Opening Round';
 }
 
+/**
+ * WHICH WEEK A ROUND IS PLAYED IN.
+ *
+ * Every bracket phase owns a multi-week window -- playoffs 14-16, MSI 17-19,
+ * Worlds 32-35 -- and the bracket used to ignore all of it. openBracket() ran on
+ * the phase-change tick and stepBracket() recursed through every round in that
+ * one call, so a player who went to the final played a quarter, a semi and a
+ * final, fifteen games of Bo5, inside week 14; weeks 15 and 16 then had nothing
+ * in them at all. A tournament that resolves in an afternoon does not read as a
+ * tournament.
+ *
+ * So rounds are spread across the window, the FINAL always landing on its last
+ * week. The count is known when the bracket opens (a field padded to a power of
+ * two plays exactly log2(size) rounds), which is what lets round 0 know where
+ * the end is.
+ */
+function roundWeekFor(bracket, index) {
+    const win = (bracket && bracket.window) || null;
+    const from = Math.round(num(win && win.from, 1));
+    const to = Math.max(from, Math.round(num(win && win.to, from)));
+    const n = Math.max(1, Math.round(num(bracket && bracket.totalRounds, 1)));
+    if (n <= 1) return to;
+    const i = Math.max(0, Math.min(n - 1, Math.round(num(index, 0))));
+    return from + Math.round((i * (to - from)) / (n - 1));
+}
+
+/** The week the round currently being played belongs to. */
+function currentRoundWeek(bracket) {
+    if (!bracket || !Array.isArray(bracket.rounds) || !bracket.rounds.length) return 0;
+    const i = bracket.rounds.length - 1;
+    const stored = Math.round(num(bracket.rounds[i].week, 0));
+    return stored > 0 ? stored : roundWeekFor(bracket, i);
+}
+
 function stampTieIds(bracket) {
     bracket.rounds.forEach((r, ri) => {
         r.ties.forEach((t, ti) => {
@@ -1111,8 +1608,32 @@ function stampTieIds(bracket) {
  *  go without the player. */
 function openBracket(kind, seedIds, title) {
     const c = snap();
-    const ids = (seedIds || []).filter(Boolean);
+    let ids = (seedIds || []).filter(Boolean);
     if (ids.length < 2) return null;
+
+    // THE FIELD HAS TO FIT ITS WINDOW. One round per week is the whole point of
+    // pinning rounds to weeks, and a field of 2^n needs n weeks.
+    //
+    // Every caller already sizes its own field -- runInternational caps Worlds at
+    // 16 for its four weeks and MSI at 8 for its three -- so this trims nothing
+    // today and is not fixing a live bug. It is here because those caps are hand
+    // -written numbers sitting in a different function from the window they have
+    // to agree with, and nothing else would notice them drifting apart: a field
+    // one team too big silently doubles up a round and the tournament quietly
+    // stops being spread at all. Deriving the bound from the window makes the
+    // agreement structural.
+    const winFor = PHASES.find(p => p.id === kind) || phaseForWeek(num(c.time.week, 1));
+    const weeks = Math.max(1, num(winFor.to, 1) - num(winFor.from, 1) + 1);
+    const maxField = Math.pow(2, weeks);
+    if (ids.length > maxField) {
+        const kept = ids.slice(0, maxField);
+        // A club that qualified plays, full stop. If the seeding cut ours, it
+        // takes the last slot rather than being told to stay home after the
+        // news post already said it was going.
+        const mine = c.player.clubId;
+        if (mine && ids.includes(mine) && !kept.includes(mine)) kept[kept.length - 1] = mine;
+        ids = kept;
+    }
 
     const seeded = ids.map((id, i) => seedTeam(c, id, i + 1));
     // Byes to the top seeds until the field is a power of two.
@@ -1122,11 +1643,17 @@ function openBracket(kind, seedIds, title) {
     const resting = seeded.slice(0, byes);
     const playing = seeded.slice(byes);
 
+    // The phase's own calendar window, and the exact number of rounds this
+    // field will play. Both are fixed for the life of the bracket and both are
+    // persisted, so a save reloaded mid-tournament resumes on the right week.
+    const win = PHASES.find(p => p.id === kind) || phaseForWeek(num(c.time.week, 1));
     const bracket = {
         kind,
         year: num(c.time.year, DEFAULT_START_YEAR),
         title: title || phaseName(kind),
         bestOf: PLAYOFF_BEST_OF,
+        window: { from: num(win.from, num(c.time.week, 1)), to: num(win.to, num(c.time.week, 1)) },
+        totalRounds: Math.max(1, Math.round(Math.log2(size))),
         rounds: [{ name: roundLabel(playing.length / 2), ties: pairSeeds(playing) }],
         byes: resting,
         champion: null,
@@ -1134,6 +1661,7 @@ function openBracket(kind, seedIds, title) {
         myPlacement: null,
         done: false,
     };
+    bracket.rounds[0].week = roundWeekFor(bracket, 0);
     stampTieIds(bracket);
 
     career.update(x => ({ ...x, season: { ...x.season, bracket } }));
@@ -1164,9 +1692,14 @@ function addBracketFixture(bracket, tie, c) {
     const clubId = c.player.clubId;
     const opp = tie.a && tie.a.id === clubId ? tie.b : tie.a;
     if (!opp) return;
+    // The ROUND's week, not the current one. They are the same whenever the gate
+    // in stepBracket let this round open, but a forced finish resolves rounds
+    // out of their window and a fixture stamped with the wrong week would sit in
+    // the calendar under a phase it was never played in.
+    const week = Math.max(1, currentRoundWeek(bracket) || num(c.time.week, 1));
     pushSchedule([{
         id: tie.id,
-        week: num(c.time.week, 1),
+        week,
         phase: bracket.kind,
         opponentId: opp.id,
         home: true,
@@ -1188,7 +1721,7 @@ function writeBracket(bracket) {
  * Drive the bracket forward. Returns as soon as it hits a tie the player is
  * in; everything else resolves immediately.
  */
-function stepBracket() {
+function stepBracket(force) {
     let guard = 0;
     // Two passes per round (resolve, then draw the next one) plus the final,
     // so a 16-team bracket with a bye round needs a dozen at the outside.
@@ -1200,6 +1733,14 @@ function stepBracket() {
         const b = JSON.parse(JSON.stringify(bracket));
         const round = b.rounds[b.rounds.length - 1];
         const clubId = c.player.clubId;
+
+        // THE WEEK GATE. A round that has not come around yet does not get
+        // played, which is the whole of item 10: without this the loop runs the
+        // entire tournament on the tick the phase opened. `force` is the escape
+        // hatch for the calendar leaving the window with the bracket unfinished
+        // -- an unresolved bracket blocks Worlds qualification and the awards, so
+        // it must never be able to hang.
+        if (!force && currentRoundWeek(b) > num(c.time.week, 1)) return bracket;
 
         const open = round.ties.filter(t => !t.winner);
         if (open.length) {
@@ -1229,11 +1770,37 @@ function stepBracket() {
             return snap().season.bracket;
         }
 
-        b.rounds.push({ name: roundLabel(field.length / 2), ties: pairSeeds(field) });
+        b.rounds.push({
+            name: roundLabel(field.length / 2),
+            ties: pairSeeds(field),
+            week: roundWeekFor(b, b.rounds.length),
+        });
         stampTieIds(b);
         writeBracket(b);
     }
     return snap().season.bracket;
+}
+
+/**
+ * Weekly bracket tick. stepBracket() now stops at a round whose week has not
+ * arrived, so something has to knock on the door once the calendar moves --
+ * otherwise a bracket the player is not in stalls after round one and never
+ * crowns a champion.
+ */
+function tickBracket() {
+    const c = snap();
+    const b = c && c.season && c.season.bracket;
+    if (!b || b.done) return;
+    if (b.kind !== phaseForWeek(num(c.time.week, 1)).id) return;
+    stepBracket();
+}
+
+/** Resolve whatever is left of a bracket the calendar has walked out of. */
+function forceFinishBracket() {
+    const c = snap();
+    const b = c && c.season && c.season.bracket;
+    if (!b || b.done) return;
+    stepBracket(true);
 }
 
 function finishBracket(b, winner, finalRound) {
@@ -1285,15 +1852,46 @@ function finishBracket(b, winner, finalRound) {
         addNews(`Runners-up at the ${b.title}. One series short.`, 'match');
     }
 
-    // Qualification. Only a main-league side travels.
+    // Qualification. Only a main-league side travels, and only a player old
+    // enough to travel with it.
+    //
+    // When the CLUB qualifies and the PLAYER does not, the club still goes —
+    // and the news line SAYS SO, naming the age and when he becomes eligible.
+    // A silent non-qualification reads as a bug and gets reported as one.
+    //
+    // Note a real and correct consequence: a sixteen-year-old who qualifies at
+    // spring playoffs (weeks 14-16) still misses MSI three weeks later, because
+    // age only moves at rollover in week 40.
     if (num(c.player.clubTier, 0) === 1 && placement) {
+        const age = num(c.player.age, 18);
+        const oldEnough = age >= MIN_AGE_INTERNATIONAL;
+        const missedLine = `Your club are going. You are not: ${MIN_AGE_INTERNATIONAL} is the minimum and you are ${age}.`;
+
         if (b.kind === 'spring_po' && placement <= 1) {
-            career.update(x => ({ ...x, season: { ...x.season, qualified: { ...(x.season.qualified || {}), msi: true } } }));
-            addNews('Qualified for the Mid-Season Invitational.', 'award');
+            if (oldEnough) {
+                career.update(x => ({ ...x, season: { ...x.season, qualified: { ...(x.season.qualified || {}), msi: true } } }));
+                addNews('Qualified for the Mid-Season Invitational.', 'award');
+            } else {
+                addNews(`Mid-Season Invitational. ${missedLine}`, 'drama');
+            }
         }
         if (b.kind === 'summer_po' && placement <= 2) {
-            career.update(x => ({ ...x, season: { ...x.season, qualified: { ...(x.season.qualified || {}), worlds: true } } }));
-            addNews('Qualified for the World Championship.', 'award');
+            if (oldEnough) {
+                career.update(x => ({ ...x, season: { ...x.season, qualified: { ...(x.season.qualified || {}), worlds: true } } }));
+                addNews('Qualified for the World Championship.', 'award');
+            } else {
+                addNews(`World Championship. ${missedLine}`, 'drama');
+            }
+        }
+        // The First Stand berth. Won by the CHAMPION only, and played in
+        // February of the FOLLOWING year, so it is stamped with that year and
+        // kept on flags -- rolloverYear() empties the season block on its way
+        // past. No age gate here: the check that matters is the player's age in
+        // the year they actually play it, which runInternational applies.
+        if (b.kind === 'summer_po' && placement === 1) {
+            const nextYear = num(c.time.year, DEFAULT_START_YEAR) + 1;
+            career.update(x => ({ ...x, flags: { ...x.flags, firstStandBerth: nextYear } }));
+            addNews(`Regional champions. That is a First Stand berth in ${nextYear}.`, 'award');
         }
     }
     saveCareer();
@@ -1355,11 +1953,27 @@ export function runInternational(kind) {
     const c = snap();
     if (!c || !c.created || (c.flags && c.flags.retired)) return null;
     const q = c.season.qualified || {};
-    if (kind !== 'msi' && kind !== 'worlds') return null;
-    if (!q[kind] || !c.player.clubId) return null;
+    if (kind !== 'msi' && kind !== 'worlds' && kind !== 'first_stand') return null;
+    if (!c.player.clubId) return null;
+    // First Stand is the one event whose berth is won in a DIFFERENT YEAR from
+    // the one it is played in -- you qualify by winning the summer, and you play
+    // it the following February. season.qualified cannot carry that: rolloverYear
+    // wipes the whole season block. So the berth lives on `flags`, which does
+    // not, and it names the year it is good for rather than being a bare boolean
+    // that would let one title qualify a club forever.
+    if (kind === 'first_stand') {
+        if (num(c.flags && c.flags.firstStandBerth, 0) !== num(c.time.year, 0)) return null;
+    } else if (!q[kind]) return null;
+    // Re-checked here as well as at qualification, and this line is the entire
+    // migration story: a save written by an older build can already be carrying
+    // season.qualified.worlds === true on a sixteen-year-old.
+    if (num(c.player.age, 18) < MIN_AGE_INTERNATIONAL) return null;
     if (c.season.bracket && c.season.bracket.kind === kind) return c.season.bracket;
 
-    const perRegion = kind === 'worlds' ? 3 : 2;   // 15-16 at Worlds, 10 at MSI
+    // First Stand fields ONE club per region -- the champions, and nobody else.
+    // That is what makes it feel different from MSI sitting three weeks later
+    // with the same names in it.
+    const perRegion = kind === 'worlds' ? 3 : kind === 'first_stand' ? 1 : 2;
     const year = num(c.time.year, DEFAULT_START_YEAR);
     const pool = [];
     for (const rid of REGION_IDS) {
@@ -1378,7 +1992,7 @@ export function runInternational(kind) {
     // simulated the whole tournament without them and returned a null placement.
     // The club is scored through strengthOfId on both paths so the pool is not
     // half player-aware and half not.
-    const cap = kind === 'worlds' ? 16 : 8;
+    const cap = kind === 'worlds' ? 16 : 8;   // must stay <= 2^(phase window weeks)
     const mineId = c.player.clubId;
     const seeds = pool
         .filter(r => r.id !== mineId)
@@ -1389,7 +2003,9 @@ export function runInternational(kind) {
         .map(r => r.id);
     if (seeds.length < 4) return null;
 
-    const title = kind === 'worlds' ? 'World Championship' : 'Mid-Season Invitational';
+    const title = kind === 'worlds' ? 'World Championship'
+        : kind === 'first_stand' ? 'First Stand'
+        : 'Mid-Season Invitational';
     addNews(`${title}: ${seeds.length} teams, one trophy, and you are in the draw.`, 'match');
     return openBracket(kind, seeds, title);
 }
@@ -1448,7 +2064,15 @@ function closeSplit(splitId) {
         if (review.statusChange) {
             career.update(x => ({ ...x, player: { ...x.player, status: review.statusChange } }));
         }
+        // Strike accounting, then enforcement, in that order and both AFTER the
+        // verdict has been shown. recordReview is engine-only on purpose —
+        // clubReview() is re-run by the Club screen on every reactive update,
+        // so counting inside it would fire the player for opening a tab.
+        safe(() => recordReview(snap(), splitId, review), null);
+        safe(() => enforceContract(snap()), null);
     }
+    // promotionCheck only after enforcement: a terminated player has no club to
+    // be promoted from, and the gate reads clubId.
     safe(() => promotionCheck(snap()), null);
     saveCareer();
 }
@@ -1750,7 +2374,10 @@ export function benchOrStart(c) {
     if (plays) return { plays: true, reason: '' };
 
     let reason;
-    if (health < 55) reason = 'You are not fit enough to be put on stage this week.';
+    // Burnout first, or the player is told exactly why he is out and then told
+    // on the next line that nobody has told him why.
+    if (burnoutBenched(s)) reason = 'The club have taken you out of the rotation while you get your head right.';
+    else if (health < 55) reason = 'You are not fit enough to be put on stage this week.';
     else if (p.status === 'benched') reason = 'You are benched. Nobody has told you why and nobody has to.';
     else reason = `The coach has you down as ${info.name.toLowerCase()} for this one.`;
     return { plays: false, reason };
@@ -1773,7 +2400,11 @@ function simSkippedFixtures() {
             if (simFixture(f.id)) skipped++;
         }
     }
-    if (skipped > 0) {
+    // Not while the club has benched you for burnout. That penalty is for
+    // letting the staff run a game you could have played; being taken out of the
+    // rotation is the club's decision, and charging morale for it would fight
+    // the relief that makes the bench recoverable instead of a spiral.
+    if (skipped > 0 && !burnoutBenched(snap())) {
         const hit = -Math.min(NOSHOW_MORALE_CAP, NOSHOW_MORALE * skipped);
         adjustCondition('morale', hit);
         addNews(skipped === 1
@@ -1787,6 +2418,22 @@ function simSkippedFixtures() {
 function handlePhaseChange(fromId, toId) {
     if (fromId === toId) return;
 
+    // Leaving a bracket phase with the bracket still running. Rounds are pinned
+    // to weeks now, so a field too big for its window (or a save carrying a
+    // bracket from an older build with no window at all) could otherwise sit
+    // unfinished forever -- and an unfinished summer bracket never awards the
+    // championship points that decide who goes to Worlds.
+    const leftBracketPhase = fromId === 'spring_po' || fromId === 'summer_po'
+        || fromId === 'msi' || fromId === 'worlds' || fromId === 'first_stand';
+    if (leftBracketPhase) {
+        const b = snap().season.bracket;
+        if (b && !b.done && b.kind === fromId) safe(() => forceFinishBracket(), null);
+    }
+
+    if (toId === 'first_stand') {
+        runInternational('first_stand');
+        return;
+    }
     if (toId === 'spring_po' || toId === 'summer_po') {
         runPlayoffs();
         return;
@@ -1869,6 +2516,11 @@ export function advanceWeek() {
     const phaseChanged = toPhase !== fromPhase || yearRolled;
     if (!yearRolled) handlePhaseChange(fromPhase, toPhase);
     ensureSeason();
+
+    // 4b. the bracket's own clock. A round waits for its week, so the new week
+    // has to come and get it -- and this must run AFTER ensureSeason, which is
+    // what carries a live bracket across the MSI/summer boundary.
+    safe(() => tickBracket(), null);
 
     // 5. the new week
     const started = startCareerWeek();

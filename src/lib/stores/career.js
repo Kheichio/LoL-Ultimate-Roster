@@ -43,6 +43,13 @@ export function blankCareer() {
             role: 'MID',
             playstyle: '',
             champion: '',
+            // Signature picks two and three, unlocked by the Second/Third
+            // Signature legacy perks. `champion` stays the FIRST one and is
+            // never merged into this list: board.js, CareerDossier, careerSmoke
+            // and championCheck all read that single field, and every save that
+            // exists has it. Capacity is derived from the perks, never stored —
+            // see economy.signatureSlots().
+            extraChampions: [],
             path: 'precomp',
             startAge: 13,
             age: 13,
@@ -124,6 +131,11 @@ export function blankCareer() {
             qualified: {},           // { msi: bool, worlds: bool }
         },
 
+        // 300 (Iron I) deliberately, even though no new career starts there any
+        // more: this object's only remaining job is the hydrate() merge base,
+        // i.e. "this save carried no value". Raising it would make a save whose
+        // soloq exists but lacks mmr jump six tiers on load. createCareer()
+        // overwrites it from the path's startMMR.
         soloq: { mmr: 300, peakMMR: 300, games: 0, wins: 0, losses: 0 },
 
         totals: {
@@ -143,11 +155,25 @@ export function blankCareer() {
             actionsLeft: 4,
             actionsMax: 4,
             trained: {},             // attrKey → sessions used this week
+            did: {},                 // activityId → true, for once-a-week activities
             clubSlotsLeft: 0,
             log: [],                 // [{ id, label, detail, accent }]
         },
 
         flags: {
+            // Lifetime count of contracts torn up for underperformance. Kept on
+            // flags rather than the contract, which is rebuilt on every move.
+            terminations: 0,
+            // Burnout. `weeks` is the consecutive run under the threshold,
+            // `strikes` how many times it has bitten this career, `benchedUntil`
+            // an ABSOLUTE week (the physioUntil idiom, so it survives rollover),
+            // and `peak` the longest run, for the retirement line.
+            burnout: { weeks: 0, strikes: 0, benchedUntil: 0, peak: 0 },
+            // The YEAR a First Stand berth is good for, or 0. It lives here
+            // rather than in season.qualified because the berth is won in the
+            // summer and played the following February, and rolloverYear()
+            // empties the whole season block on the way between them.
+            firstStandBerth: 0,
             retired: false,
             hallOfLegends: false,
             seenIntro: false,
@@ -446,6 +472,47 @@ function hydrate(raw) {
     out.player.traits = Array.isArray(raw.player?.traits)
         ? raw.player.traits.filter(t => typeof t === 'string' && TRAIT_BY_ID[t])
         : [];
+
+    // Extra signatures are bare champion ids and need the identical treatment,
+    // plus two rules of their own: never the same champion twice, and never a
+    // duplicate of `champion` itself (which would show the same pick twice in
+    // champion select). Sliced to 2 because that is the most the perks can buy.
+    //
+    // Deliberately NOT filtered by championsForStyle() on load — CLAUDE.md's
+    // "existing saves are grandfathered, never auto-reassign a saved champion"
+    // applies to these exactly as it does to the first pick.
+    {
+        const seen = new Set([out.player.champion]);
+        out.player.extraChampions = (Array.isArray(raw.player?.extraChampions) ? raw.player.extraChampions : [])
+            .filter(id => {
+                if (typeof id !== 'string' || !CHAMPION_BY_ID[id] || seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            })
+            .slice(0, 2);
+    }
+    // hydrate() does not validate anything nested inside flags, and every reader
+    // of burnout compares numbers against it. A hand-edited or cloud-round-
+    // tripped save carrying flags.burnout = 'yes' would otherwise reach all of
+    // them. Same treatment the club block gets, for the same reason.
+    {
+        const raw = out.flags && typeof out.flags.burnout === 'object' && !Array.isArray(out.flags.burnout)
+            ? out.flags.burnout : {};
+        const n = (v) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x > 0 ? x : 0; };
+        out.flags = {
+            ...out.flags,
+            burnout: {
+                weeks: n(raw.weeks), strikes: Math.min(2, n(raw.strikes)),
+                benchedUntil: n(raw.benchedUntil), peak: n(raw.peak),
+            },
+            // A year, so rot cannot turn into a permanent berth. Anything that
+            // is not a plausible year reads as "no berth".
+            firstStandBerth: (() => {
+                const y = Math.round(Number(out.flags && out.flags.firstStandBerth));
+                return Number.isFinite(y) && y >= 2000 && y <= 3000 ? y : 0;
+            })(),
+        };
+    }
     out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
     // Fractional on purpose (0.25 + 0.40), so it is clamped and not rounded.
     out.player.valueMult = clamp(Number(out.player.valueMult) || 0, 0, 5);
@@ -649,7 +716,8 @@ export function createCareer(cfg) {
     };
     c.money.gold = path.startGold;
     c.money.followers = path.startHype;
-    c.soloq.mmr = path.signed ? 2500 : 700;
+    // The old literals are kept as the fallback so a hand-built cfg still works.
+    c.soloq.mmr = Number(path.startMMR) || (path.signed ? 2500 : 700);
     c.soloq.peakMMR = c.soloq.mmr;
     c.weekly.actionsMax = path.weeklyActions;
     c.weekly.actionsLeft = path.weeklyActions;
