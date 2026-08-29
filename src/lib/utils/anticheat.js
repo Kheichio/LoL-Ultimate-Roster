@@ -154,9 +154,15 @@ export const CAREER_STR_MAX = {
     handle: 16, displayName: 64, teamId: 32, careerId: 16, blob: 24000,
 };
 
+// These must stay identical, IN ORDER, to ROLE_IDS / REGION_IDS in career
+// constants and to the `in [...]` lists in firestore.rules — boardCheck asserts
+// all three against each other. Adding a region is therefore a TWO-STAGE deploy,
+// exactly like adding a row field: re-publish the rules in the Firebase console
+// FIRST, then ship the client. Ship it the other way round and every publish
+// from a player in the new region is denied and the error swallowed.
 export const CAREER_ENUMS = {
     role:   ['TOP', 'JNG', 'MID', 'ADC', 'SUP'],
-    region: ['LCK', 'LPL', 'LEC', 'LCS', 'LCP'],
+    region: ['LCK', 'LPL', 'LEC', 'LCS', 'LCP', 'CBLOL'],
 };
 
 // hasAll(<these many names>) + keys().size() <= <this> is what makes the rules'

@@ -12,7 +12,7 @@
         TOP: '/icons/Top_icon.png', JNG: '/icons/Jungle_icon.png', MID: '/icons/Middle_icon.png',
         ADC: '/icons/Bottom_icon.png', SUP: '/icons/Support_icon.png', COACH: '/icons/Specialist_icon.png'
     };
-    const regionFlags = { LCK: '🇰🇷', LPL: '🇨🇳', LEC: '🇪🇺', LCS: '🇺🇸', LCP: '🌏', Legacy: '🏆' };
+    const regionFlags = { LCK: '🇰🇷', LPL: '🇨🇳', LEC: '🇪🇺', LCS: '🇺🇸', LCP: '🌏', CBLOL: '🇧🇷', 'LTA South': '🌎', Legacy: '🏆' };
 
     $: dark = isDarkCard(card.quality, card.role);
     $: mid = isMidCard(card.quality);

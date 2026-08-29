@@ -182,8 +182,8 @@
         { id: 'halloflegends', label: '🔥 Hall of Legends', color: '#f5c542', bg: 'rgba(255,0,51,0.2)', border: 'rgba(255,0,51,0.55)' },
     ];
 
-    const regions = ['LCK', 'LPL', 'LEC', 'LCS', 'LCP'];
-    const regionLabels = { LCK: '🇰🇷 LCK', LPL: '🇨🇳 LPL', LEC: '🇪🇺 LEC', LCS: '🇺🇸 LCS', LCP: '🌏 LCP' };
+    const regions = ['LCK', 'LPL', 'LEC', 'LCS', 'LCP', 'CBLOL', 'LTA South'];
+    const regionLabels = { LCK: '🇰🇷 LCK', LPL: '🇨🇳 LPL', LEC: '🇪🇺 LEC', LCS: '🇺🇸 LCS', LCP: '🌏 LCP', CBLOL: '🇧🇷 CBLOL', 'LTA South': '🌎 LTA South' };
 
     const catToQuality = {
         firststand: 'FirstStand', msi: 'MSI', finalists: 'Finalist',
@@ -636,13 +636,14 @@
     /* ── Region tabs ── */
     .region-bar {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-bottom: 16px;
         align-items: start;
     }
 
     .region-tab {
-        flex: 1;
+        flex: 1 1 110px;
         padding: 8px 12px;
         border-radius: 8px;
         font-size: 12px;

@@ -136,6 +136,19 @@ const TEAM_ALIASES = {
     lcp_bru:  ['RC', 'BRU'],
     lcp_dcg:  ['DCG'],
     lcp_tw:   ['TLN'],
+
+    // CBLOL. The Brazilian card blocks run 2014-2026, so several of these orgs
+    // have a decade of prints under two or three different tags; newest first.
+    cblol_loud: ['LOUD'],
+    cblol_pain: ['paiN'],
+    cblol_red:  ['RED'],          // NOT 'RDM' — Redemption (2019) is a different org
+    cblol_fur:  ['FUR', 'UPP'],   // FURIA bought the Uppercut slot
+    cblol_vks:  ['VKS', 'KEYD'],  // Keyd Stars -> Vivo Keyd -> Vivo Keyd Stars
+    cblol_los:  ['LOS'],
+    cblol_fxw:  ['FXW', 'FX'],    // Fluxo -> Fluxo W7M
+    cblol_lev:  ['LEV'],
+    cblol_kbm:  ['KBM', 'KBB'],   // KaBuM! ran Orange and Black sides in 2015
+    cblol_intz: ['INTZ', 'ITZR'], // as did INTZ
 };
 
 // ---------------------------------------------------------------------------
@@ -194,6 +207,10 @@ const SYN_NAMES = {
     LCP: {
         a: ['Aki', 'Bay', 'Chi', 'Dai', 'Eno', 'Fuji', 'Hiro', 'Kaz', 'Lin', 'Nao', 'Ry', 'Sora'],
         b: ['to', 'ki', 'ra', 'shi', 'mu', 'no', 'ka', 'yu', 'ma', 'sei'],
+    },
+    CBLOL: {
+        a: ['Bru', 'Cai', 'Dav', 'Fel', 'Gui', 'Igo', 'Jhe', 'Luk', 'Mat', 'Ped', 'Raf', 'Thi'],
+        b: ['ao', 'inho', 'ito', 'zin', 'ka', 'do', 'ren', 'ski', 'ux', 'oca'],
     },
     ALL: {
         a: ['Solo', 'Duo', 'Smurf', 'Pug', 'Queue', 'Ping', 'Ward', 'Gank', 'Dive', 'Rift', 'Nexus', 'Baron'],
@@ -314,13 +331,24 @@ function claimedIds(regionId, year) {
     return set;
 }
 
+// A career region fills empty seats from the cards that carry its own id. Brazil
+// is the one region whose cards do not all carry a single string: the league
+// spent 2025 merged into the LTA as "LTA South" before the CBLOL brand returned
+// in 2026, and those are the same players in the same orgs. orgCards() already
+// picks them up through TEAM_ALIASES; this is what lets the regional fill see
+// them too. Anything not listed here matches its own id and nothing else.
+const CARD_REGIONS = {
+    CBLOL: ['CBLOL', 'LTA South'],
+};
+
 function regionPool(regionId, role, year) {
     const key = regionId + ':' + role + ':' + year;
     const hit = _regionCache.get(key);
     if (hit) return hit;
     const db = getDB();
+    const accept = CARD_REGIONS[regionId] || [regionId];
     const pool = !db ? [] : db
-        .filter(card => card.region === regionId && card.role === role && cardActiveIn(card, year))
+        .filter(card => accept.includes(card.region) && card.role === role && cardActiveIn(card, year))
         .sort((a, b) => cardScore(b, year) - cardScore(a, year));
     if (db) { _regionCache.set(key, pool); trimCache(_regionCache, 400); }
     return pool;

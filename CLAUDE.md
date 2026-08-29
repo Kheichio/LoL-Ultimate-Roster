@@ -83,9 +83,9 @@ two splits, playoffs, MSI and Worlds, until retirement and a legacy score.
 
 ```
 src/lib/career/
-  constants.js    — 8 attributes, 5 roles + OVR weights, 5 regions, 20 playstyles, 173 champions,
+  constants.js    — 8 attributes, 5 roles + OVR weights, 6 regions, 20 playstyles, 173 champions,
                     10 genetic traits, ARCHETYPE_BIAS + the champion/playstyle fit rule,
-                    both start paths, 40-week calendar, activities, rank ladder, 90 clubs
+                    both start paths, 40-week calendar, activities, rank ladder, 108 clubs
   ratings.js      — OVR maths, potential ceilings, gain curve, age curve, wages, market value
   teams.js        — rosters pulled from the card DB, team strength, schedules, standings
   training.js     — 24 drills; converts a minigame score into permanent attribute growth
@@ -319,7 +319,12 @@ errors on lines that are pure comment — and the reported line numbers land on 
 good, which sends you hunting in the wrong place. `firestore.rules.minimal` is the comment-free
 form that was actually published; `boardCheck` asserts the two agree on every literal. When adding
 a row field later, `keys().size() <= 25` makes it a TWO-STAGE deploy: re-publish the rules by hand
-FIRST, then ship the client, or every write is denied and swallowed.
+FIRST, then ship the client, or every write is denied and swallowed. **Adding a ROLE or a REGION is
+the same two-stage deploy** — `d.region in [...]` is a closed list, so a client that offers Brazil
+before the rules know the word publishes nothing for anyone who picks it, silently. The CBLOL
+addition is the worked example: `CAREER_ENUMS` in `anticheat.js`, `REGION_IDS` in career
+`constants.js` and both rules files must agree, in order, and `boardCheck` section 1 fails if they
+drift.
 
 **Verifying career changes** — `npm run build` passing proves very little here:
 - `node tools/careerSmoke.mjs --seed 42` — plays full 12-24 year careers headlessly with ~30

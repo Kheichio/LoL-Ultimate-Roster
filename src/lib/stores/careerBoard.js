@@ -169,7 +169,7 @@ function isDenied(e) {
 
 function isOffline(e) {
     return !!e && (e.code === 'unavailable' || e.code === 'deadline-exceeded'
-        || /offline|unavailable|network error|failed to get document/i.test(errText(e)));
+        || /offline|unavailable|network error|failed to get document|blocked/i.test(errText(e)));
 }
 
 /**
@@ -180,9 +180,33 @@ function isOffline(e) {
 const DENIED_MESSAGE =
     'The server refused the publish. Either the career board rules have not been published '
     + 'in the Firebase console yet, or this device\'s clock is more than 10 minutes off — the '
-    + 'board checks freshness against the SERVER clock but stamps the write with your device\'s time.';
+    + 'board checks freshness against the SERVER clock but stamps the write with your device\'s time.'
+    + ' Check the browser console for the exact error and the refused document — if you see '
+    + 'ERR_BLOCKED_BY_CLIENT there, it is an ad blocker and not the rules at all.';
 
-const OFFLINE_MESSAGE = 'No connection to the board right now.';
+/**
+ * AD BLOCKERS ARE NAMED FIRST, ON PURPOSE.
+ *
+ * uBlock Origin, AdBlock, Ghostery, Privacy Badger and Brave Shields all block
+ * firestore.googleapis.com by default because it is a Google domain. The request
+ * never leaves the browser -- it fails as net::ERR_BLOCKED_BY_CLIENT, visible
+ * only in the console -- so the server never sees it and the rules are never
+ * evaluated. Everything above this line is therefore working perfectly while
+ * nothing reaches the board.
+ *
+ * This is by far the most common cause of "the board will not take my career",
+ * and it is completely invisible unless it is said out loud. An earlier version
+ * of this message blamed the rules and the device clock, which sent a real
+ * debugging session chasing both for several rounds while the actual cause sat
+ * in the console. Blame the blocker first; it is right most of the time.
+ *
+ * It applies to cloud saves and the roster leaderboard too -- both use the same
+ * Firestore connection, and both swallow the failure entirely.
+ */
+const OFFLINE_MESSAGE =
+    'Could not reach the board. The usual cause is an ad blocker or privacy extension blocking '
+    + 'firestore.googleapis.com — try disabling it for this site. Otherwise you are offline. '
+    + 'Nothing was changed locally, and your career is untouched.';
 
 /** FNV-1a base-36, the same loop board.js and anticheat.js use. */
 function fnv(str) {
@@ -394,10 +418,42 @@ export async function publishCareerSlot(slot, { silent } = {}) {
     // a fresh dossier nobody can rank — harmless. The reverse leaves a ranked
     // row pointing at a stale dossier, i.e. a board entry whose numbers
     // disagree with the career it opens.
+    let stage = 'dossier';
     try {
         await d.collection(PROFILE_COLLECTION).doc(uid).set(docs.profile);
+        stage = 'row';
         await d.collection(ROW_COLLECTION).doc(uid).set(docs.row);
     } catch (e) {
+        // SAY THE REAL ERROR OUT LOUD.
+        //
+        // A toast can only name the likely causes; it cannot say WHICH field a
+        // rules predicate rejected, and rules never report that over the wire.
+        // Without this, a denied publish is indistinguishable from a bug in the
+        // board -- which is exactly how the roster leaderboard's blanket
+        // `catch(e){}` hides its own failures. The payload logged here is the
+        // literal document that was refused, so it can be checked field by field
+        // against validCareerRow()/validCareerDossier() in the console's Rules
+        // Playground.
+        try {
+            console.warn(
+                `[LUR] career board publish REFUSED at the ${stage} write `
+                + `(collection "${stage === 'row' ? ROW_COLLECTION : PROFILE_COLLECTION}")`,
+                {
+                    code: e && e.code,
+                    message: e && e.message,
+                    uid,
+                    slot: s,
+                    payload: stage === 'row' ? docs.row : { ...docs.profile, blob: `<${blobBytes} chars>` },
+                    rowKeyCount: Object.keys(docs.row).length,
+                    profileKeyCount: Object.keys(docs.profile).length,
+                    rowBytes,
+                    blobBytes,
+                    deviceNow: Date.now(),
+                    deviceTime: new Date().toISOString(),
+                },
+            );
+        } catch (_) { /* console is not load-bearing */ }
+
         if (isDenied(e)) return done(false, 'denied', DENIED_MESSAGE);
         if (isOffline(e)) return done(false, 'offline', OFFLINE_MESSAGE);
         return done(false, 'error', 'Publish failed: ' + errText(e));

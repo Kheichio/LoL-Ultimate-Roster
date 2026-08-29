@@ -168,7 +168,7 @@ service cloud.firestore {
       && d.handle is string && d.handle.size() > 0 && d.handle.size() <= 16
       && d.displayName is string && d.displayName.size() <= 64
       && d.role in ['TOP', 'JNG', 'MID', 'ADC', 'SUP']
-      && d.region in ['LCK', 'LPL', 'LEC', 'LCS', 'LCP']
+      && d.region in ['LCK', 'LPL', 'LEC', 'LCS', 'LCP', 'CBLOL']
       && d.teamId is string && d.teamId.size() <= 32
       && d.retired is bool
       && d.hallOfLegends is bool;

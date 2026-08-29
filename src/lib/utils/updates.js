@@ -7,6 +7,22 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.6.8.1',
+        title: 'Ultimate Career — The Legends Board',
+        summary: 'A global leaderboard for Ultimate Career: publish your pro, browse everyone else\'s careers, and open a full dossier on any of them — their card, the five teammates they play with, and every season they\'ve ever played.',
+        details: [
+            'NEW — Legends board (Ultimate Career): a global leaderboard of other people\'s pros, sitting in a new "🌍 Legends" tab beside Profile. Anyone can browse it, signed in or not. Publish one career from any of your three save slots, and take it back down whenever you like.',
+            'NEW — Career dossiers: click anybody on the board to read their whole career, not just their row. Their player card, all eight attributes against their ceiling, their genetic trait, their champion pool and how many games they have on each, every trophy and award, and their full season-by-season record with the club they played it for and where they finished.',
+            'NEW — The Room: every dossier shows the five cards that career actually plays alongside — the club\'s starting roster, its coach, how the room is going right now, and every roster move the org has made since they arrived. It also appears on your OWN Profile, so you can finally see your teammates as cards.',
+            'FIVE WAYS TO RANK — sort the board by Legacy, Peak OVR, Games, Wins, or Completed (retired careers first). Each is a real re-query of the whole board rather than a re-shuffle of the page you already have, so the top 50 is genuinely the top 50 for whichever column you picked. Filter the loaded rows by role, region or retirement.',
+            'LEGACY IS EARNED, NOT BOUGHT — the board ranks on legacy you won on the pitch. Monuments from the Legacy Exchange are shown next to your score but never counted into your position, for the same reason the Hall of Legends has never been for sale: a renewable currency should not be able to buy the top of a leaderboard.',
+            'PRIVACY — nothing is published until you press Publish, and only the career you choose. Condition (morale, energy, health), gold, contracts and pending offers never leave your device. One career per account is on the board at a time, and removing it deletes everything that was uploaded.',
+            'FIXED (Profile) — clicking your own player card opens the card inspector again. A change made while building the board had quietly stopped it.',
+            'FIXED (Profile) — a damaged save no longer invents a rating. If your role can\'t be read, the header honestly shows "Unknown" instead of confidently claiming a rating and a squad status it made up.',
+            'FIXED — the board says what actually went wrong when it can\'t reach the server. Ad blockers and privacy extensions block the database this game uses, and the old message blamed the server instead of naming the real cause — which also silently affected cloud saves and the roster leaderboard.',
+        ],
+    },
+    {
         ver: 'Beta 1.6.0',
         title: 'Main Menu, Summer Splits 2021–2023 & a Tighter Start',
         summary: '666 new cards filling the 2021–2023 gap, a brand-new main menu with gamemode select and a loading screen, and a much tighter starting economy.',

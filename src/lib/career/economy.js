@@ -903,6 +903,7 @@ const FALLBACK_PROS = {
     LEC: ['Caps', 'Rekkles', 'Jankos', 'Hans Sama', 'Mikyx'],
     LCS: ['Bjergsen', 'CoreJJ', 'Blaber', 'Doublelift', 'Impact'],
     LCP: ['Maple', 'Levi', 'Betty', 'Karsa', 'Evi'],
+    CBLOL: ['brTT', 'Tinowns', 'Robo', 'Aegis', 'CarioK'],
 };
 
 function sampleProName(region) {

@@ -115,7 +115,7 @@
 <AuthPanel />
 
 {#if $menuScreen === 'game'}
-    <div class="version-badge">Beta 1.6.0 Public Build</div>
+    <div class="version-badge">Beta 1.6.8.1 Public Build</div>
 {/if}
 
 <style>
