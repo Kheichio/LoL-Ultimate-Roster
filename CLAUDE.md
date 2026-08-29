@@ -317,7 +317,10 @@ the Firebase console by hand. **Copy them from the file, not from a terminal.** 
 terminal mangles the text and produces a cascade of `Unexpected '&&'` and `Missing a closing '`
 errors on lines that are pure comment — and the reported line numbers land on code that is known
 good, which sends you hunting in the wrong place. `firestore.rules.minimal` is the comment-free
-form that was actually published; `boardCheck` asserts the two agree on every literal. When adding
+form that was actually published. **`boardCheck` only ever reads `firestore.rules`** — nothing in
+`tools/` opens `.minimal`, so the file that actually gets pasted into the console is the one with no
+automated coverage. Diff the two by hand (strip `//` comments and blank lines; they should be equal
+line for line) after touching either. When adding
 a row field later, `keys().size() <= 25` makes it a TWO-STAGE deploy: re-publish the rules by hand
 FIRST, then ship the client, or every write is denied and swallowed. **Adding a ROLE or a REGION is
 the same two-stage deploy** — `d.region in [...]` is a closed list, so a client that offers Brazil

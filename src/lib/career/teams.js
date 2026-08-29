@@ -137,12 +137,17 @@ const TEAM_ALIASES = {
     lcp_dcg:  ['DCG'],
     lcp_tw:   ['TLN'],
 
-    // CBLOL. The Brazilian card blocks run 2014-2026, so several of these orgs
-    // have a decade of prints under two or three different tags; newest first.
+    // CBLOL. The Brazilian card blocks run 2014-2026 (2025 was played under the
+    // LTA South name but is the same league and carries the same region), so
+    // several of these orgs have a decade of prints under two or three different
+    // tags; newest first.
     cblol_loud: ['LOUD'],
     cblol_pain: ['paiN'],
     cblol_red:  ['RED'],          // NOT 'RDM' — Redemption (2019) is a different org
-    cblol_fur:  ['FUR', 'UPP'],   // FURIA bought the Uppercut slot
+    // Rebrands and mergers only, never a purchased slot: FURIA bought Uppercut's
+    // place in 2020 and Fluxo bought Flamengo's in 2023, but neither inherited
+    // the other org's players, so neither inherits its cards.
+    cblol_fur:  ['FUR'],
     cblol_vks:  ['VKS', 'KEYD'],  // Keyd Stars -> Vivo Keyd -> Vivo Keyd Stars
     cblol_los:  ['LOS'],
     cblol_fxw:  ['FXW', 'FX'],    // Fluxo -> Fluxo W7M
@@ -150,6 +155,16 @@ const TEAM_ALIASES = {
     cblol_kbm:  ['KBM', 'KBB'],   // KaBuM! ran Orange and Black sides in 2015
     cblol_intz: ['INTZ', 'ITZR'], // as did INTZ
 };
+
+/** The card-database team tags an org's cards are printed under, newest first,
+ *  or null for an org with no cards. This is the ONLY authority on which cards
+ *  belong to which club -- matching a card's `team` against a club's display
+ *  name looks equivalent and is not: "Cloud9" contains "LOUD", "Nongshim
+ *  RedForce" contains "RED", and "paiN Gaming" contains "GAM". */
+export function cardTagsFor(teamId) {
+    const tags = TEAM_ALIASES[teamId];
+    return tags && tags.length ? tags : null;
+}
 
 // ---------------------------------------------------------------------------
 //  CARD ELIGIBILITY
@@ -331,24 +346,13 @@ function claimedIds(regionId, year) {
     return set;
 }
 
-// A career region fills empty seats from the cards that carry its own id. Brazil
-// is the one region whose cards do not all carry a single string: the league
-// spent 2025 merged into the LTA as "LTA South" before the CBLOL brand returned
-// in 2026, and those are the same players in the same orgs. orgCards() already
-// picks them up through TEAM_ALIASES; this is what lets the regional fill see
-// them too. Anything not listed here matches its own id and nothing else.
-const CARD_REGIONS = {
-    CBLOL: ['CBLOL', 'LTA South'],
-};
-
 function regionPool(regionId, role, year) {
     const key = regionId + ':' + role + ':' + year;
     const hit = _regionCache.get(key);
     if (hit) return hit;
     const db = getDB();
-    const accept = CARD_REGIONS[regionId] || [regionId];
     const pool = !db ? [] : db
-        .filter(card => accept.includes(card.region) && card.role === role && cardActiveIn(card, year))
+        .filter(card => card.region === regionId && card.role === role && cardActiveIn(card, year))
         .sort((a, b) => cardScore(b, year) - cardScore(a, year));
     if (db) { _regionCache.set(key, pool); trimCache(_regionCache, 400); }
     return pool;

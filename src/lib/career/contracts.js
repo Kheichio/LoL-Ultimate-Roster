@@ -25,7 +25,7 @@ import {
 import {
     career, matchState, absWeek, addNews, grantGold, saveCareer,
 } from '../stores/career.js';
-import { teamsInRegion, allTeamsForPlayer, teamStrength } from './teams.js';
+import { teamsInRegion, allTeamsForPlayer, teamStrength, cardTagsFor } from './teams.js';
 // economy.js imports constants/ratings/stores/utils and nothing from here, so
 // this direction is the safe one. Do NOT import contracts.js from economy.js.
 import { perkEffects, lifestyleEffects, buffValue } from './economy.js';
@@ -218,16 +218,24 @@ function incumbentAt(team, role) {
     const db = getDB();
     if (!db) return null;   // never cache a miss caused by a database that has not loaded
 
-    const org = orgName(team.name).toLowerCase();
+    // TEAM_ALIASES is the only authority on which cards belong to which club.
+    // This used to match a card's team against the club's DISPLAY NAME by
+    // substring, which looks equivalent and is not: "Cloud9" contains "LOUD",
+    // "Nongshim RedForce" contains "RED", "paiN Gaming" contains "GAM", and
+    // "RED Canids Kalunga" contains "AL". Adding the Brazilian clubs turned that
+    // into 44 offer sheets naming a real professional as the incumbent of a club
+    // he has never played for. All 60 main-league clubs have an alias list, so
+    // nothing loses a line it was entitled to; the 46 academy sides that have no
+    // list now correctly say nothing instead of naming their senior team's star
+    // as the holder of an academy seat.
+    const tags = cardTagsFor(team.id);
+    if (!tags) { _incumbentCache.set(key, null); return null; }
+    const tagSet = new Set(tags.map(t => t.toLowerCase()));
+
     let best = null;
     for (const card of db) {
         if (!card || card.role !== role || !card.team) continue;
-        const cardTeam = String(card.team).toLowerCase();
-        // Exact match, or a containment match once the name is long enough that
-        // a substring cannot collide ("T1" would match half the league).
-        const match = cardTeam === org
-            || (org.length >= 4 && (cardTeam.includes(org) || org.includes(cardTeam)));
-        if (!match) continue;
+        if (!tagSet.has(String(card.team).toLowerCase())) continue;
         if (getEra(card.year) < 5) continue;   // current-ish rosters only
         if (!best || getEffectiveRating(card) > getEffectiveRating(best)) best = card;
     }

@@ -19,7 +19,7 @@
 
 import {
     teamById, ROLE_BY_ID, PHASES, REG_SPLIT_WEEKS, MATCHES_PER_REG_WEEK,
-    ATTR_KEYS, ATTR_MAX, RETIREMENT_AGE_MIN, RETIREMENT_AGE_FORCED,
+    ATTR_KEYS, ATTR_MAX, RETIREMENT_AGE_MIN, RETIREMENT_AGE_FORCED, REGION_IDS,
 } from './constants.js';
 import {
     calcOVR, rankFromMMR, fmtGold, fmtFollowers, fmtKDA, ordinal, ovrLabel,
@@ -394,10 +394,14 @@ export const MILESTONES = [
         check: c => titleWinningOrgs(c).length >= 3,
     },
     {
-        id: 'ms_all_regions', name: 'Played All Five Regions', icon: '\u{1F30F}',
+        // Counted against REGION_IDS rather than a literal: when Brazil became
+        // the sixth region this read ">= 5" and was handing out "all regions" to
+        // a career that had never signed in one of them. The id is persisted in
+        // saves and must never change; the name and the bar may.
+        id: 'ms_all_regions', name: 'Played Every Region', icon: '\u{1F30F}',
         legacyPoints: 60, gold: 16000,
         desc: 'Take a contract in every major region.',
-        check: c => regionsPlayed(c).length >= 5,
+        check: c => regionsPlayed(c).length >= REGION_IDS.length,
     },
     {
         id: 'ms_millionaire', name: 'A Million in the Bank', icon: '\u{1F4B0}',

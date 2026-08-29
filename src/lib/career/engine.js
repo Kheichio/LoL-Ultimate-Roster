@@ -1369,15 +1369,23 @@ export function runInternational(kind) {
             .slice(0, perRegion);
         for (const r of rows) pool.push(r);
     }
-    // The player's club travels whether or not the strength table rates it.
-    if (!pool.some(r => r.id === c.player.clubId)) {
-        pool.push({ id: c.player.clubId, power: strengthOfId(c, c.player.clubId) });
-    }
-
+    // The player's club travels whether or not the strength table rates it — so
+    // it is seeded OUTSIDE the cut rather than merely added to a pool that is
+    // then cut. Adding it first and slicing the top `cap` sliced it straight
+    // back out again, and for the weakest regions that happened EVERY year: the
+    // best club in the CBLOL or the LCP sits below the global cut line, so the
+    // mode granted the qualification, announced "you are in the draw", then
+    // simulated the whole tournament without them and returned a null placement.
+    // The club is scored through strengthOfId on both paths so the pool is not
+    // half player-aware and half not.
     const cap = kind === 'worlds' ? 16 : 8;
+    const mineId = c.player.clubId;
     const seeds = pool
+        .filter(r => r.id !== mineId)
         .sort((a, b) => b.power - a.power)
-        .slice(0, cap)
+        .slice(0, cap - 1)
+        .concat([{ id: mineId, power: strengthOfId(c, mineId) }])
+        .sort((a, b) => b.power - a.power)
         .map(r => r.id);
     if (seeds.length < 4) return null;
 

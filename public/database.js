@@ -24,7 +24,7 @@ window.roleIconsLg = {
 };
 
 // --- Player nationality flags ---
-window.regionDefaultFlags = { LCK: "🇰🇷", LPL: "🇨🇳", LEC: "🇪🇺", LCS: "🇺🇸", LCP: "🌏", CBLOL: "🇧🇷", "LTA South": "🌎", Legacy: "🏆" };
+window.regionDefaultFlags = { LCK: "🇰🇷", LPL: "🇨🇳", LEC: "🇪🇺", LCS: "🇺🇸", LCP: "🌏", CBLOL: "🇧🇷", Legacy: "🏆" };
 window.playerNationalityOverrides = {
     // LPL — Korean imports
     "Rookie": "🇰🇷", "Tarzan": "🇰🇷", "MISSING": "🇰🇷", "Scout": "🇰🇷",
@@ -93,7 +93,7 @@ window.playerNationalityOverrides = {
     "Zeus": "🇰🇷", "Zeka": "🇰🇷", "Gumayusi": "🇰🇷", "Delight": "🇰🇷", "Mowgli": "🇰🇷",
 };
 
-window.regionLogos = { LCK: "🇰🇷 LCK", LPL: "🇨🇳 LPL", LEC: "🇪🇺 LEC", LCS: "🇺🇸 LCS", LCP: "🌏 LCP", CBLOL: "🇧🇷 CBLOL", "LTA South": "🌎 LTA South", Champion: "👑 ICON" };
+window.regionLogos = { LCK: "🇰🇷 LCK", LPL: "🇨🇳 LPL", LEC: "🇪🇺 LEC", LCS: "🇺🇸 LCS", LCP: "🌏 LCP", CBLOL: "🇧🇷 CBLOL", Champion: "👑 ICON" };
 window.teamLineageBridges = { 
     "SKT": "T1", "SKT T1": "T1", "SSG": "Gen.G", "SSW": "Gen.G", "Samsung Galaxy": "Gen.G", 
     "FNC": "Fnatic", "ROX": "HLE", "DK": "Dplus KIA", "IG": "Invictus Gaming", "FPX": "FunPlus Phoenix", 
@@ -118,7 +118,7 @@ window.teamLineageBridges = {
     "HP": "HELL PIGS", "JT": "J Team", "PSG": "PSG Talon", "WPE": "West Point Esports",
     "C9": "Cloud9", "CLG": "Counter Logic Gaming", "NME": "Enemy", "GV": "Gravity",
     "T8": "Team 8", "DIG": "Dignitas", "TDK": "Team Dragon Knights", "TIP": "Team Impulse",
-    // CBLOL / LTA South
+    // CBLOL (the 2025 season was branded LTA South; same league, same region)
     "paiN": "paiN Gaming", "KBM": "KaBuM! Esports", "KBB": "KaBuM! Black", "INTZ": "INTZ e-Sports",
     "ITZR": "INTZ Red", "CNB": "CNB e-Sports Club", "KEYD": "Vivo Keyd Stars", "VKS": "Vivo Keyd Stars",
     "RED": "RED Canids Kalunga", "RDM": "Redemption eSports", "LOUD": "LOUD", "FUR": "FURIA Esports",
@@ -4058,7 +4058,7 @@ const baseDatabase = [
     { id: 30122, name: "Nappon",       role: "JNG",  team: "CNB",   year: 2015, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 75, tmf: 75, frm: 74, cmp: 75, map: 77, ldr: 74 } },
     { id: 30123, name: "YoDa",         role: "MID",  team: "CNB",   year: 2015, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 77, tmf: 75, frm: 75, cmp: 74, map: 74, ldr: 73 } },
     { id: 30124, name: "Skyer",        role: "ADC",  team: "CNB",   year: 2015, rating: 74, quality: "Silver",      region: "CBLOL",     stats: { mec: 77, tmf: 72, frm: 76, cmp: 73, map: 71, ldr: 71 } },
-    { id: 30125, name: "WosWos",       role: "SUP",  team: "CNB",   year: 2015, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 67, tmf: 74, frm: 76, cmp: 76, map: 78, ldr: 77 } },
+    { id: 30125, name: "Wos",          role: "SUP",  team: "CNB",   year: 2015, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 67, tmf: 74, frm: 76, cmp: 76, map: 78, ldr: 77 } },
     // INTZ Red — 6th, 6-8
     { id: 30126, name: "Caos",         role: "TOP",  team: "ITZR",  year: 2015, rating: 73, quality: "Silver",      region: "CBLOL",     stats: { mec: 76, tmf: 74, frm: 74, cmp: 71, map: 72, ldr: 70 } },
     { id: 30127, name: "Robo",         role: "TOP",  team: "ITZR",  year: 2015, rating: 72, quality: "Silver",      region: "CBLOL",     stats: { mec: 74, tmf: 72, frm: 72, cmp: 71, map: 70, ldr: 69 } },
@@ -4127,7 +4127,7 @@ const baseDatabase = [
     { id: 30237, name: "Eryon",        role: "TOP",  team: "RED",   year: 2016, rating: 71, quality: "Silver",      region: "CBLOL",     stats: { mec: 75, tmf: 71, frm: 73, cmp: 69, map: 70, ldr: 68 } },
     { id: 30238, name: "YoDa",         role: "JNG",  team: "RED",   year: 2016, rating: 72, quality: "Silver",      region: "CBLOL",     stats: { mec: 71, tmf: 73, frm: 70, cmp: 71, map: 76, ldr: 73 } },
     { id: 30239, name: "Brucer",       role: "MID",  team: "RED",   year: 2016, rating: 71, quality: "Silver",      region: "CBLOL",     stats: { mec: 74, tmf: 72, frm: 72, cmp: 71, map: 69, ldr: 70 } },
-    { id: 30240, name: "SacyR",        role: "ADC",  team: "RED",   year: 2016, rating: 72, quality: "Silver",      region: "CBLOL",     stats: { mec: 75, tmf: 72, frm: 74, cmp: 71, map: 68, ldr: 67 } },
+    { id: 30240, name: "Sacy",         role: "ADC",  team: "RED",   year: 2016, rating: 72, quality: "Silver",      region: "CBLOL",     stats: { mec: 75, tmf: 72, frm: 74, cmp: 71, map: 68, ldr: 67 } },
     { id: 30241, name: "Dioud",        role: "SUP",  team: "RED",   year: 2016, rating: 74, quality: "Silver",      region: "CBLOL",     stats: { mec: 66, tmf: 75, frm: 74, cmp: 74, map: 76, ldr: 76 } },
     { id: 30242, name: "Neki",         role: "COACH",team: "RED",   year: 2016, rating: 70, quality: "Silver",      region: "CBLOL",     stats: { mec: 18, tmf: 67, frm: 70, cmp: 69, map: 71, ldr: 71 } },
     // Big Gods e-Sports — 8th, 5-9 games
@@ -4155,7 +4155,7 @@ const baseDatabase = [
     { id: 30311, name: "Loop",         role: "SUP",  team: "paiN",  year: 2017, rating: 80, quality: "Gold",        region: "CBLOL",     stats: { mec: 73, tmf: 81, frm: 81, cmp: 81, map: 82, ldr: 80 } },
     { id: 30312, name: "juc",          role: "COACH",team: "paiN",  year: 2017, rating: 79, quality: "Silver",      region: "CBLOL",     stats: { mec: 20, tmf: 77, frm: 80, cmp: 77, map: 79, ldr: 80 } },
     // INTZ e-Sports — 3rd, 11-3
-    { id: 30313, name: "ayel",         role: "TOP",  team: "INTZ",  year: 2017, rating: 79, quality: "Silver",      region: "CBLOL",     stats: { mec: 83, tmf: 81, frm: 81, cmp: 77, map: 77, ldr: 78 } },
+    { id: 30313, name: "Ayel",         role: "TOP",  team: "INTZ",  year: 2017, rating: 79, quality: "Silver",      region: "CBLOL",     stats: { mec: 83, tmf: 81, frm: 81, cmp: 77, map: 77, ldr: 78 } },
     { id: 30314, name: "Turtle",       role: "JNG",  team: "INTZ",  year: 2017, rating: 77, quality: "Silver",      region: "CBLOL",     stats: { mec: 75, tmf: 78, frm: 75, cmp: 76, map: 80, ldr: 78 } },
     { id: 30315, name: "Envy",         role: "MID",  team: "INTZ",  year: 2017, rating: 79, quality: "Silver",      region: "CBLOL",     stats: { mec: 81, tmf: 80, frm: 79, cmp: 79, map: 77, ldr: 76 } },
     { id: 30316, name: "micaO",        role: "ADC",  team: "INTZ",  year: 2017, rating: 80, quality: "Gold",        region: "CBLOL",     stats: { mec: 81, tmf: 79, frm: 80, cmp: 78, map: 77, ldr: 75 } },
@@ -4679,57 +4679,57 @@ const baseDatabase = [
 
     // --- LTA South 2025 Split 2 (LTA Sul 2025 - 2º Split) --- (8 teams)
     // FURIA Esports — 1st, 11-7
-    { id: 31200, name: "Guigo",        role: "TOP",  team: "FUR",   year: 2025, rating: 88, quality: "Platinum",    region: "LTA South", stats: { mec: 91, tmf: 88, frm: 90, cmp: 88, map: 86, ldr: 87 } },
-    { id: 31201, name: "Tatu",         role: "JNG",  team: "FUR",   year: 2025, rating: 87, quality: "Platinum",    region: "LTA South", stats: { mec: 86, tmf: 88, frm: 85, cmp: 86, map: 90, ldr: 88 } },
-    { id: 31202, name: "Tutsz",        role: "MID",  team: "FUR",   year: 2025, rating: 89, quality: "Platinum",    region: "LTA South", stats: { mec: 93, tmf: 88, frm: 90, cmp: 87, map: 87, ldr: 86 } },
-    { id: 31203, name: "Ayu",          role: "ADC",  team: "FUR",   year: 2025, rating: 87, quality: "Platinum",    region: "LTA South", stats: { mec: 89, tmf: 86, frm: 87, cmp: 85, map: 85, ldr: 83 } },
-    { id: 31204, name: "JoJo",         role: "SUP",  team: "FUR",   year: 2025, rating: 86, quality: "Platinum",    region: "LTA South", stats: { mec: 78, tmf: 86, frm: 87, cmp: 88, map: 90, ldr: 87 } },
-    { id: 31205, name: "Thinkcard",    role: "COACH",team: "FUR",   year: 2025, rating: 87, quality: "Platinum",    region: "LTA South", stats: { mec: 22, tmf: 84, frm: 87, cmp: 85, map: 89, ldr: 90 } },
+    { id: 31200, name: "Guigo",        role: "TOP",  team: "FUR",   year: 2025, rating: 88, quality: "Platinum",    region: "CBLOL",     stats: { mec: 91, tmf: 88, frm: 90, cmp: 88, map: 86, ldr: 87 } },
+    { id: 31201, name: "Tatu",         role: "JNG",  team: "FUR",   year: 2025, rating: 87, quality: "Platinum",    region: "CBLOL",     stats: { mec: 86, tmf: 88, frm: 85, cmp: 86, map: 90, ldr: 88 } },
+    { id: 31202, name: "Tutsz",        role: "MID",  team: "FUR",   year: 2025, rating: 89, quality: "Platinum",    region: "CBLOL",     stats: { mec: 93, tmf: 88, frm: 90, cmp: 87, map: 87, ldr: 86 } },
+    { id: 31203, name: "Ayu",          role: "ADC",  team: "FUR",   year: 2025, rating: 87, quality: "Platinum",    region: "CBLOL",     stats: { mec: 89, tmf: 86, frm: 87, cmp: 85, map: 85, ldr: 83 } },
+    { id: 31204, name: "JoJo",         role: "SUP",  team: "FUR",   year: 2025, rating: 86, quality: "Platinum",    region: "CBLOL",     stats: { mec: 78, tmf: 86, frm: 87, cmp: 88, map: 90, ldr: 87 } },
+    { id: 31205, name: "Thinkcard",    role: "COACH",team: "FUR",   year: 2025, rating: 87, quality: "Platinum",    region: "CBLOL",     stats: { mec: 22, tmf: 84, frm: 87, cmp: 85, map: 89, ldr: 90 } },
     // paiN Gaming — 2nd, 14-4
-    { id: 31206, name: "Wizer",        role: "TOP",  team: "paiN",  year: 2025, rating: 86, quality: "Platinum",    region: "LTA South", stats: { mec: 89, tmf: 86, frm: 87, cmp: 84, map: 84, ldr: 84 } },
-    { id: 31207, name: "CarioK",       role: "JNG",  team: "paiN",  year: 2025, rating: 89, quality: "Platinum",    region: "LTA South", stats: { mec: 89, tmf: 90, frm: 86, cmp: 87, map: 92, ldr: 90 } },
-    { id: 31208, name: "Roamer",       role: "MID",  team: "paiN",  year: 2025, rating: 86, quality: "Platinum",    region: "LTA South", stats: { mec: 89, tmf: 86, frm: 86, cmp: 86, map: 84, ldr: 83 } },
-    { id: 31209, name: "TitaN",        role: "ADC",  team: "paiN",  year: 2025, rating: 87, quality: "Platinum",    region: "LTA South", stats: { mec: 90, tmf: 85, frm: 87, cmp: 85, map: 84, ldr: 82 } },
-    { id: 31210, name: "Kuri",         role: "SUP",  team: "paiN",  year: 2025, rating: 86, quality: "Platinum",    region: "LTA South", stats: { mec: 78, tmf: 86, frm: 86, cmp: 88, map: 90, ldr: 87 } },
+    { id: 31206, name: "Wizer",        role: "TOP",  team: "paiN",  year: 2025, rating: 86, quality: "Platinum",    region: "CBLOL",     stats: { mec: 89, tmf: 86, frm: 87, cmp: 84, map: 84, ldr: 84 } },
+    { id: 31207, name: "CarioK",       role: "JNG",  team: "paiN",  year: 2025, rating: 89, quality: "Platinum",    region: "CBLOL",     stats: { mec: 89, tmf: 90, frm: 86, cmp: 87, map: 92, ldr: 90 } },
+    { id: 31208, name: "Roamer",       role: "MID",  team: "paiN",  year: 2025, rating: 86, quality: "Platinum",    region: "CBLOL",     stats: { mec: 89, tmf: 86, frm: 86, cmp: 86, map: 84, ldr: 83 } },
+    { id: 31209, name: "TitaN",        role: "ADC",  team: "paiN",  year: 2025, rating: 87, quality: "Platinum",    region: "CBLOL",     stats: { mec: 90, tmf: 85, frm: 87, cmp: 85, map: 84, ldr: 82 } },
+    { id: 31210, name: "Kuri",         role: "SUP",  team: "paiN",  year: 2025, rating: 86, quality: "Platinum",    region: "CBLOL",     stats: { mec: 78, tmf: 86, frm: 86, cmp: 88, map: 90, ldr: 87 } },
     // Isurus Estral — 3rd, 6-11
-    { id: 31211, name: "Summit",       role: "TOP",  team: "ISG",   year: 2025, rating: 82, quality: "Gold",        region: "LTA South", stats: { mec: 85, tmf: 84, frm: 83, cmp: 82, map: 81, ldr: 81 } },
-    { id: 31212, name: "Burdol",       role: "TOP",  team: "ISG",   year: 2025, rating: 75, quality: "Silver",      region: "LTA South", stats: { mec: 77, tmf: 77, frm: 77, cmp: 73, map: 74, ldr: 74 } },
-    { id: 31213, name: "Josedeodo",    role: "JNG",  team: "ISG",   year: 2025, rating: 84, quality: "Gold",        region: "LTA South", stats: { mec: 83, tmf: 84, frm: 81, cmp: 84, map: 86, ldr: 83 } },
-    { id: 31214, name: "Mireu",        role: "MID",  team: "ISG",   year: 2025, rating: 85, quality: "Platinum",    region: "LTA South", stats: { mec: 87, tmf: 84, frm: 85, cmp: 85, map: 83, ldr: 83 } },
-    { id: 31215, name: "Snaker",       role: "ADC",  team: "ISG",   year: 2025, rating: 84, quality: "Gold",        region: "LTA South", stats: { mec: 85, tmf: 83, frm: 84, cmp: 83, map: 82, ldr: 80 } },
-    { id: 31216, name: "Ackerman",     role: "SUP",  team: "ISG",   year: 2025, rating: 83, quality: "Gold",        region: "LTA South", stats: { mec: 75, tmf: 82, frm: 83, cmp: 83, map: 85, ldr: 83 } },
+    { id: 31211, name: "Summit",       role: "TOP",  team: "ISG",   year: 2025, rating: 82, quality: "Gold",        region: "CBLOL",     stats: { mec: 85, tmf: 84, frm: 83, cmp: 82, map: 81, ldr: 81 } },
+    { id: 31212, name: "Burdol",       role: "TOP",  team: "ISG",   year: 2025, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 77, tmf: 77, frm: 77, cmp: 73, map: 74, ldr: 74 } },
+    { id: 31213, name: "Josedeodo",    role: "JNG",  team: "ISG",   year: 2025, rating: 84, quality: "Gold",        region: "CBLOL",     stats: { mec: 83, tmf: 84, frm: 81, cmp: 84, map: 86, ldr: 83 } },
+    { id: 31214, name: "Mireu",        role: "MID",  team: "ISG",   year: 2025, rating: 85, quality: "Platinum",    region: "CBLOL",     stats: { mec: 87, tmf: 84, frm: 85, cmp: 85, map: 83, ldr: 83 } },
+    { id: 31215, name: "Snaker",       role: "ADC",  team: "ISG",   year: 2025, rating: 84, quality: "Gold",        region: "CBLOL",     stats: { mec: 85, tmf: 83, frm: 84, cmp: 83, map: 82, ldr: 80 } },
+    { id: 31216, name: "Ackerman",     role: "SUP",  team: "ISG",   year: 2025, rating: 83, quality: "Gold",        region: "CBLOL",     stats: { mec: 75, tmf: 82, frm: 83, cmp: 83, map: 85, ldr: 83 } },
     // Vivo Keyd Stars — 4th, 11-6
-    { id: 31217, name: "Boal",         role: "TOP",  team: "VKS",   year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 82, tmf: 79, frm: 78, cmp: 78, map: 77, ldr: 75 } },
-    { id: 31218, name: "Disamis",      role: "JNG",  team: "VKS",   year: 2025, rating: 82, quality: "Gold",        region: "LTA South", stats: { mec: 80, tmf: 84, frm: 80, cmp: 80, map: 84, ldr: 82 } },
-    { id: 31219, name: "Kisee",        role: "MID",  team: "VKS",   year: 2025, rating: 81, quality: "Gold",        region: "LTA South", stats: { mec: 84, tmf: 80, frm: 82, cmp: 79, map: 79, ldr: 79 } },
-    { id: 31220, name: "Morttheus",    role: "ADC",  team: "VKS",   year: 2025, rating: 82, quality: "Gold",        region: "LTA South", stats: { mec: 85, tmf: 82, frm: 82, cmp: 79, map: 79, ldr: 79 } },
-    { id: 31221, name: "Trymbi",       role: "SUP",  team: "VKS",   year: 2025, rating: 84, quality: "Gold",        region: "LTA South", stats: { mec: 76, tmf: 83, frm: 84, cmp: 85, map: 86, ldr: 85 } },
+    { id: 31217, name: "Boal",         role: "TOP",  team: "VKS",   year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 82, tmf: 79, frm: 78, cmp: 78, map: 77, ldr: 75 } },
+    { id: 31218, name: "Disamis",      role: "JNG",  team: "VKS",   year: 2025, rating: 82, quality: "Gold",        region: "CBLOL",     stats: { mec: 80, tmf: 84, frm: 80, cmp: 80, map: 84, ldr: 82 } },
+    { id: 31219, name: "Kisee",        role: "MID",  team: "VKS",   year: 2025, rating: 81, quality: "Gold",        region: "CBLOL",     stats: { mec: 84, tmf: 80, frm: 82, cmp: 79, map: 79, ldr: 79 } },
+    { id: 31220, name: "Morttheus",    role: "ADC",  team: "VKS",   year: 2025, rating: 82, quality: "Gold",        region: "CBLOL",     stats: { mec: 85, tmf: 82, frm: 82, cmp: 79, map: 79, ldr: 79 } },
+    { id: 31221, name: "Trymbi",       role: "SUP",  team: "VKS",   year: 2025, rating: 84, quality: "Gold",        region: "CBLOL",     stats: { mec: 76, tmf: 83, frm: 84, cmp: 85, map: 86, ldr: 85 } },
     // LOUD — 5th, 10-8
-    { id: 31222, name: "Robo",         role: "TOP",  team: "LOUD",  year: 2025, rating: 83, quality: "Gold",        region: "LTA South", stats: { mec: 87, tmf: 85, frm: 84, cmp: 83, map: 81, ldr: 82 } },
-    { id: 31223, name: "Shini",        role: "JNG",  team: "LOUD",  year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 77, tmf: 79, frm: 76, cmp: 77, map: 81, ldr: 79 } },
-    { id: 31224, name: "Tinowns",      role: "MID",  team: "LOUD",  year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 81, tmf: 79, frm: 79, cmp: 77, map: 76, ldr: 75 } },
-    { id: 31225, name: "Route",        role: "ADC",  team: "LOUD",  year: 2025, rating: 81, quality: "Gold",        region: "LTA South", stats: { mec: 84, tmf: 81, frm: 82, cmp: 79, map: 78, ldr: 77 } },
-    { id: 31226, name: "RedBert",      role: "SUP",  team: "LOUD",  year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 70, tmf: 77, frm: 79, cmp: 79, map: 81, ldr: 80 } },
+    { id: 31222, name: "Robo",         role: "TOP",  team: "LOUD",  year: 2025, rating: 83, quality: "Gold",        region: "CBLOL",     stats: { mec: 87, tmf: 85, frm: 84, cmp: 83, map: 81, ldr: 82 } },
+    { id: 31223, name: "Shini",        role: "JNG",  team: "LOUD",  year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 77, tmf: 79, frm: 76, cmp: 77, map: 81, ldr: 79 } },
+    { id: 31224, name: "Tinowns",      role: "MID",  team: "LOUD",  year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 81, tmf: 79, frm: 79, cmp: 77, map: 76, ldr: 75 } },
+    { id: 31225, name: "Route",        role: "ADC",  team: "LOUD",  year: 2025, rating: 81, quality: "Gold",        region: "CBLOL",     stats: { mec: 84, tmf: 81, frm: 82, cmp: 79, map: 78, ldr: 77 } },
+    { id: 31226, name: "RedBert",      role: "SUP",  team: "LOUD",  year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 70, tmf: 77, frm: 79, cmp: 79, map: 81, ldr: 80 } },
     // RED Canids Kalunga — 6th, 8-8
-    { id: 31227, name: "fNb",          role: "TOP",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 81, tmf: 79, frm: 78, cmp: 77, map: 76, ldr: 77 } },
-    { id: 31228, name: "Aegis",        role: "JNG",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 78, tmf: 80, frm: 76, cmp: 78, map: 82, ldr: 77 } },
-    { id: 31229, name: "Curse",        role: "JNG",  team: "RED",   year: 2025, rating: 75, quality: "Silver",      region: "LTA South", stats: { mec: 75, tmf: 76, frm: 74, cmp: 73, map: 78, ldr: 75 } },
-    { id: 31230, name: "Mago",         role: "MID",  team: "RED",   year: 2025, rating: 74, quality: "Silver",      region: "LTA South", stats: { mec: 77, tmf: 75, frm: 74, cmp: 72, map: 74, ldr: 71 } },
-    { id: 31231, name: "Grevthar",     role: "MID",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 80, tmf: 79, frm: 78, cmp: 76, map: 77, ldr: 76 } },
-    { id: 31232, name: "Brance",       role: "ADC",  team: "RED",   year: 2025, rating: 82, quality: "Gold",        region: "LTA South", stats: { mec: 84, tmf: 80, frm: 84, cmp: 80, map: 78, ldr: 78 } },
-    { id: 31233, name: "frosty",       role: "SUP",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "LTA South", stats: { mec: 72, tmf: 79, frm: 79, cmp: 79, map: 81, ldr: 80 } },
+    { id: 31227, name: "fNb",          role: "TOP",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 81, tmf: 79, frm: 78, cmp: 77, map: 76, ldr: 77 } },
+    { id: 31228, name: "Aegis",        role: "JNG",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 78, tmf: 80, frm: 76, cmp: 78, map: 82, ldr: 77 } },
+    { id: 31229, name: "Curse",        role: "JNG",  team: "RED",   year: 2025, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 75, tmf: 76, frm: 74, cmp: 73, map: 78, ldr: 75 } },
+    { id: 31230, name: "Mago",         role: "MID",  team: "RED",   year: 2025, rating: 74, quality: "Silver",      region: "CBLOL",     stats: { mec: 77, tmf: 75, frm: 74, cmp: 72, map: 74, ldr: 71 } },
+    { id: 31231, name: "Grevthar",     role: "MID",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 80, tmf: 79, frm: 78, cmp: 76, map: 77, ldr: 76 } },
+    { id: 31232, name: "Brance",       role: "ADC",  team: "RED",   year: 2025, rating: 82, quality: "Gold",        region: "CBLOL",     stats: { mec: 84, tmf: 80, frm: 84, cmp: 80, map: 78, ldr: 78 } },
+    { id: 31233, name: "frosty",       role: "SUP",  team: "RED",   year: 2025, rating: 78, quality: "Silver",      region: "CBLOL",     stats: { mec: 72, tmf: 79, frm: 79, cmp: 79, map: 81, ldr: 80 } },
     // Leviatán Esports — 7th, 5-11
-    { id: 31234, name: "Zothve",       role: "TOP",  team: "LEV",   year: 2025, rating: 75, quality: "Silver",      region: "LTA South", stats: { mec: 79, tmf: 77, frm: 77, cmp: 74, map: 73, ldr: 74 } },
-    { id: 31235, name: "scary",        role: "JNG",  team: "LEV",   year: 2025, rating: 74, quality: "Silver",      region: "LTA South", stats: { mec: 72, tmf: 74, frm: 73, cmp: 72, map: 77, ldr: 73 } },
-    { id: 31236, name: "cody",         role: "MID",  team: "LEV",   year: 2025, rating: 76, quality: "Silver",      region: "LTA South", stats: { mec: 78, tmf: 75, frm: 76, cmp: 74, map: 76, ldr: 74 } },
-    { id: 31237, name: "Ceo",          role: "ADC",  team: "LEV",   year: 2025, rating: 75, quality: "Silver",      region: "LTA South", stats: { mec: 77, tmf: 75, frm: 76, cmp: 73, map: 72, ldr: 70 } },
-    { id: 31238, name: "ProDelta",     role: "SUP",  team: "LEV",   year: 2025, rating: 75, quality: "Silver",      region: "LTA South", stats: { mec: 68, tmf: 75, frm: 76, cmp: 76, map: 79, ldr: 77 } },
+    { id: 31234, name: "Zothve",       role: "TOP",  team: "LEV",   year: 2025, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 79, tmf: 77, frm: 77, cmp: 74, map: 73, ldr: 74 } },
+    { id: 31235, name: "scary",        role: "JNG",  team: "LEV",   year: 2025, rating: 74, quality: "Silver",      region: "CBLOL",     stats: { mec: 72, tmf: 74, frm: 73, cmp: 72, map: 77, ldr: 73 } },
+    { id: 31236, name: "cody",         role: "MID",  team: "LEV",   year: 2025, rating: 76, quality: "Silver",      region: "CBLOL",     stats: { mec: 78, tmf: 75, frm: 76, cmp: 74, map: 76, ldr: 74 } },
+    { id: 31237, name: "Ceo",          role: "ADC",  team: "LEV",   year: 2025, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 77, tmf: 75, frm: 76, cmp: 73, map: 72, ldr: 70 } },
+    { id: 31238, name: "ProDelta",     role: "SUP",  team: "LEV",   year: 2025, rating: 75, quality: "Silver",      region: "CBLOL",     stats: { mec: 68, tmf: 75, frm: 76, cmp: 76, map: 79, ldr: 77 } },
     // Fluxo W7M — 8th, 3-13
-    { id: 31239, name: "Hidan",        role: "TOP",  team: "FXW",   year: 2025, rating: 72, quality: "Silver",      region: "LTA South", stats: { mec: 76, tmf: 74, frm: 74, cmp: 72, map: 71, ldr: 69 } },
-    { id: 31240, name: "Ganks",        role: "JNG",  team: "FXW",   year: 2025, rating: 73, quality: "Silver",      region: "LTA South", stats: { mec: 72, tmf: 75, frm: 70, cmp: 72, map: 76, ldr: 73 } },
-    { id: 31241, name: "Fuuu",         role: "MID",  team: "FXW",   year: 2025, rating: 77, quality: "Silver",      region: "LTA South", stats: { mec: 79, tmf: 76, frm: 77, cmp: 77, map: 77, ldr: 75 } },
-    { id: 31242, name: "Marvin",       role: "ADC",  team: "FXW",   year: 2025, rating: 73, quality: "Silver",      region: "LTA South", stats: { mec: 74, tmf: 72, frm: 74, cmp: 71, map: 70, ldr: 70 } },
-    { id: 31243, name: "Guigs",        role: "SUP",  team: "FXW",   year: 2025, rating: 73, quality: "Silver",      region: "LTA South", stats: { mec: 65, tmf: 72, frm: 75, cmp: 73, map: 75, ldr: 74 } },
+    { id: 31239, name: "Hidan",        role: "TOP",  team: "FXW",   year: 2025, rating: 72, quality: "Silver",      region: "CBLOL",     stats: { mec: 76, tmf: 74, frm: 74, cmp: 72, map: 71, ldr: 69 } },
+    { id: 31240, name: "Ganks",        role: "JNG",  team: "FXW",   year: 2025, rating: 73, quality: "Silver",      region: "CBLOL",     stats: { mec: 72, tmf: 75, frm: 70, cmp: 72, map: 76, ldr: 73 } },
+    { id: 31241, name: "Fuuu",         role: "MID",  team: "FXW",   year: 2025, rating: 77, quality: "Silver",      region: "CBLOL",     stats: { mec: 79, tmf: 76, frm: 77, cmp: 77, map: 77, ldr: 75 } },
+    { id: 31242, name: "Marvin",       role: "ADC",  team: "FXW",   year: 2025, rating: 73, quality: "Silver",      region: "CBLOL",     stats: { mec: 74, tmf: 72, frm: 74, cmp: 71, map: 70, ldr: 70 } },
+    { id: 31243, name: "Guigs",        role: "SUP",  team: "FXW",   year: 2025, rating: 73, quality: "Silver",      region: "CBLOL",     stats: { mec: 65, tmf: 72, frm: 75, cmp: 73, map: 75, ldr: 74 } },
 
     // --- CBLOL 2026 Split 2 (Segunda Etapa) — single round-robin of best-of-threes, 25 July – 30 August 2026; top six into a double-elimination playoff in which every match is a best-of-five, 5 September – 10 October 2026, final in Rio de Janeiro --- (8 teams, playoffs in progress)
     // Los Grandes — 1st, 5-1

@@ -10,8 +10,7 @@
         { r: 'LEC', years: MAJOR_YEARS, note: 'Full + Summer 18–23' },
         { r: 'LCS', years: ['2015','2016','2024','2025','2026'],                                   note: 'No 2011–2014, No 2017, No 2021–2023' },
         { r: 'LCP', years: ['2015','2016','2024','2025','2026'],                                   note: 'No 2011–2014, No 2017, No 2021–2023' },
-        { r: 'CBLOL', years: ['2014','2015','2016','2017','2018','2019','2020','2021','2022','2023','2024','2026'], note: 'Split 2 every year · 2025 is LTA South' },
-        { r: 'LTA South', years: ['2025'],                                                         note: '2025 only — the year CBLOL merged into the LTA' },
+        { r: 'CBLOL', years: ['2014','2015','2016','2017','2018','2019','2020','2021','2022','2023','2024','2025','2026'], note: 'Split 2 every year · 2025 ran as LTA South' },
     ];
     const specialData = [
         { type: 'Hall of Legends',  quality: 'Hall of Legends', qc: 'halloflegends', pack: 'Awards Vault', years: '2024, 2025',                  teams: 'Faker / T1 (2024) · Uzi / RNG (2025)' },

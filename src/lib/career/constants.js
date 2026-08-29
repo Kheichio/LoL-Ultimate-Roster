@@ -138,12 +138,21 @@ export const REGIONS = [
     {
         id: 'CBLOL', name: 'Brazil', league: 'CBLOL', flag: '\u{1F1E7}\u{1F1F7}', accent: '#22c55e',
         blurb: 'The loudest crowd in the world and the smallest cheque. Fights start on cooldown, the arena sells out, and almost nobody outside the country is watching.',
-        // Biggest attribute head start in the game, paid for by the worst wages
-        // and the worst practice infrastructure: you will be famous at home and
-        // grow slower than anyone abroad.
+        // The trade here is MONEY, and only money. Brazil pays the worst wages in
+        // the mode and fields its weakest clubs, so a title comes cheap and
+        // everything gold buys comes slowly. trainingMult deliberately sits WITH
+        // the LCP's 0.96 rather than below it: gold is what buys a training rig,
+        // so a wage floor already taxes training once, and charging it twice made
+        // this region close to strictly-worst rather than a trade.
+        //
+        // Note when tuning: hypeMult is nearly inert (both readers of hype are
+        // hard-capped and every region saturates them), scoutMult is read off the
+        // HIRING club's region rather than the player's, and difficulty is not
+        // read by any game logic at all -- it only draws a bar in the creator.
+        // None of the three can carry a region's compensation.
         mods: { tmf: 4, chp: 3, mec: 2, ldr: 1, cmp: -2, map: -2, knw: -1, lne: 0 },
         difficulty: 0.78, salaryMult: 0.68, hypeMult: 1.35, scoutMult: 1.12,
-        trainingMult: 0.90,
+        trainingMult: 0.96,
     },
 ];
 
@@ -1239,14 +1248,19 @@ export const LEAGUES = {
     // than the LCP's, which is what makes Brazil the region you can win at home
     // and then get taken apart on an international stage.
     CBLOL: {
+        // Ordered on the 2026 season and on the roster means of this project's own
+        // 2026 cards, which agree: LOS 86.0, LOUD 85.0, FUR 81.5, VKS 81.2,
+        // RED 78.8, paiN 77.4, FXW 75.6, LEV 73.6. paiN are the most decorated
+        // org in the league's history and are having a bad year; the static table
+        // owns the pecking order the season opens on, so it follows the form.
         tier1: [
             t1('cblol_loud', 'LOUD',                76, '#00e701'),
-            t1('cblol_pain', 'paiN Gaming',         74, '#e4002b'),
-            t1('cblol_red',  'RED Canids Kalunga',  73, '#d10a11'),
-            t1('cblol_fur',  'FURIA Esports',       71, '#111827'),
-            t1('cblol_vks',  'Vivo Keyd Stars',     70, '#8b5cf6'),
-            t1('cblol_los',  'Los Grandes',         68, '#fbbf24'),
-            t1('cblol_fxw',  'Fluxo W7M',           66, '#00d0ff'),
+            t1('cblol_los',  'Los Grandes',         74, '#fbbf24'),
+            t1('cblol_fur',  'FURIA',               72, '#111827'),
+            t1('cblol_vks',  'Vivo Keyd Stars',     71, '#8b5cf6'),
+            t1('cblol_red',  'RED Canids Kalunga',  70, '#d10a11'),
+            t1('cblol_pain', 'paiN Gaming',         69, '#e4002b'),
+            t1('cblol_fxw',  'Fluxo W7M',           66, '#1e6bff'),
             t1('cblol_lev',  'Leviatán',            64, '#0abfbc'),
             t1('cblol_kbm',  'KaBuM! Esports',      62, '#ff6a00'),
             t1('cblol_intz', 'INTZ',                59, '#e11d48'),
@@ -1256,7 +1270,7 @@ export const LEAGUES = {
             t2('cblol_paina', 'paiN Academy',       54, '#e4002b'),
             t2('cblol_reda',  'RED Canids Academy', 52, '#d10a11'),
             t2('cblol_fura',  'FURIA Academy',      51, '#111827'),
-            t2('cblol_vksa',  'Keyd Stars Academy', 49, '#8b5cf6'),
+            t2('cblol_vksa',  'VKS Academy',        49, '#8b5cf6'),
             t2('cblol_losa',  'Los Grandes Academy', 47, '#fbbf24'),
             t2('cblol_kbma',  'KaBuM! Academy',     45, '#ff6a00'),
             t2('cblol_intza', 'INTZ Academy',       43, '#e11d48'),
