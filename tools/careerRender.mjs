@@ -782,6 +782,18 @@ const SINGLE_ROT = [
     ['club-roster-holds-junk',   c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0.4, roster: { MID: null, TOP: 'nope', JNG: {} }, changes: [null, {}] } })],
     ['club-momentum-is-nonsense', c => ({ ...c, club: { teamId: c.player.clubId, momentum: 'very high', roster: {}, changes: [] } })],
     ['club-belongs-to-another',  c => ({ ...c, club: { teamId: 'org_that_no_longer_exists', momentum: -1, roster: { TOP: { name: 'Ghost', role: 'TOP', rating: 91 } }, changes: [{ year: 2027, role: 'TOP', outName: 'X', inName: 'Ghost', reason: 'cut' }] } })],
+    // Languages are a fractional id -> level map, so every rot shape proficiency
+    // has is reachable here too, and Transfers renders a row per LANGUAGES entry
+    // off the back of it. `studyLang` is a bare id like player.champion.
+    ['languages-is-null',        c => ({ ...c, player: { ...c.player, languages: null } })],
+    ['languages-is-array',       c => ({ ...c, player: { ...c.player, languages: ['ko', 'en'] } })],
+    ['languages-hold-a-string',  c => ({ ...c, player: { ...c.player, languages: { ko: 'fluent', en: NaN, nope: 40 } } })],
+    ['studylang-is-dead-id',     c => ({ ...c, player: { ...c.player, studyLang: 'klingon' } })],
+    // weekly.counts is REBUILT from a literal every week by startCareerWeek, so
+    // the only way a save carries a broken one is between the load and the first
+    // week tick -- which is exactly when the Hub renders.
+    ['weekly-counts-is-null',    c => ({ ...c, weekly: { ...c.weekly, counts: null } })],
+    ['firstseen-is-array',       c => ({ ...c, flags: { ...c.flags, firstSeen: [1, 2] } })],
 ];
 const SINGLE_STATES = [];
 for (const [label, fn] of SINGLE_ROT) {
@@ -1281,6 +1293,47 @@ console.log('---- CAREER DOSSIER --------------------------------------');
             c: fxRetired.dossier, mine: false, remote: B.remoteFiguresFrom(B.sanitizeRow('u_x', {})),
         }, 'cd-remote-empty-row', { minText: 120 });
     }
+
+    // ---- SIGNATURE SLOTS, OWNER ARM --------------------------------------
+    //  Every shape in the loop above renders with mine:false, and the panel
+    //  that SPENDS a Second/Third Signature slot is gated on mine -- so without
+    //  this block the markup that fills a slot has no render coverage at all.
+    //  That is not a hypothetical: economy.signatureSlots() and
+    //  contracts.addSignature() both shipped correct and the screen that calls
+    //  them was never written, so buying both perks (740 legacy points) changed
+    //  nothing anywhere and player.extraChampions could never leave []. The
+    //  panel only draws once a slot is owned, which is exactly why no ordinary
+    //  fixture reaches it -- none of them own the perks.
+    {
+        const champIds = Object.keys(K.CHAMPION_BY_ID || {});
+        const sig = (perks, extras) => {
+            const x = clone(S_MID.snap);
+            x.inventory = (x.inventory && typeof x.inventory === 'object') ? x.inventory : {};
+            x.inventory.perks = perks;
+            x.player.extraChampions = extras;
+            return x;
+        };
+        const SIG = [
+            // One slot bought and free: the Add arm, enabled.
+            ['cd-sig-slot-open', sig(['second_signature'], [])],
+            // Both bought and both filled: the list arm, with Drop controls.
+            ['cd-sig-slots-filled', sig(['second_signature', 'third_signature'], champIds.slice(0, 2))],
+            // The champion-id rot shape. extraChampions is persisted as bare
+            // ids exactly like player.champion, so a renamed champion lands
+            // here, and the list must drop it rather than render a blank row.
+            ['cd-sig-extras-dead-ids', sig(['second_signature', 'third_signature'], ['not_a_champion', null])],
+            // Not an array at all -- the shape hydrate() would have clamped and
+            // a hand-edited save would not.
+            ['cd-sig-extras-not-array', sig(['second_signature'], 'ahri')],
+            // Slots owned by a player who has retired: the panel must go read-only.
+            ['cd-sig-slots-retired', (() => { const x = sig(['second_signature'], []); x.flags = { ...(x.flags || {}), retired: true }; return x; })()],
+        ];
+        for (const [label, shape] of SIG) {
+            applyState(shape);
+            await render('CareerDossier(mine)', CD, { c: shape, mine: true, remote: null },
+                label, { minText: 120 });
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1440,6 +1493,13 @@ if (MATCH_STAGES.length) {
 console.log('');
 console.log('---- CAREER OVERLAY --------------------------------------');
 
+// The pre-game and first-time-at-a-tournament popups both ride the EXISTING
+// `event` kind -- no new overlay branch, no new accent, no new dismissible rule
+// -- so what they add here is the same markup driven by content the weekly roll
+// can never produce. Hoisted out of overlayPayloads() so the hostile-save loop
+// below can reach them without rebuilding the fixtures.
+let PREGAME_PAYLOAD = null, FIRSTTIME_PAYLOAD = null;
+
 function overlayPayloads() {
     applyState(S_MID.snap);
     const c = cur();
@@ -1447,6 +1507,25 @@ function overlayPayloads() {
 
     const ev = safe('rollWeeklyEvent', () => EV.rollWeeklyEvent(cur()), null) || EV.EVENT_POOL[0];
     out.push(['event-valid', 'event', ev]);
+
+    // A real pre-game draw. rollPreGameEvent() rolls PREGAME_CHANCE before it
+    // filters, so it is asked repeatedly rather than once: a single call comes
+    // back null on nearly half the seeds and the harness would silently fall
+    // through to the pool object, which is the one shape that has NOT had its
+    // `text` resolved.
+    const PREGAME_CTX = {
+        phase: 'worlds', phaseName: 'Worlds', label: 'Quarterfinal',
+        opponentId: 'lck_t1', opponentName: 'T1', bestOf: 5, kind: 'bracket',
+    };
+    for (let i = 0; i < 12 && !PREGAME_PAYLOAD; i++) {
+        PREGAME_PAYLOAD = safe('rollPreGameEvent', () => EV.rollPreGameEvent(cur(), PREGAME_CTX), null);
+    }
+    if (!PREGAME_PAYLOAD) PREGAME_PAYLOAD = EV.PREGAME_POOL[0];
+    out.push(['event-pregame', 'event', PREGAME_PAYLOAD]);
+
+    FIRSTTIME_PAYLOAD = safe('firstTimeEvent', () => EV.firstTimeEvent(cur(), 'worlds'), null)
+        || EV.FIRST_TIME_EVENTS.worlds;
+    out.push(['event-first-time-worlds', 'event', FIRSTTIME_PAYLOAD]);
 
     const iv = safe('rollInterview', () => EV.rollInterview(cur(), c.lastMatch), null)
         || (EV.INTERVIEW_POOL[0] && { ...EV.INTERVIEW_POOL[0], question: EV.INTERVIEW_POOL[0].question || 'How did it feel?' });
@@ -1478,7 +1557,7 @@ function overlayPayloads() {
     // static snapshot -- they are built here from the real tables.
     const trait = (K.TRAITS && K.TRAITS[0]) || null;
     out.push(['trait-valid', 'trait', {
-        trait: trait || { id: 'x', name: 'Talented', rarity: 'uncommon', icon: '✨', blurb: 'A trait.' },
+        trait: trait || { id: 'x', name: 'Talented', rarity: 'uncommon', icon: '\u2728', blurb: 'A trait.' },
         applied: { mec: 4, lne: 2, cmp: 2 },
         potBefore: 84, potAfter: 88, age: 16,
     }]);
@@ -1497,6 +1576,15 @@ function overlayPayloads() {
         out.push([kind + '-payload-null', kind, null]);
         out.push([kind + '-payload-garbage', kind, kind === 'awards' ? [null, undefined, 7] : { nope: true, options: [] }]);
     }
+
+    // ... and the two ways the new pools go wrong specifically. A pre-game entry
+    // pushed RAW still has `text` as the FUNCTION rollPreGameEvent() is supposed
+    // to resolve, which the template would interpolate; a first-time entry that
+    // lost its options is the undismissable overlay with nothing to press.
+    const rawFn = EV.PREGAME_POOL.find(e => e && typeof e.text === 'function') || EV.PREGAME_POOL[0];
+    out.push(['event-pregame-text-unresolved', 'event', rawFn]);
+    out.push(['event-first-time-no-options', 'event', { ...(EV.FIRST_TIME_EVENTS.worlds || {}), options: [] }]);
+
     out.push(['unknown-kind', 'not_a_kind', { a: 1 }]);
     return out;
 }
@@ -1516,6 +1604,15 @@ for (const kind of ['event', 'interview', 'result', 'offer', 'awards', 'season',
     applyState(S_HOSTILE.snap);
     ST.careerOverlay.set({ kind, payload: kind === 'awards' ? [{ id: 'z' }] : { id: 'malformed_offer' } });
     await render('CareerOverlay(' + kind + ')', COMPONENT_DIR + 'CareerOverlay.svelte', {}, 'overlay-hostile-' + kind, { minText: 40 });
+}
+
+// ... and the two new payloads against it as well. The loop above only ever
+// hands `event` a bare id, so a pre-game or first-time popup raised on a save
+// whose club, contract and schedule are all gone gets no coverage from it.
+for (const [label, payload] of [['pregame', PREGAME_PAYLOAD], ['first-time', FIRSTTIME_PAYLOAD]]) {
+    applyState(S_HOSTILE.snap);
+    ST.careerOverlay.set({ kind: 'event', payload });
+    await render('CareerOverlay(event)', COMPONENT_DIR + 'CareerOverlay.svelte', {}, 'overlay-hostile-' + label, { minText: 40 });
 }
 
 // ---------------------------------------------------------------------------

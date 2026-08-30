@@ -178,6 +178,194 @@ export function regularBestOf(regionId, tier) {
     return bo >= 3 ? 3 : 1;
 }
 
+// -------------------------------------------------------------------------
+//  LANGUAGES
+//  Six regions, four working languages, and THREE OF THEM SHARE ENGLISH ON
+//  PURPOSE. The asymmetry is the whole mechanic: a European takes an LCS or an
+//  LCP offer with nothing to learn, a Korean has to study English to move west
+//  at all, and a European has to study Korean to ever play in the LCK. One
+//  language per region would have priced every move identically and made the
+//  system a tax rather than a decision.
+//
+//  Levels are 0..100 and FRACTIONAL for the same reason player.attrs are:
+//  immersion moves them in tenths, so rounding on write or on save-load stalls
+//  a language short of the band it earned. Round at display time only.
+//
+//  Language ids are persisted save data exactly like champion and trait ids --
+//  never rename or delete one.
+// -------------------------------------------------------------------------
+export const LANGUAGES = [
+    { id: 'en', name: 'English',    accent: '#3b82f6', blurb: 'What the west runs on. Three of the six leagues hold their reviews and their comms in it.' },
+    { id: 'ko', name: 'Korean',     accent: '#ef4444', blurb: 'The LCK does not translate for you. Every VOD review, every call and every solo queue lobby is in Korean.' },
+    { id: 'zh', name: 'Mandarin',   accent: '#f59e0b', blurb: 'The LPL pays the best wages in the world and expects you to arrive able to talk to your jungler.' },
+    { id: 'pt', name: 'Portuguese', accent: '#22c55e', blurb: 'The loudest crowd on earth, and almost none of it happens in English.' },
+];
+export const LANGUAGE_BY_ID = Object.fromEntries(LANGUAGES.map(l => [l.id, l]));
+export const LANGUAGE_IDS = LANGUAGES.map(l => l.id);
+
+/** Region -> the language its league actually works in. Every REGION_IDS entry
+ *  must appear here: a missing one makes languageForRegion() return null, and a
+ *  null need is read everywhere as "no language required", so that region would
+ *  silently become free to sign for from anywhere. */
+export const REGION_LANGUAGE = {
+    LCK: 'ko', LPL: 'zh', LEC: 'en', LCS: 'en', LCP: 'en', CBLOL: 'pt',
+};
+
+// The numbers below are all sized against the curve in languageStudyGain(): a
+// lesson at level 0 is worth LANGUAGE_STUDY_BASE and the return shrinks as the
+// level rises, which puts the walk at roughly 6 lessons to LANGUAGE_SIGN_MIN,
+// 14 to LANGUAGE_FLUENT and 25 to 100. One lesson is one weekly activity slot.
+
+/** Languages share the 0..100 scale of every other visible meter in the mode,
+ *  so a bar, a percentage and a band need no conversion anywhere in the UI. */
+export const LANGUAGE_MAX = 100;
+/** The level that reads as "fluent" and pays the full interest refund. 70 and
+ *  not 100 because a career that has to max a language before a foreign club
+ *  will pay properly for it is a career that never leaves home. */
+export const LANGUAGE_FLUENT = 70;
+/** Hard gate: below this a club in that language will not sign you at all. 40
+ *  is about six lessons, i.e. two committed weeks -- long enough to be a real
+ *  decision, short enough that a move is never a season-long project. */
+export const LANGUAGE_SIGN_MIN = 40;
+/** Points from one lesson at level 0. */
+export const LANGUAGE_STUDY_BASE = 9;
+/** The study curve never drops below this multiplier. Without a floor the tail
+ *  is asymptotic and 100 is unreachable, which would make the Native band data
+ *  that no save can ever display. */
+export const LANGUAGE_STUDY_FLOOR = 0.28;
+/** Passive weekly gain from living in the region, scaled by the room left. 1.1
+ *  puts an existing foreign signing at LANGUAGE_SIGN_MIN in about 46 weeks and
+ *  fluent in about 110 -- a season and change, then three years. Living
+ *  somewhere converges on its own without ever beating a tutor. */
+export const LANGUAGE_IMMERSION_WEEKLY = 1.1;
+/** Crash course before you fly out, added by contracts.acceptOffer(). One
+ *  lesson's worth: it softens the arrival, it never clears the gate for you. */
+export const LANGUAGE_ARRIVAL_BOOST = 8;
+/** At or under this age you learn faster. 17 is the age MIN_AGE_INTERNATIONAL
+ *  first lets a player leave the region, so the bonus covers exactly the years
+ *  a prospect spends preparing to move rather than arriving after the fact. */
+export const LANGUAGE_YOUTH_AGE = 17;
+export const LANGUAGE_YOUTH_MULT = 1.25;
+/** The share of contracts.js's FOREIGN_REGION_PENALTY (-14) that fluency buys
+ *  back, so a foreign club's interest runs -14 at nothing and -4.2 at fluent.
+ *  Deliberately under 1: an import slot still has to be worth spending, even on
+ *  somebody who can talk to the room. */
+export const LANGUAGE_INTEREST_REFUND = 0.7;
+
+/** Display bands, highest first -- languageBand() walks them in order, so the
+ *  `at: 0` row is the terminator and must stay last. The 70 row is deliberately
+ *  LANGUAGE_FLUENT: the label a player reads and the level the refund pays on
+ *  are the same statement, and a band that said "Fluent" at a level the economy
+ *  did not treat as fluent would be a lie with no symptom. */
+export const LANGUAGE_BANDS = [
+    { at: 95, label: 'Native' },
+    { at: 70, label: 'Fluent' },
+    { at: 45, label: 'Conversational' },
+    { at: 20, label: 'Basic' },
+    { at: 1,  label: 'A few words' },
+    { at: 0,  label: 'None' },
+];
+
+/** The language a region's clubs work in, or null when there is none to learn.
+ *  'ALL' (the amateur circuit) and any unknown id land here, and null is read
+ *  everywhere as "no gate", which is what keeps the compulsory first-club
+ *  ladder open to a thirteen-year-old who speaks one language. */
+export function languageForRegion(regionId) {
+    const key = typeof regionId === 'string' ? regionId : '';
+    const lang = REGION_LANGUAGE[key];
+    return LANGUAGE_IDS.indexOf(lang) >= 0 ? lang : null;
+}
+
+/** A career's level in one language, 0..100 and fractional. Returns 0 for an
+ *  unknown id and for every shape a rotted save can put in `languages` -- null,
+ *  an array, a string, a NaN. */
+export function languageLevelFor(c, langId) {
+    if (LANGUAGE_IDS.indexOf(langId) < 0) return 0;
+    const map = c && c.player && c.player.languages;
+    if (!map || typeof map !== 'object') return 0;
+    const v = Number(map[langId]);
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(0, Math.min(LANGUAGE_MAX, v));
+}
+
+/** The label for a level. Never returns undefined: the `at: 0` row catches
+ *  every number, and a non-number is read as 0. */
+export function languageBand(v) {
+    const n = Number(v);
+    const lvl = Number.isFinite(n) ? Math.max(0, Math.min(LANGUAGE_MAX, n)) : 0;
+    for (const b of LANGUAGE_BANDS) if (lvl >= b.at) return b.label;
+    return LANGUAGE_BANDS[LANGUAGE_BANDS.length - 1].label;
+}
+
+/** 0..1 fluency in a region's language, where 1 is LANGUAGE_FLUENT or better.
+ *  A region that needs no language returns 1, so a caller multiplying by this
+ *  never has to special-case the amateur circuit. */
+export function fluencyForRegion(c, regionId) {
+    const need = languageForRegion(regionId);
+    if (!need) return 1;
+    return Math.max(0, Math.min(1, languageLevelFor(c, need) / LANGUAGE_FLUENT));
+}
+
+/** Whether a club in this region could sign you at all. True when the region
+ *  needs no language -- see languageForRegion(). */
+export function speaksForRegion(c, regionId) {
+    const need = languageForRegion(regionId);
+    if (!need) return true;
+    return languageLevelFor(c, need) >= LANGUAGE_SIGN_MIN;
+}
+
+/** The languages still worth studying: everything under LANGUAGE_FLUENT, in
+ *  LANGUAGES order. A language above the line is finished as far as the default
+ *  target is concerned, though a player may still push it to 100 by hand. */
+export function languagesToLearn(c) {
+    return LANGUAGES.filter(l => languageLevelFor(c, l.id) < LANGUAGE_FLUENT);
+}
+
+/**
+ * Which language a lesson would go into. The player's own pick wins while it is
+ * a real id that is not already maxed; otherwise the default is the one they
+ * have the MOST of, because finishing a language is what clears a gate and
+ * three half-learned ones clear nothing.
+ *
+ * Ties break on LANGUAGE_IDS order, which is why the loop compares strictly.
+ * Null only when every language is already at LANGUAGE_FLUENT or above -- the
+ * 'language' activity gates on exactly that.
+ *
+ * A hoisted `function` declaration on purpose: the ACTIVITIES row below names
+ * it inside its `when` gate, and ACTIVITIES is built at module load.
+ */
+export function studyTargetFor(c) {
+    const cur = c && c.player && c.player.studyLang;
+    if (LANGUAGE_IDS.indexOf(cur) >= 0 && languageLevelFor(c, cur) < LANGUAGE_MAX) return cur;
+    let best = null;
+    let bestLvl = -1;
+    for (const l of languagesToLearn(c)) {
+        const lvl = languageLevelFor(c, l.id);
+        if (lvl > bestLvl) { bestLvl = lvl; best = l.id; }
+    }
+    return best;
+}
+
+/** The fractional points one lesson adds. Three terms: the room left (the
+ *  curve), youth, and KNW -- a player whose whole job is reading patch notes
+ *  picks up a language a little faster. KNW is a 0.9x..1.2x band rather than a
+ *  bonus so a low-KNW support is slowed, not stopped. Returns 0 for an unknown
+ *  id, which is the caller's signal that there was nothing to study. */
+export function languageStudyGain(c, langId) {
+    if (LANGUAGE_IDS.indexOf(langId) < 0) return 0;
+    // Read through `|| {}` rather than a && chain: on a null career the chain
+    // yields null, Number(null) is 0, and a missing age would have quietly
+    // bought the youth bonus.
+    const p = (c && c.player) || {};
+    const level = languageLevelFor(c, langId);
+    const room = Math.max(LANGUAGE_STUDY_FLOOR, Math.min(1, 1 - level / LANGUAGE_MAX));
+    const age = Number(p.age);
+    const youth = Number.isFinite(age) && age <= LANGUAGE_YOUTH_AGE ? LANGUAGE_YOUTH_MULT : 1;
+    const knwRaw = Number((p.attrs || {}).knw);
+    const knw = Number.isFinite(knwRaw) ? Math.max(0, Math.min(99, knwRaw)) : 0;
+    return LANGUAGE_STUDY_BASE * room * youth * (0.9 + knw / 99 * 0.3);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  PLAYSTYLES
 //  Four per role. `mods` shift your starting attributes, `growth` multiplies
@@ -1150,11 +1338,25 @@ export const ACTIVITIES = [
         desc: 'Your VODs, their notes, an hour of being told the truth. Buys real standing in the room.',
         needsClub: true,
     },
+    // The only activity that buys nothing on the attribute sheet: it opens
+    // REGIONS. Priced in the business group rather than practice because that
+    // is what it competes with -- a lesson is a week you did not stream.
+    //
+    // The icon is BOOKS, not the speaking head: coach1on1 already owns that one
+    // and two identical glyphs in one list is a button nobody can find.
+    {
+        id: 'language', name: 'Language Lessons', icon: '\u{1F4DA}', accent: '#818cf8', energy: 10,
+        gold: 180, group: 'business',
+        desc: 'Sit down with a tutor. The circuit is six regions and you can only sign where you can talk.',
+        needsClub: false,
+        when: (c) => !!studyTargetFor(c),
+        whenReason: 'You already speak every language on the circuit.',
+    },
 ];
 
 export const ACTIVITY_BY_ID = ACTIVITIES.reduce((m, a) => { m[a.id] = a; return m; }, {});
 
-/** Fourteen activities against a three-slot week is too many undifferentiated
+/** Fifteen activities against a three-slot week is too many undifferentiated
  *  buttons, so the Hub renders them in labelled sections. Order is the order
  *  they appear on screen. */
 export const ACTIVITY_GROUPS = [

@@ -16,12 +16,17 @@
 //    - no single choice pays more than one week's wage for a mid-tier
 //      main-league pro (~1400g at 78 OVR), so events flavour a career and
 //      never fund one
+//    - no single choice moves a language by more than 8, which is a shade
+//      under one tutored lesson at level 0. An event may nudge a language;
+//      it must never substitute for the activity that teaches one.
 //  Over a 10-year, 400-week career an event fires roughly every third week,
 //  so these numbers compound into something real without ever being a shortcut.
 
 import {
     NEWS_TYPES, ATTR_BY_KEY, ATTR_KEYS, SQUAD_STATUS, MMR_MAX,
-    CHAMPION_BY_ID, phaseForWeek,
+    CHAMPION_BY_ID, phaseForWeek, REGION_BY_ID,
+    LANGUAGE_BY_ID, LANGUAGE_IDS, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
+    languageForRegion, languageLevelFor, languageBand,
 } from './constants.js';
 import { clamp, randInt, fmtGold, fmtFollowers } from './ratings.js';
 import {
@@ -37,15 +42,34 @@ import {
  *  season has a story, rare enough that the player still reads them. */
 export const WEEKLY_EVENT_CHANCE = 0.32;
 
+/** Chance that a week which already produced an event produces a SECOND one.
+ *  Deliberately an order of magnitude under WEEKLY_EVENT_CHANCE: two popups in
+ *  one week is meant to read as a bad week, not as the format. At 0.32 x 0.10
+ *  it lands about three times in a forty-week year. */
+export const WEEKLY_SECOND_EVENT_CHANCE = 0.10;
+
 /** An event may not repeat inside this many weeks. Half a season - long enough
  *  that nobody sees "your jungler blames you" twice in one split. */
 export const EVENT_COOLDOWN_WEEKS = 20;
+
+/** Chance of something happening in the hours before a playoff or international
+ *  game. Much higher than the weekly roll because it is gated on the fixture
+ *  rather than on the calendar: a career sees maybe fifteen of these a year at
+ *  0.55, against roughly thirteen weekly events. */
+export const PREGAME_CHANCE = 0.55;
 
 /** Notable matches (playoffs, internationals, MVP games, blowout losses) draw
  *  press. Routine regular-season games rarely do. Blended across a split this
  *  lands near the intended one interview per four matches. */
 export const INTERVIEW_CHANCE_NOTABLE = 0.55;
 export const INTERVIEW_CHANCE_ROUTINE = 0.10;
+
+/** Series KDA ratio below which the press has a question about your numbers.
+ *  Sits under match.js's own KDA_SOUR_AT (1.6), so a line the match engine has
+ *  already charged morale for is a line a journalist is allowed to ask about,
+ *  and the marginal ones are not. Reads a ratio, never a raw death count: a
+ *  support and a mid do not die the same number of times in a good game. */
+const BAD_KDA_AT = 1.5;
 
 /** Hard caps applied to every effects object before it reaches the store. */
 const CAP = {
@@ -59,6 +83,11 @@ const CAP = {
     followers: 40000,
     legacy: 3,
     mmr: 150,
+    // A language, either direction. One tutored lesson at level 0 is worth
+    // LANGUAGE_STUDY_BASE (9), so an event can never be a cheaper teacher than
+    // the activity - and the same cap on the negative side stops a bad week
+    // erasing a month of study.
+    language: 8,
 };
 
 const METERS = ['form', 'morale', 'energy', 'health'];
@@ -219,6 +248,65 @@ function championName(c) {
 
 /** Coin flip helper so gamble options read as gambles in the source too. */
 function chance(p) { return Math.random() < p; }
+
+/** The balance, read defensively. Several older options reach `c.money.gold`
+ *  straight through the chain, which throws on a save with no money block -
+ *  every apply() is supposed to survive one, so new entries go through here. */
+function goldOf(c) { return Number(c?.money?.gold) || 0; }
+
+// -------------------------------------------------------------------------
+//  LANGUAGE GATES
+//  Two different regions live on a career: player.region is where you are FROM
+//  and is never rewritten by a transfer, player.contract.region is where you
+//  currently WORK. Everything in the language section reads the second against
+//  the first, because "you cannot follow the review" is a lie to a player who
+//  grew up speaking it.
+// -------------------------------------------------------------------------
+
+/** Level in one language, 0..100 and fractional. Delegated to constants so a
+ *  rotted `languages` map (null, an array, a string) reads as 0 inside a gate
+ *  rather than throwing and silently excluding the event. */
+function langLevel(c, id) { return languageLevelFor(c, id); }
+
+function langName(id) { const l = LANGUAGE_BY_ID[id]; return l ? l.name : 'the local language'; }
+function leagueName(regionId) { const r = REGION_BY_ID[regionId]; return r ? r.league : 'the league'; }
+
+/** The league the player actually plays in, or '' when unsigned. */
+function playingRegion(c) {
+    const ct = PL(c).contract;
+    return ct && typeof ct === 'object' && typeof ct.region === 'string' ? ct.region : '';
+}
+
+/** Signed, and working somewhere other than where you are from. */
+function abroad(c) {
+    const r = playingRegion(c);
+    return isSigned(c) && !!r && r !== PL(c).region;
+}
+
+/** The language the player's league runs on, or '' when unsigned or when the
+ *  region needs none ('ALL', the amateur circuit). */
+function workLang(c) { return languageForRegion(playingRegion(c)) || ''; }
+
+/**
+ * Level in the working language, and LANGUAGE_MAX when there is no working
+ * language at all. The maximum is the safe direction on purpose: every gate
+ * below asks "am I short of it", and an unsigned player or an amateur side has
+ * nothing to be short OF. Reading the bare level would have made every
+ * language event fire for a thirteen-year-old with no contract, because
+ * languageLevelFor() honestly reports an unknown id as 0.
+ */
+function workLangLevel(c) { const id = workLang(c); return id ? langLevel(c, id) : LANGUAGE_MAX; }
+
+/** The language of the region the player is FROM, or ''. */
+function homeLang(c) { return languageForRegion(PL(c).region) || ''; }
+
+/** The first language on the circuit the player could not be signed in, in
+ *  LANGUAGE_IDS order, or '' when they clear the gate everywhere. This is the
+ *  gap an agent keeps bringing up. */
+function shortestLanguage(c) {
+    for (const id of LANGUAGE_IDS) if (langLevel(c, id) < LANGUAGE_SIGN_MIN) return id;
+    return '';
+}
 
 // -------------------------------------------------------------------------
 //  EVENT POOL
@@ -559,6 +647,171 @@ export const EVENT_POOL = [
         ],
     },
 
+    {
+        id: 'captain_vote',
+        weight: 10,
+        type: 'drama',
+        icon: '\u{1F4CB}',
+        title: 'Five Names On Five Pieces Of Paper',
+        text: 'The coach hands paper round at the end of review and asks everyone to write down who actually makes the calls in game. He collects them face down and does not open them in the room.',
+        // "Who actually makes the calls" needs a room, and enough games for the
+        // room to have formed an opinion about you rather than a first guess.
+        when: c => isSigned(c) && gamesOf(c) >= 25,
+        options: [
+            {
+                id: 'self',
+                label: 'Write your own name',
+                desc: 'Somebody has to and nobody else is going to.',
+                apply: (c) => ((Number(PL(c).attrs?.ldr) || 0) >= 62
+                    ? {
+                        text: 'Three of the five papers have your name on them and one of those is not yours. The coach tells you privately and it changes how you talk in the next block.',
+                        effects: { morale: 6, chemistry: 4, attr: { ldr: 1 } },
+                    }
+                    : {
+                        text: 'Yours is the only paper with your name on it. Nobody says anything about it and you can tell exactly who read it out to whom.',
+                        effects: { morale: -6, chemistry: -4, form: 2 },
+                    }),
+            },
+            {
+                id: 'veteran',
+                label: 'Write the oldest player in the room',
+                desc: 'He has done it before. Let him do it here.',
+                apply: () => ({
+                    text: 'He gets four of the five and takes the job properly. Comms get quieter and better, and you stop making one decision a game that used to be yours.',
+                    effects: { chemistry: 8, form: 3, morale: -3 },
+                }),
+            },
+            {
+                id: 'blank',
+                label: 'Hand it back blank',
+                desc: 'Refuse the whole premise of the exercise.',
+                apply: () => ({
+                    text: 'You say out loud that a shotcaller you vote for is not a shotcaller. Two people agree with you and the coach does the thing where he writes it down.',
+                    effects: { chemistry: -6, morale: 3, attr: { knw: 1 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'analyst_leaves',
+        weight: 9,
+        type: 'system',
+        icon: '\u{1F4CA}',
+        title: 'The Analyst Is Leaving',
+        text: 'The man who has written your matchup prep for every game you have played here is going to a bigger organisation. He tells you in the car park, before the announcement.',
+        // "Every game you have played here" needs a club and a body of games.
+        when: c => isSigned(c) && gamesOf(c) >= 20,
+        options: [
+            {
+                id: 'documents',
+                label: 'Ask him for everything he has written',
+                desc: 'Two years of prep in one folder.',
+                apply: () => ({
+                    text: 'He sends four hundred pages at one in the morning with no message attached. You read the ones about you first and they are not comfortable reading.',
+                    effects: { energy: -8, morale: -3, attr: { knw: 2 } },
+                }),
+            },
+            {
+                id: 'follow',
+                label: 'Ask whether they need a player',
+                desc: 'He is walking into a room you would like to be in.',
+                apply: () => ({
+                    text: 'He says he will mention you, in the tone of a man who has already mentioned you. Somebody in your building hears about the conversation before you get home.',
+                    effects: { morale: 5, chemistry: -5, flag: 'transferInterest' },
+                }),
+            },
+            {
+                id: 'replace',
+                label: 'Do the prep yourself until they hire',
+                desc: 'Six hours a week nobody is paying you for.',
+                apply: () => ({
+                    text: 'You are worse for a fortnight and then better than you were, because reading a scouting document and writing one are not remotely the same job.',
+                    effects: { energy: -12, form: -2, chemistry: 5, attr: { knw: 1 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'scrim_sandbag',
+        weight: 11,
+        type: 'training',
+        icon: '\u{1F3AD}',
+        title: 'They Are Not Trying',
+        text: 'The scrim partner has run the same troll composition three blocks in a row and laughed about it in lobby chat. Your coach is taking notes on it as though it were data.',
+        // A scrim partner, a block and a coach: all three need a club, and the
+        // fixture-week phases are when scrim blocks actually matter.
+        when: c => isSigned(c) && inSplit(c),
+        options: [
+            {
+                id: 'callout',
+                label: 'Say it in the lobby',
+                desc: 'Publicly, where both coaches can read it.',
+                apply: () => ({
+                    text: 'They play three serious games out of spite and you lose two of them, which is the most useful thing that has happened to you all week.',
+                    effects: { form: 5, chemistry: -4, morale: -2 },
+                }),
+            },
+            {
+                id: 'serious',
+                label: 'Play it completely straight',
+                desc: 'Beat the troll comp properly, on the clock.',
+                apply: () => ({
+                    text: 'You win four games against something nobody will ever draft and learn nothing at all. The block finishes on time and everybody is in a good mood.',
+                    effects: { morale: 4, chemistry: 4, form: -3 },
+                }),
+            },
+            {
+                id: 'find',
+                label: 'Go and find a better partner',
+                desc: 'Message every coach in the region tonight.',
+                apply: () => ({
+                    text: 'Eleven messages and one reply from a side two places above you who will give you Tuesdays. Your coach is annoyed that you did his job and takes the Tuesdays.',
+                    effects: { energy: -8, form: 6, chemistry: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'house_rules',
+        weight: 10,
+        type: 'drama',
+        icon: '\u{1F3E0}',
+        title: 'A Sheet Of Paper On The Fridge',
+        text: 'Somebody has printed house rules and taped them to the fridge. Two of the eleven are obviously about you and one of them is about the kitchen at four in the morning.',
+        // A shared building, and old enough to be living in it rather than at
+        // home with the attendance record on the kitchen table.
+        when: c => isSigned(c) && agedAtLeast(c, 17),
+        options: [
+            {
+                id: 'sign',
+                label: 'Sign it and keep to it',
+                desc: 'Including the four in the morning one.',
+                apply: () => ({
+                    text: 'You are in bed by one for three weeks and the building is a considerably better place to live. You also play about forty fewer games a week.',
+                    effects: { chemistry: 7, health: 6, mmr: -60, morale: -3 },
+                }),
+            },
+            {
+                id: 'amend',
+                label: 'Add two rules of your own',
+                desc: 'If it is a document, make it a document.',
+                apply: () => ({
+                    text: 'You put the practice room hours and the dishes on it in the same handwriting. Somebody adds a thirteenth about the volume of your keyboard and it is not a joke.',
+                    effects: { chemistry: 4, morale: 3, energy: -2 },
+                }),
+            },
+            {
+                id: 'ignore',
+                label: 'Take it down',
+                desc: 'Nobody in this building is your landlord.',
+                apply: () => ({
+                    text: 'It goes back up the same evening with a name written next to the fourth rule. The fridge is a battleground for two months and everybody knows why.',
+                    effects: { chemistry: -9, morale: 4, form: -2 },
+                }),
+            },
+        ],
+    },
+
     // ---- SCOUTING & CONTRACTS ---------------------------------------------
     {
         id: 'scout_dm',
@@ -752,6 +1005,141 @@ export const EVENT_POOL = [
                 apply: () => ({
                     text: 'You are paid within six hours and the org never forgets it. Half the scene quietly thanks you and nobody does it publicly.',
                     effects: { gold: 400, followers: 5000, morale: 3, chemistry: -8, flag: 'contractDispute' },
+                }),
+            },
+        ],
+    },
+
+    {
+        id: 'release_clause_call',
+        weight: 8,
+        type: 'transfer',
+        icon: '\u{1F513}',
+        title: 'Somebody Read Your Release Clause',
+        text: 'A club two places above you has asked, in writing, what it would take. Your agent forwards the email with no message attached to it at all.',
+        // The email is about a number that has to exist on the deal. Without a
+        // clause there is nothing for anybody to have read.
+        when: c => isSigned(c) && Number(PL(c).contract?.releaseClause) > 0,
+        options: [
+            {
+                id: 'trigger',
+                label: 'Tell them to trigger it',
+                desc: 'Say the number back and mean it.',
+                apply: () => ({
+                    text: 'Your agent replies with one line and a figure. Nothing happens for eleven days and then everything about the next four weeks is different.',
+                    effects: { morale: 7, chemistry: -7, followers: 2000, flag: 'transferInterest' },
+                }),
+            },
+            {
+                id: 'leverage',
+                label: 'Take it to your own club first',
+                desc: 'Let them match it or let them lose you.',
+                apply: (c) => (formOf(c) >= 60
+                    ? {
+                        text: 'They come back inside a week with a better deal than the one you were going to ask for, and a general manager who now checks your form on a Monday.',
+                        effects: { gold: 700, morale: 5, chemistry: -3 },
+                    }
+                    : {
+                        text: 'They look at how you are actually playing and they do not blink. The clause stays where it is and so do you, and now they know you looked.',
+                        effects: { morale: -7, chemistry: -5 },
+                    }),
+            },
+            {
+                id: 'kill',
+                label: 'Say no and say nothing',
+                desc: 'Delete the email. Play the split.',
+                apply: () => ({
+                    text: 'Nobody in the building ever finds out, which is the point of doing it that way. You think about the number at least once a week until November.',
+                    effects: { chemistry: 6, morale: -4, form: 3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'bench_buyout',
+        weight: 8,
+        type: 'money',
+        icon: '\u{1F4B0}',
+        title: 'They Offer To Pay You To Go',
+        text: 'The general manager puts a figure on the table to terminate early and leave quietly. It is most of what you are owed and none of what you came here for.',
+        // Being paid to leave needs a seat already lost and a deal to buy out.
+        when: c => isSigned(c) && ['sub', 'benched'].includes(PL(c).status) && !!PL(c).contract,
+        options: [
+            {
+                id: 'take',
+                label: 'Take it and go',
+                desc: 'Money now, and a winter with nothing in it.',
+                apply: () => ({
+                    text: 'It clears on the Friday and you are a free agent in a month where nobody is signing anybody. You have never had that much money or that little to do.',
+                    effects: { gold: 1100, morale: -6, form: -5, flag: 'transferInterest' },
+                }),
+            },
+            {
+                id: 'refuse',
+                label: 'Refuse and turn up every day',
+                desc: 'Make them pay all of it and see you doing it.',
+                apply: () => ({
+                    text: 'Nine weeks of being first into the practice room with nothing to practise for. Two people in the building start treating you differently and one of them writes the roster.',
+                    effects: { morale: -5, form: 6, chemistry: 4, energy: -8 },
+                }),
+            },
+            {
+                id: 'loan',
+                label: 'Ask to be loaned somewhere playing',
+                desc: 'Anywhere. Any tier. Just games.',
+                apply: (c) => (chance(0.45)
+                    ? {
+                        text: 'A tier below and a four-hour drive, and you play every game of the split. Nobody watches any of them and you come back a better player.',
+                        effects: { form: 8, morale: 4, gold: -200, chemistry: -3 },
+                    }
+                    : {
+                        text: 'Two calls and nothing. The window shuts on a Thursday and you spend the rest of the split as the best-prepared substitute in the league.',
+                        effects: { morale: -8, attr: { knw: 1 } },
+                    }),
+            },
+        ],
+    },
+    {
+        id: 'agent_moves_on',
+        weight: 7,
+        type: 'transfer',
+        icon: '\u{1F4C7}',
+        title: 'Your Agent Takes A Staff Job',
+        text: 'The man who has answered your phone at midnight for years is joining an organisation as a director. He cannot represent anybody from Monday and he has told you before his other clients.',
+        // "For years", and a client list to be told after you: an adult player
+        // with a professional history behind them.
+        when: c => agedAtLeast(c, 18) && gamesOf(c) >= 30,
+        options: [
+            {
+                id: 'new',
+                label: 'Sign with the agency he recommends',
+                desc: 'His word, and a stranger on the phone.',
+                apply: () => ({
+                    text: 'A competent woman who has read your contract more carefully than you ever did and who calls you back inside an hour. It is not the same and it is not worse.',
+                    effects: { gold: -200, morale: -3, chemistry: 2 },
+                }),
+            },
+            {
+                id: 'alone',
+                label: 'Represent yourself for a year',
+                desc: 'Read the deal. Do the calls. Keep the cut.',
+                apply: (c) => ((Number(PL(c).attrs?.knw) || 0) >= 70
+                    ? {
+                        text: 'You negotiate your own bonus schedule and get a clause moved that your agent had never got moved. It costs you eleven evenings.',
+                        effects: { gold: 600, energy: -10, attr: { knw: 1 } },
+                    }
+                    : {
+                        text: 'You sign something in March that you understand properly in August. It is not a disaster and it is not what somebody else would have got you.',
+                        effects: { gold: -400, morale: -4, attr: { knw: 1 } },
+                    }),
+            },
+            {
+                id: 'wait',
+                label: 'Ask him to place you somewhere first',
+                desc: 'One last piece of work before he goes.',
+                apply: () => ({
+                    text: 'He spends his last fortnight in the job making phone calls about you instead of about himself. He never mentions it and you never forget it.',
+                    effects: { morale: 6, legacy: 1, flag: 'transferInterest' },
                 }),
             },
         ],
@@ -1205,6 +1593,144 @@ export const EVENT_POOL = [
         ],
     },
 
+    {
+        id: 'old_post_resurfaces',
+        weight: 10,
+        type: 'social',
+        icon: '\u{1F5C3}',
+        title: 'Something You Wrote At Fourteen',
+        text: 'An account you had forgotten owning has been found and read in full by strangers. There are four hundred posts on it and about six of them are the reason it is trending.',
+        // The copy is explicit that this is old, so the player has to be old
+        // enough for "years ago" to be true, and visible enough for anybody to
+        // have gone looking through an archive.
+        when: c => agedAtLeast(c, 17) && hypeOf(c) >= 4000,
+        options: [
+            {
+                id: 'own',
+                label: 'Address all six of them, by name',
+                desc: 'No context, no explanation of the era.',
+                apply: () => ({
+                    text: 'Four paragraphs that quote your own posts back and do not once say the words "at the time". It is over in nine days instead of nine weeks.',
+                    effects: { followers: 6000, morale: -6, chemistry: 4 },
+                }),
+            },
+            {
+                id: 'delete',
+                label: 'Delete the account',
+                desc: 'All four hundred, tonight.',
+                apply: () => ({
+                    text: 'It is gone by midnight and archived by four different people before you started. The deletion is now the story and it has an easier headline than the posts did.',
+                    effects: { followers: 2500, morale: -4, form: -3 },
+                }),
+            },
+            {
+                id: 'ignore',
+                label: 'Say nothing at all',
+                desc: 'Give it nothing and see whether it eats.',
+                apply: (c) => (hypeOf(c) >= 20000
+                    ? {
+                        text: 'It runs for a fortnight because you are big enough to be worth a fortnight. Your press officer stops sleeping and you play some of the best games of your split.',
+                        effects: { followers: 8000, form: 4, morale: -7 },
+                    }
+                    : {
+                        text: 'It dies on the Thursday because something louder happens to somebody bigger. Two people in your own building read all four hundred anyway.',
+                        effects: { chemistry: -4, morale: -3 },
+                    }),
+            },
+        ],
+    },
+    {
+        id: 'merch_royalty',
+        weight: 10,
+        type: 'money',
+        icon: '\u{1F455}',
+        title: 'Your Name On The Back Of A Shirt',
+        text: 'Marketing send a mock-up of a jersey with your name across the shoulders and ask you to approve it by Friday. Somewhere in your contract there is a line about what you get from one.',
+        // A club shirt with your name on it needs a club and an audience that
+        // would buy one.
+        when: c => isSigned(c) && hypeOf(c) >= 3000,
+        options: [
+            {
+                id: 'read',
+                label: 'Go and read the clause first',
+                desc: 'Find out what a shirt is actually worth.',
+                apply: (c) => ((Number(PL(c).attrs?.knw) || 0) >= 65
+                    ? {
+                        text: 'It is a fraction of a percentage point and the fraction is negotiable, which nobody expected you to know. You get it moved and the approval takes an extra fortnight.',
+                        effects: { gold: 800, chemistry: -4, energy: -4 },
+                    }
+                    : {
+                        text: 'Eleven pages and a percentage with three zeroes in front of it. You sign it because the alternative is a fortnight of email about a shirt.',
+                        effects: { gold: 150, morale: -4 },
+                    }),
+            },
+            {
+                id: 'design',
+                label: 'Redraw the whole thing yourself',
+                desc: 'The mock-up is bad and everybody knows it.',
+                apply: () => ({
+                    text: 'Three evenings with somebody in the design team who is delighted anybody cares. It sells out in a weekend and marketing take the credit in a post.',
+                    effects: { gold: 450, followers: 5000, energy: -8 },
+                }),
+            },
+            {
+                id: 'approve',
+                label: 'Approve it and think about the game',
+                desc: 'It is a shirt. Friday is a game.',
+                apply: () => ({
+                    text: 'You reply with one word inside a minute and go back to the VOD you had paused. It is an ugly shirt and about four thousand people buy it anyway.',
+                    effects: { gold: 250, form: 3, followers: 1500 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'fan_at_the_door',
+        weight: 9,
+        type: 'drama',
+        icon: '\u{1F510}',
+        title: 'Somebody Works Out Where You Live',
+        text: 'There is a person on the step at nine in the morning with a poster and a marker, and they are entirely polite about it. Two days later there are three of them and one has a camera.',
+        // Being found at home needs a home address worth finding, which means a
+        // recognisable player rather than a good one - the same tier of
+        // visibility agency_offer asks for.
+        when: c => agedAtLeast(c, 17) && hypeOf(c) >= 8000,
+        options: [
+            {
+                id: 'sign',
+                label: 'Sign it and ask them not to come back',
+                desc: 'Politely, on the step, in your dressing gown.',
+                apply: () => ({
+                    text: 'They are apologetic and delighted and they post the photograph within the hour. Four more people have the address by the weekend.',
+                    effects: { followers: 6000, morale: -6, energy: -4 },
+                }),
+            },
+            {
+                id: 'move',
+                label: 'Move flats',
+                desc: 'Break the lease. Tell nobody the new one.',
+                apply: (c) => (goldOf(c) >= 900
+                    ? {
+                        text: 'Two weeks of boxes in the middle of a split and a deposit you do not get back. The new place is quiet and you sleep properly in it from the first night.',
+                        effects: { gold: -900, morale: 5, health: 5, form: -4 },
+                    }
+                    : {
+                        text: 'You price the lease break twice and it is more than a month of what you make. You stay, and you start using the back entrance.',
+                        effects: { morale: -8, health: -3 },
+                    }),
+            },
+            {
+                id: 'org',
+                label: 'Make it the club\'s problem',
+                desc: 'It happened because of their announcement post.',
+                apply: () => ({
+                    text: 'They take it seriously in a meeting and then handle it with a paragraph asking fans to respect privacy. It works about as well as a paragraph works.',
+                    effects: { chemistry: 3, morale: -3, followers: 2000 },
+                }),
+            },
+        ],
+    },
+
     // ---- THE GAME ITSELF ---------------------------------------------------
     {
         id: 'patch_gutted',
@@ -1529,6 +2055,130 @@ export const EVENT_POOL = [
                 apply: () => ({
                     text: 'It passes at about six. You play the game on ninety minutes of sleep and the first twenty minutes are somebody else playing.',
                     effects: { energy: -8, form: -4, morale: -2 },
+                }),
+            },
+        ],
+    },
+
+    {
+        id: 'champion_rework',
+        weight: 10,
+        type: 'training',
+        icon: '\u{1F528}',
+        title: 'They Reworked It',
+        text: 'Your signature pick keeps its name, its splash art and nothing else. What is on the test server is not the champion you have played four thousand games of.',
+        when: c => !!PL(c).champion,
+        options: [
+            {
+                id: 'relearn',
+                label: 'Relearn it from nothing',
+                desc: 'Two weeks in the practice tool. Again.',
+                apply: (c) => ({
+                    text: `Nine days on the test server before it goes live, most of them spent unlearning a combo your hands do without asking. You are the first person in the region who can play the new ${championName(c)}.`,
+                    effects: { energy: -14, form: -3, attr: { mec: 1, chp: 1 } },
+                }),
+            },
+            {
+                id: 'abandon',
+                label: 'Let it go',
+                desc: 'It was a champion. There are others.',
+                apply: (c) => ({
+                    text: `You do not play ${championName(c)} again for a year. It is the correct decision and there is a fortnight in there where you are noticeably worse at your job.`,
+                    effects: { form: -5, morale: -6, attr: { chp: 1 } },
+                }),
+            },
+            {
+                id: 'complain',
+                label: 'Say what you think about it publicly',
+                desc: 'You have played it more than they have.',
+                apply: () => ({
+                    text: 'Six hundred words, all of them specific, none of them rude. A designer replies to two of the six points and it changes exactly nothing in the patch.',
+                    effects: { followers: 6000, morale: 4, energy: -6 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'ping_route',
+        weight: 9,
+        type: 'system',
+        icon: '\u{1F4F6}',
+        title: 'The Route Changed',
+        text: 'The ladder has gone from forty milliseconds to ninety overnight and stayed there. Everything you do now lands slightly after the moment you decided to do it.',
+        // A ping change is only a change to somebody with a baseline: enough
+        // ladder games to know what the client normally feels like.
+        when: c => (Number(c?.soloq?.games) || 0) >= 15,
+        options: [
+            {
+                id: 'adapt',
+                label: 'Play through it and adjust',
+                desc: 'Learn to press everything earlier.',
+                apply: () => ({
+                    text: 'Three weeks of pressing everything a frame early, and then the route changes back and you are pressing everything a frame early. It takes another week to undo.',
+                    effects: { form: -4, mmr: -70, attr: { cmp: 1 } },
+                }),
+            },
+            {
+                id: 'fix',
+                label: 'Pay for a routed connection',
+                desc: 'There are companies that sell exactly this.',
+                apply: (c) => (goldOf(c) >= 300
+                    ? {
+                        text: 'Forty-four milliseconds by the Wednesday and a monthly cost you will forget you are paying. Nobody who has not had this problem understands why it mattered.',
+                        effects: { gold: -300, form: 4, morale: 4 },
+                    }
+                    : {
+                        text: 'You read three pages about it, price it, and close the tab. Ninety milliseconds is not unplayable, it is just permanently slightly wrong.',
+                        effects: { morale: -5, form: -3 },
+                    }),
+            },
+            {
+                id: 'stop',
+                label: 'Stop laddering until it is fixed',
+                desc: 'Play something else. Watch VODs.',
+                apply: () => ({
+                    text: 'Eleven days off the ladder with the client open on somebody else\'s games. Your rating does not move and neither does anything else.',
+                    effects: { energy: 10, mmr: -40, morale: -3, attr: { knw: 1 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'found_the_hole',
+        weight: 10,
+        type: 'training',
+        icon: '\u{1F50E}',
+        title: 'You Find Something In Their VODs',
+        text: 'Four hours into somebody else\'s replays you notice the same rotation at the same minute in six games running. Nobody on any desk has said it out loud.',
+        // Studying an upcoming opponent needs a fixture list to be studying for,
+        // and a professional body of games to have a reference for what is odd.
+        when: c => isSigned(c) && inSplit(c) && gamesOf(c) >= 15,
+        options: [
+            {
+                id: 'share',
+                label: 'Put it in the team document',
+                desc: 'With the timestamps. All six.',
+                apply: () => ({
+                    text: 'The coach builds most of a game plan around it and it works twice before they patch their own habit. Everybody in the room knows where it came from.',
+                    effects: { chemistry: 8, form: 5, morale: 4, energy: -6 },
+                }),
+            },
+            {
+                id: 'keep',
+                label: 'Keep it for your own lane',
+                desc: 'One player who knows is enough.',
+                apply: () => ({
+                    text: 'You are up forty in the matchup twice in three weeks and nobody quite works out how. It stops working the moment somebody else in the league notices it too.',
+                    effects: { form: 7, chemistry: -4, attr: { map: 1 } },
+                }),
+            },
+            {
+                id: 'more',
+                label: 'Go looking for the next one',
+                desc: 'Another four hours. Then another four.',
+                apply: () => ({
+                    text: 'Twelve more hours of replays across the week and you find one more thing worth half of what the first one was worth. You are wrecked by Friday.',
+                    effects: { energy: -16, attr: { knw: 2 }, form: -2 },
                 }),
             },
         ],
@@ -1909,6 +2559,568 @@ export const EVENT_POOL = [
         ],
     },
 
+    {
+        id: 'back_pain',
+        weight: 11,
+        type: 'system',
+        icon: '\u{1F9B4}',
+        title: 'Your Back Goes',
+        text: 'You stand up after a nine-hour day and something low in your back does not come up with you. It happens again on the Tuesday, getting out of a car.',
+        // A body that has already taken something, and old enough that a decade
+        // at a desk is behind it rather than in front of it. The health line
+        // sits just above wrist_warning's 80 on purpose: a back goes before a
+        // wrist does and this one fires without a club physio to catch it.
+        when: c => agedAtLeast(c, 18) && (healthOf(c) <= 82 || energyOf(c) <= 50),
+        options: [
+            {
+                id: 'physio',
+                label: 'Go and get it looked at properly',
+                desc: 'Scans, a programme, and a schedule.',
+                apply: (c) => (isSigned(c)
+                    ? {
+                        text: 'Forty minutes with somebody who does this for a living and a sheet of six exercises. Four of the six are boring and all six work.',
+                        effects: { health: 11, energy: 6, form: -3 },
+                    }
+                    : {
+                        text: 'You pay for it yourself and it is more than a month of what you make streaming. The exercises are free and you do them for about three weeks.',
+                        effects: { gold: -260, health: 8, energy: 4 },
+                    }),
+            },
+            {
+                id: 'desk',
+                label: 'Rebuild the whole setup',
+                desc: 'Chair, desk height, monitor arm.',
+                apply: (c) => (goldOf(c) >= 500
+                    ? {
+                        text: 'A chair that costs more than your first computer and a desk that goes up. Two weeks of it feeling wrong and then you stop noticing your back at all.',
+                        effects: { gold: -500, health: 8, form: 3 },
+                    }
+                    : {
+                        text: 'You put two books under the monitor and move the chair up one notch. It is genuinely better and it is not a fix.',
+                        effects: { health: 3, morale: -3 },
+                    }),
+            },
+            {
+                id: 'ignore',
+                label: 'Sit differently and carry on',
+                desc: 'It has been fine for six years.',
+                apply: () => ({
+                    text: 'You find a position that does not hurt and play in it for four months. It is a bad position and by February your neck has joined in.',
+                    effects: { health: -9, form: 3, energy: -4 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'eye_strain',
+        weight: 10,
+        type: 'system',
+        icon: '\u{1F453}',
+        title: 'The Headaches Start At Six',
+        text: 'Every day for a fortnight, at about the sixth hour, the screen begins to have an edge on it. You have never once had your eyes tested.',
+        // Old enough to book an appointment and to have been playing long enough
+        // for a sixth hour to be a normal day.
+        when: c => agedAtLeast(c, 15),
+        options: [
+            {
+                id: 'test',
+                label: 'Get them tested',
+                desc: 'An hour, and possibly glasses.',
+                apply: () => ({
+                    text: 'A very small prescription and a pair of glasses you resent for about nine days. The headaches stop and your last two hours a day come back.',
+                    effects: { gold: -220, energy: 9, health: 5, morale: -2 },
+                }),
+            },
+            {
+                id: 'breaks',
+                label: 'Take a break every hour',
+                desc: 'A timer. Stand up. Look at something far away.',
+                apply: () => ({
+                    text: 'Ten minutes an hour, which over a fourteen-hour day is more than two hours of not playing. The headaches halve and so does the volume of games.',
+                    effects: { health: 7, energy: 6, mmr: -70 },
+                }),
+            },
+            {
+                id: 'squint',
+                label: 'Turn the brightness down and carry on',
+                desc: 'It is a screen. Everyone has this.',
+                apply: () => ({
+                    text: 'The room gets darker over about a month until you are playing in the dark at four in the afternoon. The headaches get earlier rather than smaller.',
+                    effects: { health: -6, energy: -6, morale: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'wedding_clash',
+        weight: 9,
+        type: 'social',
+        icon: '\u{1F48D}',
+        title: 'You Said Yes In February',
+        text: 'A wedding you promised to be at is on the same Saturday as a game. You said yes to it in February, when the schedule was still a rumour and the date was a joke.',
+        // A wedding you were invited to as an adult, and a fixture list that
+        // actually has games on it to clash with.
+        when: c => isSigned(c) && agedAtLeast(c, 19) && inSplit(c),
+        options: [
+            {
+                id: 'go',
+                label: 'Go to the wedding',
+                desc: 'Tell the coach on Monday, not Friday.',
+                apply: () => ({
+                    text: 'You watch the second half of your own game on a phone in a car park in a suit. Your substitute plays fine. Everybody at the table is delighted you came.',
+                    effects: { morale: 10, form: -7, chemistry: -6 },
+                }),
+            },
+            {
+                id: 'game',
+                label: 'Play the game',
+                desc: 'Send something expensive and a long message.',
+                apply: () => ({
+                    text: 'You win it. The message you send at one in the morning is honest and long, and there is a photograph you are not in that goes up the next day.',
+                    effects: { form: 4, morale: -8, chemistry: 3 },
+                }),
+            },
+            {
+                id: 'both',
+                label: 'Do the ceremony and drive back',
+                desc: 'Four hours of car on a game day.',
+                apply: () => ({
+                    text: 'You are at the church at eleven and in the booth at six with a shirt collar still in your bag. You play the worst game of your month and you were at both.',
+                    effects: { morale: 4, energy: -12, form: -4, health: -3 },
+                }),
+            },
+        ],
+    },
+
+    // ---- LANGUAGE, MOVING AND HOMESICKNESS ---------------------------------
+    //  The circuit is six regions and three of them work in English, so a move
+    //  is sometimes only a flight and sometimes two years of study. Everything
+    //  below reads player.contract.region (where you WORK) against player.region
+    //  (where you are FROM) and the level in the language that league actually
+    //  runs on - never a proxy. "You cannot follow the review" is a lie to a
+    //  player who grew up speaking it, and abroad(c) is what stops it being told.
+    {
+        id: 'arrival_week',
+        weight: 12,
+        type: 'system',
+        icon: '\u{1F6EB}',
+        title: 'The First Fortnight',
+        text: 'A flat with somebody else\'s furniture in it, a supermarket where you photograph the labels to read them later, and a bus with a destination on the front you cannot make out.',
+        // Living somewhere you are not from, in a league whose working language
+        // you are still short of. Both halves have to be read directly: a player
+        // who moved LEC to LCS is abroad and has nothing to learn.
+        when: c => abroad(c) && workLangLevel(c) < LANGUAGE_FLUENT,
+        options: [
+            {
+                id: 'tutor',
+                label: 'Book a tutor for the fortnight',
+                desc: 'Two hours a day before the block.',
+                apply: (c) => ({
+                    text: 'Ten mornings of a patient woman correcting the same four sounds. By the second week you can order food and read a bus, which is more than most imports manage in a season.',
+                    effects: { gold: -240, energy: -8, language: { [workLang(c)]: 5 } },
+                }),
+            },
+            {
+                id: 'teammate',
+                label: 'Lean on the teammate who speaks both',
+                desc: 'He will translate. He has offered twice.',
+                apply: () => ({
+                    text: 'He does your bank, your contract for the flat and half your conversations for a fortnight. You are settled inside ten days and you have learned nothing at all.',
+                    effects: { chemistry: 8, morale: 5, form: 2 },
+                }),
+            },
+            {
+                id: 'inside',
+                label: 'Stay in and play',
+                desc: 'The client is the same in every country.',
+                apply: () => ({
+                    text: 'Two weeks of leaving the flat for the building and the building for the flat. Your rating is the best it has been all year and you could not name the street you live on.',
+                    effects: { mmr: 90, morale: -8, energy: -6 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'comms_language',
+        weight: 12,
+        type: 'drama',
+        icon: '\u{1F4E2}',
+        title: 'The Call Was Not In English',
+        text: 'The engage happens, four people say the same word at the same time, and you are the only one in the lobby who does not know what it was. You die on the wrong side of it.',
+        // The player must actually be short of the language the room calls in.
+        when: c => abroad(c) && workLangLevel(c) < LANGUAGE_FLUENT,
+        options: [
+            {
+                id: 'ask',
+                label: 'Ask the room to call in English',
+                desc: 'Four people slower so that one is faster.',
+                apply: () => ({
+                    text: 'They agree in the meeting and they do it for eleven days. In the fights it goes back to what it was, because nobody thinks in a second language at nineteen minutes.',
+                    effects: { chemistry: -7, form: 4, morale: 2 },
+                }),
+            },
+            {
+                id: 'twenty',
+                label: 'Learn the twenty words that get shouted',
+                desc: 'Not the language. The fight vocabulary.',
+                apply: (c) => ({
+                    text: `Twenty words on a card taped to the bottom of the monitor: go, back, wait, mine, theirs. It is not ${langName(workLang(c))} and it is the half of it you needed on Saturday.`,
+                    effects: { energy: -6, form: 5, language: { [workLang(c)]: 4 } },
+                }),
+            },
+            {
+                id: 'map',
+                label: 'Stop listening and read the map',
+                desc: 'If you cannot hear it, see it.',
+                apply: () => ({
+                    text: 'You play off five sets of feet and a minimap for a month and you get genuinely good at it. You are also the last person in every fight to know what the plan was.',
+                    effects: { attr: { map: 1 }, form: -3, morale: -5, chemistry: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'facility_tutor',
+        weight: 11,
+        type: 'training',
+        icon: '\u{1F4D6}',
+        title: 'A Tutor In The Meeting Room',
+        text: 'The club has put two hours a week on the schedule with a teacher who has taught four imports before you. It sits between the gym and the afternoon block and nobody is checking that you go.',
+        // A club-funded tutor needs a club, and a working language that is not
+        // already finished - a domestic player has nothing to be taught.
+        when: c => isSigned(c) && workLangLevel(c) < LANGUAGE_FLUENT,
+        options: [
+            {
+                id: 'attend',
+                label: 'Go to every session',
+                desc: 'And do the homework she sets.',
+                apply: (c) => ({
+                    text: 'Eight weeks of two hours and a folder of exercises. You are noticeably behind in the block on Wednesdays and you can hold a conversation by the end of the split.',
+                    effects: { energy: -8, form: -2, language: { [workLang(c)]: 6 } },
+                }),
+            },
+            {
+                id: 'trade',
+                label: 'Trade the slot for another block',
+                desc: 'Two more hours of scrims a week.',
+                apply: () => ({
+                    text: 'The coach takes the hours without asking twice. You are better at the game by March and you still need somebody in the room to tell you what was said.',
+                    effects: { form: 6, chemistry: 3, energy: -6 },
+                }),
+            },
+            {
+                id: 'half',
+                label: 'Turn up and do nothing',
+                desc: 'Present. Phone under the table.',
+                apply: (c) => ({
+                    text: 'You attend all eight and absorb about one in three. She notices in week two and stops setting you homework, which is worse than being told off.',
+                    effects: { energy: -3, morale: -3, language: { [workLang(c)]: 2 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'import_slot',
+        weight: 10,
+        type: 'social',
+        icon: '\u{1F9F3}',
+        title: 'Whose Slot Are You In',
+        text: 'A journalist in the mixed zone asks whether a domestic player could have done what you did tonight. He is not being unkind about it. He asks somebody this every single year.',
+        // Only an import can be asked this, and only about a league they are
+        // actually in: abroad(c), which reads the contract and not the passport.
+        when: c => abroad(c),
+        options: [
+            {
+                id: 'honest',
+                label: 'Say no, and say why',
+                desc: 'Name the thing you do that they do not.',
+                apply: () => ({
+                    text: 'You are specific for ninety seconds about one part of the game and it is the most interesting thing anybody says all night. Half the region reads it as arrogance.',
+                    effects: { followers: 5000, morale: 4, chemistry: -4 },
+                }),
+            },
+            {
+                id: 'cost',
+                label: 'List what it cost you to be here',
+                desc: 'The flight, the flat, the language, the year.',
+                apply: (c) => ({
+                    text: `You describe a fortnight in a flat you could not heat and a supermarket you photographed. It runs in three languages by the morning and one of them is ${langName(homeLang(c) || 'en')}.`,
+                    effects: { followers: 3500, morale: 6, legacy: 1 },
+                }),
+            },
+            {
+                id: 'refuse',
+                label: 'Tell him it is not your question',
+                desc: 'The org signed you. Ask the org.',
+                apply: () => ({
+                    text: 'Eleven words, and you walk. It reads as cold on video and every import in the league sends you the clip within a day.',
+                    effects: { followers: 2000, chemistry: 3, morale: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'homesick_offseason',
+        weight: 11,
+        type: 'system',
+        icon: '\u{1F3E1}',
+        title: 'Six Weeks And A Flight Home',
+        text: 'The season is finished, the building is shut until January, and the flight home is nine hours and most of a month of what you are paid.',
+        // Homesick needs a home you are not in, and an offseason to be in it.
+        when: c => abroad(c) && offSeason(c),
+        options: [
+            {
+                id: 'fly',
+                label: 'Go home for the whole break',
+                desc: 'Every day of it. Buy the flight tonight.',
+                apply: () => ({
+                    text: 'Six weeks of a kitchen you know the sound of. You come back in January soft and slow and having remembered why any of this was supposed to be worth it.',
+                    effects: { gold: -600, morale: 11, energy: 8, form: -5 },
+                }),
+            },
+            {
+                id: 'stay',
+                label: 'Stay and use the empty building',
+                desc: 'Nobody here. Nothing on the schedule.',
+                apply: (c) => ({
+                    text: 'Six weeks of a city you now know the buses of, on your own, with a key to a practice room. You come back a step ahead of everybody and you did not speak to anyone for most of December.',
+                    effects: { form: 7, morale: -7, language: { [workLang(c)]: 3 } },
+                }),
+            },
+            {
+                id: 'bring',
+                label: 'Fly your family out instead',
+                desc: 'Show them the city. Pay for all of it.',
+                apply: () => ({
+                    text: 'Nine days of translating menus for people who are proud of you and slightly frightened of the place. Your mother takes a photograph of the building from outside.',
+                    effects: { gold: -900, morale: 9, energy: 4 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'foreign_ladder',
+        weight: 11,
+        type: 'match',
+        icon: '\u{1F524}',
+        title: 'The Lobby Is Not In Your Language',
+        text: 'Nine other people typing in a language you are a few hundred words into. Half of it is a plan and half of it is about you and there is no way to tell which is which.',
+        // Deliberately NOT gated under LANGUAGE_SIGN_MIN: signingBlock() refuses
+        // a foreign club below 40, so a player who legitimately signed abroad is
+        // never under it and the whole entry would have been dead content. The
+        // honest line is fluency - at 40-70 you can order food and still cannot
+        // read nine strangers arguing at nineteen minutes.
+        when: c => abroad(c) && workLangLevel(c) < LANGUAGE_FLUENT,
+        options: [
+            {
+                id: 'mute',
+                label: 'Mute everybody and play',
+                desc: 'No chat, no pings, nothing but the game.',
+                apply: () => ({
+                    text: 'Eleven games in silence and you win seven of them. It is the most efficient the ladder has ever been and you do not learn one word.',
+                    effects: { mmr: 80, morale: -4, attr: { cmp: 1 } },
+                }),
+            },
+            {
+                id: 'translate',
+                label: 'Keep a translator open on the second monitor',
+                desc: 'Paste, read, answer, die.',
+                apply: (c) => ({
+                    text: 'You spend most of every laning phase reading a browser window. Your rating goes backwards and by Sunday you are recognising the words before you paste them.',
+                    effects: { mmr: -50, energy: -4, language: { [workLang(c)]: 3 } },
+                }),
+            },
+            {
+                id: 'type',
+                label: 'Type badly and let them correct you',
+                desc: 'Get it wrong in front of nine strangers.',
+                apply: (c) => ({
+                    text: `You write something in ${langName(workLang(c))} that means almost what you meant, and a support with a low rating and enormous patience rewrites it for you twice a night.`,
+                    effects: { mmr: -30, morale: -3, language: { [workLang(c)]: 5 } },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'agent_learn_it',
+        weight: 10,
+        type: 'transfer',
+        icon: '\u{1F310}',
+        title: 'He Says It Is The Language',
+        text: 'Your agent has had two conversations about you this month and both of them ended on the same sentence. Nobody is going to run a review through a translator for two years.',
+        // Three things the copy asserts, each read directly: somebody is having
+        // conversations about you (a club, or a scout who has actually made
+        // contact), you are old enough for a move to be a real prospect, and
+        // there is a language on the circuit you could not currently sign in.
+        when: c => agedAtLeast(c, 16) && !!shortestLanguage(c)
+            && (isSigned(c) || flagOf(c, 'scoutContact')),
+        options: [
+            {
+                id: 'course',
+                label: 'Pay for a proper course',
+                desc: 'Four evenings a week, for months.',
+                apply: (c) => {
+                    const id = shortestLanguage(c);
+                    return {
+                        text: `Four evenings a week of ${langName(id)} on top of everything else you already do. It is the least glamorous thing in your calendar and it is the one that moves.`,
+                        effects: { gold: -420, energy: -10, language: { [id]: 6 } },
+                    };
+                },
+            },
+            {
+                id: 'apps',
+                label: 'Do it for free at two in the morning',
+                desc: 'An app, a streak, and no teacher.',
+                apply: (c) => {
+                    const id = shortestLanguage(c);
+                    return {
+                        text: `Eleven weeks of a streak and about four hundred words of ${langName(id)}, none of which are the ones people actually say to each other. It is not nothing.`,
+                        effects: { energy: -8, morale: -2, language: { [id]: 3 } },
+                    };
+                },
+            },
+            {
+                id: 'home',
+                label: 'Decide you are staying home',
+                desc: 'One region, one language, one career.',
+                apply: (c) => ({
+                    text: `You tell him to stop taking the calls. There is a version of the next five years in ${leagueName(PL(c).region)} that is entirely fine and you have just chosen it on purpose.`,
+                    effects: { morale: 7, form: 4, chemistry: 3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'translator_quits',
+        weight: 8,
+        type: 'drama',
+        icon: '\u{1F9CD}',
+        title: 'The Translator Hands In Her Notice',
+        text: 'She has sat between you and every conversation in this building for a year and she is going to a bigger club. There are eleven weeks of the split left after she goes.',
+        // Somebody only sits between you and the room while you are short of the
+        // language the room uses.
+        when: c => abroad(c) && workLangLevel(c) < LANGUAGE_FLUENT,
+        options: [
+            {
+                id: 'lean',
+                label: 'Lean on a teammate instead',
+                desc: 'Ask the one who has been doing it anyway.',
+                apply: (c) => ({
+                    text: 'He is happy to do it and he is not a translator, so about a fifth of every meeting arrives as a summary. You get on better and you know less.',
+                    effects: { chemistry: 6, morale: -3, language: { [workLang(c)]: 2 } },
+                }),
+            },
+            {
+                id: 'solo',
+                label: 'Stop using one at all',
+                desc: 'Sit in every meeting and understand a third.',
+                apply: (c) => ({
+                    text: 'Two months of nodding at things and asking about them afterwards. You are worse in the meetings and by the end of it you are not asking afterwards.',
+                    effects: { form: -5, morale: -4, language: { [workLang(c)]: 6 } },
+                }),
+            },
+            {
+                id: 'hire',
+                label: 'Pay for your own',
+                desc: 'The club will not. You can.',
+                apply: (c) => (goldOf(c) >= 700
+                    ? {
+                        text: 'A man who has done this for two other imports and who tells you what was meant as well as what was said. It costs you what a month of the flat costs.',
+                        effects: { gold: -700, form: 5, morale: 4, chemistry: 2 },
+                    }
+                    : {
+                        text: 'You price it, and it is a month of the flat. The club says they are hiring in January and January is on the other side of the playoffs.',
+                        effects: { morale: -6, form: -3 },
+                    }),
+            },
+        ],
+    },
+    {
+        id: 'press_their_language',
+        weight: 9,
+        type: 'social',
+        icon: '\u{1F3A4}',
+        title: 'You Answer The First Question Yourself',
+        text: 'The translator leans in and you put a hand up. You get through the first answer and most of the second before you have to give it back to her.',
+        // Answering at all needs enough of the language for a club here to have
+        // signed you, and something still left to learn.
+        when: c => abroad(c) && workLangLevel(c) >= LANGUAGE_SIGN_MIN && workLangLevel(c) < LANGUAGE_MAX,
+        options: [
+            {
+                id: 'keep',
+                label: 'Do it every week from now on',
+                desc: 'Badly, in public, until it is not badly.',
+                apply: (c) => ({
+                    text: 'Eleven weeks of getting the tenses wrong on camera in front of a country that finds it charming for about six of them and then simply stops noticing.',
+                    effects: { followers: 6000, energy: -4, language: { [workLang(c)]: 4 } },
+                }),
+            },
+            {
+                id: 'back',
+                label: 'Give it back to the translator',
+                desc: 'Say what you mean instead of what you can.',
+                apply: () => ({
+                    text: 'You answer the rest properly and precisely and it is a much better interview. Somebody clips the twenty seconds before that anyway.',
+                    effects: { followers: 1500, form: 3, morale: -2 },
+                }),
+            },
+            {
+                id: 'full',
+                label: 'Do the whole thing alone next week',
+                desc: 'No safety net and eight minutes of it.',
+                apply: (c) => (chance(0.55)
+                    ? {
+                        text: 'Eight minutes, two words you have to work around, and a room that applauds at the end of it. It is the most popular you have ever been in this country.',
+                        effects: { followers: 11000, morale: 8, language: { [workLang(c)]: 3 } },
+                    }
+                    : {
+                        text: 'You lose a sentence in the middle of the fourth answer and cannot find the end of it. The silence is nine seconds long and all of it is on the broadcast.',
+                        effects: { followers: 3000, morale: -8, form: -3 },
+                    }),
+            },
+        ],
+    },
+    {
+        id: 'first_language_slips',
+        weight: 8,
+        type: 'system',
+        icon: '\u{1F4AD}',
+        title: 'You Lose A Word In Your Own Language',
+        text: 'On the phone to your mother you reach for an ordinary word and it is not there. You use the other one instead and she goes quiet for about a second.',
+        // Two languages in one head: you are working in one that is not the one
+        // you grew up in, and you have been at it long enough for it to show.
+        when: c => abroad(c) && !!homeLang(c) && homeLang(c) !== workLang(c) && agedAtLeast(c, 19),
+        options: [
+            {
+                id: 'call',
+                label: 'Call home every night in your own language',
+                desc: 'Half an hour. Nothing about work.',
+                apply: (c) => ({
+                    text: 'Thirty minutes a night of the language you learned first, about nothing at all. It comes back inside a fortnight and it costs you the last half hour of every day.',
+                    effects: { morale: 6, energy: -4, language: { [homeLang(c)]: 3 } },
+                }),
+            },
+            {
+                id: 'accept',
+                label: 'Let it happen',
+                desc: 'You live here now. Live here.',
+                apply: (c) => ({
+                    text: 'You stop translating in your head somewhere around March, which is the thing every import is told will happen and does not always. Something else goes quiet to make room for it.',
+                    effects: { form: 4, language: { [workLang(c)]: 4, [homeLang(c)]: -3 } },
+                }),
+            },
+            {
+                id: 'read',
+                label: 'Read a book from home',
+                desc: 'Forty minutes a night, on paper.',
+                apply: (c) => ({
+                    text: 'Four hundred pages of somebody writing the way people at home actually talk. It is the first thing you have read for pleasure since you were fifteen.',
+                    effects: { morale: 4, energy: -3, language: { [homeLang(c)]: 2 } },
+                }),
+            },
+        ],
+    },
+
     // ---- THE BEDROOM YEARS -------------------------------------------------
     //  Nobody has signed you, nobody is paying you, and there is homework on
     //  the desk. Everything above this line needs a club, a wage, a physio or a
@@ -2124,6 +3336,758 @@ export const EVENT_POOL = [
 export const EVENT_BY_ID = EVENT_POOL.reduce((m, e) => { m[e.id] = e; return m; }, {});
 
 // -------------------------------------------------------------------------
+//  PRE-GAME POOL
+//  The hours before a playoff tie or an international: the bus, the booth, the
+//  crowd through the wall, a message from home. Same entry shape as EVENT_POOL
+//  with two differences - `when` takes (c, ctx), and `text` may be a function of
+//  the same pair so a line can name the opponent or the stage.
+//
+//  Effects here are SMALL on purpose. These fire hours before a game that is
+//  about to be played, so a +12 form swing would not be an event, it would be a
+//  free win; nothing in this pool moves form or morale by more than 6 and most
+//  entries cut both ways. Everything the caller can supply in `ctx` is already
+//  defaulted by engine.js, and every text function defaults again anyway,
+//  because careerRender fails a render containing the word 'undefined'.
+// -------------------------------------------------------------------------
+export const PREGAME_POOL = [
+    {
+        id: 'pg_bus',
+        weight: 12,
+        type: 'system',
+        icon: '\u{1F68C}',
+        title: 'The Bus To The Venue',
+        text: 'Forty minutes in traffic with four other people who have all separately decided to be quiet about it. Somebody\'s headphones are leaking the same eight bars over and over.',
+        // A team bus needs a team.
+        when: (c, ctx) => !!ctx && isSigned(c),
+        options: [
+            {
+                id: 'notes',
+                label: 'Go through the notes one more time',
+                desc: 'Their last six drafts, on a phone, in traffic.',
+                apply: () => ({
+                    text: 'You read the same document for the fourth time and find one thing in it you had not registered. You arrive slightly carsick and slightly better prepared.',
+                    effects: { form: 3, energy: -4 },
+                }),
+            },
+            {
+                id: 'window',
+                label: 'Look out of the window',
+                desc: 'Forty minutes of not thinking about it.',
+                apply: () => ({
+                    text: 'You watch a city you have not looked at properly in three months go past. You get off the bus calmer than anybody else on it.',
+                    effects: { morale: 4, energy: 5 },
+                }),
+            },
+            {
+                id: 'talk',
+                label: 'Get the bus talking',
+                desc: 'Break it. Somebody has to.',
+                apply: () => ({
+                    text: 'Ten minutes of an argument about something entirely unrelated and the whole vehicle changes temperature. Your support tells you afterwards that he needed that.',
+                    effects: { chemistry: 6, morale: 3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_booth',
+        weight: 12,
+        type: 'training',
+        icon: '\u{1F4BB}',
+        title: 'Tech Check',
+        text: 'Twenty minutes in the booth while they let the crowd in behind the glass. Your chair is two notches lower than the one you practise on and there is no time to argue about it.',
+        when: (c, ctx) => !!ctx && isSigned(c),
+        options: [
+            {
+                id: 'fix',
+                label: 'Make them fix the chair',
+                desc: 'Hold the whole check up over two notches.',
+                apply: () => ({
+                    text: 'It takes six minutes and a man with a trolley and everybody in the booth watches you do it. The chair is right and you are the player who delayed the tech check.',
+                    effects: { form: 4, chemistry: -3 },
+                }),
+            },
+            {
+                id: 'adapt',
+                label: 'Play on it',
+                desc: 'It is two notches. Adjust.',
+                apply: () => ({
+                    text: 'Your wrist sits about a centimetre high for five hours. You stop noticing it in game two and your hands remember it on Monday.',
+                    effects: { form: -3, attr: { cmp: 1 } },
+                }),
+            },
+            {
+                id: 'drill',
+                label: 'Use the twenty minutes on keybinds',
+                desc: 'Practice tool until they take the machines.',
+                apply: () => ({
+                    text: 'Twenty minutes of the same four inputs while a building fills up ten metres away. It is the calmest you feel all day and it costs you the warm-up you usually do.',
+                    effects: { form: 3, energy: -5 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_crowd_wall',
+        weight: 11,
+        type: 'drama',
+        icon: '\u{1F50A}',
+        title: 'You Can Hear Them From The Back Room',
+        text: 'The wall between the green room and the arena is not thick. Every time the crowd goes up at something on the screen the table moves slightly.',
+        // A crowd on the other side of a wall means a real bracket tie, not a
+        // league game in a studio.
+        when: (c, ctx) => !!ctx && ctx.kind === 'bracket',
+        options: [
+            {
+                id: 'watch',
+                label: 'Go and watch the game before yours',
+                desc: 'Stand at the back of the tunnel for ten minutes.',
+                apply: () => ({
+                    text: 'You stand where the players walk out and watch about four minutes of somebody else being taken apart by that noise. It is either the best or the worst preparation available.',
+                    effects: { morale: 4, form: -3 },
+                }),
+            },
+            {
+                id: 'headphones',
+                label: 'Headphones on until they call you',
+                desc: 'Do not hear any of it.',
+                apply: () => ({
+                    text: 'Ninety minutes of the same album and no idea what the score is next door. You walk out into a wall of sound you had not adjusted to at all.',
+                    effects: { form: 3, morale: -3 },
+                }),
+            },
+            {
+                id: 'room',
+                label: 'Get the five of you talking about the plan',
+                desc: 'Out loud, over the noise.',
+                apply: () => ({
+                    text: 'Twenty minutes of saying the same six things to each other until they are boring. Boring is the point and everybody knows it is the point.',
+                    effects: { chemistry: 5, form: 2, energy: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_message_home',
+        weight: 12,
+        type: 'social',
+        icon: '\u{1F4F1}',
+        title: 'A Message From Home',
+        text: 'Your phone goes forty minutes before the walk-on. It is a photograph of six people in a front room you know, sitting in a row facing a television.',
+        when: (c, ctx) => !!ctx,
+        options: [
+            {
+                id: 'reply',
+                label: 'Reply properly',
+                desc: 'Five minutes you do not really have.',
+                apply: () => ({
+                    text: 'You write something longer than you meant to and it is the last thing you do before the phones go in the box. You are still thinking about it in champion select.',
+                    effects: { morale: 5, form: -2 },
+                }),
+            },
+            {
+                id: 'later',
+                label: 'Leave it until after',
+                desc: 'Phone in the box. Answer it tonight.',
+                apply: () => ({
+                    text: 'You put it face down and it sits in the box for six hours. Whatever you send afterwards will read differently depending on the result and you know it.',
+                    effects: { form: 3, morale: -2 },
+                }),
+            },
+            {
+                id: 'show',
+                label: 'Show it to the room',
+                desc: 'Pass the phone round the green room.',
+                apply: () => ({
+                    text: 'Three of them get their own phones out and it becomes six photographs of six front rooms. Nobody says anything about it and the room is different afterwards.',
+                    effects: { chemistry: 5, morale: 4 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_corridor',
+        weight: 11,
+        type: 'drama',
+        icon: '\u{1F6B6}',
+        title: 'Their Mid Laner In The Corridor',
+        text: (c, ctx) => `You come out of the bathroom and somebody from ${String((ctx && ctx.opponentName) || 'the other team')} is standing in the corridor with a water bottle. Neither of you had planned for this.`,
+        // The line names an opponent, so there has to be one.
+        when: (c, ctx) => !!ctx && !!ctx.opponentName,
+        options: [
+            {
+                id: 'nod',
+                label: 'Nod and keep walking',
+                desc: 'Three seconds. Nothing said.',
+                apply: () => ({
+                    text: 'He nods back. You are both entirely normal about it and you think about the exact angle of the nod twice during the first draft.',
+                    effects: { form: 2, morale: 2 },
+                }),
+            },
+            {
+                id: 'talk',
+                label: 'Say something to him',
+                desc: 'A sentence. Any sentence.',
+                apply: () => ({
+                    text: 'You ask him how the flight was and he tells you, at some length, and it is impossible to want to beat somebody less than in the ninety seconds after that.',
+                    effects: { morale: 5, form: -3 },
+                }),
+            },
+            {
+                id: 'stare',
+                label: 'Look straight at him and say nothing',
+                desc: 'Let it be uncomfortable for both of you.',
+                apply: () => ({
+                    text: 'Four seconds of a corridor. Somebody films the end of it on a phone and it is on the internet before the first game finishes.',
+                    effects: { form: 4, followers: 3000, morale: -2 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_worlds_walk',
+        weight: 12,
+        type: 'award',
+        icon: '\u{1F31F}',
+        title: 'The Walk-On',
+        text: 'They hold you in a corridor under the stage while the announcer says the name of your organisation to a building you cannot see yet. It is extremely cold down there and extremely loud above.',
+        // Only Worlds does the under-stage hold and the announcer.
+        when: (c, ctx) => !!ctx && ctx.phase === 'worlds',
+        options: [
+            {
+                id: 'look',
+                label: 'Look up at it on the way out',
+                desc: 'Take the four seconds. See the building.',
+                apply: () => ({
+                    text: 'You look up at forty thousand people and it is not frightening, it is just very large and it is real. You sit down and your hands are completely steady.',
+                    effects: { morale: 6, form: 3 },
+                }),
+            },
+            {
+                id: 'floor',
+                label: 'Watch the floor to the chair',
+                desc: 'Do not look at any of it.',
+                apply: () => ({
+                    text: 'Forty metres of looking at somebody else\'s heels. You are in the chair before you have registered where you are, which is the whole idea and it works.',
+                    effects: { form: 5, morale: -3 },
+                }),
+            },
+            {
+                id: 'crowd',
+                label: 'Find the block with your flag in it',
+                desc: 'They travelled a long way to be in it.',
+                apply: () => ({
+                    text: 'It takes you most of the walk to find them and they see you find them. You will not be able to hear anything they do for the next five hours and it does not matter.',
+                    effects: { morale: 6, energy: 4, form: -2 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_msi_jetlag',
+        weight: 11,
+        type: 'system',
+        icon: '\u{23F0}',
+        title: 'Your Body Thinks It Is Four In The Morning',
+        text: 'Eight time zones and three days is not enough of a run-up. The game is at seven in the evening here and at four in the morning wherever you slept last week.',
+        when: (c, ctx) => !!ctx && ctx.phase === 'msi',
+        options: [
+            {
+                id: 'coffee',
+                label: 'Fix it with caffeine',
+                desc: 'Whatever it takes to be awake at seven.',
+                apply: () => ({
+                    text: 'You are extremely awake for game one and two and there is a version of you in game four that is neither awake nor asleep and cannot be relied on.',
+                    effects: { energy: 8, form: -3, health: -3 },
+                }),
+            },
+            {
+                id: 'sleep',
+                label: 'Sleep through the morning session',
+                desc: 'Miss the last block. Be a person at seven.',
+                apply: () => ({
+                    text: 'You skip the morning entirely and nobody minds. You wake at two feeling like yourself for the first time since the plane.',
+                    effects: { energy: 10, health: 4, form: -2, chemistry: -3 },
+                }),
+            },
+            {
+                id: 'push',
+                label: 'Keep the schedule you flew in on',
+                desc: 'Everybody else is doing the same thing.',
+                apply: () => ({
+                    text: 'Five people all pretending to be in the right time zone. It is nearly fine for two games and it is very obviously not fine in the fourth.',
+                    effects: { form: 3, energy: -8, health: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_first_stand_cold',
+        weight: 11,
+        type: 'system',
+        icon: '\u{1F9E5}',
+        title: 'February, And Nobody Is Ready',
+        text: 'Three weeks of the year have been played and the six teams in this building are the champions of six regions. Half of them have not slept in the same time zone twice.',
+        when: (c, ctx) => !!ctx && ctx.phase === 'first_stand',
+        options: [
+            {
+                id: 'patch',
+                label: 'Spend the morning on the patch',
+                desc: 'Nobody knows what is strong. Find out.',
+                apply: () => ({
+                    text: 'Four hours of a patch two days old with three other people who also do not know what is good. You come out of it with a pick nobody has prepared for.',
+                    effects: { form: 5, energy: -6 },
+                }),
+            },
+            {
+                id: 'known',
+                label: 'Play only what you already know',
+                desc: 'February is not the month to be clever.',
+                apply: () => ({
+                    text: 'You lock in the things your hands have done a thousand times and let everybody else be inventive on the second patch of the year.',
+                    effects: { form: 3, morale: 3, chemistry: -2 },
+                }),
+            },
+            {
+                id: 'watch',
+                label: 'Watch the other five teams warm up',
+                desc: 'Everybody is in one building for two days.',
+                apply: () => ({
+                    text: 'You learn more about what the year is going to look like in one afternoon of standing behind other people than in six weeks of preseason.',
+                    effects: { attr: { knw: 1 }, form: -2, morale: 2 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_playoff_seed',
+        weight: 12,
+        type: 'match',
+        icon: '\u{1F3AF}',
+        title: 'The Whole Split In One Afternoon',
+        text: (c, ctx) => `Eighteen weeks of league games and it comes down to ${String((ctx && ctx.label) || 'this one')}. Nobody in the room says that out loud and everybody in it has done the arithmetic.`,
+        when: (c, ctx) => !!ctx && (ctx.phase === 'spring_po' || ctx.phase === 'summer_po'),
+        options: [
+            {
+                id: 'name',
+                label: 'Say out loud what is at stake',
+                desc: 'Put it on the table before somebody else does.',
+                apply: () => ({
+                    text: 'You name it in one sentence and then nobody has to carry it privately for four hours. Two of them look relieved and one of them looks worse.',
+                    effects: { chemistry: 5, morale: 3, form: -2 },
+                }),
+            },
+            {
+                id: 'routine',
+                label: 'Treat it as a Tuesday',
+                desc: 'Same warm-up. Same food. Same everything.',
+                apply: () => ({
+                    text: 'The same four hours you have run every week since January, on the one day it is not the same. It holds for about two games.',
+                    effects: { form: 4, morale: -2 },
+                }),
+            },
+            {
+                id: 'alone',
+                label: 'Get an hour on your own first',
+                desc: 'Find an empty room in the building.',
+                apply: () => ({
+                    text: 'You sit in a storage corridor with a coat on for an hour and nobody comes to find you. You are the calmest person in the booth and the room noticed you were gone.',
+                    effects: { form: 4, morale: 3, chemistry: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_long_day',
+        weight: 10,
+        type: 'system',
+        icon: '\u{1F35D}',
+        title: 'Eat Now Or Do Not Eat',
+        text: 'A best of five is five hours if it goes the distance. The catering shuts at six and nobody has ever played a good game five on nothing at all.',
+        // Only a Bo5 is a five-hour day.
+        when: (c, ctx) => !!ctx && Number(ctx.bestOf) >= 5,
+        options: [
+            {
+                id: 'proper',
+                label: 'Eat a proper meal now',
+                desc: 'Even though you are not hungry at four.',
+                apply: () => ({
+                    text: 'You eat something sensible two hours before a game you do not want to eat before. In game four you are the only person at the table who is not empty.',
+                    effects: { energy: 9, form: 3 },
+                }),
+            },
+            {
+                id: 'light',
+                label: 'Something small and keep it light',
+                desc: 'Heavy food and a Bo5 do not mix.',
+                apply: () => ({
+                    text: 'Half a plate at half four and a bag of something in the booth. It is exactly right until about the fourth hour and then it is not.',
+                    effects: { energy: 4, morale: 2 },
+                }),
+            },
+            {
+                id: 'nothing',
+                label: 'Nothing until it is over',
+                desc: 'You cannot eat before a game like this.',
+                apply: () => ({
+                    text: 'Five hours on coffee and a banana somebody put in your hand. You are perfectly fine for three games and you are not there for the fifth.',
+                    effects: { energy: -10, form: -3, health: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_warmup',
+        weight: 13,
+        type: 'match',
+        icon: '\u{1F3AE}',
+        title: 'The Warm-Up Game',
+        text: 'One custom against the coaching staff that nobody needs. You go zero and four in eight minutes and everybody in the booth carefully pretends not to have seen it.',
+        when: (c, ctx) => !!ctx,
+        options: [
+            {
+                id: 'laugh',
+                label: 'Be first to laugh at it',
+                desc: 'Say it out loud before the room does.',
+                apply: () => ({
+                    text: 'You call yourself something rude on the open comms and the whole booth goes. It stops being a thing anybody is going to bring up later.',
+                    effects: { chemistry: 5, morale: 4, form: -2 },
+                }),
+            },
+            {
+                id: 'again',
+                label: 'Ask for one more custom',
+                desc: 'Do not walk on stage after that.',
+                apply: () => ({
+                    text: 'Eleven more minutes and you win the lane comfortably against a coach who is not trying. It should not help and it does.',
+                    effects: { form: 4, energy: -4 },
+                }),
+            },
+            {
+                id: 'stop',
+                label: 'Stop warming up entirely',
+                desc: 'The last thing you do should not be bad.',
+                apply: () => ({
+                    text: 'You close the client twenty minutes early and sit with your hands on the desk. Your first ten minutes on stage are slow and everything after them is not.',
+                    effects: { form: -3, morale: 4, energy: 5 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_coach_note',
+        weight: 12,
+        type: 'training',
+        icon: '\u{1F4A1}',
+        title: 'One Sentence On The Whiteboard',
+        text: 'The coach writes a single line on the board, puts the pen down and leaves the room. It is either the most useful thing anybody has said all week or it means nothing at all.',
+        when: (c, ctx) => !!ctx && isSigned(c),
+        options: [
+            {
+                id: 'build',
+                label: 'Build the whole game around it',
+                desc: 'If he wrote it, play it.',
+                apply: () => ({
+                    text: 'Everything you do for five hours points at one sentence. It is right in three games out of five, which is a better hit rate than most plans get.',
+                    effects: { form: 5, chemistry: 4, morale: -2 },
+                }),
+            },
+            {
+                id: 'ask',
+                label: 'Go and ask him what he meant',
+                desc: 'Find him. Make him say it in full.',
+                apply: () => ({
+                    text: 'Nine minutes in a corridor and it turns out to mean something quite specific about the second drake. Nobody else in the room asked.',
+                    effects: { attr: { knw: 1 }, form: 3, energy: -3 },
+                }),
+            },
+            {
+                id: 'own',
+                label: 'Play your own game',
+                desc: 'You know your lane better than the board does.',
+                apply: () => ({
+                    text: 'You do the thing you were going to do anyway and it works, twice. He does not mention it and he writes a different sentence next week.',
+                    effects: { form: 3, chemistry: -4, morale: 3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_press_row',
+        weight: 10,
+        type: 'social',
+        icon: '\u{1F4F8}',
+        title: 'Caught On The Way In',
+        text: (c, ctx) => `Somebody with a lanyard gets thirty seconds with you between the car and the door and asks how exactly you intend to beat ${String((ctx && ctx.opponentName) || 'them')}.`,
+        when: (c, ctx) => !!ctx && !!ctx.opponentName,
+        options: [
+            {
+                id: 'specific',
+                label: 'Answer it specifically',
+                desc: 'Tell him the actual plan. Some of it.',
+                apply: () => ({
+                    text: 'You give him two real sentences about the map and it is the only interesting thing on the pre-show. Their analyst watches it in the other green room.',
+                    effects: { followers: 4000, form: -3, morale: 3 },
+                }),
+            },
+            {
+                id: 'nothing',
+                label: 'Say nothing worth clipping',
+                desc: 'Four words about respect and walk.',
+                apply: () => ({
+                    text: 'You say the thing everybody says. Nobody uses it, nobody learns anything, and you are inside the building eleven seconds sooner.',
+                    effects: { form: 3, followers: 500 },
+                }),
+            },
+            {
+                id: 'bold',
+                label: 'Say you are going to win 3-0',
+                desc: 'On camera, with your name under it.',
+                apply: () => ({
+                    text: 'It is the graphic on the broadcast within the hour and it is on the screen behind the desk whatever the score ends up being.',
+                    effects: { followers: 7000, morale: 5, form: -3, chemistry: -3 },
+                }),
+            },
+        ],
+    },
+    {
+        id: 'pg_hotel_alarm',
+        weight: 9,
+        type: 'drama',
+        icon: '\u{1F6A8}',
+        title: 'The Fire Alarm At Four',
+        text: 'The hotel empties into a car park at ten past four in the morning for eleven minutes. The game is at two in the afternoon and nobody in the group gets back to sleep.',
+        // A hotel means a bracket tie somewhere that is not home.
+        when: (c, ctx) => !!ctx && ctx.kind === 'bracket',
+        options: [
+            {
+                id: 'sleep',
+                label: 'Go back up and force four more hours',
+                desc: 'Curtains, phone off, nothing.',
+                apply: () => ({
+                    text: 'You get about two and a half of the four and they are bad ones. It is still two and a half more than the three of them who went for breakfast at five.',
+                    effects: { energy: 5, form: -2 },
+                }),
+            },
+            {
+                id: 'write',
+                label: 'Stay up and go through their draft',
+                desc: 'You are awake anyway. Use it.',
+                apply: () => ({
+                    text: 'Four in the morning in a hotel lobby with a laptop and one other person who could not sleep either. You find something. You are wrecked by game three.',
+                    effects: { form: 4, energy: -9, chemistry: 3 },
+                }),
+            },
+            {
+                id: 'nap',
+                label: 'Move the whole day back two hours',
+                desc: 'Tell the coach. Push everything.',
+                apply: () => ({
+                    text: 'The warm-up, the food and the meeting all slide and the staff are not happy about any of it. The five of you walk out having slept, which is the only number that mattered.',
+                    effects: { energy: 8, chemistry: -4, morale: 3 },
+                }),
+            },
+        ],
+    },
+];
+
+// -------------------------------------------------------------------------
+//  FIRST TIME AT A TOURNAMENT
+//  One GUARANTEED entry per tournament kind - not weighted, not rolled, and no
+//  `when` gate, because the engine owns the "have I seen this" fact and fires
+//  it from addBracketFixture(), the one place the player's own tie becomes a
+//  playable row. It happens once per career per tournament and the player has
+//  spent real years getting to it, so there is no "nothing happens" option in
+//  any of them.
+//
+//  The five keys are the five bracket kinds. Adding an event to the calendar
+//  means adding it here too, or a whole tournament arrives silently the first
+//  time somebody reaches it.
+// -------------------------------------------------------------------------
+export const FIRST_TIME_EVENTS = {
+    spring_po: {
+        id: 'first_time_spring_po',
+        type: 'award',
+        icon: '\u{1F3AB}',
+        title: 'Your First Playoff Game',
+        text: 'The table stops mattering on Friday. Everything you have done since January is now one bracket with your organisation somewhere in it, and the season is as long as you keep winning.',
+        options: [
+            {
+                id: 'prepare',
+                label: 'Spend every hour left on the opponent',
+                desc: 'Sleep less. Know more. It is one week.',
+                apply: () => ({
+                    text: 'Four nights of their VODs and a page of notes nobody asked you for. You walk in knowing their jungler better than you know your own and you have not slept properly since Monday.',
+                    effects: { form: 7, energy: -14, attr: { knw: 1 } },
+                }),
+            },
+            {
+                id: 'normal',
+                label: 'Keep the week exactly as it was',
+                desc: 'Same hours, same food, same everything.',
+                apply: () => ({
+                    text: 'You do the ordinary week on purpose, which takes more discipline than the other thing would have. On Friday you are the only person on the roster who is not visibly different.',
+                    effects: { morale: 6, form: 4, chemistry: 4 },
+                }),
+            },
+            {
+                id: 'tell',
+                label: 'Tell everybody at home to come',
+                desc: 'Tickets, trains, a hotel you pay for.',
+                apply: () => ({
+                    text: 'Six people who have never been to one of these in a block of seats you bought. You can see exactly where they are from the stage and it does not settle you at all.',
+                    effects: { gold: -400, morale: 9, form: -3 },
+                }),
+            },
+        ],
+    },
+    summer_po: {
+        id: 'first_time_summer_po',
+        type: 'award',
+        icon: '\u{1F947}',
+        title: 'The Bracket That Decides The Year',
+        text: 'Summer playoffs, and everything on the far side of them is decided in this building. Nobody in the room mentions what qualifying would mean and every single person in it has looked up the format.',
+        options: [
+            {
+                id: 'say',
+                label: 'Say the word out loud in the meeting',
+                desc: 'Name what is actually on the other side.',
+                apply: () => ({
+                    text: 'You are the one who says it and the room goes completely quiet for about four seconds. Afterwards two of them thank you and one of them plays worse for a week.',
+                    effects: { chemistry: 5, morale: 5, form: -3 },
+                }),
+            },
+            {
+                id: 'work',
+                label: 'Put the whole thing into the practice room',
+                desc: 'Ten-hour days until it is decided.',
+                apply: () => ({
+                    text: 'Nine days of the longest hours of your career and a scrim record nobody outside the building will ever see. Whatever happens on Saturday, you did the part that was yours.',
+                    effects: { form: 8, energy: -16, health: -4 },
+                }),
+            },
+            {
+                id: 'steady',
+                label: 'Make yourself the calm one',
+                desc: 'Somebody has to be, and it is not the coach.',
+                apply: () => ({
+                    text: 'You take the two youngest players out of the building on the Wednesday and talk about nothing for three hours. One of them plays the best series of his life on Saturday.',
+                    effects: { chemistry: 8, morale: 4, attr: { ldr: 1 }, energy: -5 },
+                }),
+            },
+        ],
+    },
+    first_stand: {
+        id: 'first_time_first_stand',
+        type: 'award',
+        icon: '\u{1F386}',
+        title: 'First Stand',
+        text: 'Six champions, one from each region, in February, before anybody has worked out what the patch is. You won a summer nine months ago and this is the thing it bought you.',
+        options: [
+            {
+                id: 'scout',
+                label: 'Watch all five of the others properly',
+                desc: 'Two days of the whole year in one room.',
+                apply: () => ({
+                    text: 'You spend the first two days behind other people\'s chairs writing down what the rest of the world thinks is strong. It is worth most of the season to you.',
+                    effects: { attr: { knw: 2 }, energy: -8, form: 3 },
+                }),
+            },
+            {
+                id: 'prove',
+                label: 'Treat it as the final it is',
+                desc: 'Six champions. One of them wins in February.',
+                apply: () => ({
+                    text: 'You play it like October and it is not October and that turns out not to matter. Whatever the result, nobody who watches it thinks your region got here by accident.',
+                    effects: { form: 7, morale: 5, energy: -10 },
+                }),
+            },
+            {
+                id: 'enjoy',
+                label: 'Let it be the first one',
+                desc: 'Look at it. You are allowed to.',
+                apply: () => ({
+                    text: 'You take photographs like somebody who has not done this before, because you have not. The other five champions do exactly the same thing and pretend they are not.',
+                    effects: { morale: 10, followers: 5000, form: -3 },
+                }),
+            },
+        ],
+    },
+    msi: {
+        id: 'first_time_msi',
+        type: 'award',
+        icon: '\u{1F30D}',
+        title: 'Mid-Season',
+        text: 'You won a split and the prize is a plane ticket in May. Half the teams you are about to meet have never heard of you and the other half have already watched every game you have played this year.',
+        options: [
+            {
+                id: 'study',
+                label: 'Learn the two regions you have never played',
+                desc: 'A month of games in three days.',
+                apply: () => ({
+                    text: 'Sixty games at one and a half speed on a plane and in a hotel. You arrive understanding roughly what they do and having no idea at all what it feels like.',
+                    effects: { attr: { knw: 2 }, energy: -10, form: 3 },
+                }),
+            },
+            {
+                id: 'scrim',
+                label: 'Ask the best side here for scrims',
+                desc: 'Be beaten by them privately first.',
+                apply: () => ({
+                    text: 'Two blocks against the best team in the tournament in which you win exactly one game. It is the most useful nine hours of the whole year and it is not enjoyable.',
+                    effects: { form: 6, morale: -5, energy: -10, attr: { lne: 1 } },
+                }),
+            },
+            {
+                id: 'city',
+                label: 'Go and look at the city for a day',
+                desc: 'One day. You may never come back.',
+                apply: () => ({
+                    text: 'Eleven hours of somewhere you had only ever seen on a map, with two teammates and no phone signal. You are behind on prep and you remember the day for twenty years.',
+                    effects: { morale: 10, energy: 5, form: -4 },
+                }),
+            },
+        ],
+    },
+    worlds: {
+        id: 'first_time_worlds',
+        type: 'award',
+        icon: '\u{1F3C6}',
+        title: 'You Are Going To Worlds',
+        text: (c) => `The bracket goes up with your organisation in it and you read your own name on it twice to be sure. You are ${ageOf(c)}, and every year of that has been pointed at this one thing.`,
+        options: [
+            {
+                id: 'call',
+                label: 'Call the people who bought the first computer',
+                desc: 'The call you have been drafting since you were twelve.',
+                apply: () => ({
+                    text: 'It takes four attempts to say it in a sentence and the person on the other end is not able to say anything at all for a while. You are on the phone until three in the morning.',
+                    effects: { morale: 10, energy: -4, legacy: 1 },
+                }),
+            },
+            {
+                id: 'work',
+                label: 'Go straight back into the practice room',
+                desc: 'Twenty-two teams. You are not here to attend.',
+                apply: () => ({
+                    text: 'You are the first one back in the building the next morning and you stay in it until the flights. Half the players who go to this tournament are there to have gone to it.',
+                    effects: { form: 9, energy: -14, morale: -3, attr: { knw: 1 } },
+                }),
+            },
+            {
+                id: 'sit',
+                label: 'Sit outside on your own for an hour',
+                desc: 'No phone, nobody, just the fact of it.',
+                apply: () => ({
+                    text: 'An hour on a wall outside a building in the dark, not doing anything. Everything since you were thirteen was for a piece of paper with your organisation on it and now there is one.',
+                    effects: { morale: 7, form: 5, attr: { cmp: 1 } },
+                }),
+            },
+        ],
+    },
+};
+
+// -------------------------------------------------------------------------
 //  EVENT ROLLING
 // -------------------------------------------------------------------------
 
@@ -2181,7 +4145,7 @@ export function rollWeeklyEvent(c, opts) {
     // the crisis event in front of a player who needs it: its escape branches
     // are already written, and behind the ordinary weekly chance somebody in
     // real trouble might simply never see them. Skips the roll and the cooldown
-    // but NOT the `when` gate — an event whose own conditions do not hold is
+    // but NOT the `when` gate - an event whose own conditions do not hold is
     // still the wrong event.
     const forceId = opts && typeof opts.forceId === 'string' ? opts.forceId : '';
     if (forceId) {
@@ -2195,6 +4159,90 @@ export function rollWeeklyEvent(c, opts) {
     const pool = eligibleEvents(state);
     if (!pool.length) return null;
     return weightedPick(pool);
+}
+
+/**
+ * Every event this week, 0 to 2 of them, never null and never holding a falsy
+ * entry. The first is exactly rollWeeklyEvent(); the second is a WEEKLY_SECOND_
+ * EVENT_CHANCE roll off the same eligible pool with the id already drawn taken
+ * out, so a bad week can be two things and can never be the same thing twice.
+ *
+ * rollWeeklyEvent keeps its own signature and behaviour unchanged: careerSmoke
+ * and careerRender both call it directly, and the forced-event path (burnout)
+ * still goes through it.
+ */
+export function rollWeeklyEvents(c, opts) {
+    const first = rollWeeklyEvent(c, opts);
+    if (!first) return [];
+
+    if (Math.random() >= WEEKLY_SECOND_EVENT_CHANCE) return [first];
+    const state = c || snapshot();
+    const pool = eligibleEvents(state).filter(ev => ev && ev.id !== first.id);
+    if (!pool.length) return [first];
+    const second = weightedPick(pool);
+    return second ? [first, second] : [first];
+}
+
+/**
+ * A pool entry's `text` may be a function so a pre-game line can name the
+ * opponent or the stage. It is resolved HERE rather than at render time,
+ * because the shallow copy is what the UI keeps and a function left inside it
+ * would be re-run later against a career that has already moved on. Anything
+ * that throws or hands back a non-string falls back to the entry's own title,
+ * which is never empty - careerRender fails a render containing the literal
+ * word 'undefined'.
+ */
+function resolveText(entry, c, ctx) {
+    const t = entry && entry.text;
+    if (typeof t === 'string' && t) return t;
+    if (typeof t === 'function') {
+        try {
+            const s = t(c, ctx);
+            if (typeof s === 'string' && s) return s;
+        } catch (_) { /* falls through to the title */ }
+    }
+    return (entry && entry.title) || '';
+}
+
+/**
+ * The hours before a major game. `ctx` is built by engine.js from the fixture
+ * itself - { phase, phaseName, label, opponentId, opponentName, bestOf, kind } -
+ * and every field is already defaulted there, so a gate may read it directly.
+ *
+ * Returns a SHALLOW COPY with `text` resolved to a string and a `pregame`
+ * marker, never the pool object. rollWeeklyEvent hands back the live definition
+ * and that is documented above as a hazard; writing a resolved `text` onto it
+ * would mutate the pool for the rest of the session and pin one opponent's name
+ * into every future firing of the same entry.
+ */
+export function rollPreGameEvent(c, ctx) {
+    const state = c || snapshot();
+    if (!state || !state.created || state.flags?.retired) return null;
+    if (!ctx || typeof ctx !== 'object') return null;
+    if (Math.random() >= PREGAME_CHANCE) return null;
+
+    const pool = PREGAME_POOL.filter(ev => {
+        if (!ev) return false;
+        if (weeksSinceEvent(state, ev.id) < EVENT_COOLDOWN_WEEKS) return false;
+        try { return ev.when ? !!ev.when(state, ctx) : true; } catch (_) { return false; }
+    });
+    if (!pool.length) return null;
+
+    const pick = weightedPick(pool);
+    if (!pick) return null;
+    return { ...pick, text: resolveText(pick, state, ctx), pregame: true };
+}
+
+/**
+ * The guaranteed one, the first time a career reaches a given tournament. No
+ * roll, no cooldown and no `when` - the engine writes flags.firstSeen[kind] and
+ * that flag is the whole gate. Shallow copy for the same reason as above.
+ */
+export function firstTimeEvent(c, kind) {
+    const def = FIRST_TIME_EVENTS[kind];
+    if (!def) return null;
+    const state = c || snapshot();
+    return { ...def, text: resolveText(def, state, null), firstTime: true };
 }
 
 function recordEvent(id) {
@@ -2240,6 +4288,19 @@ function capEffects(raw) {
         if (Object.keys(attr).length) out.attr = attr;
     }
 
+    // Same shape discipline as `attr`: an OBJECT keyed by language id, and an
+    // id outside LANGUAGE_IDS is dropped rather than written. Dropping is the
+    // right direction - a typo becomes nothing instead of becoming a language
+    // nobody can see, learn or spend.
+    if (e.language && typeof e.language === 'object') {
+        const lang = {};
+        for (const id of LANGUAGE_IDS) {
+            const v = Number(e.language[id]);
+            if (Number.isFinite(v) && v !== 0) lang[id] = Math.round(clamp(v, -CAP.language, CAP.language));
+        }
+        if (Object.keys(lang).length) out.language = lang;
+    }
+
     if (e.statusChange && SQUAD_STATUS[e.statusChange]) out.statusChange = e.statusChange;
     if (typeof e.flag === 'string' && e.flag) out.flag = e.flag;
     if (typeof e.unflag === 'string' && e.unflag) out.unflag = e.unflag;
@@ -2250,6 +4311,11 @@ function readSnapshotFields(c) {
     const p = PL(c);
     const attrs = {};
     for (const k of ATTR_KEYS) attrs[k] = Number(p.attrs?.[k]) || 0;
+    // Read through languageLevelFor so a save that predates the field, or one
+    // whose map has rotted, reads as a row of zeroes rather than making the
+    // whole before/after diff NaN.
+    const languages = {};
+    for (const id of LANGUAGE_IDS) languages[id] = languageLevelFor(c, id);
     return {
         gold: Number(c?.money?.gold) || 0,
         followers: Number(c?.money?.followers) || 0,
@@ -2263,6 +4329,7 @@ function readSnapshotFields(c) {
         mmr: Number(c?.soloq?.mmr) || 0,
         status: p.status || 'sub',
         attrs,
+        languages,
     };
 }
 
@@ -2298,6 +4365,22 @@ function applyEffects(rawEffects) {
             ...c,
             player: { ...c.player, chemistry: clamp((c.player.chemistry || 0) + e.chemistry, 0, 100) },
         }));
+    }
+
+    // A plain clamped write in both directions, and the existing level is added
+    // to UNROUNDED: languages are fractional for the same reason attrs are, and
+    // rounding here would throw away the tenths that weekly immersion pays in.
+    if (e.language) {
+        career.update(c => {
+            const cur = c.player && c.player.languages && typeof c.player.languages === 'object'
+                ? c.player.languages : {};
+            const next = { ...cur };
+            for (const id of Object.keys(e.language)) {
+                const base = Number(next[id]);
+                next[id] = clamp((Number.isFinite(base) ? base : 0) + e.language[id], 0, LANGUAGE_MAX);
+            }
+            return { ...c, player: { ...c.player, languages: next } };
+        });
     }
 
     // grantFollowers already moves hype in lockstep; a bare `hype` effect is for
@@ -2336,6 +4419,12 @@ function applyEffects(rawEffects) {
         if (d !== 0) attrDiff[k] = d;
     }
     if (Object.keys(attrDiff).length) applied.attr = attrDiff;
+    const langDiff = {};
+    for (const id of LANGUAGE_IDS) {
+        const d = Math.round(after.languages[id] - before.languages[id]);
+        if (d !== 0) langDiff[id] = d;
+    }
+    if (Object.keys(langDiff).length) applied.language = langDiff;
     if (after.status !== before.status) applied.statusChange = after.status;
     if (e.flag) applied.flag = e.flag;
     if (e.unflag) applied.unflag = e.unflag;
@@ -2354,6 +4443,12 @@ function signed(n) { return (n > 0 ? '+' : '-') + Math.abs(Math.round(n)); }
  * Human label for a single effect. Accepts the effects-object keys and, for
  * convenience, a bare attribute key ('mec', 1) so a UI can render one line at
  * a time without unpacking `attr` first.
+ *
+ * `language` takes both forms for the same reason: describeEffect('language',
+ * { ko: 5 }) renders "Korean +5" and joins a multi-language map with commas,
+ * and a bare language id (describeEffect('ko', 5)) renders the same single
+ * chip. Language ids and attribute keys cannot collide - one set is en/ko/zh/pt
+ * and the other is the eight three-letter attributes.
  */
 export function describeEffect(key, value) {
     if (value === 0 || value == null) return '';
@@ -2370,7 +4465,14 @@ export function describeEffect(key, value) {
             .map(k => `${ATTR_BY_KEY[k].abbr} ${signed(value[k])}`)
             .join(', ');
     }
+    if (key === 'language' && value && typeof value === 'object') {
+        return LANGUAGE_IDS
+            .filter(id => value[id])
+            .map(id => `${LANGUAGE_BY_ID[id].name} ${signed(value[id])}`)
+            .join(', ');
+    }
     if (ATTR_BY_KEY[key]) return `${ATTR_BY_KEY[key].abbr} ${signed(value)}`;
+    if (LANGUAGE_BY_ID[key]) return `${LANGUAGE_BY_ID[key].name} ${signed(value)}`;
     return '';
 }
 
@@ -2388,6 +4490,12 @@ export function effectsSummary(effects) {
     }
     if (e.attr) {
         const s = describeEffect('attr', e.attr);
+        if (s) parts.push(s);
+    }
+    // Sits with the attributes rather than with the accounting: a language is a
+    // thing the player got better at, not a thing they were paid.
+    if (e.language) {
+        const s = describeEffect('language', e.language);
         if (s) parts.push(s);
     }
     if (e.gold) parts.push(describeEffect('gold', e.gold));
@@ -2639,6 +4747,35 @@ export const INTERVIEW_POOL = [
             { label: 'Nothing. I do not read it.', tone: 'deflect', effects: { followers: 900, morale: 2, attr: { cmp: 1 } } },
         ],
     },
+    {
+        id: 'iv_bad_numbers',
+        // "You died more times than anybody" is a question about a scoreline, so
+        // it reads the series KDA the match engine summed rather than the result.
+        // `rating > 0` is the same guard `heavy` uses: a result that carries no
+        // per-match rating is a player who did not play, and ctx.kda would read
+        // as 0 for them.
+        when: (c, ctx) => !!ctx?.lost && !!ctx?.badKda && (Number(ctx?.rating) || 0) > 0,
+        question: 'You died more times tonight than anybody on either team. What happened?',
+        options: [
+            { label: 'I was too far forward all night. That is the whole answer.', tone: 'humble', effects: { morale: -3, chemistry: 6, followers: 1300 } },
+            { label: 'Look at the map at those timers, not the scoreboard.', tone: 'confident', effects: { followers: 1800, morale: 3, chemistry: -2 } },
+            { label: 'Count the ones that bought us something. Then ask me again.', tone: 'defiant', effects: { followers: 2600, morale: 4, chemistry: -5 } },
+            { label: 'I played the only role that draft left for me.', tone: 'deflect', effects: { followers: 1000, chemistry: -6, morale: 2 } },
+        ],
+    },
+    {
+        id: 'iv_ugly_win',
+        // Won it and still had the worst line on the team. The only version of
+        // this question that is not simply an insult after a defeat.
+        when: (c, ctx) => !!ctx?.won && !!ctx?.badKda && (Number(ctx?.rating) || 0) > 0,
+        question: 'You won, and your own numbers were the worst on your team. Does that sit badly?',
+        options: [
+            { label: 'It sits badly. We won and I was carried.', tone: 'humble', effects: { morale: -4, chemistry: 8, followers: 1400 } },
+            { label: 'The four of them needed somebody to soak it. That was the plan.', tone: 'confident', effects: { followers: 1700, chemistry: 4, morale: 2 } },
+            { label: 'There is one number on the broadcast at the end and we were on the right side of it.', tone: 'defiant', effects: { followers: 2400, morale: 4, chemistry: -4 } },
+            { label: 'Ask the coach what my job was tonight.', tone: 'deflect', effects: { followers: 900, chemistry: 3, morale: 1 } },
+        ],
+    },
 ];
 
 export const INTERVIEW_BY_ID = INTERVIEW_POOL.reduce((m, q) => { m[q.id] = q; return m; }, {});
@@ -2678,7 +4815,19 @@ function matchCtx(matchResult, c) {
     // loss would draw a camera and interviews would fire twice as often as
     // intended.
     const heavy = (lost && rating > 0 && rating <= 4) || m.sweep === true;
-    return { played, won, lost, mvp, rating, phase, big, series, heavy };
+    // The SERIES kda finishMatch already summed across every game of the tie:
+    // { k, d, a }. Deaths of zero is a real scoreline rather than a divide by
+    // zero, so it reads as the raw kills-plus-assists. Absent entirely reads as
+    // 0, which means badKda is also true for a result that carries no numbers -
+    // a benched player, say - so the two gates that use it below pair it with
+    // `rating > 0`, the same "did this player actually play" test `heavy` uses.
+    const kdaObj = m.kda && typeof m.kda === 'object' ? m.kda : null;
+    const kdaK = Number(kdaObj?.k) || 0;
+    const kdaD = Number(kdaObj?.d) || 0;
+    const kdaA = Number(kdaObj?.a) || 0;
+    const kda = kdaObj ? (kdaD > 0 ? (kdaK + kdaA) / kdaD : (kdaK + kdaA)) : 0;
+    const badKda = played && kda < BAD_KDA_AT;
+    return { played, won, lost, mvp, rating, phase, big, series, heavy, kda, badKda };
 }
 
 /**

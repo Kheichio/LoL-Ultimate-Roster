@@ -17,6 +17,10 @@ import {
     CLUB_TIERS, SQUAD_STATUS, PHASES, ATTR_KEYS, ATTR_MIN, ATTR_MAX,
     phaseForWeek, teamById, allTeams, championsForRole, championsForStyle,
     championFit, MIN_AGE_BY_TIER, PROFICIENCY_SIGNATURE_HEAD_START,
+    LANGUAGE_BY_ID, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
+    LANGUAGE_ARRIVAL_BOOST, LANGUAGE_INTEREST_REFUND,
+    languageForRegion, languageLevelFor, languageBand, fluencyForRegion,
+    speaksForRegion,
 } from './constants.js';
 import {
     calcOVR, calcPotentialOVR, deservedStatus, statusInfo, weeklySalaryFor,
@@ -99,6 +103,14 @@ const FOREIGN_FAME_REFUND = 9;       // and fame is what buys it back
  *  Applied to the per-week offer roll, never to the wage: buildOffer() derives
  *  eagerness from `interest`, so putting this in the roll keeps money honest. */
 const HOME_REGION_CALL_RATE = 1.25;
+
+/** And a foreign club calls sooner once it can talk to you. Deliberately under
+ *  HOME_REGION_CALL_RATE-1 so fluency never makes a foreign league keener than
+ *  the player's own: at zero fluency this is worth exactly 1, i.e. the rate the
+ *  foreign branch has always run at, so nothing regresses for a save that has
+ *  never studied. Same split as HOME_REGION_CALL_RATE -- frequency here, never
+ *  in scoutInterest(), because interest reprices the entire offer sheet. */
+const FLUENT_CALL_RATE_BONUS = 0.35;
 
 /** The headline rule of the whole mode: nobody walks into a main-league
  *  starting seat under 72. Below it a tier-1 club will only ever promise a
@@ -448,10 +460,24 @@ export function scoutInterest(c, team) {
     // fame and about 13 after a famous player buys the import slot back; much
     // above that and the foreign market closes entirely for anyone without hype,
     // which is not what prioritising the home region should mean.
+    //
+    // LANGUAGE is the second half of the import slot. A club that can actually
+    // talk to you is buying a player, not a project, and fluency buys back
+    // LANGUAGE_INTEREST_REFUND of the penalty: -14 at nothing, -4.2 at fluent.
+    // At zero fluency the arithmetic is EXACTLY what it has always been, which
+    // is what keeps every save that predates languages priced where it was.
+    //
+    // Raising interest here also raises the wage, the contract length, the
+    // signing bonus and the release clause -- buildOffer() derives all four from
+    // it -- and that is intended in this one case: a club that can talk to you
+    // wants you more and pays accordingly. Call FREQUENCY is a different thing
+    // and lives in generateOffers().
     if (t.region === 'ALL' || t.region === p.region) {
         v += HOME_REGION_BONUS;
     } else {
-        v += FOREIGN_REGION_PENALTY + Math.min(FOREIGN_FAME_REFUND, fame);
+        const need = languageForRegion(t.region);
+        const fl = need ? fluencyForRegion(c, t.region) : 1;   // 0..1
+        v += FOREIGN_REGION_PENALTY * (1 - fl * LANGUAGE_INTEREST_REFUND) + Math.min(FOREIGN_FAME_REFUND, fame);
     }
 
     // Already contracted somewhere better? They will not waste the call.
@@ -546,7 +572,20 @@ function offerBlurb(c, t, tier, status, region, interest) {
         lines.push('Walking away from an open-circuit roster costs you nothing, whenever something better calls.');
     }
     if (region !== p.region) {
-        lines.push(`Relocating to ${REGION_BY_ID[region]?.name || region}. New language, new solo queue, no friends.`);
+        // This line used to read "New language, new solo queue, no friends" and
+        // promised a mechanic that did not exist. It does now, so the sheet
+        // names the language the room actually works in and says where the
+        // player stands on it -- the same number signingBlock() gates on.
+        const regionName = REGION_BY_ID[region]?.name || region;
+        const need = languageForRegion(region);
+        const langName = need ? ((LANGUAGE_BY_ID[need] && LANGUAGE_BY_ID[need].name) || need) : '';
+        if (!need) {
+            lines.push(`Relocating to ${regionName}. Nothing to learn before you go but the roads.`);
+        } else if (speaksForRegion(c, region)) {
+            lines.push(`Relocating to ${regionName}. You already have the ${langName} for it, so the move is a visa and a flight.`);
+        } else {
+            lines.push(`Relocating to ${regionName}. The room works in ${langName} and you are at ${Math.round(languageLevelFor(c, need))}/100 ${DASH} ${LANGUAGE_SIGN_MIN} before anybody there signs you.`);
+        }
     } else if (tier <= 2) {
         // The only place a player ever learns the home-region rule exists.
         lines.push('They have watched you since you were climbing their own solo queue.');
@@ -679,6 +718,13 @@ export function signingBlock(c, team) {
     const p = c && c.player;
     if (!p || !t) return { blocked: true, reason: 'No club.' };
 
+    // The club you already play for can always renew with you. Inert today --
+    // nothing calls this with the current club, interestedTeams() filters it out
+    // by id -- and it exists so the language clause below can never evict a
+    // player from a room he is already sitting in. A signing gate is a rule
+    // about ARRIVING somewhere.
+    if (t.id === p.clubId) return { blocked: false, reason: '' };
+
     const tier = Number(t.tier) || 1;
     const ovr = calcOVR(p.attrs, p.role);
     const mmr = Number(c.soloq?.mmr) || 0;
@@ -694,6 +740,29 @@ export function signingBlock(c, team) {
     // the moment the open circuit gets regions.
     if (!everSigned && t.region !== 'ALL' && t.region !== p.region) {
         return { blocked: true, reason: 'Your first team is a local one. Nobody is flying an unproven player across the world.' };
+    }
+    // (b2) LANGUAGE. The sibling rule to (b), and unlike (b) it is load-bearing
+    // from day one: a club whose league does not work in a language you can hold
+    // a review in will not sign you however good you are.
+    //
+    // REGION_LANGUAGE maps LEC, LCS and LCP all to 'en' ON PURPOSE, so moving
+    // from Europe to North America is free while a Korean has to learn English
+    // to move west at all and a European has to learn Korean for the LCK. That
+    // asymmetry is the mechanic; a language per region would just be a tax.
+    //
+    // 'ALL' is NEVER blocked -- languageForRegion() returns null for it and for
+    // anything unknown, and normTeam() defaults an unknown club's region to
+    // 'ALL'. The compulsory first-club ladder runs entirely through the amateur
+    // sides, and careerSmoke hard-fails a run where a precomp career is never
+    // signed by anybody.
+    const need = languageForRegion(t.region);
+    if (need && !speaksForRegion(c, t.region)) {
+        const lvl = languageLevelFor(c, need);
+        const langName = (LANGUAGE_BY_ID[need] && LANGUAGE_BY_ID[need].name) || need;
+        return {
+            blocked: true,
+            reason: `They play in ${langName}. You are at ${languageBand(lvl)} - ${Math.round(lvl)}/100. Clubs here need ${LANGUAGE_SIGN_MIN}.`,
+        };
     }
 
     // (f) AGE. Blocked at the OFFER, never by downgrading the status: capping a
@@ -836,8 +905,15 @@ export function generateOffers(c) {
         // scoutInterest: raising the INTEREST would also raise the wage, the
         // contract length and the signing bonus, all of which derive from it.
         // Calling earlier is what "prioritise recruiting you" actually means.
-        const homeRate = (row.team.region === 'ALL' || row.team.region === p.region)
-            ? HOME_REGION_CALL_RATE : 1;
+        //
+        // The foreign half is the same idea read the other way round: a league
+        // you can already talk to picks the phone up sooner than one you cannot.
+        // It is exactly 1 at zero fluency -- the flat rate every foreign club
+        // used to get -- so a save that has never studied calls as it always did.
+        const home = row.team.region === 'ALL' || row.team.region === p.region;
+        const homeRate = home
+            ? HOME_REGION_CALL_RATE
+            : (1 + fluencyForRegion(c, row.team.region) * FLUENT_CALL_RATE_BONUS);
         if (Math.random() * 100 >= row.interest * rate * homeRate) continue;
         const offer = buildOffer(c, row.team, { interest: row.interest });
         if (!offer) continue;
@@ -911,6 +987,13 @@ export function acceptOffer(offerId) {
         signedWeek: c.time.week,
     };
 
+    // A crash course before you fly out. Only when the destination works in a
+    // language the player is not fluent in yet, and it lands strictly AFTER the
+    // hard gate rather than before it -- signingBlock() ran when the offer was
+    // built, so LANGUAGE_ARRIVAL_BOOST can never be what got anybody signed.
+    const arrivalLang = languageForRegion(offer.region);
+    const crashCourse = !!arrivalLang && languageLevelFor(c, arrivalLang) < LANGUAGE_FLUENT;
+
     career.update(x => ({
         ...x,
         player: {
@@ -919,6 +1002,15 @@ export function acceptOffer(offerId) {
             clubTier: offer.tier,
             status: offer.status,
             contract,
+            // Written in the SAME update as the contract: a second career.update
+            // here would be a second debounced save of a half-signed player.
+            // Fractional on purpose, like every other language write.
+            languages: crashCourse
+                ? {
+                    ...(x.player.languages && typeof x.player.languages === 'object' ? x.player.languages : {}),
+                    [arrivalLang]: clamp(languageLevelFor(x, arrivalLang) + LANGUAGE_ARRIVAL_BOOST, 0, LANGUAGE_MAX),
+                }
+                : x.player.languages,
             // Low but not hostile on a move: nobody in the room knows you, and
             // the player you just replaced knows exactly who you are. A renewal
             // keeps whatever you already built. Mentor and The Voice are what

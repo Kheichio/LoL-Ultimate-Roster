@@ -19,6 +19,7 @@ import {
     WEEKS_PER_YEAR, ENERGY_MAX, HEALTH_MAX, FORM_MAX, MORALE_MAX, phaseForWeek,
     teamById, PATH_BY_ID, REGION_BY_ID, ROLE_BY_ID, PLAYSTYLE_BY_ID, CHAMPION_BY_ID,
     TRAIT_BY_ID, championsForStyle, PROFICIENCY_SIGNATURE_HEAD_START,
+    LANGUAGE_IDS, LANGUAGE_MAX, languageForRegion,
 } from '../career/constants.js';
 import {
     calcOVR, calcPotentialOVR, clamp, clampAttr, emptyAttrs, rollNewPlayer,
@@ -78,6 +79,18 @@ export function blankCareer() {
             // is seeded with a head start at creation - that is where the hours
             // already went.
             proficiency: {},
+
+            // Languages spoken: languageId -> 0..100. FRACTIONAL for the same
+            // reason attrs are - passive immersion pays 1.1 a week and a lesson
+            // pays a decaying curve, so rounding on write or on load would shave
+            // a tenth off every gain and park a language short of fluent
+            // forever. Round at display time only.
+            languages: {},
+            // The language the player has chosen to study, or null. null is not
+            // "studying nothing": constants.studyTargetFor() falls back to the
+            // language closest to done, so the default lives there rather than
+            // being baked into this field.
+            studyLang: null,
 
             form: 50,
             morale: 65,
@@ -162,6 +175,11 @@ export function blankCareer() {
             actionsMax: 4,
             trained: {},             // attrKey → sessions used this week
             did: {},                 // activityId → true, for once-a-week activities
+            // activityId -> how many times it has been done THIS week. Separate
+            // from `did`, which is the once-a-week boolean ledger and must not
+            // be repurposed into a counter: anything reading it as a flag would
+            // start seeing 0 as "not done".
+            counts: {},
             clubSlotsLeft: 0,
             log: [],                 // [{ id, label, detail, accent }]
         },
@@ -180,6 +198,14 @@ export function blankCareer() {
             // summer and played the following February, and rolloverYear()
             // empties the whole season block on the way between them.
             firstStandBerth: 0,
+            // tournamentKind -> the YEAR the player first reached it, which is
+            // what makes the guaranteed first-time popup fire exactly once a
+            // career. Year-stamped rather than boolean, copying firstStandBerth:
+            // it reads as truthy identically and a year is strictly more
+            // informative than a `true` nobody can date. Deliberately NOT stored
+            // in flags.eventLog - that cooldown ledger is truncated to its last
+            // 60 entries, so a first Worlds would fall off it and fire again.
+            firstSeen: {},
             retired: false,
             hallOfLegends: false,
             seenIntro: false,
@@ -517,6 +543,23 @@ function hydrate(raw) {
                 const y = Math.round(Number(out.flags && out.flags.firstStandBerth));
                 return Number.isFinite(y) && y >= 2000 && y <= 3000 ? y : 0;
             })(),
+            // Normalised inside this literal rather than in a block of its own:
+            // this assignment is the last writer of out.flags, so it is the one
+            // place a flag is safely cleaned. Rot reads as "never reached",
+            // which costs at worst one repeated popup - a rot value that
+            // SURVIVED would suppress a first Worlds for the life of the save
+            // with nothing to show the player why.
+            firstSeen: (() => {
+                const src = out.flags && out.flags.firstSeen;
+                const clean = {};
+                if (src && typeof src === 'object' && !Array.isArray(src)) {
+                    for (const [kind, v] of Object.entries(src)) {
+                        const y = Number(v);
+                        if (Number.isFinite(y)) clean[kind] = y;
+                    }
+                }
+                return clean;
+            })(),
         };
     }
     out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
@@ -573,6 +616,73 @@ function hydrate(raw) {
             }
         }
         out.player.proficiency = clean;
+    }
+
+    // Languages get the proficiency treatment plus one rule of their own: they
+    // are clamped and NOT rounded. Immersion pays 1.1 a week and a lesson pays a
+    // fraction, so rounding on load would throw away part of every week the save
+    // is opened in, the same way rounding attrs would.
+    {
+        const rawLangs = out.player.languages;
+        const clean = {};
+        if (rawLangs && typeof rawLangs === 'object' && !Array.isArray(rawLangs)) {
+            for (const [id, v] of Object.entries(rawLangs)) {
+                if (!LANGUAGE_IDS.includes(id)) continue;
+                const n = Number(v);
+                if (Number.isFinite(n)) clean[id] = clamp(n, 0, LANGUAGE_MAX);
+            }
+        }
+
+        // GRANDFATHERING. Every career saved before languages existed carries no
+        // `languages` key at all, and every one of those careers is already from
+        // somewhere and most are already under contract somewhere. Loading them
+        // with an empty map would invent a problem they never had: unable to
+        // renew, and unable to justify the club they have played three years
+        // for. So a save that carried no map is seeded fluent in the language of
+        // where they are FROM and of where they PLAY.
+        //
+        // player.contract.region is a plain persisted string and is the only
+        // thing read for the second half - resolving the club through teams.js
+        // would mean importing it here, which this file deliberately does not do
+        // for anything but teamsInRegion/clearTeamCaches.
+        //
+        // One-way and one-shot: it can only ever fire for a save written before
+        // this field existed, because every save written after carries the map.
+        const rawLangSrc = raw.player && raw.player.languages;
+        const hadMap = !!rawLangSrc && typeof rawLangSrc === 'object';
+        if (!hadMap) {
+            const home = languageForRegion(out.player.region);
+            if (home) clean[home] = LANGUAGE_MAX;
+            const contract = out.player.contract;
+            if (contract && typeof contract === 'object' && typeof contract.region === 'string') {
+                const playing = languageForRegion(contract.region);
+                if (playing) clean[playing] = LANGUAGE_MAX;
+            }
+        }
+        out.player.languages = clean;
+
+        // A study target for a language that does not exist would reach
+        // studyTargetFor() as an id nothing resolves; null is the honest value
+        // for "no choice made", and the default lives in constants.js.
+        out.player.studyLang = LANGUAGE_IDS.includes(out.player.studyLang)
+            ? out.player.studyLang : null;
+    }
+
+    // weekly.counts is the "how many times already this week" ledger the soloq
+    // grind cost is priced off. engine.startCareerWeek rebuilds it from a
+    // literal every week, so this only has to survive a save reloaded mid-week -
+    // but a rotten entry must read as zero sessions, never as a negative or a
+    // NaN that would flow straight into a health cost.
+    {
+        const rawCounts = out.weekly.counts;
+        const clean = {};
+        if (rawCounts && typeof rawCounts === 'object' && !Array.isArray(rawCounts)) {
+            for (const [id, v] of Object.entries(rawCounts)) {
+                const n = Math.round(Number(v));
+                if (Number.isFinite(n)) clean[id] = Math.max(0, n);
+            }
+        }
+        out.weekly.counts = clean;
     }
 
     out.player.form   = clamp(out.player.form,   0, FORM_MAX);
@@ -719,6 +829,17 @@ export function createCareer(cfg) {
         // Your signature pick is the one you already have the hours on. Every
         // other champion starts cold.
         proficiency: champ ? { [champ.id]: PROFICIENCY_SIGNATURE_HEAD_START } : {},
+        // You already speak the language of where you grew up, at full. Nothing
+        // else on the circuit comes for free - and because three regions share
+        // English, what that buys you depends entirely on where you are from: a
+        // European can already sign in NA and LCP, a Korean can sign nowhere but
+        // the LCK until they study. Guarded because languageForRegion() returns
+        // null for a region with no working language.
+        languages: (() => {
+            const home = languageForRegion(region.id);
+            return home ? { [home]: LANGUAGE_MAX } : {};
+        })(),
+        studyLang: null,
     };
     c.money.gold = path.startGold;
     c.money.followers = path.startHype;

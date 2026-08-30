@@ -23,6 +23,9 @@ import {
     PATH_BY_ID, REGION_IDS, MMR_MAX, RETIREMENT_AGE_FORCED, ATTR_KEYS,
     teamById, DEFAULT_START_YEAR, ROLE_BY_ID, ATTR_BY_KEY, regularBestOf,
     MIN_AGE_INTERNATIONAL, soloTargetFor,
+    LANGUAGE_BY_ID, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
+    LANGUAGE_IMMERSION_WEEKLY, languageForRegion, languageLevelFor, languageBand,
+    studyTargetFor, languageStudyGain,
 } from './constants.js';
 import {
     clamp, randInt, calcOVR, calcPotentialOVR, statusInfo, decayFor, rankFromMMR,
@@ -48,7 +51,9 @@ import {
 import {
     endOfSplitAwards, grantAwards, checkMilestones, grantMilestones, retire,
 } from './awards.js';
-import { rollWeeklyEvent, rollInterview } from './events.js';
+import {
+    rollWeeklyEvent, rollWeeklyEvents, rollPreGameEvent, firstTimeEvent, rollInterview,
+} from './events.js';
 import { buildMatch, quickSim, applyMatchResult } from './match.js';
 import {
     career, matchState, careerOverlay, pushOverlay, absWeek, saveCareer, addNews,
@@ -217,6 +222,28 @@ function strengthOfId(c, id) {
     return safe(() => teamStrength(t, year), t.strength);
 }
 
+/** The languages map, type-checked. A rotted save can carry null, an array or a
+ *  string here, and spreading any of those would silently drop every level the
+ *  player has earned. Same discipline as burnoutOf(). */
+function languagesOf(c) {
+    const m = c && c.player && c.player.languages;
+    return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+}
+
+/** The phases where an ordinary schedule row is still a big game. A bracket row
+ *  is one by definition; these cover the league fixtures that sit inside a
+ *  tournament window, which is how a First Stand or MSI week reads. */
+const MAJOR_PHASES = new Set(['spring_po', 'summer_po', 'first_stand', 'msi', 'worlds']);
+
+/** The one game this week worth being nervous about, or null. UNPLAYED only:
+ *  the pre-game roll must fire for the game the player is about to walk into,
+ *  never for one they have already finished. */
+function majorFixtureFor(c) {
+    return fixturesInWeek(c).find(
+        f => f && !f.played && (f.kind === 'bracket' || MAJOR_PHASES.has(f.phase)),
+    ) || null;
+}
+
 function pushSchedule(rows) {
     if (!rows || !rows.length) return;
     career.update(c => {
@@ -258,11 +285,11 @@ function formBaseline(c) {
 export function startCareerWeek() {
     const notes = [];
     const start = snap();
-    if (!start || !start.created) return { event: null, income: null, notes };
+    if (!start || !start.created) return { event: null, events: [], income: null, notes };
 
     const stamp = absWeek(start);
     if (num(start.weekly && start.weekly.stamp, -1) === stamp) {
-        return { event: null, income: weeklyIncome(start), notes };
+        return { event: null, events: [], income: weeklyIncome(start), notes };
     }
 
     // ---- upkeep: sponsors, buffs and stale offers --------------------------
@@ -303,6 +330,11 @@ export function startCareerWeek() {
             actionsMax: actions,
             trained: {},
             did: {},
+            // REBUILT FROM A LITERAL, so every weekly key has to be named here or
+            // it is deleted every week and careerSmoke's shape check fails on it.
+            // counts is the per-activity repeat ledger doSoloQueue prices its
+            // grind off; `did` above stays the once-a-week boolean ledger.
+            counts: {},
             clubSlotsLeft: clubSlots,
             log: [],
             stamp,
@@ -319,6 +351,33 @@ export function startCareerWeek() {
         + num(life.energyRegen, 0) + num(perks.energyRegen, 0),
     );
     if (regen > 0) adjustCondition('energy', regen);
+
+    // ---- immersion: the language the room actually works in ----------------
+    // Living somewhere teaches you it slowly whether you study or not, which is
+    // what makes an existing foreign signing converge on fluent instead of
+    // sitting at whatever the arrival boost gave them for six years. Scaled by
+    // the room left, so it converges rather than accumulating.
+    //
+    // DELIBERATELY BEFORE the four condition steps below rather than anywhere
+    // inside them. Those four are one ordered block -- form drift, seat morale
+    // pull, purchased floors, tickBurnout -- and their order is load-bearing; a
+    // language level is not a condition meter and must not be dropped between
+    // the pull and the floors just because that is where there was room.
+    const liveLang = c.player.clubId && c.player.contract
+        ? languageForRegion(c.player.contract.region)
+        : null;
+    if (liveLang) {
+        const lvl = languageLevelFor(c, liveLang);
+        if (lvl < LANGUAGE_MAX) {
+            // Fractional on write, like attrs: immersion pays in tenths and
+            // rounding each week down would never move the level at all.
+            const soaked = clamp(lvl + LANGUAGE_IMMERSION_WEEKLY * (1 - lvl / LANGUAGE_MAX), 0, LANGUAGE_MAX);
+            career.update(x => ({
+                ...x,
+                player: { ...x.player, languages: { ...languagesOf(x), [liveLang]: soaked } },
+            }));
+        }
+    }
 
     // ---- form drift and the floors money buys ------------------------------
     const target = formBaseline(c);
@@ -389,10 +448,45 @@ export function startCareerWeek() {
     }
 
     // ---- the week's story --------------------------------------------------
-    const event = safe(() => rollWeeklyEvent(snap()), null);
+    // rollWeeklyEvents, not rollWeeklyEvent: a bad week can now be two things.
+    // It always hands back an array and never a falsy entry.
+    const events = safe(() => rollWeeklyEvents(snap()), []);
+
+    // ---- the hours before a big game ---------------------------------------
+    // AT WEEK START, and deliberately NOT in startFixture().
+    //
+    // startFixture is bypassed by all three sim paths -- the Hub's Sim button,
+    // the Calendar's Sim button and simSkippedFixtures() inside advanceWeek --
+    // so an event rolled there simply would not exist for a player who sims,
+    // which over a twelve-year career is most of them. And its last statement is
+    // matchState.set(m): past that line CareerShell has already swapped to
+    // MatchDay and buildMatch has ALREADY BUILT the match object, so an effect
+    // applied there could not touch the game it was announcing.
+    //
+    // Here the form and morale land before the player presses Play, on every
+    // path, with no deadlock risk and nothing layered over MatchDay.
+    const major = safe(() => majorFixtureFor(snap()), null);
+    if (major) {
+        // Every ctx field defaulted to a real string or number here, because the
+        // pool's gates and its text functions read them directly.
+        const majorPhase = major.phase || phaseForWeek(num(major.week, 1)).id;
+        const oppTeam = major.opponentId ? teamById(major.opponentId) : null;
+        const pre = safe(() => rollPreGameEvent(snap(), {
+            phase: majorPhase,
+            phaseName: phaseName(majorPhase),
+            label: major.label || phaseName(majorPhase),
+            opponentId: major.opponentId || '',
+            opponentName: oppTeam ? oppTeam.name : 'an opponent',
+            bestOf: bestOfFor(major, snap()),
+            kind: major.kind || 'league',
+        }), null);
+        if (pre) events.push(pre);
+    }
 
     saveCareer();
-    return { event, income, notes };
+    // `event` is kept as the first entry for the callers that predate the array:
+    // careerSmoke reads it and the two UI call sites are widened separately.
+    return { event: events.length ? events[0] : null, events, income, notes };
 }
 
 // ---------------------------------------------------------------------------
@@ -754,7 +848,52 @@ export function injuryRoll(c) {
     return { injured: true, healthLost: lost, risk };
 }
 
+// ---------------------------------------------------------------------------
+//  SOLO QUEUE HAS A PRICE NOW
+//  It was the one activity that could be spammed for free: MMR, attributes and
+//  followers, with nothing attached to how the session actually went and nothing
+//  attached to doing it four times in a week.
+//
+//  Both halves are sized against the seat pull, which caps the weekly morale
+//  move at 3 (SQUAD_STATUS.moralePull) -- not against the 0-100 range. A sink
+//  sized against the range would walk every career into the burnout ladder.
+// ---------------------------------------------------------------------------
+
+/** Morale per NET win over the session. Net rather than wins, so a 3-3 is
+ *  neutral and only a genuinely bad night costs anything. */
+const SOLOQ_MORALE_PER_NET = 0.9;
+/** A good session is a small lift and no more. Solo queue must not become a
+ *  morale farm: it is the cheapest activity in the mode and would out-earn the
+ *  psychologist at a third of the price. */
+const SOLOQ_MORALE_UP_CAP = 2;
+/** A bad session, before tilt. Looser than the up cap on purpose -- that
+ *  asymmetry IS feature C. */
+const SOLOQ_MORALE_DOWN_CAP = -6;
+/** Extra morale lost per session already played this week, LOSING sessions
+ *  only. Queueing again after a bad one is the thing being priced, not
+ *  queueing at all. */
+const SOLOQ_TILT_PER_REPEAT = 1.2;
+const SOLOQ_TILT_MAX = 4;
+/** Health per REPEAT session. The first session of a week is free; the second
+ *  costs 2, the third 4, and it caps before a single week can put a healthy
+ *  player near the benching line. */
+const SOLOQ_GRIND_HEALTH_PER = 2;
+const SOLOQ_GRIND_HEALTH_MAX = 7;
+
+/** "Second", "Third"... for the grind line. Defaulted past the end of the table
+ *  so a seventh session in one week can never print `undefined` at the player. */
+const SESSION_ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth'];
+function sessionOrdinal(prior) {
+    const i = Math.max(0, Math.round(Number(prior) || 0));
+    return SESSION_ORDINALS[i] || `${i + 1}th`;
+}
+
 function doSoloQueue(c) {
+    // Sessions already played this week. doActivity increments weekly.counts
+    // AFTER the handler returns, so this is strictly the ones that came before
+    // this one and the first session of a week reads 0.
+    const counts = c.weekly && typeof c.weekly.counts === 'object' && c.weekly.counts ? c.weekly.counts : {};
+    const prior = Math.max(0, num(counts.soloq, 0));
     const games = randInt(4, 6);
     const ovr = calcOVR(c.player.attrs, c.player.role);
     const mmr = clamp(num(c.soloq.mmr, 300), 0, MMR_MAX);
@@ -802,7 +941,31 @@ function doSoloQueue(c) {
     const followers = Math.round((6 + wins * 7) * followerMultiplier(c));
     if (followers > 0) grantFollowers(followers);
 
-    const detail = `${wins}W-${games - wins}L, ${delta >= 0 ? '+' : ''}${delta} MMR, now ${after.label}`;
+    // What the session did to your head. SUPPRESSED while burnout has you
+    // benched, for exactly the reason simSkippedFixtures' no-show penalty is:
+    // the three-week bench is a recovery, and a morale sink running through it
+    // would hold the player under the clear line and turn the bench into a trap.
+    const net = wins - (games - wins);
+    let tilt = 0;
+    if (!burnoutBenched(c)) {
+        const base = clamp(Math.round(net * SOLOQ_MORALE_PER_NET), SOLOQ_MORALE_DOWN_CAP, SOLOQ_MORALE_UP_CAP);
+        tilt = net < 0 ? -Math.min(SOLOQ_TILT_MAX, Math.round(prior * SOLOQ_TILT_PER_REPEAT)) : 0;
+        if (base + tilt !== 0) adjustCondition('morale', base + tilt);
+    }
+
+    // What it did to your body, charged ALWAYS -- bench or no bench, the body
+    // does not care whose decision it was. Note that 'soloq' is deliberately
+    // absent from NO_INJURY_ACTIVITIES, so every session ALSO takes the ordinary
+    // ~5% injury roll on top of this; this is the visible, predictable half of
+    // the cost and there is no second risk roll anywhere for it.
+    const grind = Math.min(SOLOQ_GRIND_HEALTH_MAX, prior * SOLOQ_GRIND_HEALTH_PER);
+    if (grind > 0) adjustCondition('health', -grind);
+
+    // The player is TOLD, in the week log, both times. A meter that moves with
+    // no line explaining it reads as a bug and gets reported as one.
+    const detail = `${wins}W-${games - wins}L, ${delta >= 0 ? '+' : ''}${delta} MMR, now ${after.label}`
+        + (tilt < 0 ? `, tilted (${tilt} morale)` : '')
+        + (grind > 0 ? `. ${sessionOrdinal(prior)} session this week - you are grinding through it (-${grind} health)` : '');
     logWeek('Solo Queue', detail, '#22c55e');
     return ok(`Solo queue: ${wins}-${games - wins}. ${after.label}.`, detail);
 }
@@ -981,6 +1144,54 @@ function doCoach1on1(c) {
 }
 
 /**
+ * The only activity that buys nothing on the attribute sheet. It opens REGIONS:
+ * contracts.signingBlock() will not let a club in a language you are under
+ * LANGUAGE_SIGN_MIN in sign you at all, and scoutInterest() refunds the foreign
+ * penalty in proportion to fluency above that.
+ */
+function doLanguage(c, payload) {
+    // The player's explicit pick wins; otherwise studyTargetFor() picks the one
+    // they are furthest through, because finishing a language is what opens a
+    // region and three half-learned ones open nothing.
+    const lang = (payload && typeof payload.lang === 'string' && LANGUAGE_BY_ID[payload.lang])
+        ? payload.lang
+        : studyTargetFor(c);
+    // activityGate() runs the row's own when() and should already have caught
+    // this. Reached only by a direct doActivity('language') call, and the slot
+    // is already spent by then, so say what happened rather than logging a
+    // lesson that never took place. Resolved through LANGUAGE_BY_ID a second
+    // time so every `def.name` below is a real string: a null here would print
+    // the word `undefined` at the player, which careerRender fails a build for.
+    const def = lang ? LANGUAGE_BY_ID[lang] : null;
+    if (!def) return no('There is nothing left for you to study.');
+
+    const before = languageLevelFor(c, lang);
+    // FRACTIONAL on write, exactly like attrs. A lesson is worth 2-9 points and
+    // rounding each one would stall a language short of the band it earned.
+    const after = clamp(before + languageStudyGain(c, lang), 0, LANGUAGE_MAX);
+    career.update(x => ({
+        ...x,
+        player: { ...x.player, languages: { ...languagesOf(x), [lang]: after } },
+    }));
+
+    // A news line every single lesson is noise -- it is fourteen of them to
+    // fluency. Only the two crossings that change what the player can actually
+    // DO, and the band, which is the label they read on the Transfers panel.
+    const bandAfter = languageBand(after);
+    if (before < LANGUAGE_FLUENT && after >= LANGUAGE_FLUENT) {
+        addNews(`${def.name} is fluent now. Clubs in that language deal with you like anybody else.`, 'system');
+    } else if (before < LANGUAGE_SIGN_MIN && after >= LANGUAGE_SIGN_MIN) {
+        addNews(`${def.name} has passed ${LANGUAGE_SIGN_MIN}. Clubs in that language will take the call now.`, 'system');
+    } else if (bandAfter !== languageBand(before)) {
+        addNews(`${def.name} is ${bandAfter.toLowerCase()}. It is starting to stick.`, 'system');
+    }
+
+    const detail = `${def.name} ${Math.round(after)}/100 - ${bandAfter}`;
+    logWeek('Language Lessons', `${def.name} ${Math.round(after)}/100`, def.accent || '#818cf8');
+    return ok(`An hour of ${def.name} with a tutor. ${detail}.`, detail);
+}
+
+/**
  * Spend one activity slot. `train` is deliberately not handled here -- a drill
  * runs through a minigame and training.completeDrill() owns that whole flow.
  */
@@ -1020,11 +1231,26 @@ export function doActivity(activityId, payload) {
         case 'fans':      res = doFans(c); break;
         case 'sponsorday': res = doSponsorDay(c); break;
         case 'coach1on1': res = doCoach1on1(c); break;
+        case 'language': res = doLanguage(c, payload); break;
         // An activity with no case here would silently do NOTHING while
         // charging a slot, the gold and the energy. careerSmoke asserts every
         // id has a case for exactly that reason.
         default:          res = ok(`${act.name} done.`, '');
     }
+
+    // The generic repeat ledger, incremented AFTER the handler has run. That
+    // order is the mechanic, not an implementation detail: a handler reading
+    // weekly.counts[id] sees the sessions that came BEFORE it, which is exactly
+    // what "you have already done this three times this week" means. Counting
+    // first would charge the first session of the week for itself.
+    career.update(x => {
+        const cur = (x.weekly && typeof x.weekly.counts === 'object' && x.weekly.counts
+            && !Array.isArray(x.weekly.counts)) ? x.weekly.counts : {};
+        return {
+            ...x,
+            weekly: { ...x.weekly, counts: { ...cur, [activityId]: num(cur[activityId], 0) + 1 } },
+        };
+    });
 
     // Hours on the hands carry a risk; the activities that exist to repair the
     // player obviously do not.
@@ -1738,6 +1964,34 @@ function addBracketFixture(bracket, tie, c) {
         score: null,
         myRating: null,
     }]);
+
+    // THE FIRST TIME. This is the only place in the mode where "the player is
+    // actually in this tournament" becomes a fact: openBracket() only knows the
+    // CLUB qualified, and both internationals are separately age-gated, so a
+    // sixteen-year-old whose club goes to MSI has not been to MSI.
+    //
+    // Year-stamped on flags.firstSeen rather than left to the event cooldown
+    // ledger: flags.eventLog is truncated to its last 60 entries, so a first
+    // Worlds would fall off it inside two seasons and fire again.
+    const kind = bracket.kind;
+    const seen = c.flags && typeof c.flags.firstSeen === 'object' && c.flags.firstSeen
+        && !Array.isArray(c.flags.firstSeen) ? c.flags.firstSeen : {};
+    if (kind && !num(seen[kind], 0)) {
+        career.update(x => {
+            const cur = (x.flags && typeof x.flags.firstSeen === 'object' && x.flags.firstSeen
+                && !Array.isArray(x.flags.firstSeen)) ? x.flags.firstSeen : {};
+            return {
+                ...x,
+                flags: { ...x.flags, firstSeen: { ...cur, [kind]: num(x.time.year, DEFAULT_START_YEAR) } },
+            };
+        });
+        // pushOverlay, never careerOverlay.set -- a set here would clobber the
+        // panel the bracket draw has already queued. And note that tickBurnout's
+        // forced quit_thought roll DISCARDS its return value, so that crisis
+        // event is currently never shown to anybody: it is not a template.
+        const ev = safe(() => firstTimeEvent(snap(), kind), null);
+        if (ev) pushOverlay('event', ev);
+    }
 }
 
 function writeBracket(bracket) {
@@ -2580,7 +2834,10 @@ export function advanceWeek() {
 
     saveCareer();
     return {
-        events: started.event ? [started.event] : [],
+        // EVERY event the week produced, in order: the weekly roll (0-2 of
+        // them) and then the pre-game one. Taking only the first is what made
+        // the second weekly roll and the whole pre-game pool invisible.
+        events: Array.isArray(started.events) ? started.events.filter(Boolean) : [],
         news,
         phaseChanged,
         yearRolled,

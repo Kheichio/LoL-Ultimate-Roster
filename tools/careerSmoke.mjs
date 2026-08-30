@@ -824,7 +824,38 @@ const stats = {
     drillGainSum: 0,
     awardIds: new Map(),
     perfectRatings: 0,
+    // ---- languages, the solo queue grind and the two new event pools --------
+    // Every one of these ships WIRED AND DEAD unless something counts it. The
+    // language activity sits behind studyTargetFor(), the grind cost only starts
+    // on the SECOND session of a week, and both new event pools hand back
+    // shallow copies that are trivially easy to create and then throw away --
+    // which is exactly what drainOverlay() used to do to every non-interview
+    // overlay in the mode.
+    languageLessons: 0,
+    soloqSessions: 0,
+    soloqRepeats: 0,
+    soloqGrindHealth: 0,
+    soloqTiltMorale: 0,
+    grindSessions: 0,
+    grindWeeks: 0,
+    preGameEvents: 0,
+    firstTimeEvents: new Map(),
 };
+
+/** Count a life event at the moment it is APPLIED, wherever it came from: the
+ *  array off advanceWeek (weekly rolls plus the pre-game one) or an overlay the
+ *  engine pushed. Both markers are written by events.js onto the shallow copy it
+ *  hands back, so an entry carrying neither came straight off EVENT_POOL. */
+function noteLifeEvent(ev) {
+    if (!ev) return;
+    if (ev.pregame) stats.preGameEvents++;
+    if (ev.firstTime) {
+        // The ids are `first_time_<bracket kind>` by contract, which is what
+        // lets this line up against flags.firstSeen without a second table.
+        const kind = String(ev.id || '').replace(/^first_time_/, '');
+        stats.firstTimeEvents.set(kind, (stats.firstTimeEvents.get(kind) || 0) + 1);
+    }
+}
 
 /** Record whether the player actually got a seat, split by club status. */
 function noteAppearance(hadClub, played) {
@@ -836,6 +867,25 @@ function noteAppearance(hadClub, played) {
         if (!played) stats.unsignedBench++;
     }
 }
+
+/** How much of a GRINDER career's non-training slots go to solo queue. Feature
+ *  C charges nothing for the first session of a week, so what has to be reached
+ *  reliably is the second and third -- not solo queue itself. Off the ordinary
+ *  eleven-entry pool it is picked about one slot in eleven, which over a whole
+ *  run produces a handful of repeats and would let the repeat cost regress to
+ *  zero with nothing to show for it. */
+const GRINDER_SOLOQ_SHARE = 0.9;
+
+// The grind and the tilt are charged inside engine.doSoloQueue() from
+// module-private constants this harness cannot import, so they are read back off
+// the line the engine writes FOR THE PLAYER -- which is also the contract worth
+// pinning, because a meter that moves with no line explaining it gets reported
+// as a bug. Reading the health meter instead cannot work: 'soloq' is
+// deliberately absent from NO_INJURY_ACTIVITIES, so an injury roll lands in the
+// same delta and a run charging zero grind would look identical to one that took
+// two injuries.
+const SOLOQ_GRIND_RE = /\(-(\d+) health\)/;
+const SOLOQ_TILT_RE = /tilted \((-?\d+) morale\)/;
 
 function spendActions() {
     let guard = 0;
@@ -875,12 +925,35 @@ function spendActions() {
         // hype or an absent flag inside it would go green.
         const pool = [
             'soloq', 'vod', 'stream', 'media', 'gym', 'rest',
-            'friends', 'therapy', 'recover', 'fans', 'sponsorday',
+            'friends', 'therapy', 'recover', 'fans', 'sponsorday', 'language',
         ];
         if (c2.player.clubId) pool.push('scrim', 'scrim', 'coach1on1');
-        const act = rpick(pool);
+        // The grinder career. The training branch above is left alone on purpose:
+        // a config that stopped training would fail the `progression` and
+        // `ceilingstall` lines on its own shape rather than on a defect, and
+        // those two are the only evidence in the whole run that training works.
+        const act = (CTX.cfg && CTX.cfg.grind && rand() < GRINDER_SOLOQ_SHARE) ? 'soloq' : rpick(pool);
+        // Read BEFORE the call: doActivity increments weekly.counts after the
+        // handler returns, so this is the same `prior` doSoloQueue priced off.
+        const priorSoloq = (act === 'soloq')
+            ? Math.max(0, Math.round(Number(c2.weekly && c2.weekly.counts && c2.weekly.counts.soloq) || 0))
+            : 0;
         res = step('engine.doActivity(' + act + ')', () => G.doActivity(act), null);
         if (res && res.ok) {
+            if (act === 'language') {
+                stats.languageLessons++;
+                CTX.lessons = (CTX.lessons || 0) + 1;
+            }
+            if (act === 'soloq') {
+                stats.soloqSessions++;
+                if (CTX.cfg && CTX.cfg.grind) stats.grindSessions++;
+                if (priorSoloq >= 1) stats.soloqRepeats++;
+                const detail = String(res.detail || '');
+                const grind = SOLOQ_GRIND_RE.exec(detail);
+                if (grind) stats.soloqGrindHealth += Math.abs(Number(grind[1]) || 0);
+                const tilt = SOLOQ_TILT_RE.exec(detail);
+                if (tilt) stats.soloqTiltMorale += Math.abs(Number(tilt[1]) || 0);
+            }
             drainOverlay();
             continue;
         }
@@ -890,18 +963,47 @@ function spendActions() {
     }
 }
 
+/**
+ * Answer everything the engine put in front of the player and then move on.
+ *
+ * This used to apply `interview` and throw every other overlay away with a bare
+ * careerOverlay.set(null), which is two bugs at once. The first-time tournament
+ * popup is pushed as kind 'event' from addBracketFixture(), so it was being
+ * BUILT and DISCARDED -- its options never ran, and a pool of guaranteed
+ * once-per-career events could have been entirely inert with nothing to show it.
+ * And set(null) leaves the queue BEHIND the visible slot untouched: pushOverlay
+ * lines an overlay up when one is already showing, and the bracket draw pushes
+ * its own panel in the same tick, so the first-time event is precisely the thing
+ * that would sit in that queue forever. nextOverlay() is what the shell calls
+ * and it is what drains it.
+ */
 function drainOverlay() {
-    const ov = readStore(ST.careerOverlay);
-    if (!ov) return;
-    if (ov.kind === 'interview' && ov.payload) {
-        const iv = ov.payload;
-        const n = Array.isArray(iv.options) ? iv.options.length : 0;
-        if (n > 0) {
-            step('events.applyInterviewAnswer', () => EV.applyInterviewAnswer(iv, ri(0, n - 1)));
-            stats.interviewsApplied++;
+    let guard = 0;
+    while (guard++ < 12) {
+        const ov = readStore(ST.careerOverlay);
+        if (!ov) return;
+        if (ov.kind === 'interview' && ov.payload) {
+            const iv = ov.payload;
+            const n = Array.isArray(iv.options) ? iv.options.length : 0;
+            if (n > 0) {
+                step('events.applyInterviewAnswer', () => EV.applyInterviewAnswer(iv, ri(0, n - 1)));
+                stats.interviewsApplied++;
+            }
+        } else if (ov.kind === 'event' && ov.payload) {
+            const ev = ov.payload;
+            const opts = Array.isArray(ev.options) ? ev.options : [];
+            if (opts.length) {
+                noteLifeEvent(ev);
+                step('events.applyEventOption(overlay)', () => EV.applyEventOption(ev, rpick(opts).id));
+                stats.eventsApplied++;
+            }
         }
+        if (!step('stores.nextOverlay', () => ST.nextOverlay(), false)) return;
     }
-    ST.careerOverlay.set(null);
+    fail('wrong', 'src/lib/stores/career.js', 'the overlay queue never empties',
+        `${ctxLine()} -> 12 nextOverlay() calls and something is still showing`,
+        'pushOverlay is queueing faster than nextOverlay can drain, or nextOverlay stopped shifting.',
+        'overlaydrain');
 }
 
 function playFixtureManually(f) {
@@ -1218,7 +1320,9 @@ function runCareer(cfg, label) {
     step('resetCareer', () => ST.resetCareer());
     prevSnapshot = null;
 
-    CTX = { label, week: 1, year: K.DEFAULT_START_YEAR, cfg };
+    // `lessons` rides on CTX because spendActions() is module-level and has no
+    // other handle on which career it is spending for.
+    CTX = { label, week: 1, year: K.DEFAULT_START_YEAR, cfg, lessons: 0 };
 
     const created = step('createCareer', () => ST.createCareer(cfg), null);
     if (!created) {
@@ -1242,6 +1346,15 @@ function runCareer(cfg, label) {
     let roleSwitched = false;
     let weeks = 0;
     const tally = { ovr: 0 };
+    // Feature B, end to end. signingBlock() refuses any club whose working
+    // language the player is under LANGUAGE_SIGN_MIN in, so a move that CROSSES
+    // a language can only ever happen after the lessons did -- which is the one
+    // observation that proves the whole chain (activity -> level -> gate ->
+    // offer -> transfer) rather than any single link of it. Recorded live
+    // because player.contract is gone by retirement.
+    const homeLang = K.languageForRegion(cur().player.region) || '';
+    let signedAbroad = false;
+    let signedNewLanguage = false;
 
     while (weeks < N_YEARS * K.WEEKS_PER_YEAR + 4) {
         const c0 = cur();
@@ -1296,10 +1409,13 @@ function runCareer(cfg, label) {
             }
         }
 
+        if (cfg.grind) stats.grindWeeks++;
+
         const adv = step('engine.advanceWeek', () => G.advanceWeek(), null);
         if (adv && Array.isArray(adv.events) && adv.events.length) {
             for (const ev of adv.events) {
                 if (ev && Array.isArray(ev.options) && ev.options.length) {
+                    noteLifeEvent(ev);
                     step('events.applyEventOption', () => EV.applyEventOption(ev, rpick(ev.options).id));
                     stats.eventsApplied++;
                 }
@@ -1311,6 +1427,17 @@ function runCareer(cfg, label) {
         CTX.week = c1.time.week;
         CTX.year = c1.time.year;
         assertInvariants(c1, tally);
+        if (c1.player.clubId && (!signedAbroad || !signedNewLanguage)) {
+            const club = K.teamById(c1.player.clubId);
+            const reg = club ? club.region : '';
+            // 'ALL' is the amateur circuit and belongs to nobody, so it counts as
+            // neither a move nor a language crossing.
+            if (reg && reg !== 'ALL') {
+                if (reg !== c1.player.region) signedAbroad = true;
+                const need = K.languageForRegion(reg);
+                if (need && need !== homeLang) signedNewLanguage = true;
+            }
+        }
         if (tally.ovr) ovrByYear.set(c1.time.year, tally.ovr);
         for (const k of K.ATTR_KEYS) {
             const v = Number(c1.player.attrs[k]) || 0;
@@ -1457,6 +1584,30 @@ function runCareer(cfg, label) {
         traits: Array.isArray(end.player.traits) ? end.player.traits.slice() : [],
         proficiency: (end.player.proficiency && typeof end.player.proficiency === 'object')
             ? { ...end.player.proficiency } : {},
+        // Languages. The HOME one is seeded to LANGUAGE_MAX at creation, so the
+        // only number that says anything about feature B is the best of the
+        // others -- that is the one a lesson, an arrival boost or an event moved.
+        lessons: Number(CTX.lessons) || 0,
+        homeLang,
+        bestOtherLang: (() => {
+            const langs = (end.player.languages && typeof end.player.languages === 'object'
+                && !Array.isArray(end.player.languages)) ? end.player.languages : {};
+            let best = 0;
+            for (const id of K.LANGUAGE_IDS) {
+                if (id === homeLang) continue;
+                const v = Number(langs[id]);
+                if (Number.isFinite(v) && v > best) best = v;
+            }
+            return best;
+        })(),
+        signedAbroad,
+        signedNewLanguage,
+        // Which tournaments this career actually WALKED INTO. Stamped by
+        // addBracketFixture when the player's own tie becomes a playable row, so
+        // unlike season.bracket it excludes a club that qualified for an event
+        // its sixteen-year-old was too young to be taken to.
+        firstSeen: (end.flags && end.flags.firstSeen && typeof end.flags.firstSeen === 'object'
+            && !Array.isArray(end.flags.firstSeen)) ? Object.keys(end.flags.firstSeen) : [],
         // The tier of the FIRST club this career ever joined. Item 12 says it must
         // be an amateur one for anybody who was not signed at creation.
         firstClubTier: FIRST_CLUB.get(label) || 0,
@@ -1524,6 +1675,13 @@ function buildConfigs(n) {
             playstyleId: styleId,
             championId: champs.length ? champs[i % champs.length].id : '',
             tryRoleChange: i === 2,
+            // ONE career spams solo queue. Feature C prices the second and third
+            // session of a week, and off the ordinary activity pool nobody ever
+            // queues twice -- so without this config the repeat health cost and
+            // the tilt penalty would both read as zero forever and this harness
+            // would call a dead system green. Not career 2: that one throws its
+            // attributes away on a role change and is already an outlier.
+            grind: i === 5,
         });
     }
     return out;
@@ -2332,6 +2490,151 @@ console.log(`  role changes           : ${stats.roleChanges}`);
         fail('wrong', 'src/lib/career/constants.js', 'the scouting gate moved',
             `SCOUT_MMR_GATE now needs OVR ${scoutAt.toFixed(1)}, was 73.7`,
             'The curve is pinned at SOLOQ_JOINT_OVR precisely so everything above it is unchanged.');
+    }
+}
+// Languages, and what learning one is actually for. The HOME language is seeded
+// to LANGUAGE_MAX at creation, so nothing here reads it -- the only number that
+// says anything about feature B is the best of the others, because that is the
+// one a lesson, an arrival boost or an event had to move. Every link in the
+// chain fails silently: an activity whose gate never opens, a gain that rounds
+// to nothing on write, a signing gate nobody ever clears.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const lessons = results.map(r => Number(r.lessons) || 0);
+    const bestOther = results.map(r => Number(r.bestOtherLang) || 0);
+    const conversant = results.filter(r => (Number(r.bestOtherLang) || 0) >= K.LANGUAGE_SIGN_MIN);
+    const fluentSecond = results.filter(r => (Number(r.bestOtherLang) || 0) >= K.LANGUAGE_FLUENT);
+    const abroad = results.filter(r => r.signedAbroad);
+    const crossed = results.filter(r => r.signedNewLanguage);
+    console.log(`  languages              : ${mean(lessons).toFixed(1)} lessons per career`
+        + `, best non-home level ${mean(bestOther).toFixed(1)}/${K.LANGUAGE_MAX} mean`
+        + ` (${conversant.length} careers past the ${K.LANGUAGE_SIGN_MIN} signing gate,`
+        + ` ${fluentSecond.length} fluent in a second)`);
+    console.log(`  moving region          : ${abroad.length}/${results.length} careers signed outside their own region`
+        + `, ${crossed.length} of those into another language`);
+
+    if (stats.languageLessons === 0) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'no language lesson was ever completed in any career',
+            `${results.length} careers x ${N_YEARS} years, 0 successful doActivity('language') `
+            + `out of a pool that offers it on every slot`,
+            "doLanguage() is the 'language' arm of the doActivity switch and ACTIVITIES.language's "
+            + 'when() calls studyTargetFor(); one of them refuses every call, so the activity is a '
+            + 'button that charges 180 gold and does nothing.',
+            'nolessons');
+    }
+    if (results.length && Math.max(0, ...bestOther) <= 0) {
+        fail('wrong', 'src/lib/career/constants.js',
+            'no career ever raised a second language by any amount',
+            `${stats.languageLessons} lessons were completed and every career still finished with `
+            + `0 in every language but its own`,
+            'languageStudyGain() returns 0 (an unknown id, or a clamp that collapsed), or doLanguage '
+            + 'is rounding on write -- attributes and language levels are both fractional on purpose.',
+            'nosecondlang');
+    }
+}
+// The solo queue grind, feature C. Both halves are read back off the line
+// doSoloQueue writes for the PLAYER rather than off the meters, because 'soloq'
+// is deliberately absent from NO_INJURY_ACTIVITIES: an injury roll lands in the
+// same health delta, so a run charging zero grind and a run that took two
+// injuries are indistinguishable from the meter alone.
+{
+    const grinders = results.filter(r => r.cfg && r.cfg.grind);
+    const perWeek = stats.grindWeeks ? (stats.grindSessions / stats.grindWeeks) : 0;
+    console.log(`  solo queue grind       : ${stats.soloqSessions} sessions, ${stats.soloqRepeats} of them`
+        + ` a repeat inside one week; the grinder career queued ${perWeek.toFixed(2)} times a week`
+        + ` over ${stats.grindWeeks} weeks`);
+    console.log(`                           ${stats.soloqGrindHealth} health charged to the repeat cost`
+        + `, ${stats.soloqTiltMorale} morale charged to tilt`);
+
+    if (!grinders.length) {
+        fail('wrong', 'tools/careerSmoke.mjs',
+            'the matrix contains no grinder career',
+            `${results.length} configs and none carries grind: true`,
+            'buildConfigs must flag one career; off the ordinary pool solo queue is picked about one '
+            + 'slot in twelve and the repeat cost essentially never fires.',
+            'nogrinder');
+    } else if (stats.soloqRepeats === 0) {
+        fail('wrong', 'tools/careerSmoke.mjs',
+            'no career ever queued solo queue twice in one week',
+            `${stats.soloqSessions} sessions across the run, none of them with weekly.counts.soloq >= 1`,
+            'Either GRINDER_SOLOQ_SHARE is too low against the weekly slot count, or engine.doActivity '
+            + 'stopped incrementing weekly.counts and every session reads as the first.',
+            'grindershare');
+    } else {
+        if (stats.soloqGrindHealth === 0) {
+            fail('wrong', 'src/lib/career/engine.js',
+                'the solo queue repeat health cost never fired once',
+                `${stats.soloqRepeats} repeat sessions were played and not one of them charged health`,
+                'doSoloQueue() prices the grind off weekly.counts.soloq, which doActivity increments '
+                + 'AFTER the handler returns; if the increment moved before the switch, prior is always '
+                + '>= 1 and if the ledger is rebuilt mid-week prior is always 0.',
+                'nogrind');
+        }
+        if (stats.soloqTiltMorale === 0) {
+            fail('wrong', 'src/lib/career/engine.js',
+                'the solo queue tilt morale penalty never fired once',
+                `${stats.soloqRepeats} repeat sessions across the run charged 0 morale to tilt`,
+                'The tilt arm needs net < 0 AND prior >= 1 AND not burnoutBenched(c); a losing session '
+                + 'is common at soloTargetFor equilibrium, so zero means the arm is unreachable.',
+                'notilt');
+        }
+    }
+}
+// The two new event pools, feature A. Both are shallow copies handed back by
+// events.js and marked `pregame` / `firstTime`, and both are trivially easy to
+// create and then drop on the floor -- which is exactly what drainOverlay did to
+// every non-interview overlay before this run. Counted where they are APPLIED,
+// never where they are rolled.
+{
+    const ft = stats.firstTimeEvents;
+    const ftTotal = Array.from(ft.values()).reduce((s, v) => s + v, 0);
+    // flags.firstSeen, not stats.bracketWeeks: the flag is stamped by
+    // addBracketFixture when the PLAYER'S OWN tie becomes a playable row, while
+    // season.bracket exists whenever the CLUB qualified. MSI and Worlds are
+    // separately age-gated, so a sixteen-year-old whose club goes has not gone,
+    // and asserting off the club would fail an honest run.
+    const reached = new Set();
+    for (const r of results) for (const k of (Array.isArray(r.firstSeen) ? r.firstSeen : [])) reached.add(k);
+    const clubBrackets = Object.keys(stats.bracketWeeks || {}).sort();
+    console.log(`  pre-game events        : ${stats.preGameEvents} applied across ${results.length} careers`);
+    console.log(`  first-time events      : ${ftTotal} applied -- ` + (ft.size
+        ? Array.from(ft.entries()).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} x${n}`).join(', ')
+        : 'none'));
+    console.log(`  tournaments reached    : ${[...reached].sort().join('/') || 'none'} by the player`
+        + `  (club-level brackets opened: ${clubBrackets.join('/') || 'none'})`);
+
+    if (stats.preGameEvents === 0) {
+        fail('wrong', 'src/lib/career/events.js',
+            'no pre-game event ever fired',
+            `${results.length} careers played ${stats.matchesPlayedManually + stats.matchesSimmed} matches `
+            + `including every playoff and international the run reached, and rollPreGameEvent produced nothing`,
+            'startCareerWeek rolls it off majorFixtureFor(); an UNPLAYED bracket-or-major-phase fixture '
+            + 'must exist in the current week, PREGAME_CHANCE must be reachable, and every PREGAME_POOL '
+            + 'entry needs a when(c, ctx) that some real career satisfies.',
+            'nopregame');
+    }
+    if (ftTotal === 0) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'not one first-time tournament event fired',
+            `the run reached ${[...reached].sort().join(', ') || 'no'} tournament(s) and flags.firstSeen was `
+            + `stamped for them, but no first_time_* event was ever applied`,
+            'addBracketFixture must pushOverlay(\'event\', firstTimeEvent(...)) AFTER writing '
+            + 'flags.firstSeen[kind]; an overlay that is pushed while another is showing goes onto the '
+            + 'queue behind it and is only ever reached through nextOverlay().',
+            'nofirsttime');
+    } else {
+        for (const kind of reached) {
+            if (ft.get(kind)) continue;
+            fail('wrong', 'src/lib/career/events.js',
+                `the ${kind} first-time event never fired for a career that reached ${kind}`,
+                `flags.firstSeen.${kind} was stamped by at least one career; applied first-time events: `
+                + (Array.from(ft.entries()).map(([k, n]) => `${k} x${n}`).join(', ') || 'none'),
+                `FIRST_TIME_EVENTS must hold the key "${kind}" -- firstTimeEvent() returns null for an `
+                + 'unknown kind and the engine silently pushes nothing, so a missing key is a tournament '
+                + 'whose one guaranteed moment nobody ever sees.',
+                'firsttimemissing|' + kind);
+        }
     }
 }
 // Early contract termination. A club that can never fire you is the thing this

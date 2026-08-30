@@ -1211,6 +1211,67 @@ export function isMatchOver(match) {
 // ---------------------------------------------------------------------------
 //  RESULT
 // ---------------------------------------------------------------------------
+
+// POST-MATCH MORALE. KDA and a lost series already reach morale twice over
+// before any of the below: gameRating folds the series ratio in as
+// clamp((ratio - 2.4) * 0.28, -1.5, 1.6), moraleDelta then reads that rating
+// back as (rating - 6) * 1.4, and a lost series is a flat -5 on top. These two
+// terms are therefore sized as a TOP-UP on a charge already being made, not as
+// the whole price of a bad night - a term written as if nothing else existed
+// would be paid three times.
+//
+// PENALTY-ONLY, for exactly the reason the condition block in successChance
+// gives: morale measures near 93 across a simulated run, it feeds the morale
+// FLOOR in successChance, and careerSmoke fails a run outright above a 7.6 mean
+// match rating. A KDA bonus here would raise morale, raise that floor and lift
+// every rating in the mode; a penalty that fades can only bite when the thing
+// it measures has actually gone wrong.
+//
+// Both are capped at 3, against SQUAD_STATUS.moralePull's weekly cap of 3 and
+// the existing +/-12 clamp on moraleDelta - a sink that could swallow the whole
+// clamp on its own would make a bad series indistinguishable from a catastrophe.
+const KDA_SOUR_AT = 1.6;        // series KDA ratio at or above which nothing is charged
+const KDA_MORALE_STEP = 1.6;    // morale per point of ratio below the line
+const KDA_MORALE_MAX = 3.0;     // hard cap on the KDA term alone
+const LOSS_STREAK_STEP = 0.9;   // morale per consecutive prior loss
+const LOSS_STREAK_MAX = 3.0;    // hard cap on the streak term alone
+/** How far back the streak scan reads. A split is 18 league rows plus a
+ *  bracket, so twelve covers the whole of a bad run while bounding the sort on
+ *  a schedule that rot could have made enormous. */
+const LOSS_STREAK_SCAN = 12;
+
+/**
+ * Consecutive losses immediately BEFORE this match. finishMatch() runs before
+ * applyMatchResult() ticks this fixture off, so the tail of the played rows is
+ * genuinely the run that led into this one and never includes it.
+ *
+ * SORTED before tailing, the same as formBaseline() and tickClubMomentum():
+ * season.schedule is NOT in week order - ensureSeason() rebuilds it as
+ * [...freshSplitRows, ...carriedBracketRows] and MSI is carried into summer, so
+ * the raw tail holds the OLDEST games of the half-year. Wrapped, because a
+ * rotten schedule must cost the player nothing rather than break a match.
+ */
+function priorLossStreak(state) {
+    try {
+        const rows = (state && state.season && Array.isArray(state.season.schedule))
+            ? state.season.schedule : [];
+        const played = rows
+            .filter(f => f && f.played === true)
+            .sort((a, b) => num(a.week, 0) - num(b.week, 0))
+            .slice(-LOSS_STREAK_SCAN);
+        let n = 0;
+        for (let i = played.length - 1; i >= 0; i--) {
+            // Anything that is not an explicit loss ends the run, so a row whose
+            // `won` never got written cannot be counted as one.
+            if (played[i].won !== false) break;
+            n++;
+        }
+        return n;
+    } catch (e) {
+        return 0;
+    }
+}
+
 function seriesTightness(bestOf, seriesScore) {
     const need = winsNeeded(bestOf);
     const margin = Math.abs(num(seriesScore[0], 0) - num(seriesScore[1], 0));
@@ -1276,8 +1337,19 @@ export function finishMatch(c, match) {
     if (played) {
         const base = (rating - 5.6) * 1.8 + (won ? 4 : -4);
         formDelta = Math.round(clamp(base * (0.78 + 0.42 * tight), -14, 14));
+        // A sour stat line and a run of defeats are the two things a player
+        // takes home, and neither was charged for on its own: the rating buries
+        // the first (a 0/6/2 and a 2/6/8 differ by about half a point of rating
+        // and by nothing at all afterwards) and the flat -5 treats the fifth
+        // loss in a row exactly like the first. Both are floors - see the block
+        // above KDA_SOUR_AT for why neither may ever pay out.
+        const ratio = fmtKDA(kda.k, kda.d, kda.a).ratio;
+        const kdaTerm = ratio >= KDA_SOUR_AT ? 0
+            : -clamp((KDA_SOUR_AT - ratio) * KDA_MORALE_STEP, 0, KDA_MORALE_MAX);
+        const streakTerm = won ? 0
+            : -clamp(priorLossStreak(state) * LOSS_STREAK_STEP, 0, LOSS_STREAK_MAX);
         moraleDelta = Math.round(clamp(
-            (won ? 5 : -5) + (rating - 6) * 1.4 + (mvp ? 4 : 0),
+            (won ? 5 : -5) + (rating - 6) * 1.4 + (mvp ? 4 : 0) + kdaTerm + streakTerm,
             -12, 12,
         ));
     } else {

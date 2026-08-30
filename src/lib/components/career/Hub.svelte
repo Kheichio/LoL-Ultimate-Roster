@@ -358,12 +358,16 @@
         try { res = advanceWeek(); } catch (e) { res = null; }
         res = res || {};
 
-        const ev = Array.isArray(res.events)
-            ? res.events[0]
-            : (res.events || res.event || null);
+        // EVERY entry, in order. A week can now hand back two weekly events and
+        // a pre-game one on top; reading events[0] threw the rest away, which is
+        // what made the whole pre-game pool invisible from this button.
+        const evs = Array.isArray(res.events)
+            ? res.events
+            : (res.events ? [res.events] : (res.event ? [res.event] : []));
         // pushOverlay, not set: rolling the week can already have raised a split
-        // awards panel or a trait reveal, and the weekly event lands last.
-        if (ev) pushOverlay('event', ev);
+        // awards panel or a trait reveal, and the weekly events land last. The
+        // queue is what keeps a second event from clobbering the first.
+        for (const ev of evs) if (ev) pushOverlay('event', ev);
 
         if (res.yearRolled) showToast('A new competitive year begins.', 'info');
         else if (res.phaseChanged) showToast('New phase: ' + $currentPhase.name + '.', 'info');

@@ -318,6 +318,14 @@
         if (e.attr && typeof e.attr === 'object') {
             for (const k of Object.keys(e.attr)) if (e.attr[k]) push(k, e.attr[k]);
         }
+        // One chip per language, exactly like the attr map above, rather than
+        // describeEffect('language', map) -- that joins every language into a
+        // single string, and one chip reading "Korean +5, English -2" cannot be
+        // coloured up and down at the same time. A bare id falls through to
+        // describeEffect's LANGUAGE_BY_ID arm and prints "Korean +5".
+        if (e.language && typeof e.language === 'object') {
+            for (const k of Object.keys(e.language)) if (e.language[k]) push(k, e.language[k]);
+        }
         if (e.gold) push('gold', e.gold);
         if (e.followers) push('followers', e.followers);
         if (e.hype && e.hype !== e.followers) push('hype', e.hype);

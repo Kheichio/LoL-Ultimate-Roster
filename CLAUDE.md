@@ -195,6 +195,88 @@ champion stays legal for *some* style in each of its roles. Mid-career switching
 `contracts.switchChampion()`, priced in CHP and form rather than gold. **Existing saves are
 grandfathered — never auto-reassign a saved champion.**
 
+**A second signature needs a SCREEN, not just a slot.** `economy.signatureSlots()` derives capacity
+from the Second Signature (310 LP) and Third Signature (430 LP) perks, `contracts.addSignature()` /
+`dropSignature()` spend and release one, and `match.signatureIds()` has always read
+`player.extraChampions` into the draft — and for a while **every one of those was correct and none
+of them had a caller**. Nothing in `src/lib/components` imported the designate family, so
+`extraChampions` could never leave `[]` and 740 legacy points bought a slot no player could fill.
+The comment on `signatureState()` even said "Read by the Dossier so an unused slot is visible", and
+that reader did not exist. It lives in `CareerDossier.svelte` now, inside the Signature Pick panel,
+owner-only and hidden until a slot is actually owned. That last condition is why the render harness
+could not have caught it either: no ordinary fixture owns the perks, so `careerRender` drives five
+`cd-sig-*` shapes with `mine: true` and `inventory.perks` populated. **A perk whose only proof is
+the model layer is a perk nobody can spend** — the same failure this perk's own rewrite was written
+to fix, one layer further up.
+
+### Languages and moving region
+Six regions, four working languages, and **`REGION_LANGUAGE` maps LEC, LCS and LCP all to `en` on
+purpose**. The asymmetry is the whole mechanic: a European takes an LCS or an LCP offer with nothing
+to learn, a Korean has to study English to move west at all, and anybody who is not Korean has to
+study Korean for the LCK. One language per region would have priced every move identically and made
+the system a tax rather than a decision.
+
+`player.languages` is `{ languageId: 0..100 }` and **fractional, for the same reason `player.attrs`
+are**: immersion pays 1.1 a week and a lesson pays a decaying curve, so rounding on write or on
+save-load parks a language short of the band it earned. **Nothing writes a rounded level.** The
+Transfers panel, the week log line and `signingBlock`'s reason string all round at the point they
+print. Language ids are persisted save data exactly like champion and trait ids: **never rename or
+delete one.**
+
+Two gates, deliberately different shapes:
+- **HARD** - `contracts.signingBlock()` clause (b2). A club whose league works in a language you are
+  under `LANGUAGE_SIGN_MIN` (40) in will not sign you at all. `'ALL'` is NEVER blocked:
+  `languageForRegion()` returns null for it and for anything unknown, `normTeam()` defaults an
+  unknown club's region to `'ALL'`, and the compulsory first-club ladder runs entirely through the
+  amateur sides - careerSmoke hard-fails a run where a precomp career is never signed by anybody.
+  The function also opens with `if (t.id === p.clubId) return { blocked: false }`, which is inert
+  today and exists so the language rule can never evict a player from a room he is already sitting
+  in. A signing gate is a rule about ARRIVING somewhere.
+- **SOFT** - `contracts.scoutInterest()`. Fluency buys back `LANGUAGE_INTEREST_REFUND` (0.7) of
+  `FOREIGN_REGION_PENALTY`, so a foreign club runs -14 at nothing and -4.2 at fluent. At zero
+  fluency the arithmetic is EXACTLY what it always was, which is what keeps every save that predates
+  languages priced where it was. Raising interest here also raises the wage, the years, the signing
+  bonus and the release clause - `buildOffer()` derives all four from it - and that is intended in
+  this one case: a club that can talk to you is buying a player, not a project. **Call FREQUENCY is
+  a different thing and stays in `generateOffers()`** (`FLUENT_CALL_RATE_BONUS`, worth exactly 1x at
+  zero fluency), because interest reprices the entire offer sheet and frequency does not.
+
+Four things move a level, and only one of them is a button. `engine.doLanguage()` is the `'language'`
+activity (`LANGUAGE_STUDY_BASE`, curved by the room left, by youth and by KNW; ~6 lessons to the
+signing gate, 14 to fluent, 25 to 100). `startCareerWeek` adds
+`LANGUAGE_IMMERSION_WEEKLY * (1 - level/LANGUAGE_MAX)` for the league you actually play in - living
+somewhere teaches it to you whether you study or not, which is what makes an existing foreign
+signing converge instead of sitting on whatever the arrival boost gave it. **That step sits BEFORE
+the four condition steps, never inside them**: form drift, seat morale pull, purchased floors and
+`tickBurnout` are one ordered block and a language is not a condition meter.
+`contracts.acceptOffer()` adds `LANGUAGE_ARRIVAL_BOOST` in the SAME `career.update` that writes the
+contract, and strictly after the hard gate ran when the offer was built, so the crash course can
+never be what got anybody signed. And an event option may pay a `language` effect, capped at
+`CAP.language` (8) in either direction - a shade under one tutored lesson at level 0, so an event can
+nudge a language and can never substitute for the activity that teaches one.
+
+**Grandfathering lives in `hydrate()` and is the part worth reading twice.** There is no version
+gate and no `migrate()`, so a save written before this change carries no `player.languages` key at
+all - and every one of those careers is already from somewhere and most are already under contract
+somewhere. When the RAW save carried no map, hydrate seeds `languageForRegion(player.region)` and
+`languageForRegion(player.contract.region)` to `LANGUAGE_MAX`. Loading them with an empty map would
+have invented a problem they never had: unable to renew, and unable to justify the club they have
+played three years for. It reads `player.contract.region` - a plain persisted string - rather than
+resolving the club through teams.js, because `stores/career.js` imports nothing from there but
+`teamsInRegion` / `clearTeamCaches` and this is not worth widening that for. One-way and one-shot:
+every save written since carries the map, so it cannot fire twice.
+
+**`player.region` is where you are FROM and is never rewritten by a transfer** - four modules read
+it as nationality. `player.contract.region` is where you WORK, and every language gate reads the
+second against the first. events.js keeps `abroad()` and `workLang()` for exactly that distinction,
+because "you cannot follow the review" is a lie told to a player who grew up speaking it.
+
+Measured on `--seed 42`: 26.4 lessons a career, a mean best non-home level of 91.8/100, and 8 of 8
+careers signing outside their own region with 7 of those crossing a language boundary. careerSmoke
+prints `languages` and `moving region`, and fails the run outright if no lesson ever completes or no
+career ever raises a second language - a gate nobody can pass and a gate nobody ever needs to pass
+look identical from the outside.
+
 ### The legacy economy is priced against measured income
 Legacy points are **not scarce** and the old board was written as if they were. Eight simulated
 twelve-year careers retire holding **618 to 6,531 LP**; the thirteen-perk board cost **107 LP in
@@ -399,6 +481,105 @@ told about the friend they climbed with at fourteen. Helpers in `events.js`: `ag
 `agedBetween`, and `onBigStage`, which confirms a real bracket or fixture rather than just a
 playoff-shaped calendar week.
 
+### Pre-game and first-time events
+There are three EVENT pools in events.js now (`INTERVIEW_POOL` is a separate shape and unaffected),
+and they are three because they are rolled three different ways. `EVENT_POOL` (72 entries, weighted,
+20-week id cooldown) is the weekly one, and it gained a `LANGUAGE, MOVING AND HOMESICKNESS` section
+worth about 14% of its weight. `PREGAME_POOL` (14) is the hours before a big game. `FIRST_TIME_EVENTS`
+(5 keys) is guaranteed, once per career per tournament, and is not rolled at all.
+
+- **A week can be two things.** `rollWeeklyEvents()` is the first roll plus a
+  `WEEKLY_SECOND_EVENT_CHANCE` (0.10) draw off the same eligible pool with the id already drawn
+  removed. `rollWeeklyEvent()` keeps its exact old signature and behaviour on purpose - careerSmoke
+  and careerRender both call it directly, and the forced-event path still goes through it.
+- **The pre-game roll fires at WEEK START, not in `startFixture()`.** `startFixture` is bypassed by
+  all three sim paths (the Hub's Sim button, the Calendar's Sim button and `simSkippedFixtures()`
+  inside `advanceWeek`), so an event rolled there would not exist for a player who sims - which
+  across twelve years is most of them. And its last statement is `matchState.set(m)`: past that line
+  `CareerShell` has already swapped to MatchDay and `buildMatch` has ALREADY BUILT the match object,
+  so an effect applied there could not touch the game it was announcing. At week start the form and
+  morale land before the player presses Play, on every path, with nothing layered over MatchDay.
+  `engine.majorFixtureFor()` picks the game - the first UNPLAYED fixture this week that is a bracket
+  tie or sits in a `MAJOR_PHASES` window - and defaults every `ctx` field to a real string or number,
+  because the gates and the text functions read them directly.
+- **`rollPreGameEvent` and `firstTimeEvent` return a SHALLOW COPY**, with `text` resolved to a string
+  and a `pregame` / `firstTime` marker. `rollWeeklyEvent` hands back the live pool object and that is
+  documented in the file as a hazard; writing a resolved `text` onto it would mutate the pool for the
+  rest of the session and pin one opponent's name into every future firing of the entry.
+- **The first-time flag is `flags.firstSeen[kind]`, year-stamped, NOT `flags.eventLog`.** That
+  cooldown ledger is truncated to its last 60 entries, so a first Worlds would fall off it inside two
+  seasons and fire again. Same idiom as `flags.firstStandBerth`: a year reads as truthy identically
+  and is strictly more informative than a `true` nobody can date. It is written in
+  `addBracketFixture()`, the only place in the mode where "the player is actually in this tournament"
+  becomes a fact - `openBracket()` only knows the CLUB qualified, and both internationals are
+  separately age-gated. Adding a tournament to the calendar means adding its key here too, or the
+  whole event arrives silently the first time somebody reaches it.
+- **Both reuse `kind: 'event'`.** No new overlay kind was added anywhere, so there are zero new
+  `valid` / `accent` / `dismissible` / markup branches and the existing "undismissable until
+  answered" rule applies to them for free. They are queued with `pushOverlay`, never
+  `careerOverlay.set` - a set would clobber whatever the bracket draw or a split-awards panel has
+  already put in the queue. Note that `tickBurnout`'s forced `quit_thought` roll DISCARDS its return
+  value, so that crisis event is currently never shown to anybody: it is not a template.
+- **The last mile is the two Sim buttons.** `startCareerWeek` returns `{ event, events, income,
+  notes }` and `advanceWeek` returns `events`; `Hub.svelte` and `Calendar.svelte` push EVERY entry in
+  order. Both used to read `events[0]`, which is what made the second weekly roll and the entire
+  pre-game pool invisible - created, then dropped on the floor with nothing on screen to say so.
+
+Measured on `--seed 42`: 244 pre-game events and 38 first-time events applied across 8 careers
+(`spring_po` x8, `summer_po` x8, `worlds` x8, `msi` x7, `first_stand` x7). careerSmoke's
+`drainOverlay()` now APPLIES `kind === 'event'` overlays with a seeded option instead of throwing
+them away, which is the only reason any of those numbers exist; it fails the run when no pre-game
+event ever fires, when no first-time event ever fires, and when a tournament the run actually
+reached never fired its own.
+
+### Morale has a downside now
+These are the **first systematic morale SINKS in the mode**, and morale is not an isolated meter: it
+feeds `training.moraleFactor()` (0.85x at rock bottom, 1.12x at loving it), the `MORALE_FLOOR_AT`
+floor in `match.successChance()`, and the burnout ladder - under `BURNOUT_MORALE` (40) for six weeks
+benches the player, and a second strike TERMINATES THE CONTRACT. A morale drain is therefore also a
+training nerf and a rating nerf. **Re-measure with careerSmoke, never tune by intuition.**
+
+Everything is sized against `SQUAD_STATUS.moralePull`, which caps the weekly seat move at 3, and not
+against the 0-100 range. A sink sized against the range walks every career into the burnout ladder.
+
+- **Solo queue** (`engine.doSoloQueue`). `net = wins - losses`; `base` is `net * SOLOQ_MORALE_PER_NET`
+  clamped to `[-6, +2]` - asymmetric on purpose, because a morale farm at the cheapest activity in
+  the mode would out-earn the psychologist at a third of the price. `tilt` fires on a LOSING session
+  only, `-min(4, prior * 1.2)`: queueing again after a bad one is the thing being priced, not
+  queueing at all. Health is `min(7, prior * 2)` and is charged **always, bench or no bench** - the
+  body does not care whose decision it was - while the morale half is skipped entirely while
+  `burnoutBenched(c)`. **Every new morale penalty must be suppressed there**: the three-week bench is
+  a recovery and a sink running through it turns it into a trap.
+- **`prior` is `weekly.counts.soloq`, and `doActivity` increments the counter AFTER the handler
+  returns.** That order is the mechanic, not an implementation detail: the handler sees the sessions
+  that came BEFORE it, so the first session of a week is free and the second costs 2 health. Counting
+  first would charge the first session for itself. `weekly.counts` is REBUILT FROM A LITERAL in
+  `startCareerWeek`, so a new `weekly` key that is not named in that literal is deleted every week
+  and fails careerSmoke's shape check.
+- `soloq` is deliberately absent from `NO_INJURY_ACTIVITIES`, so every session ALSO takes the
+  ordinary injury roll on top. That is the risk half of the cost and there is no second roll for it.
+- **`match.finishMatch` charges a bad line and a bad run** - `KDA_SOUR_AT` (1.6) with
+  `KDA_MORALE_STEP`, and `LOSS_STREAK_STEP` per consecutive prior loss, each capped at 3 and folded
+  into the existing `+/-12` clamp on `moraleDelta`. **PENALTY-ONLY, and that is not stylistic.** The
+  rating already embeds the series KDA, `moraleDelta` already reads that rating back, and a lost
+  series is already a flat -5, so a term written as if nothing else existed would be paid three
+  times; and a KDA BONUS would raise morale, raise the `successChance` floor and lift every rating in
+  the mode against careerSmoke's 7.6 hard-fail line. Same shape as the morale and health terms in
+  `successChance`: a penalty that fades can only bite when the thing it measures has gone wrong.
+- `priorLossStreak()` reads `season.schedule`, **sorted by week before tailing** - the schedule is
+  not in week order (`ensureSeason` rebuilds it as `[...freshSplitRows, ...carriedBracketRows]` and
+  MSI is carried into summer), scans at most the last 12 played rows, and is wrapped in a try/catch
+  that yields 0. A rotten schedule must cost the player nothing rather than break a match. The
+  current fixture is not marked played at `finishMatch` time, so the tail is genuinely "before this
+  one".
+
+Measured on `--seed 42` with all of it live: morale mean **91.6** (min 29, one player-week under 30),
+match ratings **7.36** mean / 1.11 sd against the 7.6 hard fail, and **0 terminations**. Across 1071
+solo queue sessions, 263 of them a repeat inside one week, 662 health went to the grind cost and 126
+morale to tilt. Read `condition`, `solo queue grind` and the `MATCH RATINGS` block; careerSmoke fails
+the run if the grind cost or the tilt penalty never fires once, because a sink that never bites is
+indistinguishable from one that was never wired.
+
 ### The career leaderboard
 A global board of other people's careers: browse, then open a full dossier — their player card,
 their club roster cards, their season-by-season team history and their performance stats.
@@ -433,7 +614,7 @@ their club roster cards, their season-by-season team history and their performan
   `boardOVR`, which floors at 1 and falls back to MID. The DOSSIER must not: on a role-rotted save
   that turns an honest "Unknown / 0" into a confident "Academy Prospect" with an invented rating.
 - **`Profile.svelte` is a two-line wrapper over `CareerDossier.svelte`** (`c`, `mine`, `remote`),
-  which is what gives a stranger's profile the same 42-state `careerRender` coverage the owner's
+  which is what gives a stranger's profile the same 50-state `careerRender` coverage the owner's
   has. Every awards.js reader is `c || snapshot()`, so calling one with a bare `c` renders the
   VIEWER'S own numbers under a stranger's handle — they all take the guarded `c0`, and
   `boardCheck` section 7 lints for it.
@@ -495,6 +676,30 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   options raise every match rating, and `careerSmoke` fails outright above a 7.6 mean. `--list`
   prints every event id by role and phase. It also reports **pool depth against a Bo5**: one game
   draws `[early, early, mid, mid, late]`, so a series consumes 10/10/5 per role without repeats.
+- `node tools/lifeCheck.mjs` - the LIFE event pools in `events.js` (weekly, pre-game, first-time),
+  which nothing covered: `eventCheck.mjs` is `matchEvents.js` and has never so much as imported this
+  file. 91 authored entries across three pools where every failure mode is SILENT - a duplicated id
+  overwrites the other one's row in `flags.eventLog` so the 20-week cooldown leaks, a two-option
+  event just renders two buttons and is still undismissable until answered, an unsatisfiable `when`
+  is dead content nobody ever sees, an unknown `type` falls through to 'system' and a grey badge, and
+  **an effect key outside the CAP table is DROPPED by `capEffects()` with no warning**, which is
+  exactly how five legacy perk keys shipped doing nothing. It runs every `apply()` against ten
+  synthetic careers (unsigned 13yo through retired, plus a deliberately rotten one) and deep-compares
+  the career before and after, because the pool header promises `apply()` is pure and nothing had
+  ever checked. It also owns the LANGUAGE table: a region missing from `REGION_LANGUAGE` makes
+  `languageForRegion()` return null, null reads everywhere as "no language required", and that region
+  silently becomes free to sign for from anywhere on the circuit. `--list` prints the pools, and the
+  id-uniqueness and purity rules carry their own positive/negative controls. It passes clean, with
+  seven standing warnings. **Two of its rules were WRONG on the first cut and were relaxed rather
+  than obeyed**, which is the more useful half of the story: a six-character floor on option labels
+  failed `charity_stream.pass` and `bootcamp_offer.go`, which are the correct words for those
+  buttons — the rule now catches an empty or placeholder label (2 chars) and nothing else, because a
+  lint that tells you to pad good copy to hit a character count gets disabled. And the ASCII rule is
+  a hard error on **`events.js` only**, where new copy actually lands and which is clean; on
+  `constants.js` it prints the count (77 lines: 3,037 box-drawing characters in the section banners,
+  plus `Leviatan`'s acute and six curly apostrophes in real club names and blurbs) as a **baseline a
+  new violation is visible against**. Failing it would have meant misspelling an org's name or
+  shipping a harness that is red on day one.
 - `node tools/slotCheck.mjs` — the save-slot system, which nothing else touches. Asserts the thing
   that would be catastrophic and silent: **slot 1 resolves to the bare key**, so every save that
   predates slots is still there. Also isolation both ways, device prefs staying global, scoped
@@ -520,7 +725,7 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   bare `c` — every one of those falls through to `c || snapshot()` and would print the VIEWER'S own
   numbers under a stranger's handle. The lint patterns carry their own positive/negative controls,
   because a lint that matches nothing looks exactly like a clean codebase.
-- `node tools/careerRender.mjs` — Vite SSR-renders all 21 career components against 42 game
+- `node tools/careerRender.mjs` — Vite SSR-renders all 23 career components against 50 game
   states (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
   check that exercises the Svelte templates. Note two extra loops beyond the screens matrix: the
   **Shop is rendered once per tab** (`initialTab`, a prop only this harness passes — `tab` is

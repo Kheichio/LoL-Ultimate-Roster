@@ -38,6 +38,8 @@
     } from '../../career/ratings.js';
     import {
         canSwitchChampion, switchableChampions, championSwitchPreview, switchChampion,
+        signatureState, canDesignateSignature, designatableChampions,
+        addSignature, dropSignature,
     } from '../../career/contracts.js';
     import {
         MILESTONES, claimedMilestoneIds, awardHistoryByYear, AWARD_BY_ID,
@@ -351,6 +353,83 @@
         const res = switchChampion(switchPick);
         showToast(res.msg, res.ok ? 'success' : 'error');
         if (res.ok) { switching = false; switchPick = ''; }
+    }
+
+    // ---- extra signature picks ------------------------------------------
+    //  Second Signature (310 LP) and Third Signature (430 LP) each buy a SLOT,
+    //  economy.signatureSlots() has always counted it, contracts.addSignature()
+    //  has always been able to fill one, and match.signatureIds() has always
+    //  read the result into the draft -- but NOTHING EVER RENDERED THE FLOW.
+    //  With no caller, player.extraChampions could never leave [], so both
+    //  perks were unspendable and 740 legacy points bought nothing on any
+    //  screen. That is the same wired-and-dead failure the perk rewrite was
+    //  itself written to fix, one layer further up; the comment on
+    //  contracts.signatureState() already claimed this reader existed.
+    let designating = false;
+    let designatePick = '';
+
+    // Guarded the way Hub wraps activityGate: these run on every reactive pass
+    // of a screen that is also pointed at strangers' saves and rot fixtures.
+    function safeSigState(cc) {
+        try {
+            const s = signatureState(cc);
+            return (s && Number.isFinite(s.slots)) ? s : { slots: 1, used: 0, free: 0, ids: [] };
+        } catch { return { slots: 1, used: 0, free: 0, ids: [] }; }
+    }
+    function safeDesignateGate(cc) {
+        try {
+            const g = canDesignateSignature(cc);
+            return (g && typeof g === 'object') ? g : { ok: false, reason: '' };
+        } catch { return { ok: false, reason: '' }; }
+    }
+    function safeDesignatePool(cc) {
+        try {
+            const list = designatableChampions(cc);
+            return Array.isArray(list) ? list.filter(Boolean) : [];
+        } catch { return []; }
+    }
+
+    $: sigState = safeSigState(c0);
+    $: sigExtras = (Array.isArray(p.extraChampions) ? p.extraChampions : [])
+        .map(id => CHAMPION_BY_ID[id])
+        .filter(Boolean);
+    $: designateGate = mine ? safeDesignateGate(c0) : { ok: false, reason: '' };
+    $: designatePool = (mine && designating) ? safeDesignatePool(c0) : [];
+    // Shown only once a slot has actually been bought, or once one is filled.
+    // A player who owns neither perk is not shown an empty shelf.
+    $: showSlots = sigExtras.length > 0 || (mine && !retired && sigState.slots > 1);
+
+    function openDesignate() {
+        if (!mine) return;
+        playSound('click');
+        if (!designateGate.ok) { showToast(designateGate.reason, 'error'); return; }
+        designating = true;
+        designatePick = '';
+    }
+
+    function cancelDesignate() {
+        playSound('click');
+        designating = false;
+        designatePick = '';
+    }
+
+    function pickDesignate(id) {
+        playSound('click');
+        designatePick = designatePick === id ? '' : id;
+    }
+
+    function commitDesignate() {
+        if (!mine || !designatePick) return;
+        const res = addSignature(designatePick);
+        showToast(res.msg, res.ok ? 'success' : 'error');
+        if (res.ok) { designating = false; designatePick = ''; }
+    }
+
+    function doDropSignature(id) {
+        if (!mine) return;
+        playSound('click');
+        const res = dropSignature(id);
+        showToast(res.msg, res.ok ? 'success' : 'error');
     }
 
     // ---- champion proficiency -------------------------------------------
@@ -985,6 +1064,81 @@
                 <button class="sig-btn" on:click={cancelSwitch}>Not yet</button>
             </div>
         {/if}
+
+        <!-- ---- EXTRA SIGNATURE SLOTS ----
+             The only place a slot bought by Second/Third Signature can be
+             filled. Kept inside this panel rather than given its own, because
+             a second signature is the same statement as the first one: this is
+             what they have to ban. Adding one does NOT change your main. -->
+        {#if showSlots}
+            <div class="sig-extra">
+                <div class="sig-extra-head">
+                    <span class="sig-extra-t">Signature Slots</span>
+                    {#if mine}
+                        <span class="sig-extra-c">{sigState.used} / {sigState.slots}</span>
+                    {/if}
+                </div>
+
+                {#if sigExtras.length}
+                    <div class="sig-extra-list">
+                        {#each sigExtras as ch (ch.id)}
+                            <div class="sig-extra-row">
+                                <span class="sig-extra-n">{ch.name}</span>
+                                <span class="sig-extra-a">{ch.archetype}</span>
+                                {#if mine && !retired}
+                                    <button class="lnk" on:click={() => doDropSignature(ch.id)}>Drop</button>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+
+                {#if mine && !retired}
+                    {#if !designating}
+                        <p class="note">{designateGate.reason}</p>
+                        <div class="sig-acts">
+                            <button class="sig-btn" on:click={openDesignate} disabled={!designateGate.ok}>
+                                Add a signature
+                            </button>
+                        </div>
+                    {:else}
+                        <p class="note">
+                            A second champion nobody can ban you off. Same playstyle pool and the same
+                            price as re-maining &#8212; and {champ ? champ.name : 'your main'} stays
+                            exactly where it is.
+                        </p>
+
+                        <div class="sig-grid">
+                            {#each designatePool as ch (ch.id)}
+                                <button
+                                    class="sig-opt"
+                                    class:sig-opt-on={designatePick === ch.id}
+                                    on:click={() => pickDesignate(ch.id)}
+                                >
+                                    <span class="sig-opt-n">{ch.name}</span>
+                                    <span class="sig-opt-a">{ch.archetype}</span>
+                                </button>
+                            {:else}
+                                <p class="note">Nothing else your playstyle would let you main.</p>
+                            {/each}
+                        </div>
+
+                        <div class="sig-acts">
+                            <button
+                                class="sig-btn sig-btn-go"
+                                on:click={commitDesignate}
+                                disabled={!designatePick || !CHAMPION_BY_ID[designatePick]}
+                            >
+                                {designatePick && CHAMPION_BY_ID[designatePick]
+                                    ? `Add ${CHAMPION_BY_ID[designatePick].name}`
+                                    : 'Pick one'}
+                            </button>
+                            <button class="sig-btn" on:click={cancelDesignate}>Not yet</button>
+                        </div>
+                    {/if}
+                {/if}
+            </div>
+        {/if}
     </div>
 
     <!-- ============ CHAMPION PROFICIENCY ============ -->
@@ -1526,6 +1680,31 @@
     .sig-prev-v { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12.5px; color: #7d93b8; }
     .sig-prev-v b { color: #f87171; font-weight: 700; }
     .sig-prev-note { margin: 9px 0 0; font-size: 11px; line-height: 1.6; color: #56688a; }
+
+    .sig-extra {
+        margin-top: 16px; padding-top: 14px;
+        border-top: 1px solid rgba(51, 65, 85, 0.4);
+    }
+    .sig-extra-head {
+        display: flex; align-items: baseline; justify-content: space-between;
+        gap: 12px; margin-bottom: 10px;
+    }
+    .sig-extra-t {
+        font-size: 9.5px; font-weight: 700; letter-spacing: 1.6px;
+        text-transform: uppercase; color: #3f5069;
+    }
+    .sig-extra-c {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 12px; color: #7d93b8;
+    }
+    .sig-extra-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .sig-extra-row {
+        display: flex; align-items: baseline; gap: 9px;
+        padding: 8px 11px; border-radius: 9px;
+        background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(51, 65, 85, 0.4);
+    }
+    .sig-extra-n { font-size: 12.5px; font-weight: 700; color: #cbd5e1; }
+    .sig-extra-a { flex: 1; font-size: 10px; color: #56688a; }
     .note-tight { margin: 12px 0 0; font-size: 11px; }
     .dot { color: #2c3a52; margin: 0 5px; }
 

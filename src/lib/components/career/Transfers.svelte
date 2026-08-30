@@ -15,6 +15,8 @@
     import {
         ROLES, ROLE_BY_ID, REGION_BY_ID, CLUB_TIERS, SQUAD_STATUS,
         PLAYSTYLES, championsForStyle, championFitsStyle, phaseForWeek, ATTRS, UNSIGNED_SOFT_CAP,
+        LANGUAGES, REGION_LANGUAGE, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
+        languageLevelFor, languageBand, studyTargetFor,
     } from '../../career/constants.js';
     import {
         statusInfo, fmtGold, weeklySalaryFor, SCOUT_MMR_GATE,
@@ -114,6 +116,58 @@
     function isUrgent(o) {
         const w = weeksLeft(o);
         return w !== null && w <= 0;
+    }
+
+    // ---------------------------------------------------------------------
+    //  LANGUAGES
+    //  The panel reads levels and writes exactly one field, player.studyLang.
+    //  Every rule -- the hard signing gate, the interest refund, what a lesson
+    //  is worth -- lives in constants.js and contracts.js and is read here
+    //  through the same helpers those modules use, so the screen and the engine
+    //  cannot disagree about who can sign you.
+    // ---------------------------------------------------------------------
+    /** Which leagues a language opens, derived from REGION_LANGUAGE rather than
+     *  listed by hand: three regions share English today, and a hand-kept list
+     *  here would go stale the first time a seventh region is added. */
+    const LANG_REGIONS = Object.fromEntries(LANGUAGES.map(l => [
+        l.id,
+        Object.keys(REGION_LANGUAGE)
+            .filter(rid => REGION_LANGUAGE[rid] === l.id)
+            .map(rid => (REGION_BY_ID[rid] ? REGION_BY_ID[rid].league : rid))
+            .join(', '),
+    ]));
+
+    function safeStudyTarget(state) {
+        try { return studyTargetFor(state) || null; } catch (e) { return null; }
+    }
+
+    // studyTargetFor(), not p.studyLang: with nothing picked a lesson still goes
+    // somewhere -- the language you already have most of -- so marking the raw
+    // field would leave the row the next lesson actually lands in unmarked.
+    $: studyTarget = safeStudyTarget(c);
+    $: langRows = LANGUAGES.map(l => {
+        const raw = languageLevelFor(c, l.id);
+        return {
+            id: l.id,
+            name: l.name,
+            accent: l.accent,
+            // Levels are fractional in the save exactly like attrs are, because
+            // immersion moves them in tenths. Rounded HERE and nowhere else.
+            level: Math.round(raw),
+            pct: Math.max(0, Math.min(100, (raw / LANGUAGE_MAX) * 100)),
+            band: languageBand(raw),
+            full: raw >= LANGUAGE_MAX,
+            regions: LANG_REGIONS[l.id] || 'No league on the circuit',
+            studying: studyTarget === l.id,
+        };
+    });
+
+    function pickStudy(id) {
+        playSound('click');
+        const lang = LANGUAGES.find(l => l.id === id);
+        career.update(x => ({ ...x, player: { ...x.player, studyLang: id } }));
+        saveCareer();
+        showToast('Lessons now go into ' + (lang ? lang.name : 'that language') + '.', 'info');
     }
 
     // ---------------------------------------------------------------------
@@ -719,6 +773,53 @@
             {/if}
         </section>
 
+        <!-- ======================= LANGUAGES =======================
+             Shares order.scout and sits before it in the markup: flexbox breaks
+             an order tie on document order, so this lands immediately above the
+             scouting board in both section orders without a fifth order slot --
+             and the board underneath is where the gate is actually felt, as a
+             club that rates you and still says "cannot sign you". -->
+        <section class="tf-sec" style="order:{order.scout}">
+            <div class="side-label">Languages</div>
+            <p class="sec-note">
+                Six leagues, four languages, and a club will not sign a player who cannot talk to the
+                room: {LANGUAGE_SIGN_MIN}/{LANGUAGE_MAX} is the floor to be signed in a region at all,
+                and {LANGUAGE_FLUENT} is where a club stops pricing you as an import risk. Lessons are
+                an activity slot on the Hub &#x2014; this is where you choose what they go into.
+            </p>
+
+            <div class="panel langs">
+                {#each langRows as l (l.id)}
+                    <div class="lang" class:lang-on={l.studying} style="--ac:{l.accent}">
+                        <div class="lang-id">
+                            <span class="lang-name">{l.name}</span>
+                            <span class="lang-regions">{l.regions}</span>
+                        </div>
+
+                        <div class="lang-meter">
+                            <div class="lang-bar" aria-hidden="true">
+                                <div class="int-fill" style="width:{l.pct}%; background:{l.accent}"></div>
+                            </div>
+                            <span class="lang-num">
+                                {l.level}<span class="lang-of">/{LANGUAGE_MAX}</span>
+                            </span>
+                            <span class="lang-band">{l.band}</span>
+                        </div>
+
+                        {#if l.full}
+                            <!-- studyTargetFor() skips a maxed language, so a Study
+                                 button here would set a field the engine ignores. -->
+                            <span class="lang-done">Nothing left</span>
+                        {:else if l.studying}
+                            <span class="lang-done lang-cur">Studying</span>
+                        {:else}
+                            <button class="b b-ghost" on:click={() => pickStudy(l.id)}>Study</button>
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+        </section>
+
         <!-- ===================== SCOUTING BOARD ===================== -->
         <section class="tf-sec" style="order:{order.scout}">
             <div class="side-label">Scouting board</div>
@@ -1063,6 +1164,21 @@
     .gate { margin-top: 16px; }
     .gate-p { font-size: 11.5px; color: #56688a; line-height: 1.7; margin-top: 10px; max-width: 660px; }
 
+    /* ============ LANGUAGES ============ */
+    .langs { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+    .lang { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(15,23,42,0.42); border: 1px solid rgba(51,65,85,0.2); border-left: 3px solid var(--ac); min-width: 0; }
+    .lang-on { background: color-mix(in srgb, var(--ac) 9%, rgba(15,23,42,0.42)); border-color: color-mix(in srgb, var(--ac) 32%, transparent); border-left-color: var(--ac); }
+    .lang-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .lang-name { font-size: 13px; font-weight: 700; color: #dbe4f5; }
+    .lang-regions { font-size: 9.5px; font-weight: 700; color: #475569; line-height: 1.45; overflow-wrap: anywhere; }
+    .lang-meter { flex-shrink: 0; width: 108px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+    .lang-bar { width: 100%; height: 4px; border-radius: 4px; background: rgba(148,163,184,0.12); overflow: hidden; }
+    .lang-num { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 800; color: var(--ac); line-height: 1; }
+    .lang-of { font-size: 9px; font-weight: 700; color: #3f5069; }
+    .lang-band { font-size: 8.5px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #3f5069; }
+    .lang-done { flex-shrink: 0; font-size: 9px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #475569; }
+    .lang-cur { color: var(--ac); }
+
     /* ============ SCOUTING ============ */
     .scout-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
     @media (max-width: 700px) { .scout-list { grid-template-columns: 1fr; } }
@@ -1148,6 +1264,7 @@
         .rc-ovr-n { font-size: 26px; }
         .rc-loss { margin-left: 0; }
         .sc-int { width: 76px; }
+        .lang-meter { width: 84px; }
         .b { padding: 8px 12px; font-size: 10.5px; }
     }
 </style>

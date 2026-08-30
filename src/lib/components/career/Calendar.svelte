@@ -43,8 +43,8 @@
     // One glyph per qualification status. 'chase' is the only one that is a
     // lock, because it is the only one the player can still do something about.
     const QUAL_ICON = {
-        won: '\u{1F3C6}', live: '\u{1F534}', in: '✓',
-        chase: '\u{1F512}', out: '✗', missed: '—', locked: '\u{1F6AB}',
+        won: '\u{1F3C6}', live: '\u{1F534}', in: '\u{2713}',
+        chase: '\u{1F512}', out: '\u{2717}', missed: '\u{2014}', locked: '\u{1F6AB}',
     };
 
     let busy = false;
@@ -208,8 +208,13 @@
 
         const raw = r.events;
         const evs = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-        const choice = evs.find(e => e && Array.isArray(e.options) && e.options.length);
-        if (choice) pushOverlay('event', choice);
+        // Every answerable entry, in order. A week can hand back two weekly
+        // events and a pre-game one, and taking only the first left the rest
+        // created-and-discarded with nothing on screen to say so. pushOverlay
+        // queues them behind whatever is already open.
+        for (const e of evs) {
+            if (e && Array.isArray(e.options) && e.options.length) pushOverlay('event', e);
+        }
 
         const now = get(career);
         if (r.yearRolled) showToast('The ' + now.time.year + ' season begins.', 'success');
