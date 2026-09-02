@@ -10,6 +10,17 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.4.2',
+        title: 'Ultimate Career — Emergency Fix: Prospects Who Could Never Be Signed',
+        summary: 'A free agent who trained hard could make himself permanently unsignable. The better you got, the further the only clubs allowed to sign you slid down your own shortlist, until at around 80 rated literally nobody in the world could ever call. This was introduced in 1.7.4 and it is fixed.',
+        details: [
+            'FIXED (critical) — training could make you unsignable. An unsigned player may only join an amateur team; every academy and main-league club refuses a player with no professional record. But 1.7.4 added a rule that makes a club lose interest in someone far above its level, and the amateur teams are the WEAKEST clubs in the game — so they took that penalty hardest, sank below the hundred-odd clubs that were never allowed to sign you anyway, and dropped off the end of the shortlist the game draws offers from. Measured on a 15-year-old free agent: at 45 rated five amateur teams could call, at 65 two, at 73 one, and at 80 rated none at all, ever. The rule now applies only once you have actually been a professional — a prospect nobody has signed is not "too good" for anyone.',
+            'FIXED — the game picked its shortlist before checking who was allowed to sign you. It ranked every club by interest, took the top fourteen, and only then asked which of them could legally make an offer — so whenever the clubs that wanted you most were clubs that could not have you, the shortlist filled with them and the ones that could were never looked at. It now filters first and ranks second.',
+            'FIXED — the same flaw was quietly costing CONTRACTED players their step up. A club better than you rates you lower than a club you have outgrown, so genuine step-up offers ranked BELOW the weaker teams that wanted you more, and fell off the shortlist in exactly the same way. Offers per career have roughly doubled as a result, and they are the offers a career is supposed to be built on.',
+            'NOTE — if you have a career sitting unsigned, it should start getting calls again from the next offseason window. Nothing about your player is reset; the clubs simply come back.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.4.1',
         title: 'Ultimate Career — No More Mirror Matchups & a Full Scoreboard',
         summary: 'You could be drafted into a mirror matchup — Zeri into Zeri — and the lane was then graded as if playing against yourself meant something. All ten champions in a game are now distinct. Every match also ends on a proper scoreboard with all ten players and their K/D/A instead of just your own line, and a knockout week finally looks like one rather than hiding the bracket under the activity board.',

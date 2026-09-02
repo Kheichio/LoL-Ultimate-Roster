@@ -53,6 +53,27 @@ const OFFER_LIFETIME_WEEKS = 3;
 /** Below this a club is curious, not interested, and does not make the call. */
 const MIN_OFFER_INTEREST = 35;
 
+/** How many SIGNABLE clubs may be rolled against in one week, and how deep the
+ *  ranked list is searched to find them. The pool bound is deliberately larger
+ *  than the 108 clubs in the world: it exists to make the search exhaustive, not
+ *  to trim it, because the trimming is what broke the transfer system once
+ *  already (see generateOffers). Only the number of CANDIDATES is a tuning dial.
+ *
+ *  FOURTEEN IS MEASURED, and the measurement is worth recording because the
+ *  obvious theory about it was WRONG. Filtering for eligibility before the slice
+ *  raised offer volume from 258 to 475 per eight careers, which looked like the
+ *  candidate count suddenly meaning three times as much -- so it was tried at 8,
+ *  and volume barely moved (475 -> 448, mean rating 7.52 -> 7.50). The count is
+ *  not the driver. The extra offers are legal clubs the old top-14 slice was
+ *  hiding, and it hid them from CONTRACTED players too: a club that is a genuine
+ *  step UP has a negative rating gap, therefore LOW interest, therefore a rank
+ *  below the weaker clubs that wanted the player more -- so the step-up offers a
+ *  career is supposed to be built on were the exact ones falling off the end of
+ *  the list. The volume rise is that bug lifting, not a new dial. Left at the
+ *  original 14; change it only against a fresh careerSmoke measurement. */
+const OFFER_CANDIDATES = 14;
+const OFFER_CANDIDATE_POOL = 500;
+
 /**
  * Ceiling on the stacked offer premium.
  *
@@ -466,13 +487,43 @@ export function scoutInterest(c, team) {
     const gap = ovr - str;
     let v = 50 + Math.min(gap, OVERQUALIFIED_TURN) * 3.1;
 
-    // YOUR OWN CLUB IS EXEMPT from the turn. renewalOffer() prices a renewal off
-    // this number and returns null under MIN_OFFER_INTEREST, so decaying it here
-    // would make an elite player at a mid-table club unrenewable by the club he
-    // already plays for -- a far worse bug than the one being fixed. Same rule
-    // and the same reason as signingBlock()'s first clause: over-qualification
-    // is a statement about ARRIVING somewhere, not about staying.
-    if (gap > OVERQUALIFIED_TURN && !(p.clubId && t.id === p.clubId)) {
+    // TWO EXEMPTIONS, and the second one is a bug fix paid for in real player time.
+    //
+    // (1) YOUR OWN CLUB IS EXEMPT from the turn. renewalOffer() prices a renewal
+    // off this number and returns null under MIN_OFFER_INTEREST, so decaying it
+    // here would make an elite player at a mid-table club unrenewable by the club
+    // he already plays for. Same rule and the same reason as signingBlock()'s
+    // first clause: over-qualification is a statement about ARRIVING somewhere.
+    //
+    // (2) A PLAYER WHO HAS NEVER BEEN SIGNED IS EXEMPT FROM IT ENTIRELY, and this
+    // is the same everSigned escape signingBlock's clauses (a)/(c2)/(e2) and
+    // eligibleClub's free-agent rail already run on. It was missed here, and
+    // missing it silently broke the one path every precomp career has to walk.
+    //
+    // WHY IT BROKE: an unsigned player may only be signed by a TIER 3 amateur
+    // side -- clause (a) refuses everything above it -- and the amateur sides are
+    // the WEAKEST clubs in the world, so they carry the BIGGEST gap and take the
+    // HARDEST decay. Interest then ranks them below the hundred-odd academies and
+    // main-league clubs that are all forbidden from signing him, and
+    // generateOffers slices the top fourteen BEFORE testing eligibility, so the
+    // legal clubs fell off the end of the list. Measured on a 15-year-old free
+    // agent, MID, LEC, 2513 MMR:
+    //     ovr 45 -> 5 of the 6 amateur sides inside the window, offers flow
+    //     ovr 65 -> 2 inside the window
+    //     ovr 73 -> 1
+    //     ovr 80 -> 0 inside the window, and NOBODY CAN EVER CALL
+    // The amateur sides ranked 1, 2, 6, 10, 19, 34 under the old curve and
+    // 17, 30, 45, 55, 66, 72 under the decayed one. In other words TRAINING MADE
+    // THE PLAYER UNSIGNABLE: the better the prospect got, the further the only
+    // clubs allowed to sign him slid down his own shortlist.
+    //
+    // A prospect with no professional record is not "too good" for anybody --
+    // that is precisely what clause (a) already says by forcing him through the
+    // open circuit in the first place. The decay is about a professional being
+    // wasted on a club beneath him, and it starts applying the moment he has been
+    // one. careerSmoke's `unsignableProspect` check is the regression test.
+    const everSigned = !!(c.flags && c.flags.everSigned);
+    if (everSigned && gap > OVERQUALIFIED_TURN && !(p.clubId && t.id === p.clubId)) {
         v -= (gap - OVERQUALIFIED_TURN) * OVERQUALIFIED_DECAY;
     }
 
@@ -1143,13 +1194,27 @@ export function generateOffers(c) {
     // the curve turned over they are an entirely different fourteen clubs, so
     // re-measure offer volume with careerSmoke before changing the literal --
     // the old figure proves nothing about the new list.
-    const rows = interestedTeams(c, 14).filter(row => {
+    // FILTER FIRST, THEN TAKE THE TOP FOURTEEN. This used to slice to fourteen
+    // rows and filter afterwards, which silently assumes the clubs that rate a
+    // player highest are also the ones ALLOWED to sign him. They are routinely
+    // not: an unsigned prospect is wanted most by the academies and main-league
+    // sides that clause (a) forbids him from joining, and he may only sign for a
+    // tier 3 amateur team. When the ranking and the rules disagree like that, the
+    // fourteen fill with clubs that cannot call and the handful that can never
+    // get looked at -- so the player receives NOTHING, for ever, with no message
+    // anywhere saying why. That is not a tuning risk, it is a total silent
+    // failure of the transfer system, and it is exactly what happened.
+    //
+    // Ranking still decides WHO calls and in what order. It no longer decides
+    // WHETHER anyone can. The cost is one pass over the candidate pool of pure,
+    // card-DB-free predicates, which is what signingBlock was built to be.
+    const rows = interestedTeams(c, OFFER_CANDIDATE_POOL).filter(row => {
         const t = row.team;
         if (taken.has(t.id)) return false;
         if ((rejected[t.id] || 0) >= REJECTIONS_BEFORE_BLACKLIST) return false;
         if (row.interest < MIN_OFFER_INTEREST) return false;
         return eligibleClub(c, t, ovr, cur, curStrength, midSeasonScout);
-    });
+    }).slice(0, OFFER_CANDIDATES);
 
     for (const row of rows) {
         if (room <= 0) break;

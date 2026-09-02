@@ -1837,6 +1837,14 @@ function playWeekFixtures() {
  * the snapshot it takes on entry.
  */
 function goalProbeRepoint(offer) {
+    // ELIGIBLE ON MOST CAREERS, FIRED ON EXACTLY ONE. Pinning the probe to a
+    // single career index made it depend on that one career happening to reach
+    // the accept branch, and an unrelated change to the offer pipeline shifted
+    // the seeded stream just enough that it never did -- so the harness failed
+    // on its own probe rather than on anything in the game. `stats.goalProbes`
+    // is the global one-shot: the first eligible career to reach a real offer
+    // fires it and every other career keeps measuring reachability honestly.
+    if (stats.goalProbes > 0) return;
     if (!CTX.cfg || !CTX.cfg.goalProbe || CTX.goalRepointed) return;
     if (!offer || !offer.teamId || !K.teamById(offer.teamId)) return;
     const c = cur();
@@ -2549,6 +2557,10 @@ function runCareer(cfg, label) {
         goalClubId: end.player.goalClubId || null,
         goalReached: Math.round(Number(end.flags && end.flags.goalReached) || 0),
         everAtGoal: GOAL_AT.has(label),
+        // Whether the stamp probe actually fired on THIS career, not merely
+        // whether it was eligible to. The natural-reach rate is measured off
+        // the careers it did not touch.
+        goalProbeFired: !!CTX.goalRepointed,
         monuments: (end.inventory && Array.isArray(end.inventory.monuments))
             ? end.inventory.monuments.length : 0,
         trades: (end.inventory && end.inventory.trades && typeof end.inventory.trades === 'object')
@@ -2611,7 +2623,11 @@ function buildConfigs(n) {
             // The goal-club stamp probe. Not career 2 (the role switch) and not
             // career 5 (the grinder): both are already outliers, and this one
             // needs an ordinary career that signs an ordinary run of contracts.
-            goalProbe: i === 7,
+            // ELIGIBLE, not chosen: goalProbeRepoint fires on the FIRST of these
+            // to reach a real offer and never again, so the probe cannot be
+            // silenced by one career's luck. Excludes career 2 (the role switch)
+            // and career 6 (the grinder), which are already outliers.
+            goalProbe: i !== 1 && i !== 5,
         });
     }
     return out;
@@ -3927,7 +3943,7 @@ console.log(`  role changes           : ${stats.roleChanges}`);
 {
     const withGoal = results.filter(r => r.goalClubId);
     const reached = withGoal.filter(r => r.goalReached > 0);
-    const natural = withGoal.filter(r => !(r.cfg && r.cfg.goalProbe));
+    const natural = withGoal.filter(r => !r.goalProbeFired);
     const naturalReached = natural.filter(r => r.goalReached > 0);
     const nm = id => { const t = K.teamById(id); return t ? t.name : String(id); };
     console.log(`  goal club              : ${reached.length}/${withGoal.length} careers reached the club they`
@@ -4013,6 +4029,85 @@ step('teams.signingFor hits its target', () => {
                 'The synthetic fallback must back SYN_ROLE_TILT[role] out of the target -- syntheticPlayer treats `strength` as a roster mean, not a seat rating.');
         }
     }
+    return true;
+}, null);
+// AN UNSIGNED PROSPECT MUST ALWAYS HAVE SOMEBODY WHO CAN SIGN HIM, at EVERY
+// rating -- and the higher the rating, the more true that should be.
+//
+// This is a regression test for a shipped bug, and the bug is worth stating
+// because the existing checks all stayed green through it. `neverSigned` and
+// `badFirst` only prove that the driven careers DID get signed, and they get
+// signed early, at a low rating, before the failure begins. The failure was at
+// the top of the unsigned range: an over-qualification decay was applied to a
+// player with no professional record, and because an unsigned player may only
+// join a TIER 3 amateur side -- the weakest clubs in the world, therefore the
+// biggest rating gap, therefore the hardest decay -- the only clubs allowed to
+// sign him sank below the hundred-odd clubs forbidden from doing so. Measured on
+// a real save: at ovr 65 two amateur sides could still call, at 73 one, at 80
+// NONE, ever. Training the player made him unsignable.
+//
+// So this walks the rating range rather than sampling one point, and asserts on
+// the thing that actually matters: the number of clubs that could genuinely make
+// an offer. It is a pure-predicate check -- no career is driven and no store is
+// touched -- so it costs nothing and cannot be seed-dependent.
+step('an unsigned prospect is signable at every rating', () => {
+    const ROLE = 'MID';
+    const mkProspect = (ovrVal) => {
+        const attrs = {}; const pot = {};
+        for (const k of K.ATTR_KEYS) { attrs[k] = ovrVal; pot[k] = Math.min(K.ATTR_MAX, ovrVal + 12); }
+        return {
+            created: true,
+            time: { year: 2026, week: 38 },   // offseason: the window an unsigned player has
+            player: {
+                handle: 'Prospect', region: 'LEC', role: ROLE, path: 'precomp',
+                startAge: 13, age: 15, attrs, potential: pot, traits: [],
+                proficiency: {}, languages: { en: 100 }, extraChampions: [],
+                form: 60, morale: 70, energy: 80, health: 90, hype: 0,
+                clubId: null, clubTier: 0, status: 'sub', contract: null,
+                chemistry: 50, rejected: {}, goalClubId: null,
+            },
+            money: { gold: 0, followers: 0, legacy: 0 },
+            inventory: { gear: {}, lifestyle: {}, consumables: {}, perks: [], trades: {}, monuments: [] },
+            soloq: { mmr: 2600 },
+            club: { teamId: null, momentum: 0, roster: {}, changes: [] },
+            season: {}, totals: {}, history: [], awards: [], trophies: [], news: [], offers: [],
+            weekly: { counts: {} },
+            flags: { everSigned: false },
+        };
+    };
+
+    const seen = [];
+    for (const ovrVal of [45, 55, 65, 73, 80, 85]) {
+        const c = mkProspect(ovrVal);
+        // Every club that is BOTH interested enough to call and legally able to.
+        const callable = C.interestedTeams(c, 500)
+            .filter(row => !row.blocked && row.interest >= 35);
+        seen.push(`${ovrVal}:${callable.length}`);
+        if (!callable.length) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'a well-trained unsigned prospect has nobody who can sign him',
+                `ovr ${ovrVal}, age 15, 2600 MMR, never signed -> 0 clubs both willing and allowed`
+                + ` (by rating: ${seen.join(' ')})`,
+                'An unsigned player may only join a tier 3 amateur side, and those are the weakest clubs in the '
+                + 'world -- so any term that penalises a large rating gap hits exactly the clubs he is allowed to '
+                + 'sign for. Over-qualification must be gated on flags.everSigned in scoutInterest() as well as in '
+                + 'signingBlock() and eligibleClub(); a player with no record is not too good for anybody.',
+                'unsignableProspect');
+            return false;
+        }
+    }
+    // The other direction: it must not have been made vacuous by everything
+    // simply being legal. A prospect who is signable by literally every club in
+    // the world means the first-club ladder has stopped existing.
+    const wideOpen = C.interestedTeams(mkProspect(73), 500).filter(row => !row.blocked).length;
+    if (wideOpen > 20) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'the first-club ladder has stopped refusing anybody',
+            `an unsigned 73-rated prospect can be signed by ${wideOpen} clubs`,
+            'signingBlock clause (a) must still hold every unsigned player to the open circuit.',
+            'ladderopen');
+    }
+    console.log(`  unsigned prospect      : callable clubs by rating ${seen.join('  ')} (0 at any rating is a hard fail)`);
     return true;
 }, null);
 // The legacy economy. The board was repriced against exactly these numbers, so
