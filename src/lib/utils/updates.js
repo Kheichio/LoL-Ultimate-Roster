@@ -10,6 +10,18 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.4.3',
+        title: 'Ultimate Career — The Scoreboard, Where You Actually Are',
+        summary: 'The ten-player scoreboard existed but only on the end-of-series screen, one click past where a game actually ends — so after playing a match you saw the result, your own line, and nothing else. It is now on the game screen the moment a game finishes, on the end-of-series screen, and in Last Match on the week screen.',
+        details: [
+            'NEW — the scoreboard is now on the game screen. When a game ends you get the result card you always got, and underneath it the full ten players with their champions and K/D/A. Previously that only appeared after the whole series, one screen later, which is why it looked like it was missing after a match you played yourself.',
+            'NEW — Last Match on the week screen carries the scoreboard too. A series gives you every game with a selector, and it opens on the decider rather than quietly showing you game one and calling it the series.',
+            'FIXED — the end-of-series scoreboard had never been rendered by our own test harness even once, because it only exists after you press a button and the harness cannot press buttons. That is precisely why this shipped half-finished. Both the game screen and the series screen are now driven by the harness directly, against 60-odd shapes including benched games, damaged saves and matches played before scoreboards existed.',
+            'CHANGED — the scoreboard is now built in one place instead of three near-identical copies, so the game screen, the series screen, the sim result and Last Match cannot drift apart from each other.',
+            'NOTE — a benched game and a match played before this update simply show no scoreboard, rather than an empty table of dashes. Nothing is reset.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.4.2',
         title: 'Ultimate Career — Emergency Fix: Prospects Who Could Never Be Signed',
         summary: 'A free agent who trained hard could make himself permanently unsignable. The better you got, the further the only clubs allowed to sign you slid down your own shortlist, until at around 80 rated literally nobody in the world could ever call. This was introduced in 1.7.4 and it is fixed.',

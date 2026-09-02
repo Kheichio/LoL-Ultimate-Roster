@@ -334,7 +334,7 @@
                     Playing as a guest. <button class="linkish" on:click={() => showAuthPanel.set(true)}>Log in</button> to sync your club to the cloud.
                 {/if}
             </p>
-            <p class="build">Beta 1.7.4.2 Public Build</p>
+            <p class="build">Beta 1.7.4.3 Public Build</p>
         </div>
 
     {:else if $menuScreen === 'slots' && slotMode}

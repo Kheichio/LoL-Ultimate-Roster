@@ -24,7 +24,8 @@
         isMatchOver, finishMatch, matchRatingLabel, headlineFor,
         draftPending, draftOption, chooseDraft,
     } from '../../career/match.js';
-    import { CHAMPION_BY_ID, ROLE_BY_ID } from '../../career/constants.js';
+    import { CHAMPION_BY_ID } from '../../career/constants.js';
+    import { normaliseBoard, normaliseBoards } from '../../career/scoreboard.js';
     import { completeMatch } from '../../career/engine.js';
 
     // -- tuning mirrors match.js' own clamps -----------------------------
@@ -56,6 +57,22 @@
     //  'game'     - game-result interstitial
     //  'result'   - the full match result screen
     let stage = 'decision';
+
+    /** Which screen to open on, and what to show there. ONLY the render
+     *  harness ever passes these -- CareerShell mounts this component bare,
+     *  and with both absent every line below behaves exactly as it always
+     *  has. Same idiom as Shop's `initialTab`.
+     *
+     *  They exist because `finalResult` and `gameCard` are component-local
+     *  and are assigned ONLY inside event handlers, which SSR never runs. So
+     *  tools/careerRender.mjs could not reach the result screen or the
+     *  per-game interstitial at all: their markup appeared in 0 of 1207 dump
+     *  files, and the interstitial shipped showing a player their own KDA and
+     *  nothing else with no harness able to see it. Anything the harness
+     *  hands over is treated as rot until proven otherwise. */
+    export let initialStage = null;    // 'game' | 'result'
+    export let initialResult = null;   // a result object to render at that stage
+
     let currentEvent = null, lastOutcome = null, gameCard = null, finalResult = null;
     let pendingInterview = null, milestones = [], floats = [];
     let continueReady = false, busy = false, benchShown = false, interviewOpened = false;
@@ -177,50 +194,16 @@
     //  match.js hangs a `board` off every entry of the game log, so a Bo5
     //  carries five of them and finishMatch persists the lot as result.games.
     //  It is ABSENT on a benched game and on every save written before it
-    //  existed, so the whole panel is built to disappear rather than degrade:
-    //  a board that does not normalise produces no row, and no rows produce no
-    //  section at all. Champions are stored as IDS - permanent save data - and
-    //  a renamed or retired one simply prints no champion rather than the id.
-    function sbRow(r, i, mine) {
-        if (!r || typeof r !== 'object') return null;
-        const roleId = typeof r.role === 'string' ? r.role : '';
-        const def = ROLE_BY_ID[roleId] || null;
-        const champ = (typeof r.champ === 'string' && r.champ) ? CHAMPION_BY_ID[r.champ] : null;
-        const name = typeof r.name === 'string' ? r.name.trim() : '';
-        return {
-            key: (mine ? 'a' : 'e') + i,
-            name: name || 'Unknown Player',
-            // The three-letter ID, not ROLE_BY_ID.short - "Jungle" and
-            // "Support" do not fit a badge column on a phone. The lookup still
-            // earns its keep: it validates the seat and names it in the title.
-            role: def ? def.id : String(roleId).slice(0, 3).toUpperCase(),
-            roleName: def ? def.name : '',
-            champ: champ && typeof champ.name === 'string' ? champ.name : '',
-            k: Math.max(0, Math.round(num(r.k))),
-            d: Math.max(0, Math.round(num(r.d))),
-            a: Math.max(0, Math.round(num(r.a))),
-            me: mine && r.me === true,
-        };
-    }
-    function sbSide(list, mine) {
-        return Array.isArray(list) ? list.map((r, i) => sbRow(r, i, mine)).filter(Boolean) : [];
-    }
-    function sbGame(g, i) {
-        const b = (g && g.board) || null;
-        if (!b || typeof b !== 'object') return null;
-        const ally = sbSide(b.ally, true);
-        const enemy = sbSide(b.enemy, false);
-        if (!ally.length || !enemy.length) return null;
-        const mins = Math.round(num(g && g.duration));
-        return {
-            key: 'sb' + i,
-            number: Math.max(1, Math.round(num(g && g.game, i + 1))),
-            won: !!(g && (g.won ?? g.win ?? g.victory)),
-            mins: mins > 0 ? mins : 0,
-            ally,
-            enemy,
-        };
-    }
+    //  existed, so every panel that reads one is built to disappear rather
+    //  than degrade. The normaliser itself is career/scoreboard.js - it used
+    //  to be a copy here and a near-identical copy in CareerOverlay, which is
+    //  two chances for a defensive read to drift and blank a screen.
+    //
+    //  It is read in TWO places in this file: the end-of-series result screen
+    //  (`boards`, below) and the per-game interstitial (`gameCard.board`).
+    //  The interstitial is where a player actually is when the game they just
+    //  played ends, and for a long time it showed them their own line and
+    //  nothing else.
 
     // -- flow ------------------------------------------------------------
     function bail(msg) {
@@ -434,6 +417,13 @@
             number: playedGameNo,
             series,
             over: safeOver(nm),
+            // THIS game's ten-player board, carried across from the game
+            // object finishGame just wrote rather than re-derived from the
+            // match: the interstitial is where the player is standing when
+            // the game ends, and until this line it showed them their own
+            // line and nothing else. Null on a benched game, and on a match
+            // in progress from before boards existed - both render nothing.
+            board: normaliseBoard(g, playedGameNo - 1),
         };
 
         decisionsThisGame = 0;
@@ -528,9 +518,59 @@
         }
     }
 
+    /** The harness seam. Builds `finalResult` / `gameCard` from a plain object
+     *  instead of from an event handler, so SSR can reach the two screens that
+     *  otherwise have zero coverage. Never called during ordinary play: the
+     *  only caller is boot(), and only when `initialStage` was passed in.
+     *  Every read is defaulted, because the shapes pushed at it are rotted on
+     *  purpose. */
+    function harnessBoot() {
+        const r = (initialResult && typeof initialResult === 'object') ? initialResult : {};
+
+        if (initialStage === 'result') {
+            finalResult = r;
+            pendingInterview = null;
+            milestones = [];
+            boardIdx = 0;
+            continueReady = true;
+            stage = 'result';
+            return;
+        }
+
+        // 'game' - the per-game interstitial. Take the LAST game of the log,
+        // which is the one that has just finished.
+        const games = Array.isArray(r.games) ? r.games : [];
+        const idx = games.length - 1;
+        const g = idx >= 0 && games[idx] && typeof games[idx] === 'object' ? games[idx] : null;
+        const kda = (g && g.kda && typeof g.kda === 'object') ? g.kda
+            : (r.kda && typeof r.kda === 'object') ? r.kda : {};
+        const line = { k: num(kda.k), d: num(kda.d), a: num(kda.a) };
+        const cs = num(g ? g.cs : r.cs);
+        const pre = { adv: 0, per: 0, k: line.k, d: line.d, a: line.a, cs };
+        const score = Array.isArray(r.score) ? [num(r.score[0]), num(r.score[1])] : [0, 0];
+        const rating = g && Number.isFinite(Number(g.rating)) ? Number(g.rating)
+            : Number.isFinite(Number(r.rating)) ? Number(r.rating) : null;
+
+        gameCard = {
+            won: !!(g ? (g.won ?? g.win ?? g.victory) : r.won),
+            duration: deriveDuration(g, pre),
+            kda: line,
+            kdaLine: fmtKDA(line.k, line.d, line.a),
+            cs,
+            rating,
+            number: Math.max(1, Math.round(num(g && g.game, Math.max(1, games.length)))),
+            series: score,
+            over: false,
+            board: normaliseBoard(g, Math.max(0, idx)),
+        };
+        continueReady = true;
+        stage = 'game';
+    }
+
     // Hydrate synchronously so the first paint already shows the opening
     // decision instead of flashing an in-between panel.
     (function boot() {
+        if (initialStage === 'game' || initialStage === 'result') { harnessBoot(); return; }
         const m0 = get(matchState);
         if (!m0) return;
         gameStart = snap(m0);
@@ -603,9 +643,7 @@
     // One board per GAME, in the order they were played. A Bo5 is five of them
     // and showing only the first would be the same bug this panel exists to
     // fix, so a series gets a selector and every game keeps its own number.
-    $: boards = (finalResult && Array.isArray(finalResult.games))
-        ? finalResult.games.map(sbGame).filter(Boolean)
-        : [];
+    $: boards = finalResult ? normaliseBoards(finalResult.games) : [];
     $: shownBoard = boards.length
         ? boards[Math.min(Math.max(0, boardIdx), boards.length - 1)]
         : null;
@@ -1150,6 +1188,65 @@
                                     </div>
                                 {/if}
                             </div>
+
+                            <!-- ============== THIS GAME'S SCOREBOARD ==============
+                                 The other nine players in the game that just
+                                 ended, in the same visual language as the
+                                 end-of-series board so the two read as one
+                                 feature. Absent entirely on a benched game and
+                                 on a match in progress from before boards
+                                 existed - `gameCard.board` is null and nothing
+                                 renders, rather than a table of dashes. -->
+                            {#if gameCard.board}
+                                <div class="gc-sb">
+                                    <div class="side-label">Scoreboard</div>
+                                    <div class="sb-cap">
+                                        Game {gameCard.board.number}
+                                        {#if gameCard.board.mins}
+                                            <span class="sb-cap-dot">&middot;</span>{gameCard.board.mins} min
+                                        {/if}
+                                    </div>
+                                    <div class="sb-sides">
+                                        <div class="sb-side sb-mine" class:sb-win={gameCard.board.won}>
+                                            <div class="sb-head">
+                                                <span class="sb-team">{m.myTeamName || 'Your Team'}</span>
+                                                <span class="sb-verdict">{gameCard.board.won ? 'Win' : 'Loss'}</span>
+                                            </div>
+                                            {#each gameCard.board.ally as r (r.key)}
+                                                <div class="sb-row" class:sb-me={r.me}>
+                                                    <span class="sb-role" title={r.roleName}>{r.role}</span>
+                                                    <span class="sb-who">
+                                                        <span class="sb-name">
+                                                            <span class="sb-nm">{r.name}</span>
+                                                            {#if r.me}<span class="sb-you">You</span>{/if}
+                                                        </span>
+                                                        {#if r.champ}<span class="sb-champ">{r.champ}</span>{/if}
+                                                    </span>
+                                                    <span class="sb-kda">{r.k} / {r.d} / {r.a}</span>
+                                                </div>
+                                            {/each}
+                                        </div>
+
+                                        <div class="sb-side sb-theirs" class:sb-win={!gameCard.board.won}>
+                                            <div class="sb-head">
+                                                <span class="sb-team">{m.opponentName || 'Opponent'}</span>
+                                                <span class="sb-verdict">{gameCard.board.won ? 'Loss' : 'Win'}</span>
+                                            </div>
+                                            {#each gameCard.board.enemy as r (r.key)}
+                                                <div class="sb-row">
+                                                    <span class="sb-role" title={r.roleName}>{r.role}</span>
+                                                    <span class="sb-who">
+                                                        <span class="sb-name"><span class="sb-nm">{r.name}</span></span>
+                                                        {#if r.champ}<span class="sb-champ">{r.champ}</span>{/if}
+                                                    </span>
+                                                    <span class="sb-kda">{r.k} / {r.d} / {r.a}</span>
+                                                </div>
+                                            {/each}
+                                        </div>
+                                    </div>
+                                </div>
+                            {/if}
+
                             <button class="btn-primary big-btn" on:click={primaryAction} disabled={!continueReady}>
                                 {gameCard.over ? 'See the result' : 'Next game'}
                             </button>
@@ -1488,6 +1585,10 @@
     }
     .gc-v { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 15px; font-weight: 800; color: #e2e8f0; }
     .gc-l { font-size: 8px; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; color: #3f5069; }
+    /* The interstitial's own scoreboard. Everything inside it is the same
+       .sb-* block the result screen uses, so the two are one feature; this
+       wrapper only undoes the card's centring and gives it the full width. */
+    .gc-sb { width: 100%; text-align: left; margin: 0 0 26px; }
 
     /* =========== BENCH / FALLBACK =========== */
     .panel-c { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.28); border-radius: 20px; padding: 40px 24px; }

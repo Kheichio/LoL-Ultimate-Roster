@@ -36,6 +36,7 @@
     } from '../../career/teams.js';
     import { contractStatusLine, interestedTeams } from '../../career/contracts.js';
     import { matchRatingLabel } from '../../career/match.js';
+    import { normaliseBoards } from '../../career/scoreboard.js';
     import BracketView from './BracketView.svelte';
     import ClubScout from './ClubScout.svelte';
     import {
@@ -55,6 +56,12 @@
     // team object: opponentOf()-style stand-ins for an unconfirmed bracket slot
     // must never reach ClubScout, so this is only ever set from a resolved club.
     let scoutId = null;
+    // Which game of the last series the recap scoreboard is showing, as
+    // { stamp, key } rather than an index. The stamp is what makes the pick
+    // self-expiring: the moment lastMatch is a DIFFERENT match the selection
+    // stops matching and the panel falls back to the decider on its own, with
+    // no reactive statement writing to a variable it also reads.
+    let lmSel = null;
 
     onMount(() => {
         try { ensureSeason(); saveCareer(); } catch (e) { /* fresh career, no season yet */ }
@@ -164,6 +171,44 @@
             if (r && r.label) return r;
         } catch (e) { /* fall through */ }
         return { label: (Math.round((Number(v) || 0) * 10) / 10).toFixed(1), color: '#94a3b8' };
+    }
+
+    // The ten-player scoreboards for the last result. Boards ride on the GAME
+    // LOG, so c.lastMatch.games[i].board is byte-for-byte the data the result
+    // screen renders, and career/scoreboard.js is the one normaliser both go
+    // through - a second copy here is how the two would drift apart.
+    //
+    // ABSENT IS AN ORDINARY STATE, not an error: a benched game carries no
+    // board, and neither does any result saved before boards existed. An empty
+    // list must therefore render NOTHING - no table, no row of dashes - which
+    // is what the {#if lmBoard} gate in the panel is for.
+    function safeBoards(lm) {
+        try {
+            const rows = normaliseBoards(lm && lm.games);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) { return []; }
+    }
+
+    // Identity of the match itself, not of its boards: two different results
+    // both hand back keys 'sb0', 'sb1', so the keys alone cannot tell the
+    // panel that the series under it has been replaced.
+    function matchStamp(lm) {
+        if (!lm || typeof lm !== 'object') return '';
+        const part = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+        return [part(lm.year), part(lm.week), part(lm.opponentId), part(lm.opponentName)].join('|');
+    }
+
+    // The DECIDER by default - the last game played. Opening a Bo5 on game one
+    // and saying nothing else would imply that game was the series, which is
+    // the one thing this recap must never do; the tabs are how the other games
+    // are reached.
+    function pickLmBoard(list, sel, stamp) {
+        if (!Array.isArray(list) || !list.length) return null;
+        if (sel && sel.stamp === stamp) {
+            const hit = list.find(b => b && b.key === sel.key);
+            if (hit) return hit;
+        }
+        return list[list.length - 1];
     }
 
     function myStrengthFor(c) {
@@ -352,6 +397,10 @@
     $: lastKDA = lastMatch && lastMatch.kda
         ? fmtKDA(lastMatch.kda.k, lastMatch.kda.d, lastMatch.kda.a)
         : null;
+    $: lmBoards = safeBoards(lastMatch);
+    $: lmStamp = matchStamp(lastMatch);
+    $: lmBoard = pickLmBoard(lmBoards, lmSel, lmStamp);
+    $: lmOppName = (lastMatch && lastMatch.opponentName) || 'Opponent';
 
     $: table = safeTable(c);
     $: myRow = table.find(r => r.isMine) || null;
@@ -396,6 +445,12 @@
         scoutId = id;
     }
     function closeScout() { scoutId = null; }
+
+    function showLmBoard(b) {
+        if (!b || !b.key) return;
+        playSound('click');
+        lmSel = { stamp: lmStamp, key: b.key };
+    }
 
     function playMatch() {
         if (!nextFixture || busy) return;
@@ -1029,6 +1084,84 @@
                         <p class="lm-head">&ldquo;{lastMatch.headline}&rdquo;</p>
                     {/if}
                 </div>
+
+                <!-- ---------- THE SCOREBOARD ----------
+                     The same ten seats the result screen shows, in the place
+                     the player actually comes back to. It renders ONLY when a
+                     board survives the normaliser: a benched game has none, and
+                     nor does any result saved before boards existed, and an
+                     absent board must leave nothing behind rather than an empty
+                     table. A series is one board PER GAME and the tabs open on
+                     the decider, so the panel never shows game one and lets it
+                     stand for the whole tie. -->
+                {#if lmBoard}
+                    <div class="lmb">
+                        {#if lmBoards.length > 1}
+                            <div class="lmb-tabs" role="group" aria-label="Games in the last series">
+                                {#each lmBoards as b (b.key)}
+                                    <button
+                                        class="lmb-tab"
+                                        class:lmb-on={b.key === lmBoard.key}
+                                        class:lmb-won={b.won}
+                                        aria-pressed={b.key === lmBoard.key}
+                                        aria-label="Game {b.number}, {b.won ? 'won' : 'lost'}"
+                                        on:click={() => showLmBoard(b)}
+                                    >
+                                        <span class="lmb-tab-n">G{b.number}</span>
+                                        <span class="lmb-tab-r">{b.won ? 'W' : 'L'}</span>
+                                    </button>
+                                {/each}
+                            </div>
+                        {/if}
+
+                        <div class="lmb-cap">
+                            Game {lmBoard.number}
+                            {#if lmBoards.length > 1}
+                                <span class="lmb-dot">&middot;</span>of {lmBoards.length}
+                            {/if}
+                            {#if lmBoard.mins}
+                                <span class="lmb-dot">&middot;</span>{lmBoard.mins} min
+                            {/if}
+                        </div>
+
+                        {#key lmBoard.key}
+                            <div class="lmb-side" class:lmb-side-win={lmBoard.won}>
+                                <div class="lmb-head">
+                                    <span class="lmb-team">{myTeamName}</span>
+                                    <span class="lmb-verdict">{lmBoard.won ? 'Win' : 'Loss'}</span>
+                                </div>
+                                {#each lmBoard.ally as r (r.key)}
+                                    <div class="lmb-row" class:lmb-me={r.me}>
+                                        <span class="lmb-role" title={r.roleName}>{r.role}</span>
+                                        <span class="lmb-who">
+                                            <span class="lmb-nm">{r.name}</span>
+                                            {#if r.me}<span class="lmb-you">You</span>{/if}
+                                            {#if r.champ}<span class="lmb-champ">{r.champ}</span>{/if}
+                                        </span>
+                                        <span class="lmb-kda">{r.k}/{r.d}/{r.a}</span>
+                                    </div>
+                                {/each}
+                            </div>
+
+                            <div class="lmb-side" class:lmb-side-win={!lmBoard.won}>
+                                <div class="lmb-head">
+                                    <span class="lmb-team">{lmOppName}</span>
+                                    <span class="lmb-verdict">{lmBoard.won ? 'Loss' : 'Win'}</span>
+                                </div>
+                                {#each lmBoard.enemy as r (r.key)}
+                                    <div class="lmb-row">
+                                        <span class="lmb-role" title={r.roleName}>{r.role}</span>
+                                        <span class="lmb-who">
+                                            <span class="lmb-nm">{r.name}</span>
+                                            {#if r.champ}<span class="lmb-champ">{r.champ}</span>{/if}
+                                        </span>
+                                        <span class="lmb-kda">{r.k}/{r.d}/{r.a}</span>
+                                    </div>
+                                {/each}
+                            </div>
+                        {/key}
+                    </div>
+                {/if}
             {:else}
                 <p class="empty">
                     You have not played a competitive game yet. Your first result lands here.
@@ -1619,6 +1752,93 @@
     }
     .lm-bench { margin: 10px 0 0; font-size: 11px; line-height: 1.55; color: #7d6a8e; }
     .lm-head { margin: 11px 0 0; font-size: 11px; line-height: 1.6; font-style: italic; color: #64748b; }
+
+    /* The recap scoreboard, at side-rail density. The two sides STACK instead
+       of sitting in two columns the way the result screen prints them: ten
+       names, ten champions and ten KDA lines do not fit two columns of a narrow
+       rail, and for the same reason every seat is ONE line here - champion
+       beside the name rather than under it. This is a recap, not the main
+       event; it must not push the rest of the column off a phone. */
+    .lmb { margin-top: 12px; }
+    .lmb-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+    .lmb-tab {
+        display: flex; align-items: baseline; gap: 5px;
+        padding: 3px 8px; border-radius: 6px;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid rgba(51, 65, 85, 0.35);
+        font-family: inherit; cursor: pointer;
+    }
+    .lmb-tab:hover { border-color: rgba(139, 92, 246, 0.4); }
+    .lmb-tab:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
+    .lmb-on { background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.45); }
+    .lmb-tab-n { font-size: 10px; font-weight: 800; color: #7c8db0; }
+    .lmb-on .lmb-tab-n { color: #dbe4f5; }
+    .lmb-tab-r { font-size: 8.5px; font-weight: 900; letter-spacing: 0.6px; color: #f87171; }
+    .lmb-won .lmb-tab-r { color: #4ade80; }
+
+    .lmb-cap {
+        font-size: 8px; font-weight: 800; letter-spacing: 1.1px;
+        text-transform: uppercase; color: #334155; margin-bottom: 7px;
+    }
+    .lmb-dot { margin: 0 4px; color: #23304a; }
+
+    .lmb-side {
+        padding: 8px 10px 6px;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.45);
+        border: 1px solid rgba(51, 65, 85, 0.28);
+        border-top: 2px solid rgba(239, 68, 68, 0.35);
+    }
+    .lmb-side + .lmb-side { margin-top: 8px; }
+    .lmb-side-win { border-top-color: rgba(34, 197, 94, 0.5); }
+    .lmb-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+    .lmb-team {
+        flex: 1; min-width: 0;
+        font-size: 10.5px; font-weight: 800; color: #b9c7de;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .lmb-verdict {
+        flex-shrink: 0;
+        font-size: 8px; font-weight: 900; letter-spacing: 1.2px;
+        text-transform: uppercase; color: #f87171;
+    }
+    .lmb-side-win .lmb-verdict { color: #4ade80; }
+
+    .lmb-row {
+        display: grid; grid-template-columns: 24px minmax(0, 1fr) auto;
+        align-items: baseline; gap: 7px;
+        padding: 3px 0;
+        border-bottom: 1px solid rgba(51, 65, 85, 0.18);
+    }
+    .lmb-row:last-child { border-bottom: none; }
+    .lmb-role {
+        font-size: 8px; font-weight: 900; letter-spacing: 0.6px;
+        text-transform: uppercase; color: #3f5069;
+    }
+    .lmb-me .lmb-role { color: #a78bfa; }
+    .lmb-who { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+    .lmb-nm {
+        min-width: 0;
+        font-size: 10.5px; font-weight: 700; color: #b9c7de;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .lmb-me .lmb-nm { color: #e8eefb; }
+    .lmb-you {
+        flex-shrink: 0;
+        font-size: 7.5px; font-weight: 900; letter-spacing: 0.8px; text-transform: uppercase;
+        padding: 1px 4px; border-radius: 4px;
+        color: #c4b5fd; background: rgba(139, 92, 246, 0.16);
+    }
+    .lmb-champ {
+        min-width: 0;
+        font-size: 9.5px; color: #56688a;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .lmb-kda {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 10px; font-weight: 800; color: #8fa1c0; white-space: nowrap;
+    }
+    .lmb-me .lmb-kda { color: #e2e8f0; }
 
     /* ===================== SIDE: SEASON ===================== */
     .sn-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

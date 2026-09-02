@@ -28,8 +28,9 @@
 
     import {
         NEWS_TYPES, CLUB_TIERS, REGION_BY_ID, ROLE_BY_ID, teamById,
-        ATTR_BY_KEY, TRAIT_RARITIES, CHAMPION_BY_ID,
+        ATTR_BY_KEY, TRAIT_RARITIES,
     } from '../../career/constants.js';
+    import { normaliseBoards } from '../../career/scoreboard.js';
     import {
         fmtGold, fmtFollowers, fmtKDA, ordinal, statusInfo, ovrLabel,
     } from '../../career/ratings.js';
@@ -489,52 +490,14 @@
     //  written before boards existed - so a board that does not normalise
     //  yields no rows, and no rows yield no panel at all. Champion IDS are
     //  permanent save data: a renamed or retired one prints no champion rather
-    //  than a raw id.
-    function sbRow(r, i, mine) {
-        if (!r || typeof r !== 'object') return null;
-        const roleId = typeof r.role === 'string' ? r.role : '';
-        const def = ROLE_BY_ID[roleId] || null;
-        const champ = (typeof r.champ === 'string' && r.champ) ? CHAMPION_BY_ID[r.champ] : null;
-        const name = typeof r.name === 'string' ? r.name.trim() : '';
-        return {
-            key: (mine ? 'a' : 'e') + i,
-            name: name || 'Unknown Player',
-            // The three-letter ID, not ROLE_BY_ID.short - "Jungle" and
-            // "Support" do not fit a badge column inside a modal on a phone.
-            // The lookup still validates the seat and names it in the title.
-            role: def ? def.id : String(roleId).slice(0, 3).toUpperCase(),
-            roleName: def ? def.name : '',
-            champ: champ && typeof champ.name === 'string' ? champ.name : '',
-            k: Math.max(0, Math.round(num(r.k))),
-            d: Math.max(0, Math.round(num(r.d))),
-            a: Math.max(0, Math.round(num(r.a))),
-            me: mine && r.me === true,
-        };
-    }
-    function sbSide(list, mine) {
-        return Array.isArray(list) ? list.map((r, i) => sbRow(r, i, mine)).filter(Boolean) : [];
-    }
-    function sbGame(g, i) {
-        const b = (g && g.board) || null;
-        if (!b || typeof b !== 'object') return null;
-        const ally = sbSide(b.ally, true);
-        const enemy = sbSide(b.enemy, false);
-        if (!ally.length || !enemy.length) return null;
-        const mins = Math.round(num(g && g.duration));
-        return {
-            key: 'sb' + i,
-            number: Math.max(1, Math.round(num(g && g.game, i + 1))),
-            won: !!(g && (g.won ?? g.win ?? g.victory)),
-            mins: mins > 0 ? mins : 0,
-            ally,
-            enemy,
-        };
-    }
-
-    // A Bo3 or Bo5 has a board per GAME. Showing only the first would be the
-    // same omission this panel exists to fix, so a series gets a selector and
-    // every board keeps the game number it was actually played as.
-    $: resBoards = res && Array.isArray(res.games) ? res.games.map(sbGame).filter(Boolean) : [];
+    //  than a raw id. All of that lives in career/scoreboard.js, which MatchDay
+    //  reads too - it was a second copy of the same defensive read here until
+    //  a third screen needed it.
+    //
+    //  A Bo3 or Bo5 has a board per GAME. Showing only the first would be the
+    //  same omission this panel exists to fix, so a series gets a selector and
+    //  every board keeps the game number it was actually played as.
+    $: resBoards = res ? normaliseBoards(res.games) : [];
     $: shownBoard = resBoards.length
         ? resBoards[Math.min(Math.max(0, boardIdx), resBoards.length - 1)]
         : null;
