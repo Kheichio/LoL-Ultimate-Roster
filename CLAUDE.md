@@ -656,6 +656,75 @@ between a reload and a match the player is halfway through.
 proficiency panel, falling back to the signature. Measured: 17.8% strong / 64.4% contested / 17.8%
 weak picks, mean swing +0.0000 per pick.
 
+### All ten champions in a game are distinct
+A player reported **Zeri into Zeri**. `rollDraft()` chose the enemy laner as a flat
+`pick(championsForRole(p.role))` with no exclusion set of any kind, and it did so BEFORE the
+player's three options were built, so nothing downstream could prevent the collision — a mirror was
+not unlucky, it had probability ~1/poolsize every game, and `championMatchup(x, x)` was then scored
+as if it were a real lane.
+
+The fix is the real rule rather than a patch: **a champion appears once in a game.** The player's
+three options are built first and the enemy is drawn from the role pool with all three excluded —
+that direction and not the reverse, because a role pool is 26-56 champions and losing 3 costs the
+enemy nothing, whereas removing one from a small style pool can bite the player. The
+scoreboard below extends the same rule to all ten seats. Degrades to the unfiltered pool if the
+exclusion would ever empty it, which is unreachable today.
+
+Measured over 8000 draft rolls across every role and playstyle: **0 mirrors, 0 enemy-inside-options,
+173 distinct enemy champions.** careerSmoke asserts it at three sites (the three as offered, what
+was locked in, and every draft `finishGame` rolls for games 2-5 of a series) and carries a positive
+control — a hand-built mirror the checker must catch, because a lint that cannot fail looks exactly
+like a clean codebase.
+
+### The end-of-match scoreboard
+Every played game now carries all ten players' lines, attached to the game object in
+`match.gameLog`, so `finishMatch`'s existing `games` array persists it into `c.lastMatch` with no
+other change. It is **not published to the career leaderboard**, so it needs no firestore.rules work.
+
+```
+game.board = { ally: [{ name, role, champ, k, d, a, me? } x5], enemy: [{ ... } x5] }
+```
+
+- `champ` is a champion ID, never a name — ids are permanent save data and names are re-resolved for
+  display, the same rule the leaderboard follows.
+- **The player's own k/d/a is FIXED.** It comes from the decision system and the other nine are
+  built around it; the player's seat is pinned by zeroing its weight in the share-out. Nothing here
+  touches rating, KDA, win probability, advantage, personal score or proficiency banking — it is a
+  readout assembled after all of those are decided, and careerSmoke's match-rating mean must not
+  move by a thousandth when it changes.
+- **The two sides reconcile by construction**: ally deaths are distributed out of enemy kills and
+  vice versa, so `sum(ally.k) === sum(enemy.d)` and `sum(enemy.k) === sum(ally.d)`. Assists are
+  deliberately NOT conserved (four players can assist one kill); they are rolled per side and
+  clamped to `teamKills - ownKills`.
+- Absent on a benched game and on every save written before this change. Every reader defaults.
+
+Measured: **7493 boards over 7493 played games, 1098 benched games with 0 boards**, 0 imbalances,
+0 duplicate champions, 0 impossible assists. Save size 72kb -> 77kb worst (230kb for three slots of
+a 1024kb document). careerSmoke's `boardProblems()` carries a 15-shape positive control and
+careerRender drives 30 board states including a Bo5 with five boards and a board missing from the
+MIDDLE of a series.
+
+**Known: MatchDay's copy of the scoreboard is unreachable to careerRender.** Its panel hangs off
+`finalResult`, a component-local assigned only inside an event handler, which SSR never runs — the
+dump confirms 0 occurrences of its markup against 26 for the overlay's. The normaliser therefore
+exists as two near-identical copies and only one has coverage. The overlay is the path most players
+see (roughly half a career's games are simmed), so the covered copy is the important one, but the
+two can drift with nothing to say so.
+
+### The knockout week has to look like one
+`tournamentNow(c)` reads the LIVE BRACKET rather than the calendar, and until now only Calendar
+called it. On the Hub — the screen the player actually stands on — a knockout week was
+indistinguishable from a training week: the draw rendered BELOW the entire sixteen-button activity
+board, so the one week that matters most was the one thing nobody scrolled to.
+
+The main column now opens with the tournament banner (round, round N of M, opponent, and which week
+the final is on), the fixture card carries a **Knockout** chip, and the bracket panel sits ABOVE the
+activity board. Anything added to that column later belongs below the bracket, not between it and
+the fixture. Proven reachable rather than assumed: `careerRender --dump` shows `tbanner` in 3 Hub
+states and `fx-ko` in 1, rendering as
+`Spring Playoffs / Semifinals / Round 1 of 3 / Best of 5 / vs Karmine Corp / final on week 16`
+above `Next Up`.
+
 ### Scrims sharpen the room
 `doScrim()` now permanently raises the four seats that are NOT the player's own, into
 `career.club.scrim` — the only mutable org state in the mode, scoped by `club.teamId`, which is what
@@ -884,9 +953,17 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   an elite player receiving a tier-3 offer, OR the run never producing a tier-1 offer to a
   high-OVR player, because a rule that only removes offers and a rule that was never wired look
   identical); **`split meta`** (picks by band, failing if neither band is ever landed); and
-  **`goal club`**. Measured mean match rating is now **7.46** against the 7.6 hard fail — the eight
-  new systems spent about half the old margin, so anything adding a one-directional bonus must
-  re-measure this line first.
+  **`goal club`**. It also asserts **no mirror matchup** at three draft sites and every
+  **`scoreboard`** invariant (ten distinct champions, both sides reconciling, the player's own line
+  matching that game's kda exactly, no board on a benched game), each with a positive-control block.
+  Measured mean match rating is **7.44** against the 7.6 hard fail — the new systems spent about half
+  the old margin, so anything adding a one-directional bonus must re-measure this line first.
+  **A caution learned here: an inertness threshold written as a bare COUNT is a coin flip.** The
+  first cut of `alwaysdecline` failed on "more than 8 splits", which called a third of a 24-split
+  career "most" and sat directly between two equally legitimate seeded runs — 6.3 splits on one and
+  8.1 on the next, the whole difference being where the RNG stream landed once an unrelated feature
+  started consuming it. It is a SHARE of the splits actually played now, and the coverage line
+  prints that share so the next person can see it rather than infer it.
 - `node tools/eventCheck.mjs` — the in-match decision pools (`matchEvents.js`). That file opens
   with a page of authoring discipline that was, until this existed, enforced entirely by a comment:
   3-or-4 options, a safest and a greedy play at least 0.12 of difficulty apart, safest averaging
@@ -947,7 +1024,7 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   because a lint that matches nothing looks exactly like a clean codebase.
 - `node tools/careerRender.mjs` — Vite SSR-renders every career component against the game-state
   matrix (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
-  check that exercises the Svelte templates. **1174 renders, 0 crashes.**
+  check that exercises the Svelte templates. **1207 renders, 0 crashes.**
   A third loop joined the two below: **ClubScout is driven directly**, because it is a child with
   three required props mounted only behind `scoutId !== null`, which no SSR pass sets — exactly
   BracketView's position. Its card-database-unloaded arm needs a second, throwaway Vite graph built

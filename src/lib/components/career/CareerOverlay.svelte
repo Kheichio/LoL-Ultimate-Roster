@@ -28,7 +28,7 @@
 
     import {
         NEWS_TYPES, CLUB_TIERS, REGION_BY_ID, ROLE_BY_ID, teamById,
-        ATTR_BY_KEY, TRAIT_RARITIES,
+        ATTR_BY_KEY, TRAIT_RARITIES, CHAMPION_BY_ID,
     } from '../../career/constants.js';
     import {
         fmtGold, fmtFollowers, fmtKDA, ordinal, statusInfo, ovrLabel,
@@ -78,6 +78,7 @@
     let revealed = 0;          // awards revealed so far
     let revealTimer = null;
     let busy = false;
+    let boardIdx = 0;          // result: which game's scoreboard is on screen
 
     let lastRef = null;
 
@@ -97,6 +98,7 @@
         revealed = 0;
         busy = false;
         stage = 'ask';
+        boardIdx = 0;
         if (!cur) return;
 
         if (cur.kind === 'awards') {
@@ -479,6 +481,69 @@
         ? res.moraleNotes.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim())
         : [];
 
+    // --- result: the ten-player scoreboard ----------------------------
+    //  Roughly half a career's games are simmed from the Hub or the Calendar,
+    //  so this overlay is the scoreboard's main audience. match.js hangs a
+    //  `board` off each entry of the game log and finishMatch persists the lot
+    //  as res.games, but it is ABSENT for a benched game and for every save
+    //  written before boards existed - so a board that does not normalise
+    //  yields no rows, and no rows yield no panel at all. Champion IDS are
+    //  permanent save data: a renamed or retired one prints no champion rather
+    //  than a raw id.
+    function sbRow(r, i, mine) {
+        if (!r || typeof r !== 'object') return null;
+        const roleId = typeof r.role === 'string' ? r.role : '';
+        const def = ROLE_BY_ID[roleId] || null;
+        const champ = (typeof r.champ === 'string' && r.champ) ? CHAMPION_BY_ID[r.champ] : null;
+        const name = typeof r.name === 'string' ? r.name.trim() : '';
+        return {
+            key: (mine ? 'a' : 'e') + i,
+            name: name || 'Unknown Player',
+            // The three-letter ID, not ROLE_BY_ID.short - "Jungle" and
+            // "Support" do not fit a badge column inside a modal on a phone.
+            // The lookup still validates the seat and names it in the title.
+            role: def ? def.id : String(roleId).slice(0, 3).toUpperCase(),
+            roleName: def ? def.name : '',
+            champ: champ && typeof champ.name === 'string' ? champ.name : '',
+            k: Math.max(0, Math.round(num(r.k))),
+            d: Math.max(0, Math.round(num(r.d))),
+            a: Math.max(0, Math.round(num(r.a))),
+            me: mine && r.me === true,
+        };
+    }
+    function sbSide(list, mine) {
+        return Array.isArray(list) ? list.map((r, i) => sbRow(r, i, mine)).filter(Boolean) : [];
+    }
+    function sbGame(g, i) {
+        const b = (g && g.board) || null;
+        if (!b || typeof b !== 'object') return null;
+        const ally = sbSide(b.ally, true);
+        const enemy = sbSide(b.enemy, false);
+        if (!ally.length || !enemy.length) return null;
+        const mins = Math.round(num(g && g.duration));
+        return {
+            key: 'sb' + i,
+            number: Math.max(1, Math.round(num(g && g.game, i + 1))),
+            won: !!(g && (g.won ?? g.win ?? g.victory)),
+            mins: mins > 0 ? mins : 0,
+            ally,
+            enemy,
+        };
+    }
+
+    // A Bo3 or Bo5 has a board per GAME. Showing only the first would be the
+    // same omission this panel exists to fix, so a series gets a selector and
+    // every board keeps the game number it was actually played as.
+    $: resBoards = res && Array.isArray(res.games) ? res.games.map(sbGame).filter(Boolean) : [];
+    $: shownBoard = resBoards.length
+        ? resBoards[Math.min(Math.max(0, boardIdx), resBoards.length - 1)]
+        : null;
+    function pickBoard(i) {
+        if (i === boardIdx) return;
+        playSound('click');
+        boardIdx = i;
+    }
+
     function signedNum(n) { return (n > 0 ? '+' : '') + Math.round(n); }
     function rewardText(r) {
         if (r.fmt === 'gold') return (r.v > 0 ? '+' : '-') + fmtGold(Math.abs(r.v));
@@ -797,6 +862,75 @@
                             {/each}
                         </div>
                     {/if}
+                {/if}
+
+                <!-- Ten-player scoreboard. Renders nothing at all when the
+                     board is absent: a benched game, or a result saved before
+                     boards existed. -->
+                {#if shownBoard}
+                    <p class="co-lbl">Scoreboard</p>
+                    {#if resBoards.length > 1}
+                        <div class="co-sb-tabs">
+                            {#each resBoards as b, i (b.key)}
+                                <button
+                                    class="co-sb-tab"
+                                    class:co-sb-on={b.key === shownBoard.key}
+                                    class:co-sb-won={b.won}
+                                    aria-pressed={b.key === shownBoard.key}
+                                    on:click={() => pickBoard(i)}
+                                >
+                                    <span class="co-sb-tab-n">Game {b.number}</span>
+                                    <span class="co-sb-tab-r">{b.won ? 'W' : 'L'}</span>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+
+                    <p class="co-sb-cap">
+                        Game {shownBoard.number}
+                        {#if shownBoard.mins}
+                            <span class="co-sb-dot">&middot;</span>{shownBoard.mins} min
+                        {/if}
+                    </p>
+
+                    <div class="co-sb">
+                        <div class="co-sb-side co-sb-mine" class:co-sb-winner={shownBoard.won}>
+                            <div class="co-sb-head">
+                                <span class="co-sb-team">{res.myTeamName || 'Your team'}</span>
+                                <span class="co-sb-verdict">{shownBoard.won ? 'Win' : 'Loss'}</span>
+                            </div>
+                            {#each shownBoard.ally as r (r.key)}
+                                <div class="co-sb-row" class:co-sb-me={r.me}>
+                                    <span class="co-sb-role" title={r.roleName}>{r.role}</span>
+                                    <span class="co-sb-who">
+                                        <span class="co-sb-name">
+                                            <span class="co-sb-nm">{r.name}</span>
+                                            {#if r.me}<span class="co-sb-you">You</span>{/if}
+                                        </span>
+                                        {#if r.champ}<span class="co-sb-champ">{r.champ}</span>{/if}
+                                    </span>
+                                    <span class="co-sb-kda">{r.k} / {r.d} / {r.a}</span>
+                                </div>
+                            {/each}
+                        </div>
+
+                        <div class="co-sb-side co-sb-them" class:co-sb-winner={!shownBoard.won}>
+                            <div class="co-sb-head">
+                                <span class="co-sb-team">{res.opponentName || 'Opponent'}</span>
+                                <span class="co-sb-verdict">{shownBoard.won ? 'Loss' : 'Win'}</span>
+                            </div>
+                            {#each shownBoard.enemy as r (r.key)}
+                                <div class="co-sb-row">
+                                    <span class="co-sb-role" title={r.roleName}>{r.role}</span>
+                                    <span class="co-sb-who">
+                                        <span class="co-sb-name"><span class="co-sb-nm">{r.name}</span></span>
+                                        {#if r.champ}<span class="co-sb-champ">{r.champ}</span>{/if}
+                                    </span>
+                                    <span class="co-sb-kda">{r.k} / {r.d} / {r.a}</span>
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
                 {/if}
 
                 <div class="co-acts">
@@ -1448,6 +1582,87 @@
     .co-mvp-ico { font-size: 16px; }
     .co-mvp-t { font-size: 11px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: #fbbf24; }
 
+    /* ============ RESULT SCOREBOARD ============ */
+    /* Three columns - role, the name over the champion, K/D/A - rather than a
+       six-column table, so ten rows still read inside a modal on a phone with
+       nothing scrolling sideways. */
+    .co-sb-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+    .co-sb-tab {
+        display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer; font-family: inherit;
+        padding: 6px 10px; border-radius: 9px;
+        background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(51, 65, 85, 0.36);
+        transition: border-color 0.14s ease, background 0.14s ease;
+    }
+    .co-sb-tab:hover { border-color: color-mix(in srgb, var(--ac) 45%, transparent); }
+    .co-sb-tab:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+    .co-sb-on { background: rgba(20, 28, 48, 0.7); border-color: color-mix(in srgb, var(--ac) 50%, transparent); }
+    .co-sb-tab-n { font-size: 10.5px; font-weight: 800; color: #7c8fb0; }
+    .co-sb-on .co-sb-tab-n { color: #dbe4f5; }
+    .co-sb-tab-r {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 9.5px; font-weight: 800; color: #f87171;
+    }
+    .co-sb-won .co-sb-tab-r { color: #4ade80; }
+    .co-sb-cap {
+        margin: 0 0 9px; font-size: 9px; font-weight: 800; letter-spacing: 1.3px;
+        text-transform: uppercase; color: #3f5069;
+    }
+    .co-sb-dot { color: #2c3a52; margin: 0 5px; }
+
+    .co-sb { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .co-sb-side {
+        min-width: 0; padding: 11px 12px 8px; border-radius: 13px;
+        background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.28);
+        border-top: 2px solid var(--t);
+    }
+    .co-sb-mine { --t: #a78bfa; }
+    .co-sb-them { --t: #64748b; }
+    .co-sb-winner { border-color: rgba(34, 197, 94, 0.26); border-top-color: var(--t); }
+    .co-sb-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+    .co-sb-team {
+        flex: 1; min-width: 0; font-size: 12px; font-weight: 800; color: var(--t);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .co-sb-verdict {
+        flex-shrink: 0; font-size: 8px; font-weight: 800; letter-spacing: 1.2px;
+        text-transform: uppercase; color: #f87171;
+    }
+    .co-sb-winner .co-sb-verdict { color: #4ade80; }
+
+    .co-sb-row {
+        display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center;
+        gap: 8px; padding: 5px 0; border-bottom: 1px solid rgba(51, 65, 85, 0.16);
+    }
+    .co-sb-row:last-child { border-bottom: none; }
+    .co-sb-me {
+        margin: 0 -6px; padding: 5px 6px; border-radius: 8px; border-bottom-color: transparent;
+        background: color-mix(in srgb, var(--t) 14%, transparent);
+    }
+    .co-sb-role { font-size: 8px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #3f5069; }
+    .co-sb-me .co-sb-role { color: var(--t); }
+    .co-sb-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .co-sb-name {
+        display: flex; align-items: baseline; min-width: 0;
+        font-size: 11px; font-weight: 700; color: #b9c7de;
+    }
+    .co-sb-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .co-sb-me .co-sb-name { color: #e8eefb; }
+    .co-sb-you {
+        flex-shrink: 0; margin-left: 6px; padding: 1px 5px; border-radius: 4px;
+        font-size: 7.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--t);
+        background: color-mix(in srgb, var(--t) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--t) 34%, transparent);
+    }
+    .co-sb-champ {
+        font-size: 9.5px; color: #56688a;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .co-sb-kda {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 11px; font-weight: 800; color: #94a3b8; white-space: nowrap;
+    }
+    .co-sb-me .co-sb-kda { color: #e2e8f0; }
+
     /* ============ STAT TILES ============ */
     .co-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .co-stat {
@@ -1621,12 +1836,16 @@
         .co-score-n { font-size: 25px; }
         .co-team { font-size: 11px; }
         .co-acts-row { flex-direction: column; }
+        .co-sb { grid-template-columns: 1fr; }
     }
     @media (max-width: 380px) {
         .co-award { gap: 10px; padding: 12px; }
         .co-aw-ico { font-size: 19px; }
         .co-aw-name { font-size: 13px; }
         .co-club-row { flex-wrap: wrap; gap: 4px 10px; }
+        .co-sb-side { padding: 10px 10px 7px; }
+        .co-sb-row { grid-template-columns: 25px minmax(0, 1fr) auto; gap: 6px; }
+        .co-sb-kda { font-size: 10px; }
     }
     @media (prefers-reduced-motion: reduce) {
         .co-panel, .co-bg, .co-award, .co-outcome, .co-mvp, .co-hol, .co-total { animation: none; }

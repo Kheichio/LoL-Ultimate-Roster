@@ -28,7 +28,9 @@ import {
 import {
     clamp, randInt, pick, bell, calcOVR, statusInfo, fmtKDA,
 } from './ratings.js';
-import { teamStrength, teamStrengthWithPlayer, teammatesOf, clubStrengthFor } from './teams.js';
+import {
+    teamStrength, teamStrengthWithPlayer, teammatesOf, clubStrengthFor, getTeamRoster,
+} from './teams.js';
 import {
     career, addNews, grantGold, grantFollowers, adjustCondition, logWeek, saveCareer,
     addProficiency,
@@ -573,8 +575,10 @@ export function rollDraft(c, oppStrength, usedChampions = []) {
     // A stronger org scouts you and picks last, so it counters more often. The
     // same `targeting` term that decides whether your signature survives the
     // ban phase decides whether you get to answer their pick or guess at it.
+    //
+    // The enemy LANER is drawn further down, AFTER the three options exist. See
+    // the NO MIRROR MATCHUPS block for why the order matters.
     const rolePool = championsForRole(p.role) || [];
-    const enemy = rolePool.length ? pick(rolePool) : null;
     const counter = Math.random() >= clamp(0.55 - targeting, 0.20, 0.80);
 
     // ---- what you may pick ------------------------------------------------
@@ -629,6 +633,26 @@ export function rollDraft(c, oppStrength, usedChampions = []) {
             take(ch);
         }
     }
+
+    // NO MIRROR MATCHUPS, EVER.
+    // A player reported getting Zeri into Zeri. The enemy laner used to be drawn
+    // from the whole role pool BEFORE the three options were built, so nothing
+    // downstream could stop the collision - and championMatchup(x, x) is a
+    // meaningless self-comparison that was being scored as if it were a real
+    // lane. In League a champion is picked once per game, so a mirror is not
+    // unlucky, it is impossible.
+    //
+    // The exclusion runs against the PLAYER'S three rather than the other way
+    // round on purpose: a role pool is 26-56 champions and does not notice
+    // losing three, whereas the style pool the player's options come from can be
+    // small enough that removing one from it bites.
+    const offered = new Set(options.map(ch => ch.id));
+    const enemyPool = rolePool.filter(ch => ch && !offered.has(ch.id));
+    // DEGRADE, NEVER BREAK - the same discipline as the POOL DRAIN block above.
+    // Unreachable at today's pool sizes; it becomes reachable only if a role pool
+    // shrinks to DRAFT_OPTIONS, and a mirror lane beats no lane at all.
+    const enemySource = enemyPool.length ? enemyPool : rolePool;
+    const enemy = enemySource.length ? pick(enemySource) : null;
 
     return {
         outcome,
@@ -1159,6 +1183,277 @@ function pentakillRoll(match, kda, won) {
     return Math.random() < chance ? 1 : 0;
 }
 
+// ---------------------------------------------------------------------------
+//  SCOREBOARD
+//  Ten players, one line each, for one finished game.
+//
+//  This is a READOUT and nothing else. It is assembled AFTER the win roll, the
+//  duration, the rating and the player's own KDA have all been decided, and it
+//  changes none of them - the player's line is copied in verbatim and the other
+//  nine are built AROUND it. careerSmoke's 7.6 mean-rating line must not move by
+//  a thousandth because of anything below.
+//
+//  It hangs off the `game` object pushed onto match.gameLog, so a Bo5 carries
+//  five of them and finishMatch's existing `games` array persists them for free.
+//  Plain strings and finite numbers only - no card references, no colours, and
+//  champions as IDS, because ids are permanent save data and names are
+//  re-resolved for display. Every reader defaults, because an older save has no
+//  board at all and a rotted one has no roster.
+// ---------------------------------------------------------------------------
+const BOARD_ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
+
+// How a team's kills, assists and deaths lean by seat. Mid and ADC take the
+// kills, support takes very few and a pile of assists, jungle skews to assists,
+// top sits in the middle. Deliberately close to SOLO_SHARE / ASSIST_LEAN in
+// spirit; kept separate because those two scale the PLAYER's own line out of a
+// decision outcome and these divide a whole team's total.
+const BOARD_KILL_W = { TOP: 0.90, JNG: 0.78, MID: 1.25, ADC: 1.45, SUP: 0.28 };
+const BOARD_ASSIST_W = { TOP: 0.72, JNG: 1.32, MID: 1.00, ADC: 0.86, SUP: 1.50 };
+const BOARD_DEATH_W = { TOP: 1.10, JNG: 1.05, MID: 0.95, ADC: 0.92, SUP: 1.18 };
+
+function boardJitter() {
+    return Math.max(0.05, 1 + bell() * 0.30);
+}
+
+/** A seat's card rating, or a replacement-level default. NEVER writes to the
+ *  card: getTeamRoster hands out shared cached instances. */
+function boardRating(card) {
+    if (!card || typeof card !== 'object') return 62;
+    const r = num(getEffectiveRating(card), 0);
+    return r > 0 ? clamp(r, 30, 105) : 62;
+}
+
+function boardName(card, role) {
+    const n = card && typeof card.name === 'string' ? card.name.trim() : '';
+    if (n) return n;
+    const r = ROLE_BY_ID[role];
+    return 'Unknown ' + ((r && r.short) || role || 'Player');
+}
+
+/**
+ * Split `total` across `weights` as whole numbers that add back up to EXACTLY
+ * `total`. Largest-remainder rather than rounding each share, because a
+ * scoreboard whose two halves do not reconcile is the first thing a player
+ * notices. A weight of 0 is honoured as zero - that is how a pinned seat (the
+ * player's own fixed line) is held out of the pool.
+ */
+function shareOut(total, weights) {
+    const t = Math.max(0, Math.round(num(total, 0)));
+    const n = Array.isArray(weights) ? weights.length : 0;
+    const out = new Array(n).fill(0);
+    if (!n || !t) return out;
+
+    const w = [];
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+        const v = Math.max(0, num(weights[i], 1));
+        w.push(v);
+        sum += v;
+    }
+    // Every weight zero or rotted. Spread it evenly rather than dropping kills
+    // on the floor - the two sides still have to reconcile.
+    if (sum <= 0) {
+        for (let i = 0; i < t; i++) out[i % n] += 1;
+        return out;
+    }
+
+    const rema = [];
+    let given = 0;
+    for (let i = 0; i < n; i++) {
+        if (w[i] <= 0) continue;
+        const exact = t * w[i] / sum;
+        const base = Math.floor(exact);
+        out[i] = base;
+        given += base;
+        rema.push({ i, r: exact - base });
+    }
+    rema.sort((a, b) => b.r - a.r);
+    for (let k = 0; given < t && rema.length; k++) {
+        out[rema[k % rema.length].i] += 1;
+        given++;
+    }
+    return out;
+}
+
+/**
+ * One champion for one seat, never a repeat.
+ *
+ * ALL TEN CHAMPIONS IN A GAME ARE DISTINCT - that is the single rule that makes
+ * the mirror matchup impossible and gives the scoreboard something to print
+ * beside every name. If a role pool were ever exhausted (unreachable at today's
+ * 26-56 champion pools) the seat goes out EMPTY rather than duplicating a
+ * champion already on the board.
+ */
+function boardChampFor(role, taken) {
+    const pool = championsForRole(role) || [];
+    const free = pool.filter(ch => ch && ch.id && !taken.has(ch.id));
+    if (!free.length) return '';
+    const ch = pick(free);
+    taken.add(ch.id);
+    return ch.id;
+}
+
+/**
+ * Seat a loose list of cards by role. teammatesOf().starters arrives in roster
+ * order with the player's own seat removed, but it is `.filter(Boolean)`-ed, so
+ * a missing seat would shift everything after it. Seat by the card's own role
+ * where that is readable and fill the gaps positionally.
+ */
+function boardSeats(cards, skipRole) {
+    const want = BOARD_ROLES.filter(r => r !== skipRole);
+    const seats = {};
+    const spare = [];
+    for (const card of (Array.isArray(cards) ? cards : [])) {
+        if (!card || typeof card !== 'object') continue;
+        const r = typeof card.role === 'string' ? card.role : '';
+        if (want.indexOf(r) >= 0 && !seats[r]) seats[r] = card;
+        else spare.push(card);
+    }
+    for (const r of want) {
+        if (!seats[r] && spare.length) seats[r] = spare.shift();
+    }
+    return seats;
+}
+
+/**
+ * Five stat lines for one side.
+ *
+ * `fixed` pins one seat's k/d/a - the player's own line, which the decision
+ * system already produced and which nothing here may re-roll - by zeroing its
+ * weight, sharing the remainder across the other four and writing the pinned
+ * numbers back afterwards. The team totals therefore still add up exactly.
+ */
+function boardSide(seats, champs, teamKills, teamDeaths, fixedRole, fixed) {
+    const killW = [];
+    const assistW = [];
+    const deathW = [];
+    for (const role of BOARD_ROLES) {
+        const good = clamp(1 + (boardRating(seats[role]) - 74) / 70, 0.55, 1.55);
+        killW.push(num(BOARD_KILL_W[role], 1) * good * boardJitter());
+        assistW.push(num(BOARD_ASSIST_W[role], 1) * (0.60 + good * 0.40) * boardJitter());
+        deathW.push(num(BOARD_DEATH_W[role], 1) * clamp(2 - good, 0.55, 1.55) * boardJitter());
+    }
+
+    const idx = BOARD_ROLES.indexOf(fixedRole);
+    const pinned = (fixed && idx >= 0) ? fixed : null;
+    if (pinned) { killW[idx] = 0; assistW[idx] = 0; deathW[idx] = 0; }
+
+    const kills = shareOut(Math.max(0, num(teamKills, 0) - (pinned ? pinned.k : 0)), killW);
+    const deaths = shareOut(Math.max(0, num(teamDeaths, 0) - (pinned ? pinned.d : 0)), deathW);
+
+    // Assists are not a conserved quantity the way kills and deaths are - four
+    // people can assist the same kill - so they are rolled off the team's own
+    // kill count and then CLAMPED to what is arithmetically possible: nobody
+    // assists a kill they took themselves, or one their team never made.
+    const assistPool = Math.round(num(teamKills, 0) * (1.70 + Math.random() * 0.50));
+    const assists = shareOut(Math.max(0, assistPool - (pinned ? pinned.a : 0)), assistW);
+
+    if (pinned) {
+        kills[idx] = pinned.k;
+        deaths[idx] = pinned.d;
+        assists[idx] = pinned.a;
+    }
+
+    const rows = [];
+    for (let i = 0; i < BOARD_ROLES.length; i++) {
+        const role = BOARD_ROLES[i];
+        const k = Math.max(0, Math.round(num(kills[i], 0)));
+        const d = Math.max(0, Math.round(num(deaths[i], 0)));
+        // The pinned line is copied through untouched. The floor on teamKills in
+        // buildBoard already guarantees the cap could not have bitten it, and
+        // this is the belt as well as the braces.
+        const cap = Math.max(0, Math.round(num(teamKills, 0)) - k);
+        const a = (pinned && i === idx)
+            ? Math.max(0, Math.round(num(assists[i], 0)))
+            : clamp(Math.round(num(assists[i], 0)), 0, cap);
+        rows.push({
+            name: boardName(seats[role], role),
+            role,
+            champ: typeof champs[role] === 'string' ? champs[role] : '',
+            k, d, a,
+        });
+    }
+    return rows;
+}
+
+/**
+ * The whole ten-player board for one finished game. Never throws: it is called
+ * behind a try/catch and every read defaults, because an "Unknown Org" opponent
+ * and a card database that has not loaded are both states buildMatch already
+ * models.
+ */
+function buildBoard(state, match, kda, won, duration) {
+    const myRole = ROLE_BY_ID[roleOf(state)] ? roleOf(state) : 'MID';
+    const year = Math.round(num(match && match.year, yearOf(state)));
+    const draft = (match && match.draft) || {};
+
+    // THE PLAYER'S OWN LINE IS FIXED. It came out of the decision system and is
+    // the truth; everything below is arranged around it.
+    const myK = Math.max(0, Math.round(num(kda && kda.k, 0)));
+    const myD = Math.max(0, Math.round(num(kda && kda.d, 0)));
+    const myA = Math.max(0, Math.round(num(kda && kda.a, 0)));
+
+    // ---- seats. SHARED CACHED CARDS: read only, never written, never sorted.
+    const mates = boardSeats((teammatesOf(state) || {}).starters, myRole);
+    const oppRoster = getTeamRoster(match && match.opponentId, year) || {};
+    const allySeats = {};
+    const enemySeats = {};
+    for (const role of BOARD_ROLES) {
+        const mate = role === myRole ? null : mates[role];
+        allySeats[role] = (mate && typeof mate === 'object') ? mate : null;
+        const foe = oppRoster[role];
+        enemySeats[role] = (foe && typeof foe === 'object') ? foe : null;
+    }
+
+    // ---- ten distinct champions -------------------------------------------
+    const taken = new Set();
+    const allyChamp = {};
+    const enemyChamp = {};
+    const mine = typeof draft.picked === 'string' ? draft.picked : '';
+    if (mine) { taken.add(mine); allyChamp[myRole] = mine; }
+    const theirs = (typeof draft.enemyId === 'string' && draft.enemyId && draft.enemyId !== mine)
+        ? draft.enemyId : '';
+    if (theirs) { taken.add(theirs); enemyChamp[myRole] = theirs; }
+    for (const role of BOARD_ROLES) {
+        if (!allyChamp[role]) allyChamp[role] = boardChampFor(role, taken);
+        if (!enemyChamp[role]) enemyChamp[role] = boardChampFor(role, taken);
+    }
+
+    // ---- how many kills the game produced ---------------------------------
+    // `duration` is already computed by finishGame and is the honest scalar: a
+    // 20 minute stomp and a 52 minute grind are not the same scoreboard.
+    const gap = num(match && match.myStrength, 50) - num(match && match.oppStrength, 50);
+    const total = Math.max(8, Math.round(
+        21 + (clamp(num(duration, 31), 20, 52) - 31) * 0.42 + bell() * 4.5,
+    ));
+    // The winning side out-kills the losing one, by more when it was also the
+    // stronger side on paper.
+    const favour = won ? gap : -gap;
+    const winnerShare = clamp(0.60 + clamp(favour / 70, -0.16, 0.16) + bell() * 0.05, 0.52, 0.80);
+    const winnerKills = Math.round(total * winnerShare);
+
+    // The team totals bend around the player's fixed line, never the other way
+    // round: you cannot out-kill your own team, you cannot die more times than
+    // they were killed, and you cannot assist on more kills than your team got
+    // without you.
+    const allyKills = Math.max(won ? winnerKills : total - winnerKills, myK + myA);
+    const enemyKills = Math.max(won ? total - winnerKills : winnerKills, myD);
+
+    // TEAM TOTALS RECONCILE BY CONSTRUCTION: every ally kill is an enemy death
+    // and every enemy kill is an ally death, so deaths are DISTRIBUTED out of
+    // the other side's kill count rather than rolled on their own.
+    const ally = boardSide(allySeats, allyChamp, allyKills, enemyKills, myRole, { k: myK, d: myD, a: myA });
+    const enemy = boardSide(enemySeats, enemyChamp, enemyKills, allyKills, null, null);
+
+    const handle = (state && state.player && typeof state.player.handle === 'string'
+        && state.player.handle.trim()) ? state.player.handle.trim() : 'You';
+    for (const row of ally) {
+        if (row.role === myRole) { row.name = handle; row.me = true; }
+    }
+
+    return { ally, enemy };
+}
+
 /**
  * Close the current game out: roll the win, log it, then either deal a fresh
  * five decisions for the next game or mark the series finished.
@@ -1189,6 +1484,17 @@ export function finishGame(c, match) {
         rating: match.playerPlays === false ? 0 : gameRating(match.personal, kda, won),
         pentakills: pentakillRoll(match, kda, won),
     };
+
+    // TEN-PLAYER SCOREBOARD. Omitted entirely on a benched game - there is no
+    // player line to build one around and an empty shell is worse than no key
+    // at all, since every reader has to default for old saves anyway. Wrapped
+    // because a readout must never be able to take a match down with it.
+    if (match.playerPlays !== false) {
+        try {
+            const board = buildBoard(state, match, kda, won, duration);
+            if (board) game.board = board;
+        } catch (e) { /* no board rather than no match */ }
+    }
 
     // Bank the game on whatever was actually locked in. Not on player.champion:
     // the signature pick is a preference, proficiency is a record of what you

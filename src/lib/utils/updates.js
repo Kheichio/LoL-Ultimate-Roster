@@ -10,6 +10,19 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.4.1',
+        title: 'Ultimate Career — No More Mirror Matchups & a Full Scoreboard',
+        summary: 'You could be drafted into a mirror matchup — Zeri into Zeri — and the lane was then graded as if playing against yourself meant something. All ten champions in a game are now distinct. Every match also ends on a proper scoreboard with all ten players and their K/D/A instead of just your own line, and a knockout week finally looks like one rather than hiding the bracket under the activity board.',
+        details: [
+            'FIXED (critical) — you could be handed a mirror matchup. The enemy laner was drawn from the whole champion pool for your role with nothing stopping it landing on the champion you had just picked, so Zeri into Zeri was not merely unlucky — it was roughly a one-in-forty roll every single game, in every game of every series. The lane was then graded as a real matchup, which is meaningless against yourself: a champion compared to itself is neither a good nor a bad matchup, and it was being scored as though it were.',
+            'FIXED — the draft now works the way a real one does: all ten champions in a game are distinct. Your three options are chosen first and the opposition is drafted around them, rather than the enemy being rolled before your own choices even existed. Doing it in that order matters — a role has 26 to 56 champions in it, so drafting the opposition around your picks costs them nothing, whereas removing their pick from your list could have quietly narrowed a small champion pool.',
+            'NEW — a full scoreboard at the end of every match. You used to see your own line and nothing else. Every game now ends with all ten players, both teams, each with the champion they played and their K/D/A, with your own row marked. A Bo3 or Bo5 shows you every game in the series rather than only the last one, and it appears whether you played the match yourself or simulated it.',
+            'THE SCOREBOARD IS REAL, not decoration. Your own K/D/A is the one the match actually produced — nothing is re-rolled to make the table look tidy — and the other nine lines are built around it, so the two teams reconcile exactly: every kill on one side is a death on the other. Stronger players post better lines, and roles behave like roles, so your ADC and mid take the kills while your support takes the assists.',
+            'CHANGED — a knockout week now looks like one. The bracket used to be drawn underneath the entire activity board, so the single most important week of a split looked exactly like a training week and the draw simply went unread. The tournament is now announced at the top of the page — the round, which round of how many, who you are playing and which week the final lands on — the fixture itself is tagged Knockout, and the bracket sits above your activities instead of below them.',
+            'NOTE — the banner reads the actual bracket, not the calendar, so a club that did not qualify is never told it is at Worlds. Existing careers are unaffected: nothing is reset, and a match played before this update simply has no scoreboard to show.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.4',
         title: 'Ultimate Career — Ratings That Fall, a Shifting Meta & Offers That Make Sense',
         summary: 'Your rating can go down now. A split played below par takes attributes off you, and training is what holds them — so the back half of a career is about defending what you built, not just adding to it. Champions swing in and out of the meta every split, elite players stop being called by amateur sides, scrims sharpen the four people you play with, and you can finally scout any club in the world and name the one you are trying to join.',

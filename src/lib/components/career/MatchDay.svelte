@@ -24,7 +24,7 @@
         isMatchOver, finishMatch, matchRatingLabel, headlineFor,
         draftPending, draftOption, chooseDraft,
     } from '../../career/match.js';
-    import { CHAMPION_BY_ID } from '../../career/constants.js';
+    import { CHAMPION_BY_ID, ROLE_BY_ID } from '../../career/constants.js';
     import { completeMatch } from '../../career/engine.js';
 
     // -- tuning mirrors match.js' own clamps -----------------------------
@@ -60,6 +60,7 @@
     let pendingInterview = null, milestones = [], floats = [];
     let continueReady = false, busy = false, benchShown = false, interviewOpened = false;
     let decisionsThisGame = 0, lastEventId = null, floatSeq = 0;
+    let boardIdx = 0;          // which game's scoreboard the result screen shows
     let gameStart = { adv: 0, per: 0, k: 0, d: 0, a: 0, cs: 0 };
 
     const timers = [];
@@ -171,6 +172,55 @@
         };
     }
     function normList(arr) { return Array.isArray(arr) ? arr.map(normLog).filter(Boolean) : []; }
+
+    // -- ten-player scoreboard -------------------------------------------
+    //  match.js hangs a `board` off every entry of the game log, so a Bo5
+    //  carries five of them and finishMatch persists the lot as result.games.
+    //  It is ABSENT on a benched game and on every save written before it
+    //  existed, so the whole panel is built to disappear rather than degrade:
+    //  a board that does not normalise produces no row, and no rows produce no
+    //  section at all. Champions are stored as IDS - permanent save data - and
+    //  a renamed or retired one simply prints no champion rather than the id.
+    function sbRow(r, i, mine) {
+        if (!r || typeof r !== 'object') return null;
+        const roleId = typeof r.role === 'string' ? r.role : '';
+        const def = ROLE_BY_ID[roleId] || null;
+        const champ = (typeof r.champ === 'string' && r.champ) ? CHAMPION_BY_ID[r.champ] : null;
+        const name = typeof r.name === 'string' ? r.name.trim() : '';
+        return {
+            key: (mine ? 'a' : 'e') + i,
+            name: name || 'Unknown Player',
+            // The three-letter ID, not ROLE_BY_ID.short - "Jungle" and
+            // "Support" do not fit a badge column on a phone. The lookup still
+            // earns its keep: it validates the seat and names it in the title.
+            role: def ? def.id : String(roleId).slice(0, 3).toUpperCase(),
+            roleName: def ? def.name : '',
+            champ: champ && typeof champ.name === 'string' ? champ.name : '',
+            k: Math.max(0, Math.round(num(r.k))),
+            d: Math.max(0, Math.round(num(r.d))),
+            a: Math.max(0, Math.round(num(r.a))),
+            me: mine && r.me === true,
+        };
+    }
+    function sbSide(list, mine) {
+        return Array.isArray(list) ? list.map((r, i) => sbRow(r, i, mine)).filter(Boolean) : [];
+    }
+    function sbGame(g, i) {
+        const b = (g && g.board) || null;
+        if (!b || typeof b !== 'object') return null;
+        const ally = sbSide(b.ally, true);
+        const enemy = sbSide(b.enemy, false);
+        if (!ally.length || !enemy.length) return null;
+        const mins = Math.round(num(g && g.duration));
+        return {
+            key: 'sb' + i,
+            number: Math.max(1, Math.round(num(g && g.game, i + 1))),
+            won: !!(g && (g.won ?? g.win ?? g.victory)),
+            mins: mins > 0 ? mins : 0,
+            ally,
+            enemy,
+        };
+    }
 
     // -- flow ------------------------------------------------------------
     function bail(msg) {
@@ -425,6 +475,7 @@
         pendingInterview = (done && done.interview) || null;
         milestones = (done && Array.isArray(done.milestones)) ? done.milestones : [];
 
+        boardIdx = 0;
         stage = 'result';
         continueReady = true;
         playSound(finalResult.won ? 'win' : 'lose');
@@ -548,6 +599,21 @@
         : fmtKDA(0, 0, 0);
     $: decisionLog = finalResult ? normList(finalResult.decisionLog) : [];
     $: rewards = finalResult ? buildRewards(finalResult) : [];
+
+    // One board per GAME, in the order they were played. A Bo5 is five of them
+    // and showing only the first would be the same bug this panel exists to
+    // fix, so a series gets a selector and every game keeps its own number.
+    $: boards = (finalResult && Array.isArray(finalResult.games))
+        ? finalResult.games.map(sbGame).filter(Boolean)
+        : [];
+    $: shownBoard = boards.length
+        ? boards[Math.min(Math.max(0, boardIdx), boards.length - 1)]
+        : null;
+    function pickBoard(i) {
+        if (i === boardIdx) return;
+        playSound('click');
+        boardIdx = i;
+    }
 
     function buildRewards(r) {
         const rows = [];
@@ -816,6 +882,81 @@
                     {/if}
                 </div>
             </div>
+
+            <!-- ============== FULL SCOREBOARD ==============
+                 Absent entirely for a benched series and for any result saved
+                 before boards existed - `boards` is empty and nothing renders,
+                 rather than a table of dashes. -->
+            {#if shownBoard}
+                <section class="sb" aria-label="Full scoreboard">
+                    <div class="side-label">Scoreboard</div>
+
+                    {#if boards.length > 1}
+                        <div class="sb-tabs">
+                            {#each boards as b, i (b.key)}
+                                <button
+                                    class="sb-tab"
+                                    class:sb-tab-on={b.key === shownBoard.key}
+                                    class:sb-tab-won={b.won}
+                                    aria-pressed={b.key === shownBoard.key}
+                                    on:click={() => pickBoard(i)}
+                                >
+                                    <span class="sb-tab-n">Game {b.number}</span>
+                                    <span class="sb-tab-r">{b.won ? 'W' : 'L'}</span>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+
+                    <div class="sb-cap">
+                        Game {shownBoard.number}
+                        {#if shownBoard.mins}
+                            <span class="sb-cap-dot">&middot;</span>{shownBoard.mins} min
+                        {/if}
+                    </div>
+
+                    {#key shownBoard.key}
+                        <div class="sb-sides">
+                            <div class="sb-side sb-mine" class:sb-win={shownBoard.won}>
+                                <div class="sb-head">
+                                    <span class="sb-team">{finalResult.myTeamName || m.myTeamName || 'Your Team'}</span>
+                                    <span class="sb-verdict">{shownBoard.won ? 'Win' : 'Loss'}</span>
+                                </div>
+                                {#each shownBoard.ally as r (r.key)}
+                                    <div class="sb-row" class:sb-me={r.me}>
+                                        <span class="sb-role" title={r.roleName}>{r.role}</span>
+                                        <span class="sb-who">
+                                            <span class="sb-name">
+                                                <span class="sb-nm">{r.name}</span>
+                                                {#if r.me}<span class="sb-you">You</span>{/if}
+                                            </span>
+                                            {#if r.champ}<span class="sb-champ">{r.champ}</span>{/if}
+                                        </span>
+                                        <span class="sb-kda">{r.k} / {r.d} / {r.a}</span>
+                                    </div>
+                                {/each}
+                            </div>
+
+                            <div class="sb-side sb-theirs" class:sb-win={!shownBoard.won}>
+                                <div class="sb-head">
+                                    <span class="sb-team">{finalResult.opponentName || m.opponentName || 'Opponent'}</span>
+                                    <span class="sb-verdict">{shownBoard.won ? 'Loss' : 'Win'}</span>
+                                </div>
+                                {#each shownBoard.enemy as r (r.key)}
+                                    <div class="sb-row">
+                                        <span class="sb-role" title={r.roleName}>{r.role}</span>
+                                        <span class="sb-who">
+                                            <span class="sb-name"><span class="sb-nm">{r.name}</span></span>
+                                            {#if r.champ}<span class="sb-champ">{r.champ}</span>{/if}
+                                        </span>
+                                        <span class="sb-kda">{r.k} / {r.d} / {r.a}</span>
+                                    </div>
+                                {/each}
+                            </div>
+                        </div>
+                    {/key}
+                </section>
+            {/if}
 
             <div class="rs-actions">
                 {#if pendingInterview}
@@ -1458,6 +1599,76 @@
     .rs-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 34px; }
     .rs-hint { font-size: 10px; font-weight: 700; color: #3a4a63; }
 
+    /* =========== FULL SCOREBOARD =========== */
+    /* Two stacked blocks on a phone, side by side from 760px up. Deliberately
+       not a six-column table: the role, the pair of names and the K/D/A are
+       three columns that survive a 320px screen without a scrollbar. */
+    .sb { margin-top: 32px; }
+    .sb-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+    .sb-tab {
+        display: inline-flex; align-items: baseline; gap: 7px; cursor: pointer; font-family: inherit;
+        padding: 7px 12px; border-radius: 10px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.32);
+        transition: border-color 0.14s ease, background 0.14s ease;
+    }
+    .sb-tab:hover { border-color: rgba(139,92,246,0.4); }
+    .sb-tab-on { background: rgba(139,92,246,0.08); border-color: rgba(139,92,246,0.5); }
+    .sb-tab-n { font-size: 11px; font-weight: 800; color: #7c8db0; }
+    .sb-tab-on .sb-tab-n { color: #dbe4f5; }
+    .sb-tab-r {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 10px; font-weight: 900; color: #f87171;
+    }
+    .sb-tab-won .sb-tab-r { color: #4ade80; }
+    .sb-cap { font-size: 9.5px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #3f5069; margin-bottom: 10px; }
+    .sb-cap-dot { margin: 0 5px; color: #23304a; }
+
+    .sb-sides { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+    .sb-side {
+        min-width: 0; padding: 12px 14px 9px; border-radius: 14px;
+        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.28);
+        border-top: 2px solid var(--sc);
+        animation: rise 0.28s ease both;
+    }
+    .sb-mine { --sc: var(--my); }
+    .sb-theirs { --sc: var(--opp); }
+    .sb-win { border-color: rgba(34,197,94,0.24); border-top-color: var(--sc); }
+    .sb-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 9px; }
+    .sb-team {
+        flex: 1; min-width: 0; font-size: 12.5px; font-weight: 800; color: var(--sc);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sb-verdict { flex-shrink: 0; font-size: 8.5px; font-weight: 900; letter-spacing: 1.3px; text-transform: uppercase; color: #f87171; }
+    .sb-win .sb-verdict { color: #4ade80; }
+
+    .sb-row {
+        display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center;
+        gap: 9px; padding: 6px 0; border-bottom: 1px solid rgba(51,65,85,0.14);
+    }
+    .sb-row:last-child { border-bottom: none; }
+    .sb-me {
+        margin: 0 -7px; padding: 6px 7px; border-radius: 9px; border-bottom-color: transparent;
+        background: color-mix(in srgb, var(--sc) 13%, transparent);
+    }
+    .sb-role { font-size: 8.5px; font-weight: 900; letter-spacing: 0.8px; text-transform: uppercase; color: #3f5069; }
+    .sb-me .sb-role { color: var(--sc); }
+    .sb-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .sb-name { display: flex; align-items: baseline; min-width: 0; font-size: 11.5px; font-weight: 700; color: #b9c7de; }
+    .sb-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-me .sb-name { color: #e8eefb; }
+    .sb-you {
+        flex-shrink: 0; margin-left: 6px; padding: 1px 5px; border-radius: 4px;
+        font-size: 7.5px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: var(--sc);
+        background: color-mix(in srgb, var(--sc) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--sc) 34%, transparent);
+    }
+    .sb-champ { font-size: 10px; color: #56688a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-kda {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 11.5px; font-weight: 800; color: #94a3b8; white-space: nowrap;
+    }
+    .sb-me .sb-kda { color: #e2e8f0; }
+
     /* =========== RESPONSIVE =========== */
     @media (max-width: 1000px) {
         .md-body { grid-template-columns: minmax(0,1fr); gap: 30px; }
@@ -1478,6 +1689,9 @@
         .rs-team { font-size: 13px; }
         .big-btn { max-width: none; }
     }
+    @media (max-width: 760px) {
+        .sb-sides { grid-template-columns: minmax(0,1fr); gap: 12px; }
+    }
     @media (max-width: 380px) {
         .score-row { gap: 8px; }
         .s-num { font-size: 26px; }
@@ -1485,5 +1699,8 @@
         .rs-score { gap: 10px; }
         .rs-n { font-size: 30px; }
         .opt { padding: 13px 12px; gap: 10px; }
+        .sb-side { padding: 11px 11px 8px; }
+        .sb-row { grid-template-columns: 26px minmax(0,1fr) auto; gap: 7px; }
+        .sb-kda { font-size: 10.5px; }
     }
 </style>

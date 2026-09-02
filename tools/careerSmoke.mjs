@@ -1037,6 +1037,22 @@ const stats = {
     metaPicks: { strong: 0, contested: 0, weak: 0 },
     metaSwingSum: 0,
     goalProbes: 0,         // careers that re-pointed their goal at a signing club
+    // ---- the ten-player scoreboard -----------------------------------------
+    // game.board is a READOUT hung off the game log and persisted on lastMatch.
+    // It has no mechanical reader anywhere, which is precisely why it needs
+    // counting: a builder that silently stopped producing one, or that started
+    // producing a board whose two halves do not reconcile, would change no
+    // number in the mode and no assertion anywhere else would notice.
+    boards: {
+        seen: 0,          // boards actually inspected
+        gamesSeen: 0,     // played games inspected, board or not
+        allyKills: 0,     // summed across every board, for the mean
+        enemyKills: 0,
+        worstGap: -1,     // most lopsided kill line observed
+        worstLine: '',
+        benchedGames: 0,  // benched games inspected
+        benchedBoards: 0, // ...of which carried a board at all (must stay 0)
+    },
 };
 
 /** Champion-select picks whose meta band could not be resolved. Counted apart
@@ -1208,12 +1224,382 @@ function drainOverlay() {
         'overlaydrain');
 }
 
+// ---------------------------------------------------------------------------
+//  NO MIRROR MATCHUPS, AND THE TEN-PLAYER SCOREBOARD
+// ---------------------------------------------------------------------------
+//  Both checkers below are PURE -- they return a list of problem strings and
+//  call nothing. That is not tidiness: neither rule can ever fire on a healthy
+//  run (a mirror is impossible by construction and a board reconciles by
+//  construction), so a rule that was silently broken and a rule that is working
+//  produce identical output. Purity is what lets the two control blocks feed
+//  each checker a deliberately rotten shape and assert it is CAUGHT, which is
+//  the only evidence either assertion is alive at all.
+//
+//  Same argument as boardCheck's lint self-tests and the inertness assertions
+//  further down this file: a check that cannot fail looks exactly like a clean
+//  codebase.
+// ---------------------------------------------------------------------------
+
+/**
+ * A mirror matchup - the enemy laner on a champion the player was offered, or
+ * worse, the one they actually locked in.
+ *
+ * A player reported Zeri into Zeri: the enemy laner used to be drawn from the
+ * whole role pool BEFORE the three options existed, so nothing downstream could
+ * stop the collision, and championMatchup(x, x) was being scored as if a
+ * self-comparison were a real lane. In League a champion is picked once per
+ * game, so this is not unlucky, it is impossible.
+ *
+ * Returns [] for a draft with no enemy laner: a blind pick against nobody is
+ * not a mirror, and rollDraft may legitimately return enemyId null if a role
+ * pool were ever empty.
+ */
+function mirrorProblems(draft) {
+    const out = [];
+    const d = (draft && typeof draft === 'object') ? draft : {};
+    const foe = typeof d.enemyId === 'string' ? d.enemyId : '';
+    if (!foe) return out;
+    const opts = Array.isArray(d.options)
+        ? d.options.filter(x => typeof x === 'string' && x) : [];
+    const picked = typeof d.picked === 'string' ? d.picked : '';
+    // The locked-in case first: it is the same defect one step worse, and it is
+    // the sentence worth reading in a failure report.
+    if (picked && picked === foe) {
+        out.push(`the locked-in pick "${picked}" IS the enemy laner`);
+    }
+    if (opts.indexOf(foe) >= 0) {
+        out.push(`the enemy laner "${foe}" was one of the ${opts.length} offered [${opts.join(', ')}]`);
+    }
+    return out;
+}
+
+/** THE POSITIVE CONTROL for the rule above. A rule that never fires on a clean
+ *  run has to be proved against a mirror somebody built on purpose. */
+{
+    const clean = { options: ['zeri', 'jinx', 'kaisa'], enemyId: 'caitlyn', picked: 'zeri' };
+    const offered = { options: ['zeri', 'jinx', 'kaisa'], enemyId: 'jinx', picked: 'zeri' };
+    const locked = { options: ['zeri', 'jinx', 'kaisa'], enemyId: 'zeri', picked: 'zeri' };
+    const blind = { options: ['zeri', 'jinx', 'kaisa'], enemyId: null, picked: 'zeri' };
+    if (mirrorProblems(clean).length) {
+        fail('crash', 'tools/careerSmoke.mjs', 'the mirror check flags a legitimate draft',
+            `a clean draft came back with: ${mirrorProblems(clean).join('; ')}`,
+            'mirrorProblems() must return [] when the enemy laner is outside the three offered.',
+            'mirrorctl|falsepos');
+    }
+    if (mirrorProblems(blind).length) {
+        fail('crash', 'tools/careerSmoke.mjs', 'the mirror check flags a blind pick against nobody',
+            `enemyId null came back with: ${mirrorProblems(blind).join('; ')}`,
+            'A draft with no enemy laner is not a mirror.',
+            'mirrorctl|blind');
+    }
+    if (!mirrorProblems(offered).length || !mirrorProblems(locked).length) {
+        fail('crash', 'tools/careerSmoke.mjs',
+            'the mirror check cannot catch a mirror that was built on purpose',
+            `offered-mirror -> ${mirrorProblems(offered).length} problems, `
+            + `locked-in mirror -> ${mirrorProblems(locked).length} problems; both must be non-zero`,
+            'mirrorProblems() is the only thing standing between rollDraft and Zeri into Zeri. '
+            + 'If it cannot catch a hand-built mirror it is not testing anything.',
+            'mirrorctl|deadrule');
+    }
+}
+
+/** Assert a draft carries no mirror, wherever the harness has one in hand. */
+function checkMirror(draft, where) {
+    for (const problem of mirrorProblems(draft)) {
+        fail('wrong', 'src/lib/career/match.js',
+            'champion select produced a mirror matchup',
+            `${ctxLine()} ${where} -> ${problem}`,
+            'rollDraft draws the enemy laner from rolePool MINUS the three offered ids, and it must '
+            + 'happen AFTER the options exist. championMatchup(x, x) is a meaningless self-comparison '
+            + 'and a champion is picked once per game.',
+            'mirror|' + problem.slice(0, 40));
+    }
+}
+
+const BOARD_SIDES = ['ally', 'enemy'];
+
+/**
+ * The ten-player scoreboard on one finished game.
+ *
+ * ABSENT IS LEGAL and is the first thing checked: a benched game has no player
+ * line to build a board around, and every save written before the feature
+ * existed has no key at all. There is no version gate in this mode, so "no
+ * board" must read as "nothing to check" everywhere, forever.
+ *
+ * `game.kda` is the pin. The player's own line came out of the decision system
+ * and the board is arranged around it; if the two ever disagree the readout is
+ * lying about the one number the player already watched being earned.
+ */
+function boardProblems(game) {
+    const out = [];
+    const g = (game && typeof game === 'object') ? game : {};
+    const b = (g && g.board) || null;
+    if (!b) return out;
+
+    if (typeof b !== 'object' || Array.isArray(b)) {
+        out.push(`board is ${Array.isArray(b) ? 'an array' : typeof b}, not an object`);
+        return out;
+    }
+    const sides = {
+        ally: Array.isArray(b.ally) ? b.ally : null,
+        enemy: Array.isArray(b.enemy) ? b.enemy : null,
+    };
+    for (const s of BOARD_SIDES) {
+        if (!sides[s]) out.push(`board.${s} is not an array`);
+    }
+    if (!sides.ally || !sides.enemy) return out;
+
+    for (const s of BOARD_SIDES) {
+        if (sides[s].length !== 5) {
+            out.push(`board.${s} has ${sides[s].length} rows, and a team is five players`);
+        }
+    }
+
+    // ---- ten distinct, real champions -------------------------------------
+    // Distinctness is the rule that makes the mirror impossible on the other
+    // eight seats as well; resolvability is the CHAMPION_BY_ID contract, and a
+    // champion id is permanent save data, so a dead one means a rename landed.
+    const seenChamp = new Map();
+    const kills = { ally: 0, enemy: 0 };
+    const deaths = { ally: 0, enemy: 0 };
+    for (const s of BOARD_SIDES) {
+        for (let i = 0; i < sides[s].length; i++) {
+            const row = sides[s][i];
+            const at = `board.${s}[${i}]`;
+            if (!row || typeof row !== 'object' || Array.isArray(row)) {
+                out.push(`${at} is not a row object`);
+                continue;
+            }
+            const id = typeof row.champ === 'string' ? row.champ : '';
+            if (!id) {
+                out.push(`${at} (${row.role}) carries no champion id`);
+            } else if (!K.CHAMPION_BY_ID[id]) {
+                out.push(`${at} names "${id}", which is not a champion`);
+            } else if (seenChamp.has(id)) {
+                out.push(`"${id}" is on the board twice, at ${seenChamp.get(id)} and ${at}`);
+            }
+            if (id) seenChamp.set(id, at);
+
+            for (const key of ['k', 'd', 'a']) {
+                const v = row[key];
+                if (!isNum(v)) { out.push(`${at}.${key} is ${JSON.stringify(v)}, not a finite number`); continue; }
+                if (v < 0) out.push(`${at}.${key} is ${v}, and nobody has negative ${key}`);
+                if (Math.round(v) !== v) out.push(`${at}.${key} is ${v}, and a scoreboard prints whole numbers`);
+            }
+            kills[s] += isNum(row.k) ? row.k : 0;
+            deaths[s] += isNum(row.d) ? row.d : 0;
+        }
+    }
+
+    // ---- exactly one row is the player's, and it is HIS line ---------------
+    const mineAt = [];
+    for (let i = 0; i < sides.ally.length; i++) {
+        const row = sides.ally[i];
+        if (row && typeof row === 'object' && row.me) mineAt.push(i);
+    }
+    for (let i = 0; i < sides.enemy.length; i++) {
+        const row = sides.enemy[i];
+        if (row && typeof row === 'object' && row.me) out.push(`board.enemy[${i}] is flagged as the player`);
+    }
+    if (mineAt.length !== 1) {
+        out.push(`${mineAt.length} ally rows are flagged as the player, and exactly one must be`);
+    } else {
+        const row = sides.ally[mineAt[0]];
+        const kda = (g.kda && typeof g.kda === 'object') ? g.kda : {};
+        for (const key of ['k', 'd', 'a']) {
+            const mine = isNum(row[key]) ? row[key] : NaN;
+            const truth = Math.max(0, Math.round(Number(kda[key]) || 0));
+            if (!(mine === truth)) {
+                out.push(`the player's ${key} reads ${JSON.stringify(row[key])} on the board `
+                    + `and ${truth} in game.kda`);
+            }
+        }
+    }
+
+    // ---- the two halves reconcile ------------------------------------------
+    // Every ally kill is an enemy death. A scoreboard whose sides disagree is
+    // the first thing a player notices and the cheapest thing to get wrong.
+    if (kills.ally !== deaths.enemy) {
+        out.push(`${kills.ally} ally kills against ${deaths.enemy} enemy deaths`);
+    }
+    if (kills.enemy !== deaths.ally) {
+        out.push(`${kills.enemy} enemy kills against ${deaths.ally} ally deaths`);
+    }
+
+    // ---- assists are bounded by what the team actually killed --------------
+    // Four people can assist one kill, so assists are not conserved the way
+    // kills are - but nobody assists a kill they took themselves, or one their
+    // team never made.
+    for (const s of BOARD_SIDES) {
+        for (let i = 0; i < sides[s].length; i++) {
+            const row = sides[s][i];
+            if (!row || typeof row !== 'object') continue;
+            if (!isNum(row.a) || !isNum(row.k)) continue;
+            const room = kills[s] - row.k;
+            if (row.a > room) {
+                out.push(`board.${s}[${i}] has ${row.a} assists on a side that made ${kills[s]} kills `
+                    + `and took ${row.k} of them itself`);
+            }
+        }
+    }
+
+    return out;
+}
+
+/** THE POSITIVE CONTROL for the board rules. Every arm below is a shape the
+ *  builder could plausibly regress into, hand-built here so the rule that would
+ *  catch it is proved to be awake. */
+{
+    const row = (role, champ, k, d, a, me) => {
+        const r = { name: 'X', role, champ, k, d, a };
+        if (me) r.me = true;
+        return r;
+    };
+    // Two real champion ids to build a clean board from, taken from the live
+    // table rather than hardcoded - ids are permanent, but this file must not be
+    // the thing that breaks if one is ever retired.
+    const ids = Object.keys(K.CHAMPION_BY_ID).slice(0, 11);
+    const cleanBoard = () => ({
+        ally: [
+            row('TOP', ids[0], 2, 1, 3), row('JNG', ids[1], 1, 2, 4),
+            row('MID', ids[2], 4, 1, 2, true), row('ADC', ids[3], 3, 1, 1),
+            row('SUP', ids[4], 0, 2, 6),
+        ],
+        enemy: [
+            row('TOP', ids[5], 2, 2, 2), row('JNG', ids[6], 1, 2, 3),
+            row('MID', ids[7], 2, 3, 1), row('ADC', ids[8], 2, 2, 2),
+            row('SUP', ids[9], 0, 1, 4),
+        ],
+    });
+    // ally k = 10, enemy d = 10; enemy k = 7, ally d = 7.
+    const cleanGame = () => ({ kda: { k: 4, d: 1, a: 2 }, board: cleanBoard() });
+
+    const controls = [
+        ['a clean board', cleanGame(), false],
+        ['no board at all (an old save)', { kda: { k: 4, d: 1, a: 2 } }, false],
+        ['board as a string', { kda: { k: 4, d: 1, a: 2 }, board: 'ally' }, true],
+        ['six rows on one side', (() => {
+            const g = cleanGame(); g.board.ally.push(row('TOP', ids[10], 0, 0, 0)); return g;
+        })(), true],
+        ['a duplicated champion', (() => {
+            const g = cleanGame(); g.board.enemy[0].champ = ids[0]; return g;
+        })(), true],
+        ['a dead champion id', (() => {
+            const g = cleanGame(); g.board.enemy[2].champ = 'champion_that_never_was'; return g;
+        })(), true],
+        ['no player row', (() => {
+            const g = cleanGame(); delete g.board.ally[2].me; return g;
+        })(), true],
+        ['two player rows', (() => {
+            const g = cleanGame(); g.board.ally[0].me = true; return g;
+        })(), true],
+        ["the player's line disagreeing with game.kda", (() => {
+            const g = cleanGame(); g.kda.k = 9; return g;
+        })(), true],
+        ['kills that do not reconcile', (() => {
+            const g = cleanGame(); g.board.enemy[0].d = 5; return g;
+        })(), true],
+        ['a fractional kill', (() => {
+            const g = cleanGame(); g.board.enemy[1].k = 1.5; return g;
+        })(), true],
+        ['a negative death', (() => {
+            const g = cleanGame(); g.board.enemy[1].d = -2; return g;
+        })(), true],
+        ['a missing k/d/a', (() => {
+            const g = cleanGame(); delete g.board.enemy[3].a; return g;
+        })(), true],
+        ['more assists than the team made kills', (() => {
+            const g = cleanGame(); g.board.ally[4].a = 40; return g;
+        })(), true],
+        ['ally null', { kda: { k: 4, d: 1, a: 2 }, board: { ally: null, enemy: cleanBoard().enemy } }, true],
+    ];
+    for (const [label, game, shouldCatch] of controls) {
+        const found = boardProblems(game);
+        if (shouldCatch && !found.length) {
+            fail('crash', 'tools/careerSmoke.mjs',
+                'a scoreboard rule cannot catch the defect it exists for',
+                `control "${label}" was built broken on purpose and boardProblems() returned nothing`,
+                'The board has no mechanical reader, so an assertion that cannot fire is the only '
+                + 'thing between a silently broken readout and a shipped one.',
+                'boardctl|' + label);
+        }
+        if (!shouldCatch && found.length) {
+            fail('crash', 'tools/careerSmoke.mjs',
+                'a scoreboard rule flags a legitimate board',
+                `control "${label}" is valid and boardProblems() returned: ${found.join('; ')}`,
+                'A false positive here fails honest runs at random. Loosen the rule, do not delete it.',
+                'boardctl|falsepos|' + label);
+        }
+    }
+}
+
+/**
+ * Inspect one finished game's board and fold it into the coverage counters.
+ * `played` is what decides whether a board is even allowed to exist.
+ */
+function noteBoard(game, played) {
+    const g = (game && typeof game === 'object') ? game : null;
+    if (!g) return;
+    const b = g.board || null;
+
+    if (played === false) {
+        stats.boards.benchedGames++;
+        if (b) {
+            stats.boards.benchedBoards++;
+            fail('wrong', 'src/lib/career/match.js',
+                'a benched game carried a ten-player scoreboard',
+                `${ctxLine()} -> game ${g.game} came back playerPlays === false with a board attached`,
+                'finishGame builds the board only when match.playerPlays !== false: there is no player '
+                + 'line to arrange one around, and an empty shell is worse than the absent key every '
+                + 'reader already has to default for.',
+                'boardbenched');
+        }
+        return;
+    }
+
+    stats.boards.gamesSeen++;
+    if (!b) return;
+
+    for (const problem of boardProblems(g)) {
+        fail('wrong', 'src/lib/career/match.js',
+            'the ten-player scoreboard is not internally consistent',
+            `${ctxLine()} -> ${problem}`,
+            'buildBoard/boardSide/shareOut own every number on the board. shareOut conserves the '
+            + 'total by largest remainder, deaths are DISTRIBUTED out of the other side\'s kills, and '
+            + 'the player\'s own line is pinned by zeroing its weight and copied back verbatim.',
+            'board|' + problem.replace(/\d+/g, '#').slice(0, 60));
+    }
+
+    // Coverage. Counted whether or not anything failed - see the scoreboard
+    // block in the coverage report for why the numbers matter on their own.
+    stats.boards.seen++;
+    const sum = (rows, key) => (Array.isArray(rows) ? rows : [])
+        .reduce((s, r) => s + ((r && isNum(r[key])) ? r[key] : 0), 0);
+    const ak = sum(b.ally, 'k');
+    const ek = sum(b.enemy, 'k');
+    stats.boards.allyKills += ak;
+    stats.boards.enemyKills += ek;
+    const gap = Math.abs(ak - ek);
+    if (gap > stats.boards.worstGap) {
+        stats.boards.worstGap = gap;
+        stats.boards.worstLine = `${ak}-${ek}`;
+    }
+}
+
+/** Every game of a finished series, from either the hand-played path or the
+ *  sim path -- result.games is the array persisted onto c.lastMatch. */
+function noteResultBoards(result) {
+    const r = (result && typeof result === 'object') ? result : null;
+    if (!r || !Array.isArray(r.games)) return;
+    for (const g of r.games) noteBoard(g, r.played);
+}
+
 function playFixtureManually(f) {
     const hadClub = !!cur().player.clubId;
     const m0 = step('engine.startFixture', () => G.startFixture(f.id), null);
     if (!m0) {
         const simmed = step('engine.simFixture(fallback)', () => G.simFixture(f.id), null);
-        if (simmed) stats.matchesSimmed++;
+        if (simmed) { stats.matchesSimmed++; noteResultBoards(simmed); }
         return;
     }
 
@@ -1223,6 +1609,9 @@ function playFixtureManually(f) {
         const o = mm.draft && mm.draft.outcome;
         if (o === 'signature' || o === 'pocket' || o === 'offscript') stats.draft[o]++;
         else stats.draft.missing++;
+        // Every draft the harness has in hand goes past the mirror rule, not
+        // only the one champion select happens to be sitting on.
+        checkMirror(mm.draft, 'on the rolled draft');
     }
 
     let m = m0;
@@ -1263,6 +1652,13 @@ function playFixtureManually(f) {
                 }
                 if (already.length) stats.fearlessSeen++;
                 stats.fearlessMax = Math.max(stats.fearlessMax || 0, already.length);
+
+                // NO MIRROR MATCHUPS. Checked on the three as offered, before
+                // anything is locked in, because that is where the rule lives:
+                // rollDraft draws the enemy laner out of the role pool MINUS
+                // these three, so a collision here means the draw moved back
+                // above the options and nothing downstream can stop it.
+                checkMirror(m.draft, 'at champion select');
 
                 const views = new Map();
                 for (const id of opts) {
@@ -1305,6 +1701,11 @@ function playFixtureManually(f) {
                         fail('crash', 'src/lib/career/match.js', 'chooseDraft did not record the pick',
                             `${ctxLine()}`, 'Every decision after this reads match.draft.picked.');
                     }
+                    // ...and again on what was actually LOCKED IN. This is the
+                    // arm that would have caught Zeri into Zeri: the pick the
+                    // player watched themselves make can never be the champion
+                    // standing in the other lane.
+                    checkMirror(m.draft, 'after chooseDraft');
                 }
             }
 
@@ -1347,6 +1748,10 @@ function playFixtureManually(f) {
                     'Clamp the per-game rating to 0..10.');
                 if (m.playerPlays !== false) stats.ratings.push(fg.game.rating);
             }
+            // THE TEN-PLAYER SCOREBOARD, checked on the game object finishGame
+            // just built rather than on the persisted copy: this is where
+            // game.kda is still in hand to pin the player's own line against.
+            noteBoard(fg.game, m.playerPlays !== false);
         }
         m = fg.match;
         ST.matchState.set(m);
@@ -1400,6 +1805,11 @@ function playWeekFixtures() {
                     if (out.played !== false && isNum(out.rating)) stats.ratings.push(out.rating);
                     if (out.played === false) stats.benchedGames++;
                     noteAppearance(hadClub, out.played !== false);
+                    // Roughly half a career's games come through here, and
+                    // quickSim runs the same finishGame, so a board that only
+                    // ever survived the hand-played path would be invisible to a
+                    // harness that looked at one of the two.
+                    noteResultBoards(out);
                 }
             }
         }
@@ -2114,6 +2524,11 @@ function runCareer(cfg, label) {
         declineOVR: Number(end.flags && end.flags.decline && end.flags.decline.ovrLost) || 0,
         declineSplits: Number(end.flags && end.flags.decline && end.flags.decline.splits) || 0,
         declineHeld: Number(end.flags && end.flags.decline && end.flags.decline.heldTotal) || 0,
+        // How many splits the career actually PLAYED. closeSplit files one
+        // history row per split, so this is the honest denominator for "how
+        // often did decline bite" -- a bare count of bitten splits cannot tell
+        // a long career from a punitive system.
+        splitsPlayed: Array.isArray(end.history) ? end.history.length : 0,
         // Roster churn and club momentum. club.changes belongs to a CLUB and is
         // wiped by a transfer, so the lifetime total has to come off the flag.
         rosterChanges: Number(end.flags && end.flags.rosterMoves) || 0,
@@ -2602,6 +3017,39 @@ console.log(`  benched appearances    : ${stats.benchedGames}`);
         }
     }
 }
+// THE TEN-PLAYER SCOREBOARD. A readout with no mechanical reader anywhere: it
+// changes no rating, no win roll and no KDA, which is exactly why it needs an
+// inertness assertion of its own. A buildBoard that started throwing would be
+// swallowed by the try/catch it is deliberately wrapped in, every game would
+// simply arrive without a board, and NOT ONE other number in this file would
+// move. Same argument as roster churn and club momentum.
+{
+    const b = stats.boards;
+    const mean = (n) => (b.seen ? (n / b.seen).toFixed(1) : '-');
+    console.log(`  scoreboard             : ${b.seen} boards over ${b.gamesSeen} played games`
+        + ` (${b.benchedGames} benched games, ${b.benchedBoards} of them with a board)`);
+    console.log(`                           mean ${mean(b.allyKills)} ally kills vs ${mean(b.enemyKills)} enemy`
+        + `, most lopsided ${b.worstLine || 'none'}`);
+
+    if (b.seen === 0) {
+        fail('wrong', 'src/lib/career/match.js',
+            'not one game in the whole run produced a ten-player scoreboard',
+            `${b.gamesSeen} played games inspected across ${results.length} careers and every one of them `
+            + `came back with game.board absent`,
+            'finishGame calls buildBoard behind a try/catch that deliberately swallows a throw -- a board '
+            + 'that stopped being built looks exactly like a save written before the feature existed, and '
+            + 'nothing else in the mode reads it. Check buildBoard is not throwing on the first seat it '
+            + 'reads.',
+            'noboards');
+    } else if (b.gamesSeen && b.seen < b.gamesSeen * 0.5) {
+        fail('wrong', 'src/lib/career/match.js',
+            'most played games came back without a scoreboard',
+            `${b.seen} boards over ${b.gamesSeen} played games`,
+            'Every game the player actually plays should carry one. A partial rate means buildBoard is '
+            + 'throwing on some roster shape and the try/catch is hiding it.',
+            'partialboards');
+    }
+}
 console.log(`  unsigned games/benched : ${stats.unsignedGames} / ${stats.unsignedBench}`);
 console.log(`  signed games/benched   : ${stats.signedGames} / ${stats.signedBench}`);
 console.log(`  offers seen / accepted : ${stats.offersSeen} / ${stats.offersAccepted}`);
@@ -2915,8 +3363,10 @@ console.log(`  role changes           : ${stats.roleChanges}`);
     const totalSplits = splits.reduce((s, v) => s + v, 0);
     const held = results.map(r => Number(r.declineHeld) || 0);
     const heldTotal = held.reduce((s, v) => s + v, 0);
-    console.log(`  decline                : -${mean(lost).toFixed(1)} mean OVR over ${mean(splits).toFixed(1)} splits per career`
-        + ` (budget ${G.DECLINE_CAREER_MAX}), ${bitten}/${results.length} careers bitten at least once`);
+    const played = results.map(r => Math.max(1, Number(r.splitsPlayed) || 0));
+    const share = mean(splits.map((v, i) => v / played[i]));
+    console.log(`  decline                : -${mean(lost).toFixed(1)} mean OVR over ${mean(splits).toFixed(1)} of ${mean(played).toFixed(1)} splits per career`
+        + ` (${Math.round(share * 100)}%, budget ${G.DECLINE_CAREER_MAX}), ${bitten}/${results.length} careers bitten at least once`);
     console.log(`  maintained by training : ${heldTotal} attribute-shares held at zero by drilling them that split`
         + ` (${mean(held).toFixed(1)} per career)`);
 
@@ -2941,10 +3391,19 @@ console.log(`  role changes           : ${stats.roleChanges}`);
             + 'Par set near the per-GAME mean fires never. Re-read the MATCH RATINGS block above and set DECLINE_RATING relative to it.',
             'nodecline2');
     }
-    if (bitten === results.length && mean(splits) > 8) {
+    // "Most of its splits" has to be measured as a SHARE of the splits the career
+    // actually played, not as a bare count. The first cut of this check failed on
+    // "more than 8", which called a third of a twelve-year career "most" -- and
+    // worse, 8 sat directly between two equally legitimate seeded runs (6.3
+    // splits on one, 8.1 on the next, the whole difference being where the RNG
+    // stream happened to land after an unrelated feature started consuming it).
+    // A threshold that a rerun can cross on noise alone is not a tuning check,
+    // it is a coin flip that blames engine.js.
+    if (bitten === results.length && share > 0.55) {
         fail('wrong', 'src/lib/career/engine.js',
             'every career declined in most of its splits -- par is set too high',
-            `${bitten}/${results.length} careers, ${mean(splits).toFixed(1)} splits each`,
+            `${bitten}/${results.length} careers, ${mean(splits).toFixed(1)} of ${mean(played).toFixed(1)} splits each`
+            + ` (${Math.round(share * 100)}% of splits played)`,
             'Decline is meant to punish a bad split, not to be a tax on playing. Lower DECLINE_RATING.',
             'alwaysdecline');
     }

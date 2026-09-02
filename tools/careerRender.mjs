@@ -2122,6 +2122,158 @@ for (const [label, payload] of [['pregame', PREGAME_PAYLOAD], ['first-time', FIR
         ST.careerOverlay.set({ kind: 'result', payload: res });
         await render('CareerOverlay(result)', CO, {}, 'overlay-morale-notes-net-zero', { minText: 40 });
     }
+
+    // ---- THE TEN-PLAYER SCOREBOARD --------------------------------------
+    //  match.js hangs a `board` off every entry of the game log and finishMatch
+    //  persists the lot as result.games. NO ORDINARY FIXTURE IN THIS FILE OWNS
+    //  ONE: every state above is a saved career whose lastMatch was written by a
+    //  path that either predates boards or was benched, so the whole panel --
+    //  the tabs, the two sides, the You chip, the champion column -- would
+    //  render green while being unreachable. That is precisely how the
+    //  signature-slot perk shipped with a correct model, correct markup and no
+    //  fixture that could see it.
+    //
+    //  Driven through the RESULT OVERLAY rather than MatchDay for the same
+    //  reason the morale notes above are: MatchDay's copy hangs off
+    //  `finalResult`, a local assigned inside an event handler SSR never runs.
+    //  The overlay is also the panel most players actually see, because roughly
+    //  half a career's games are simmed from the Hub or the Calendar.
+    const CHAMP_IDS = Object.keys(K.CHAMPION_BY_ID || {});
+    const SB_ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
+    const SB_NAMES = ['Ledger', 'Kimchi', 'Aurora', 'Vantage', 'Halcyon',
+        'Brick', 'Moonlit', 'Sable', 'Quill', 'Torrent'];
+
+    /** One valid ten-player board. `off` walks the champion pool so two boards
+     *  in one series never collide, which is the rule the model guarantees. */
+    function sbBoard(off, myRole) {
+        const champ = (i) => CHAMP_IDS[(off * 10 + i) % (CHAMP_IDS.length || 1)] || '';
+        const side = (base, mine) => SB_ROLES.map((role, i) => {
+            const row = {
+                name: SB_NAMES[base + i] || 'Player',
+                role,
+                champ: champ(base + i),
+                k: [2, 1, 4, 3, 0][i] + (mine ? 0 : 0),
+                d: [1, 2, 1, 1, 2][i],
+                a: [3, 4, 2, 1, 6][i],
+            };
+            if (mine && role === myRole) row.me = true;
+            return row;
+        });
+        return { ally: side(0, true), enemy: side(5, false) };
+    }
+    function sbGameRow(n, won, off, myRole) {
+        return {
+            game: n, won, duration: 28 + n,
+            kda: { k: 4, d: 1, a: 2 }, cs: 250, rating: 7.4, pentakills: 0,
+            board: sbBoard(off, myRole || 'MID'),
+        };
+    }
+    /** The same game with no board at all -- a benched game, or every save
+     *  written before the feature existed. There is no version gate in this
+     *  mode, so this shape is not legacy, it is permanent. */
+    function sbGameNoBoard(n, won) {
+        const g = sbGameRow(n, won, 0, 'MID');
+        delete g.board;
+        return g;
+    }
+
+    const bo1 = [sbGameRow(1, true, 0, 'MID')];
+    const bo5 = [
+        sbGameRow(1, true, 0, 'MID'), sbGameRow(2, false, 1, 'MID'),
+        sbGameRow(3, true, 2, 'MID'), sbGameRow(4, false, 3, 'MID'),
+        sbGameRow(5, true, 4, 'MID'),
+    ];
+    /** Break exactly one thing on an otherwise valid Bo1. */
+    function rot(fn) {
+        const games = clone(bo1);
+        fn(games[0]);
+        return games;
+    }
+
+    const SB_STATES = [
+        // ---- the shapes the model actually produces --------------------
+        ['bo1-full', bo1],
+        ['bo5-series', bo5],
+        // A series where one game was benched: the tab strip must survive a
+        // board missing from the MIDDLE of the list, not only off the end.
+        ['bo3-one-game-benched', [sbGameRow(1, true, 0, 'MID'), sbGameNoBoard(2, false), sbGameRow(3, true, 2, 'MID')]],
+        // ---- absent, which is legal and permanent -----------------------
+        ['board-absent', [sbGameNoBoard(1, true)]],
+        ['games-absent', undefined],
+        ['games-empty', []],
+        // ---- rot --------------------------------------------------------
+        ['board-is-a-string', rot(g => { g.board = 'ally 5 enemy 5'; })],
+        ['board-is-an-array', rot(g => { g.board = [{ name: 'x' }]; })],
+        ['board-is-null', rot(g => { g.board = null; })],
+        ['ally-null', rot(g => { g.board.ally = null; })],
+        ['enemy-null', rot(g => { g.board.enemy = null; })],
+        ['ally-is-a-string', rot(g => { g.board.ally = 'five players'; })],
+        ['row-missing-kda', rot(g => { delete g.board.ally[1].k; delete g.board.ally[1].d; delete g.board.ally[1].a; })],
+        ['row-kda-is-junk', rot(g => { g.board.enemy[2].k = 'lots'; g.board.enemy[2].d = null; g.board.enemy[2].a = NaN; })],
+        // A champion id is permanent save data, so a renamed or retired one is
+        // the one rot shape that can arrive from an HONEST save.
+        ['dead-champion-id', rot(g => { g.board.ally[0].champ = 'champion_that_never_was'; })],
+        ['champion-is-not-a-string', rot(g => { g.board.enemy[0].champ = 7; })],
+        ['no-champion-at-all', rot(g => { g.board.ally[3].champ = ''; })],
+        ['six-rows-on-one-side', rot(g => {
+            g.board.ally.push({ name: 'Sixth', role: 'TOP', champ: CHAMP_IDS[60] || '', k: 0, d: 0, a: 0 });
+        })],
+        ['four-rows-on-one-side', rot(g => { g.board.enemy.pop(); })],
+        // The `me` flag is what puts the You chip on a row. Missing, and the
+        // panel must still render ten players rather than nothing.
+        ['me-flag-missing', rot(g => { for (const r of g.board.ally) delete r.me; })],
+        ['me-flag-on-every-row', rot(g => { for (const r of g.board.ally) r.me = true; })],
+        ['me-flag-on-the-enemy', rot(g => { g.board.enemy[2].me = true; })],
+        ['rows-are-null', rot(g => { g.board.ally = [null, undefined, 0, '', false]; })],
+        ['row-has-no-role', rot(g => { delete g.board.enemy[1].role; g.board.enemy[2].role = 'BOTTOM'; })],
+        ['row-name-is-blank', rot(g => { g.board.ally[4].name = '   '; g.board.enemy[4].name = 42; })],
+        ['games-is-a-string', 'the five games'],
+        ['games-holds-junk', [null, 7, 'game one', { board: {} }]],
+    ];
+
+    for (const [label, games] of SB_STATES) {
+        const res = { ...RES_BASE, played: true, won: true, score: [3, 2] };
+        if (games === undefined) delete res.games; else res.games = games;
+        applyState(S_MID.snap);
+        ST.careerOverlay.set({ kind: 'result', payload: res });
+        await render('CareerOverlay(result)', CO, {}, 'overlay-scoreboard-' + label, { minText: 40 });
+    }
+
+    // A benched result carrying a full board anyway. The model never writes
+    // this, which is exactly why it is here: the bench interstitial and the
+    // scoreboard are two independent branches of the same panel.
+    {
+        const res = { ...RES_BASE, played: false, benchReason: 'The coach went with somebody else.', games: bo1 };
+        applyState(S_MID.snap);
+        ST.careerOverlay.set({ kind: 'result', payload: res });
+        await render('CareerOverlay(result)', CO, {}, 'overlay-scoreboard-benched-with-board', { minText: 40 });
+    }
+    // ...and the whole thing on the hostile save, where the club, the contract
+    // and the schedule are all gone and res.myTeamName is whatever was in it.
+    for (const [label, games] of [['bo5', bo5], ['rot', rot(g => { g.board.ally = null; })]]) {
+        applyState(S_HOSTILE.snap);
+        ST.careerOverlay.set({ kind: 'result', payload: { ...RES_BASE, games } });
+        await render('CareerOverlay(result)', CO, {}, 'overlay-scoreboard-hostile-' + label, { minText: 40 });
+    }
+
+    // The same payloads on MatchDay. Its own copy of the panel hangs off
+    // `finalResult` and SSR cannot reach it, but sbGame/sbRow and the `boards`
+    // reactive statement are the SAME code compiled into a second component, so
+    // a match whose game log carries boards still drives the normaliser and
+    // proves the template compiles around it.
+    for (const [label, log] of [['bo1', bo1], ['bo5', bo5], ['rot', rot(g => { g.board = 'x'; })]]) {
+        if (!MATCH_STAGES.length) break;
+        applyState(S_MID.snap);
+        const m = clone(MATCH_STAGES[0][1]);
+        m.gameLog = clone(log);
+        m.games = clone(log);
+        ST.matchState.set(m);
+        await render('MatchDay', COMPONENT_DIR + 'MatchDay.svelte', {}, 'match-scoreboard-' + label, {
+            minText: 60,
+            allowEmptyIf: () => readStore(ST.matchState) === null,
+        });
+    }
+    ST.matchState.set(null);
 }
 
 // ---------------------------------------------------------------------------

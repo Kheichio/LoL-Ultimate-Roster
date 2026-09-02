@@ -32,7 +32,7 @@
         calcOVR, SCOUT_MMR_GATE,
     } from '../../career/ratings.js';
     import {
-        describeTeam, teamStrength, teamStrengthWithPlayer, leagueTable,
+        describeTeam, teamStrength, teamStrengthWithPlayer, leagueTable, tournamentNow,
     } from '../../career/teams.js';
     import { contractStatusLine, interestedTeams } from '../../career/contracts.js';
     import { matchRatingLabel } from '../../career/match.js';
@@ -284,6 +284,15 @@
     $: liveBracket = (c.season && c.season.bracket && typeof c.season.bracket === 'object')
         ? c.season.bracket
         : null;
+    // The live tournament, read off the BRACKET rather than the calendar, so a
+    // player whose club did not qualify is never told they are at Worlds. Same
+    // reader the Calendar banner uses; wrapped because every engine read on this
+    // screen is (careerRender drives it against rotted saves).
+    $: tourney = (() => { try { return tournamentNow(c); } catch (e) { return null; } })();
+    // Is THIS week's game a knockout tie? The complaint this answers is that a
+    // bracket match was indistinguishable from a league game, because the draw
+    // sat below the whole activity board and nothing above it said "knockout".
+    $: isBracketTie = !!(nextFixture && nextFixture.kind === 'bracket');
     $: bestOf = nextFixture
         ? (Number(nextFixture.bestOf) || (SERIES_PHASES.indexOf(phase.id) >= 0 ? 5 : 1))
         : 1;
@@ -501,8 +510,54 @@
     <!-- ============ MAIN COLUMN ============ -->
     <div class="col main">
 
+        <!-- ---------- TOURNAMENT BANNER ----------
+             FIRST thing in the column, above everything, and only while the
+             player's own club is actually in a live bracket. It reads the
+             BRACKET, not the calendar, so a club that did not qualify never
+             sees it -- the banner has to MEAN something when it appears.
+
+             This exists because a knockout week was indistinguishable from a
+             league week on this screen: the draw was rendered below the entire
+             activity board, so the one week that matters most looked exactly
+             like the other thirty-nine. -->
+        {#if tourney}
+            <div class="tbanner" class:tb-done={tourney.done} style="--a:{tourney.accent}">
+                <div class="tb-mark" aria-hidden="true">
+                    <span class="tb-pulse"></span>
+                    <span class="tb-cup">{tourney.done ? '\u{1F3C6}' : '\u{1F3DF}'}</span>
+                </div>
+                <div class="tb-body">
+                    <div class="tb-top">
+                        <span class="tb-title">{tourney.title}</span>
+                        {#if !tourney.done}
+                            <span class="tb-round">{tourney.round}</span>
+                            <span class="tb-of">Round {tourney.roundIndex} of {tourney.totalRounds}</span>
+                            <span class="tb-bo">Best of {tourney.bestOf}</span>
+                        {:else if tourney.placement === 1}
+                            <span class="tb-round tb-win">Champions</span>
+                        {:else if tourney.placement === 2}
+                            <span class="tb-round">Runners-up</span>
+                        {:else if tourney.placement}
+                            <span class="tb-round">Finished {tourney.placement}{tourney.placement === 3 ? 'rd' : 'th'}</span>
+                        {:else}
+                            <span class="tb-round">Eliminated</span>
+                        {/if}
+                    </div>
+                    <div class="tb-sub">
+                        {#if tourney.done}
+                            The bracket is decided.
+                        {:else}
+                            <span class="tb-vs">vs</span>
+                            <span class="tb-opp" style="--o:{tourney.opponentAccent}">{tourney.opponent}</span>
+                            <span class="tb-when">&middot; final on week {tourney.lastWeek}</span>
+                        {/if}
+                    </div>
+                </div>
+            </div>
+        {/if}
+
         <!-- ---------- NEXT UP ---------- -->
-        <section class="panel block next" aria-labelledby="hub-next">
+        <section class="panel block next" class:next-ko={isBracketTie} aria-labelledby="hub-next">
             <div class="blk-head">
                 <h2 class="lbl" id="hub-next">Next Up</h2>
                 <span class="phase-pill" style="--ph:{phase.accent}">
@@ -514,6 +569,13 @@
                 <div class="fx">
                     <div class="fx-top">
                         <div class="fx-meta">
+                            {#if isBracketTie}
+                                <!-- A knockout tie is not a league game and must
+                                     not read like one: lose it and the run is
+                                     over. This is the label the player was
+                                     missing entirely. -->
+                                <span class="fx-ko">Knockout</span>
+                            {/if}
                             <span class="fx-tag" style="--a:{opponent.accent}">{fixtureLabel}</span>
                             <span class="fx-bo">Best of {bestOf}</span>
                             {#if nextFixture.home}
@@ -592,6 +654,35 @@
                 </div>
             {/if}
         </section>
+
+        <!-- ---------- BRACKET ----------
+             Only while one is actually running. The Season screen owns the
+             permanent home for this; the Hub is where the player is standing
+             the week they have a tie to play, and reading the draw should not
+             cost them a navigation.
+
+             IT SITS ABOVE THE ACTIVITY BOARD ON PURPOSE. It used to render
+             below it, which put the single most important thing on the screen
+             underneath sixteen buttons the player scrolls past every week --
+             so a knockout week looked identical to a training week and the
+             draw went unread. Anything added to this column later belongs
+             BELOW this panel, not between it and the fixture. -->
+        {#if liveBracket}
+            <section class="panel block" aria-labelledby="hub-bracket">
+                <div class="blk-head">
+                    <h2 class="lbl" id="hub-bracket">Bracket</h2>
+                    <span class="mini">{phase.name}</span>
+                </div>
+                <BracketView
+                    bracket={liveBracket}
+                    myId={p.clubId}
+                    myName={myTeamName}
+                    myAccent={myTeamAccent}
+                    accent={phase.accent || '#a78bfa'}
+                    showHead={true}
+                />
+            </section>
+        {/if}
 
         <!-- ---------- THIS WEEK ---------- -->
         <section class="panel block" aria-labelledby="hub-week">
@@ -673,28 +764,6 @@
                 <div class="flash" role="status">{flash.text}</div>
             {/if}
         </section>
-
-        <!-- ---------- BRACKET ---------- -->
-        <!-- Only while one is actually running. The Season screen owns the
-             permanent home for this; the Hub is where the player is standing
-             the week they have a tie to play, and reading the draw should not
-             cost them a navigation. -->
-        {#if liveBracket}
-            <section class="panel block" aria-labelledby="hub-bracket">
-                <div class="blk-head">
-                    <h2 class="lbl" id="hub-bracket">Bracket</h2>
-                    <span class="mini">{phase.name}</span>
-                </div>
-                <BracketView
-                    bracket={liveBracket}
-                    myId={p.clubId}
-                    myName={myTeamName}
-                    myAccent={myTeamAccent}
-                    accent={phase.accent || '#a78bfa'}
-                    showHead={true}
-                />
-            </section>
-        {/if}
 
         <!-- ---------- WEEK LOG ---------- -->
         <section class="panel block" aria-labelledby="hub-log">
@@ -1108,8 +1177,65 @@
         white-space: nowrap;
     }
 
+    /* ---- the live tournament banner, first thing in the column ----
+       Same treatment the Calendar screen uses, so the two surfaces read as one
+       feature rather than two lookalikes. */
+    .tbanner {
+        display: flex; align-items: center; gap: 12px;
+        padding: 11px 14px; margin-bottom: 14px;
+        border-radius: 12px;
+        background: linear-gradient(135deg,
+            color-mix(in srgb, var(--a) 20%, rgba(15, 23, 42, 0.85)),
+            rgba(15, 23, 42, 0.85));
+        border: 1px solid color-mix(in srgb, var(--a) 42%, transparent);
+    }
+    .tb-mark { position: relative; flex: 0 0 40px; height: 40px; display: grid; place-items: center; }
+    .tb-cup { font-size: 21px; position: relative; z-index: 1; }
+    .tb-pulse {
+        position: absolute; inset: 0; border-radius: 50%;
+        background: color-mix(in srgb, var(--a) 30%, transparent);
+        animation: hubTbPulse 2.4s ease-in-out infinite;
+    }
+    @keyframes hubTbPulse {
+        0%, 100% { transform: scale(0.82); opacity: 0.55; }
+        50%      { transform: scale(1.06); opacity: 0.18; }
+    }
+    .tb-done .tb-pulse { animation: none; opacity: 0.5; }
+    @media (prefers-reduced-motion: reduce) {
+        .tb-pulse { animation: none; opacity: 0.45; }
+    }
+    .tb-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .tb-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .tb-title {
+        font-size: 14px; font-weight: 900; letter-spacing: 0.2px; color: #f1f5f9;
+    }
+    .tb-round {
+        font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+        padding: 3px 8px; border-radius: 5px;
+        color: #e2e8f0;
+        background: color-mix(in srgb, var(--a) 26%, transparent);
+        border: 1px solid color-mix(in srgb, var(--a) 40%, transparent);
+    }
+    .tb-win { background: color-mix(in srgb, var(--a) 44%, transparent); color: #f8fafc; }
+    .tb-of, .tb-bo { font-size: 10px; font-weight: 700; color: #64748b; }
+    .tb-sub { font-size: 11px; font-weight: 600; color: #94a3b8; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tb-vs { color: #475569; }
+    .tb-opp { color: var(--o); font-weight: 800; }
+    .tb-when { color: #475569; }
+
     .fx { display: flex; flex-direction: column; gap: 16px; }
     .fx-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+    /* A knockout tie gets the loudest chip on the card and a lit edge on the
+       whole panel: lose this one and the season is over, which nothing on this
+       screen used to say. */
+    .fx-ko {
+        font-size: 8.5px; font-weight: 900; letter-spacing: 1.1px; text-transform: uppercase;
+        padding: 3px 8px; border-radius: 5px;
+        color: #fde68a;
+        background: rgba(234, 179, 8, 0.16);
+        border: 1px solid rgba(234, 179, 8, 0.45);
+    }
+    .next-ko { border-color: rgba(234, 179, 8, 0.38); }
     .fx-tag {
         font-size: 8.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
         padding: 3px 8px; border-radius: 5px;
