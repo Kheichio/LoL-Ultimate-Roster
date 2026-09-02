@@ -268,6 +268,42 @@ export const GEAR_MAX_TIER = 5;
  *  "how many splits until I can afford another camp". */
 export const CEILING_PURCHASE_MAX = 3;
 
+/**
+ * THE THREE CONSUMABLE BOUNDS. Gold is renewable and a week is not, so an item
+ * that is merely priced is not bounded at all: the answer to "can I do this
+ * again" was, for every one of the fifteen items below, "yes, as many times as
+ * you can click". buyConsumable(id, 999) was legal, useConsumable() charged no
+ * activity slot and wrote no counter, and the only bound in the whole system was
+ * CEILING_PURCHASE_MAX above - which caps one item's EFFECT, not its use.
+ *
+ *   CONSUMABLE_HOLD_MAX   how many of one item may be HELD at once. Global
+ *                         default; an item may override it with its own
+ *                         `holdMax` field. This is the bulk-buying bound.
+ *   item.maxPerWeek       how many may be USED in one week. Ledger:
+ *                         weekly.counts['cons:' + id].
+ *   item.maxPerCareer     how many may be USED in a whole career. Ledger:
+ *                         flags.consumablesUsed[id].
+ *
+ * All three are DATA on the item, read by exactly one function
+ * (consumableAllowance) which buyConsumable, useConsumable and
+ * consumableSection all go through - so a cap can never mean two things and a
+ * new item stays a data edit and nothing else. An item with neither field is
+ * uncapped by use and bounded only by the hold cap, which is correct for the
+ * buff items: pushBuff() refreshes rather than stacks, so a second one inside
+ * its own window buys nothing.
+ */
+export const CONSUMABLE_HOLD_MAX = 5;
+
+/** Prefix for the per-week use ledger inside weekly.counts.
+ *
+ *  weekly.counts is REUSED rather than a new weekly.* key added on purpose:
+ *  engine.startCareerWeek rebuilds `weekly` from a literal every week, so a new
+ *  top-level key would be deleted every week AND fail careerSmoke's shape check,
+ *  while weekly.counts already exists, is already rebuilt, and is already
+ *  hydrate-sanitised to a non-negative integer map. The prefix is what keeps the
+ *  consumable ids and the activity ids permanently non-colliding. */
+export const CONSUMABLE_WEEK_KEY = 'cons:';
+
 // ---------------------------------------------------------------------------
 //  CONSUMABLES
 //  Single use. The `effect` block is the whole contract - useConsumable() reads
@@ -288,24 +324,50 @@ export const CEILING_PURCHASE_MAX = 3;
 //  attrXP is in ATTRIBUTE POINTS, not some separate XP scale: applyAttrGain()
 //  multiplies it by gainCurve() and rounds, so anything under ~1.0 is eaten by
 //  rounding and anything over ~3 trivialises a training week.
+//
+//  Two more fields sit OUTSIDE `effect` because they bound the item rather than
+//  describe it - see CONSUMABLE_HOLD_MAX above:
+//
+//    maxPerWeek    uses allowed in one week   (weekly.counts['cons:' + id])
+//    maxPerCareer  uses allowed in a career   (flags.consumablesUsed[id])
+//    holdMax       overrides CONSUMABLE_HOLD_MAX for this item
+//
+//  They are sized to bite SPAM and not ordinary play: one psychologist session
+//  or one all-nighter a week is what a real week looks like, ten of either is
+//  the exploit. Morale is not an isolated meter - it feeds
+//  training.moraleFactor(), the MORALE_FLOOR_AT floor in match.successChance()
+//  and the burnout ladder - so every number here is a training and rating
+//  change as well as an economy one. RE-MEASURE with careerSmoke rather than
+//  tuning them by intuition.
 // ---------------------------------------------------------------------------
 export const CONSUMABLES = [
     {
         id: 'energy_drink', name: 'Energy Drink', icon: '\u{1F964}', cost: 60,
+        // Two a week. The cheapest item on the page, so it is the one that most
+        // obviously defeats the energy budget if it is uncapped, but it is also
+        // small enough that one is not a decision.
+        maxPerWeek: 2,
         desc: 'Thirty energy now, a small bill from your body later.',
         effect: { condition: { energy: 30, health: -2 } },
     },
     {
         id: 'sleep_kit', name: 'Sleep Therapy Kit', icon: '\u{1F6CF}', cost: 220,
+        maxPerWeek: 1,
         desc: 'Blackout blinds, a blue-light filter and an alarm you actually respect.',
         effect: { condition: { energy: 45, morale: 4 } },
     },
     {
         id: 'sports_massage', name: 'Sports Massage', icon: '\u{1F486}', cost: 320,
+        maxPerWeek: 1,
         desc: 'Forty minutes of somebody undoing what the last three weeks did to your shoulders.',
         effect: { condition: { health: 20, energy: 8 } },
     },
     {
+        // The four buff items (this, focus_supplement, bootcamp_pass and
+        // agent_retainer) carry NO use cap on purpose: pushBuff() refreshes
+        // rather than stacks, so a second one inside its own window buys
+        // nothing, and OFFER_BONUS_CAP already bounds the retainer. They still
+        // take the default CONSUMABLE_HOLD_MAX like everything else.
         id: 'wrist_brace', name: 'Wrist Brace', icon: '\u{1FA79}', cost: 260,
         desc: 'Unglamorous, slightly restrictive, and the reason careers reach twenty-six.',
         effect: {
@@ -323,16 +385,25 @@ export const CONSUMABLES = [
     },
     {
         id: 'meta_report', name: 'Patch Meta Report', icon: '\u{1F4CA}', cost: 340,
+        // Permanent progress bought outside the activity budget and costing no
+        // slot: without a weekly bound this is simply a training week you can
+        // buy as many times as you have gold for.
+        maxPerWeek: 1,
         desc: 'Somebody else did the spreadsheet. Item math, powerspikes and what is about to be broken.',
         effect: { attrXP: { knw: 1.0, chp: 1.0 } },
     },
     {
         id: 'pr_blast', name: 'Social Media Push', icon: '\u{1F4E3}', cost: 400,
+        // Followers are never spent, only gated against - they are the gate on
+        // the lifestyle ladder and on every sponsor. Buying them without limit
+        // turns both of those gates into a gold price.
+        maxPerWeek: 2,
         desc: 'A clip package, a thumbnail, and forty-eight hours of somebody else pushing it.',
         effect: { followers: 1500 },
     },
     {
         id: 'team_dinner', name: 'Team Dinner', icon: '\u{1F35C}', cost: 480,
+        maxPerWeek: 1,
         desc: 'You pay, nobody talks about the split, and the scrim block goes better on Monday.',
         effect: {
             chemistry: 9,
@@ -342,11 +413,18 @@ export const CONSUMABLES = [
     },
     {
         id: 'vod_package', name: 'Analyst VOD Package', icon: '\u{1F4FC}', cost: 620,
+        maxPerWeek: 1,
         desc: 'Forty games cut down to the twenty minutes where somebody better than you made a decision.',
         effect: { attrXP: { knw: 1.6, map: 1.2 } },
     },
     {
+        // PER WEEK ONLY, and NEVER per career. engine.js names this item as one
+        // of the escapes from the burnout ladder, and the ladder's SECOND STRIKE
+        // TERMINATES THE CONTRACT - a career cap on it could make a burnout
+        // spiral unescapable, which is a save-ending bug rather than a balance
+        // one. If a future change adds maxPerCareer here, it is wrong.
         id: 'psych_session', name: 'Sports Psychologist Session', icon: '\u{1F9E0}', cost: 700,
+        maxPerWeek: 1,
         desc: 'An hour on why game five feels different, and what to do with your hands when it does.',
         effect: {
             condition: { morale: 22, form: 5 },
@@ -354,7 +432,13 @@ export const CONSUMABLES = [
         },
     },
     {
+        // THE ENGINE OF THE WHOLE SPAM LOOP, and the reason this section exists.
+        // `actions` raises weekly.actionsLeft with no ceiling against actionsMax,
+        // so it is the only mechanic in the mode that can exceed the weekly
+        // activity budget - and an uncapped one buys an unbounded week, which
+        // then buys unbounded everything else. One a week.
         id: 'all_nighter', name: 'All-Nighter', icon: '\u{1F319}', cost: 900,
+        maxPerWeek: 1,
         desc: 'One more activity this week, paid for out of next week. The oldest bad idea in the scene.',
         effect: {
             actions: 1,
@@ -363,6 +447,7 @@ export const CONSUMABLES = [
     },
     {
         id: 'private_coaching', name: 'Private Coaching Session', icon: '\u{1F9D1}\u{200D}\u{1F3EB}', cost: 1100,
+        maxPerWeek: 1,
         desc: 'Two hours with somebody who has already done it, aimed straight at the attribute your role lives on.',
         effect: {
             attrXP: { ROLE_PRIMARY: 2.4 },
@@ -383,7 +468,16 @@ export const CONSUMABLES = [
         // a whole career -- gold is renewable and a ceiling is not, so without
         // that bound a veteran with a decade of wages simply buys 99 in
         // everything. The first cut of this had no bound and did exactly that.
+        //
+        // maxPerCareer is CEILING_PURCHASE_MAX expressed by COUNT rather than by
+        // rounded OVR. The old budget charged a ROUNDED role-weighted OVR
+        // difference, which stops charging entirely once the high-weight
+        // ceilings reach ATTR_MAX while the item keeps raising the rest - i.e.
+        // the bound quietly stopped existing exactly when it mattered. A count
+        // cannot leak that way, and it also stops the player buying a fourth
+        // camp they can never use.
         id: 'performance_camp', name: 'Performance Camp', icon: '\u{1F3D4}', cost: 26000,
+        maxPerCareer: CEILING_PURCHASE_MAX,
         desc: 'Ten days at altitude with sports scientists, a biomechanist and nobody to scrim. You come back with a different upper limit.',
         effect: {
             potentialXP: { ALL: 1 },
@@ -1159,7 +1253,7 @@ export function unsignedCapFor(c) {
  *
  * DERIVED, never stored. Capacity comes straight out of `inventory.perks`, so
  * everyone who already bought these perks gets their slot the instant this
- * ships — no reconciliation pass, no `flags.perksApplied` bookkeeping, and
+ * ships - no reconciliation pass, no `flags.perksApplied` bookkeeping, and
  * nothing to forget when a perk list changes.
  *
  * The perks used to be wired to a comfort SCALAR read only on 'pocket' draws
@@ -1254,11 +1348,134 @@ export function buyGear(categoryId, tier) {
 // ---------------------------------------------------------------------------
 //  PURCHASING - CONSUMABLES
 // ---------------------------------------------------------------------------
+/** Non-negative integer map reader, tolerant of a hand-edited or rotten save.
+ *  Both ledgers this file writes are already hydrate-sanitised to exactly this
+ *  shape; this is what makes the reader safe when it is handed a bare object. */
+function countMapOf(v) {
+    return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+}
+
+function countOf(map, key) {
+    const n = Math.round(Number(map[key]));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * THE ONE PLACE A CONSUMABLE CAP IS DECIDED.
+ *
+ * buyConsumable(), useConsumable() and consumableSection() all read this, which
+ * is the whole point: a cap enforced in the action and re-derived in the view
+ * model is a cap that means two different things the first time either side is
+ * edited, and the player meets the difference as an error toast on an enabled
+ * button. Same rule lifestyleAgeGate() exists for.
+ *
+ * Pure. Reads three ledgers and writes none:
+ *   weekly.counts['cons:' + id]   uses this week
+ *   flags.consumablesUsed[id]     uses this career
+ *   inventory.consumables[id]     how many are in the bag
+ *
+ * Returns, always, every field:
+ *   usedWeek, usedCareer   integers, what has been spent
+ *   weekLeft, careerLeft   uses remaining, or Infinity when the item is uncapped
+ *   holdLeft               how many more may be BOUGHT (already clamped by
+ *                          careerLeft, so nobody buys a camp they cannot use)
+ *   held                   how many are in the bag right now
+ *   weekCap, careerCap     the caps themselves, 0 meaning "uncapped"
+ *   holdCap                the hold cap that applied
+ *   blocked, reason        whether a USE is refused right now, and why
+ *   limitLabel             a ready-made string for the UI - never Infinity
+ *
+ * The ceiling budget (CEILING_PURCHASE_MAX) is folded into `reason` rather than
+ * being checked separately by useConsumable, so there is exactly one place that
+ * says why an item cannot be used.
+ */
+export function consumableAllowance(c, item) {
+    const it = (typeof item === 'string') ? CONSUMABLE_BY_ID[item] : item;
+    const blank = {
+        usedWeek: 0, usedCareer: 0,
+        weekLeft: 0, careerLeft: 0, holdLeft: 0, held: 0,
+        weekCap: 0, careerCap: 0, holdCap: 0,
+        blocked: true, reason: 'No such item.', limitLabel: '',
+    };
+    if (!it || !it.id) return blank;
+
+    const s = st(c);
+    const id = it.id;
+    const counts = countMapOf(s && s.weekly && s.weekly.counts);
+    const careerUsed = countMapOf(s && s.flags && s.flags.consumablesUsed);
+
+    const usedWeek = countOf(counts, CONSUMABLE_WEEK_KEY + id);
+    const usedCareer = countOf(careerUsed, id);
+    const held = Math.max(0, Math.round(Number(s?.inventory?.consumables?.[id]) || 0));
+
+    const weekCap = Math.max(0, Math.round(Number(it.maxPerWeek) || 0));
+    const careerCap = Math.max(0, Math.round(Number(it.maxPerCareer) || 0));
+    const holdCap = Math.max(1, Math.round(Number(it.holdMax) || CONSUMABLE_HOLD_MAX));
+
+    const weekLeft = weekCap > 0 ? Math.max(0, weekCap - usedWeek) : Infinity;
+    const careerLeft = careerCap > 0 ? Math.max(0, careerCap - usedCareer) : Infinity;
+
+    // A career cap bounds the BAG as well as the week: holding four camps when
+    // one use remains is gold spent on nothing, so the purchase is clamped to
+    // whatever is still usable rather than to the raw hold cap.
+    let holdLeft = Math.max(0, holdCap - held);
+    if (careerLeft !== Infinity) holdLeft = Math.min(holdLeft, Math.max(0, careerLeft - held));
+
+    // Bought ceiling is bounded for a whole career on top of the count cap, and
+    // stays a separate clause because a save from before the count cap existed
+    // can be over the OVR budget without ever having tripped the count.
+    const ceilingSpent = Math.max(0, Number(s?.flags?.boughtCeilingOVR) || 0);
+    const buysCeiling = !!(it.effect && it.effect.potentialXP);
+
+    let blocked = false;
+    let reason = '';
+    if (careerLeft <= 0) {
+        blocked = true;
+        reason = `${it.name} is bounded for the career - you have used all ${careerCap}.`;
+    } else if (buysCeiling && ceilingSpent >= CEILING_PURCHASE_MAX) {
+        blocked = true;
+        reason = `There is nothing left for a camp to find. You have taken ${CEILING_PURCHASE_MAX} rating of ceiling this way already.`;
+    } else if (weekLeft <= 0) {
+        blocked = true;
+        reason = weekCap === 1
+            ? `One ${it.name} a week. Come back next week.`
+            : `${weekCap} x ${it.name} a week, and you have used them. Come back next week.`;
+    }
+
+    let limitLabel = '';
+    if (careerCap > 0) {
+        limitLabel = `${Math.max(0, careerLeft)} of ${careerCap} left this career`;
+    } else if (weekCap > 0) {
+        limitLabel = `${Math.max(0, weekLeft)} of ${weekCap} left this week`;
+    }
+
+    return {
+        usedWeek, usedCareer,
+        weekLeft, careerLeft, holdLeft, held,
+        weekCap, careerCap, holdCap,
+        blocked, reason, limitLabel,
+    };
+}
+
 export function buyConsumable(id, qty = 1) {
     const item = CONSUMABLE_BY_ID[id];
     if (!item) return fail('No such item.');
 
-    const n = Math.max(1, Math.round(Number(qty) || 1));
+    const c = snapshot();
+    const allow = consumableAllowance(c, item);
+
+    // GATE BEFORE SPEND. The quantity is clamped against the bag cap and the
+    // career budget here, before a single gold leaves the account - a purchase
+    // that is refused must cost nothing, and one that is trimmed must charge for
+    // what it actually delivered rather than for what was asked.
+    const want = Math.max(1, Math.round(Number(qty) || 1));
+    if (allow.holdLeft <= 0) {
+        return fail(allow.careerCap > 0 && allow.careerLeft <= allow.held
+            ? `You are holding every ${item.name} this career has left.`
+            : `You can only carry ${allow.holdCap} x ${item.name}. Use one first.`);
+    }
+    const n = Math.min(want, allow.holdLeft);
+
     const total = item.cost * n;
     if (!spendGold(total)) {
         return fail(`Not enough gold. ${n} x ${item.name} costs ${fmtGold(total)}.`);
@@ -1267,9 +1484,10 @@ export function buyConsumable(id, qty = 1) {
     addConsumable(id, n);
     playSound('claim');
     saveCareer();
+    const trimmed = n < want ? ` (${want} asked, bag holds ${allow.holdCap})` : '';
     return done(n > 1
-        ? `Bought ${n} x ${item.name} for ${fmtGold(total)} gold.`
-        : `Bought ${item.name} for ${fmtGold(total)} gold.`);
+        ? `Bought ${n} x ${item.name} for ${fmtGold(total)} gold${trimmed}.`
+        : `Bought ${item.name} for ${fmtGold(total)} gold${trimmed}.`);
 }
 
 /** The attribute a role's rating leans on hardest - the ROLE_PRIMARY target. */
@@ -1321,13 +1539,14 @@ export function useConsumable(id) {
         return fail(`${item.name} needs a roster to use it on.`);
     }
 
-    // Bought ceiling is bounded for a whole career. Checked BEFORE the item is
-    // consumed, so a player at the limit keeps the item and their gold rather
-    // than paying for nothing.
+    // Every use bound in one clause: per week, per career, and the ceiling
+    // budget. Checked BEFORE anything is consumed, so a player at a limit keeps
+    // the item and their gold rather than paying for nothing - same ordering
+    // rule as buyPerk()'s prerequisite check.
+    const allow = consumableAllowance(c, item);
+    if (allow.blocked) return fail(allow.reason);
+
     const ceilingSpent = Math.max(0, Number(c?.flags?.boughtCeilingOVR) || 0);
-    if (eff.potentialXP && ceilingSpent >= CEILING_PURCHASE_MAX) {
-        return fail(`There is nothing left for a camp to find. You have taken ${CEILING_PURCHASE_MAX} rating of ceiling this way already.`);
-    }
 
     const parts = [];
 
@@ -1352,15 +1571,24 @@ export function useConsumable(id) {
 
     // Ceiling points. Unlike attrXP these are NOT put through gainCurve - they
     // move potential itself, which is the whole reason to buy them.
+    //
+    // THE BUDGET IS CHARGED BY WHAT THE CEILING ACTUALLY ROSE BY, not by a
+    // rounded role-weighted OVR difference. That was a real leak: calcOVR() is
+    // rounded and role-weighted, so once the two or three high-weight ceilings
+    // reached ATTR_MAX the difference rounded to zero, the budget stopped
+    // charging, and the camp kept raising every other ceiling for ever - the
+    // bound quietly stopped existing exactly where it was supposed to bite. The
+    // largest per-attribute rise is 1 for the Performance Camp, so
+    // CEILING_PURCHASE_MAX still means three points of bought ceiling and
+    // maxPerCareer says the same thing by count.
     if (eff.potentialXP) {
-        const potBefore = calcOVR(c.player.potential, c.player.role);
         const rose = raisePotential(resolveAttrXP(eff.potentialXP, c.player.role));
         const roseKeys = Object.keys(rose);
         if (roseKeys.length) {
-            const potAfter = calcOVR(snapshot().player.potential, c.player.role);
+            const charge = Math.max(1, ...roseKeys.map(k => Math.max(0, Number(rose[k]) || 0)));
             career.update(x => ({
                 ...x,
-                flags: { ...x.flags, boughtCeilingOVR: ceilingSpent + Math.max(0, potAfter - potBefore) },
+                flags: { ...x.flags, boughtCeilingOVR: ceilingSpent + charge },
             }));
             parts.push(roseKeys.length === ATTR_KEYS.length
                 ? `+${rose[roseKeys[0]]} to every ceiling`
@@ -1404,11 +1632,38 @@ export function useConsumable(id) {
 
     addConsumable(id, -1);
 
+    // Both ledgers are bumped AFTER the effect block, beside the bag decrement
+    // and never before it - the same deliberate ordering doActivity uses for
+    // weekly.counts, which is what makes the FIRST use of a week free of any
+    // repeat cost. Counting first would charge a use for itself.
+    //
+    // weekly.counts is reused with the 'cons:' prefix rather than a new weekly
+    // key: engine.startCareerWeek rebuilds `weekly` from a literal, so a new
+    // top-level key would be wiped every week and fail careerSmoke's shape
+    // check. flags.* is free-form and spread first by hydrate, so
+    // consumablesUsed carries a career across a save reload for free.
+    career.update(x => {
+        const counts = (x.weekly && typeof x.weekly.counts === 'object' && x.weekly.counts
+            && !Array.isArray(x.weekly.counts)) ? x.weekly.counts : {};
+        const used = (x.flags && typeof x.flags.consumablesUsed === 'object' && x.flags.consumablesUsed
+            && !Array.isArray(x.flags.consumablesUsed)) ? x.flags.consumablesUsed : {};
+        const wk = CONSUMABLE_WEEK_KEY + id;
+        return {
+            ...x,
+            weekly: { ...x.weekly, counts: { ...counts, [wk]: countOf(counts, wk) + 1 } },
+            flags: { ...x.flags, consumablesUsed: { ...used, [id]: countOf(used, id) + 1 } },
+        };
+    });
+
     // The one place the card database earns its keep in this module.
+    // A cap the player only meets as a refusal reads as a bug, so the week log
+    // says what is left the moment a bounded item is used.
+    const after = consumableAllowance(null, item);
+    const leftNote = after.limitLabel ? ` ${after.limitLabel}.` : '';
     if (id === 'vod_package') {
-        addNews(`Watched a cut of ${sampleProName(c.player.region)} VODs until the patterns stopped looking like luck.`, 'training');
+        addNews(`Watched a cut of ${sampleProName(c.player.region)} VODs until the patterns stopped looking like luck.${leftNote}`, 'training');
     } else {
-        addNews(`Used ${item.name}.`, 'system');
+        addNews(`Used ${item.name}.${leftNote}`, 'system');
     }
 
     playSound('click');
@@ -1785,22 +2040,61 @@ function consumableSection(c) {
     const hasClub = !!(c && c.player && c.player.clubId);
 
     const items = CONSUMABLES.map(item => {
-        const held = Math.round(Number(c?.inventory?.consumables?.[item.id]) || 0);
+        // EVERY gate resolved here, including the caps and the ceiling budget.
+        // The component renders flags, never rules - a bound that lives only in
+        // useConsumable() is a bound the player meets as an error toast on a
+        // button that looked enabled, which is exactly how the lifestyle age
+        // gate shipped and exactly how the ceiling budget was shipping until
+        // this: the Performance Camp rendered a live Use button at the cap.
+        const allow = consumableAllowance(c, item);
+        const held = allow.held;
         const affordable = gold >= item.cost;
         const needsClub = !!(item.effect && item.effect.needsClub);
         const clubLocked = needsClub && !hasClub;
+
+        // BUY side.
+        const bagFull = allow.holdLeft <= 0;
         let lockReason = '';
         if (clubLocked) lockReason = 'Needs a club';
-        else if (!affordable) lockReason = `Need ${fmtGold(item.cost - gold)} more gold`;
+        else if (bagFull) {
+            lockReason = allow.careerCap > 0 && allow.careerLeft <= held
+                ? 'Nothing left this career'
+                : `Bag full (${allow.holdCap} max)`;
+        } else if (!affordable) lockReason = `Need ${fmtGold(item.cost - gold)} more gold`;
+
+        // USE side. Kept as its OWN string: "you cannot buy another" and "you
+        // cannot use this one" are different sentences and a shop that
+        // collapses them tells the player the wrong one about half the time.
+        let useLockReason = '';
+        if (held < 1) useLockReason = 'None in the bag';
+        else if (clubLocked) useLockReason = 'Needs a club';
+        else if (allow.blocked) useLockReason = allow.reason;
+
         return {
             kind: 'consumable',
             ...item,
             currency: 'gold',
             held,
-            usable: held > 0 && !clubLocked,
+            usable: !useLockReason,
+            useLocked: !!useLockReason,
+            useLockReason,
+            // Remaining-uses numbers, plus a pre-rendered label so no component
+            // ever has to print an Infinity. weekCap / careerCap are 0 when the
+            // item is uncapped, which is the flag to test before showing a
+            // number rather than testing the number itself.
+            weekCap: allow.weekCap,
+            careerCap: allow.careerCap,
+            holdCap: allow.holdCap,
+            usesLeftWeek: allow.weekCap > 0 ? allow.weekLeft : null,
+            usesLeftCareer: allow.careerCap > 0 ? allow.careerLeft : null,
+            usedWeek: allow.usedWeek,
+            usedCareer: allow.usedCareer,
+            buyLimit: allow.holdLeft,
+            capped: allow.weekCap > 0 || allow.careerCap > 0,
+            limitLabel: allow.limitLabel,
             owned: held > 0,
             affordable,
-            locked: clubLocked || !affordable,
+            locked: clubLocked || bagFull || !affordable,
             lockReason,
         };
     });
@@ -1808,7 +2102,7 @@ function consumableSection(c) {
     return {
         id: 'consumables',
         name: 'Consumables',
-        blurb: 'Single use, bought in bulk, kept in the bag until the week you need them. Nothing here is a substitute for training - it is a way to survive the week you cannot train.',
+        blurb: `Single use, bought in bulk, kept in the bag until the week you need them. ${CONSUMABLE_HOLD_MAX} of any one item at a time, and the ones that would otherwise buy a week you did not earn are capped per week on top. Nothing here is a substitute for training - it is a way to survive the week you cannot train.`,
         currency: 'gold',
         items,
     };

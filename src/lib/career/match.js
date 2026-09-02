@@ -23,6 +23,7 @@ import {
     PHASES, phaseForWeek, teamById, ARCHETYPE_BIAS, biasDistance,
     championsForRole, championsForStyle, championMatchup, matchupLabel,
     proficiency01, proficiencyBand,
+    metaTierFor, metaLabelFor, splitForWeek,
 } from './constants.js';
 import {
     clamp, randInt, pick, bell, calcOVR, statusInfo, fmtKDA,
@@ -217,8 +218,8 @@ export function signatureIds(c) {
 }
 
 // ---------------------------------------------------------------------------
-//  MATCHUP AND PROFICIENCY
-//  Two terms, and they are deliberately built to cancel out across a career.
+//  MATCHUP, PROFICIENCY AND META
+//  Three terms, and they are deliberately built to cancel out across a career.
 //
 //  MATCHUP is symmetric: championMatchup() runs -2.5..+2.5 and a good lane pays
 //  exactly what a bad one costs, so it adds variance and a real reason to think
@@ -230,8 +231,22 @@ export function signatureIds(c) {
 //  would drift upward as it accumulated games - and careerSmoke fails a run
 //  outright once the mean match rating passes 7.6, which currently has about a
 //  tenth of a point of headroom.
+//
+//  META is symmetric for the same reason MATCHUP is, and by construction rather
+//  than by tuning: constants.metaFor() bands each role's pool with equal strong
+//  and weak fractions (META_STRONG_FRACTION === META_WEAK_FRACTION), so a strong
+//  pick pays EXACTLY what a weak pick costs and the contested middle pays
+//  nothing. Across a career the two bands cancel and the mean rating does not
+//  drift. A pure "strong picks are better" bonus would be a permanent rise on
+//  every rating in the mode, straight at the 7.6 hard fail, which has only about
+//  0.24 of headroom over the measured 7.36 - so if this ever needs to be made
+//  bigger, it gets bigger in BOTH directions or not at all.
+//
+//  The reference magnitude is documented in constants.js as META_STEP_REF; the
+//  LIVE constant is owned here, because this is the file careerSmoke measures.
 // ---------------------------------------------------------------------------
 const MATCHUP_STEP = 0.035;          // one counter step. A hard counter is +/-7%
+const META_STEP = 0.035;             // +/-3.5% for a strong / weak split pick
 const PROFICIENCY_SWING = 0.14;
 const PROFICIENCY_NEUTRAL = 0.65;    // mastery at which proficiency stops costing
 /** How much mastery protects you from a losing lane. Applied to BAD matchups
@@ -658,6 +673,9 @@ export function draftOption(c, match, championId) {
     const prof = proficiency01(games);
     // A blind pick cannot be scored against a lane you have not seen yet.
     const matchup = (d.counter && mine && theirs) ? championMatchup(mine, theirs) : 0;
+    // Where this pick sits in THIS split's meta. Unlike the matchup it is known
+    // before the enemy pick, so it is scored on a blind pick too.
+    const meta = mine ? metaTierNow(state, mine.id) : 0;
 
     return {
         id: championId,
@@ -671,10 +689,13 @@ export function draftOption(c, match, championId) {
         band: proficiencyBand(prof),
         matchup,
         matchupLabel: matchupLabel(matchup),
-        // What the two terms are worth on this pick, so the screen can show the
-        // real numbers rather than a vibe.
+        meta,
+        metaLabel: metaLabelFor(meta),
+        // What the three terms are worth on this pick, so the screen can show
+        // the real numbers rather than a vibe.
         matchupSwing: matchupSwingFor(matchup, prof),
         proficiencySwing: (prof - PROFICIENCY_NEUTRAL) * PROFICIENCY_SWING,
+        metaSwing: meta * META_STEP,
     };
 }
 
@@ -686,6 +707,23 @@ function burnoutBenchedNow(state) {
     if (!until) return false;
     const t = (state && state.time) || {};
     return until > (Number(t.year) || 0) * 40 + (Number(t.week) || 1);
+}
+
+/**
+ * Which meta band a champion sits in for the split this career is CURRENTLY in.
+ *
+ * The split is derived from the calendar here rather than imported from
+ * engine.js: engine.js already imports this file, so reaching back for it would
+ * be a cycle that breaks careerRender's Vite SSR module graph. constants.js owns
+ * splitForWeek() precisely so both sides can read the same answer without one
+ * importing the other.
+ *
+ * Never throws and reads 0 (contested) for an unknown id - champion ids are
+ * permanent persisted save data and a save carrying one this build has dropped
+ * must play, not break.
+ */
+function metaTierNow(state, championId) {
+    return metaTierFor(championId, yearOf(state), splitForWeek(weekOf(state)));
 }
 
 /** A losing lane hurts less the better you know the champion. A winning one is
@@ -906,8 +944,10 @@ export function successChance(c, match, option, event) {
         chance += OFFSCRIPT_PENALTY;
     }
 
-    // Lane matchup and how well you know the pick. Both only apply once a
-    // champion has actually been chosen.
+    // Lane matchup, the split meta, and how well you know the pick. All three
+    // only apply once a champion has actually been chosen, so a benched game, a
+    // save from before champion select existed and any match with no pick keep
+    // their arithmetic exactly as it was.
     if (playing && draft && draft.picked) {
         const prof = proficiency01(num(p.proficiency && p.proficiency[playing.id], 0));
         chance += (prof - PROFICIENCY_NEUTRAL) * PROFICIENCY_SWING;
@@ -915,6 +955,11 @@ export function successChance(c, match, option, event) {
         // A blind pick is not scored against a lane you could not see.
         const theirs = draft.counter ? CHAMPION_BY_ID[draft.enemyId] : null;
         if (theirs) chance += matchupSwingFor(championMatchup(playing, theirs), prof);
+
+        // The split meta. Symmetric: +META_STEP strong, -META_STEP weak, and
+        // exactly nothing for the contested middle. Scored on a blind pick too -
+        // what patch it is does not depend on seeing the enemy pick.
+        chance += metaTierNow(state, playing.id) * META_STEP;
     }
 
     // The map read. Nothing in the option text says which one this is.
@@ -1250,13 +1295,33 @@ const LOSS_STREAK_SCAN = 12;
  * [...freshSplitRows, ...carriedBracketRows] and MSI is carried into summer, so
  * the raw tail holds the OLDEST games of the half-year. Wrapped, because a
  * rotten schedule must cost the player nothing rather than break a match.
+ *
+ * TWO things are deliberately NOT counted:
+ *
+ *   - A season block belonging to somebody else. season.clubId is stamped when
+ *     the fixture list is drawn and ensureSeason() only redraws in preseason,
+ *     spring and summer, so between a transfer and the next drawing phase the
+ *     block legitimately still holds the OLD club's rows. Charging those to the
+ *     first game at the new club bills a player for a losing run he left behind.
+ *   - Games the player did not play, which applyMatchResult writes with
+ *     `myRating === null`. Every other morale sink in the mode is suppressed
+ *     during a burnout bench because the bench is a recovery, not a trap; this
+ *     one would otherwise charge a returning player for defeats he watched.
+ *     Strictly `=== null`, so a row from before that field existed (undefined)
+ *     keeps counting exactly as it used to.
  */
 function priorLossStreak(state) {
     try {
-        const rows = (state && state.season && Array.isArray(state.season.schedule))
-            ? state.season.schedule : [];
+        const season = (state && state.season) || {};
+        // Normalised, because an unsigned career is a legitimate null === null
+        // while an older save can carry undefined against it.
+        const seasonClub = season.clubId || null;
+        const myClub = (state && state.player && state.player.clubId) || null;
+        if (seasonClub !== myClub) return 0;
+
+        const rows = Array.isArray(season.schedule) ? season.schedule : [];
         const played = rows
-            .filter(f => f && f.played === true)
+            .filter(f => f && f.played === true && f.myRating !== null)
             .sort((a, b) => num(a.week, 0) - num(b.week, 0))
             .slice(-LOSS_STREAK_SCAN);
         let n = 0;
@@ -1270,6 +1335,17 @@ function priorLossStreak(state) {
     } catch (e) {
         return 0;
     }
+}
+
+/** Plain-English ordinal for a run of defeats. The list only has to reach the
+ *  length of a run anybody actually sees; the numeral is the fallback. */
+const DEFEAT_ORDINALS = [
+    '', 'First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth',
+    'Seventh', 'Eighth', 'Ninth', 'Tenth',
+];
+function defeatOrdinal(n) {
+    const i = Math.max(1, Math.round(num(n, 1)));
+    return DEFEAT_ORDINALS[i] || `${i}th`;
 }
 
 function seriesTightness(bestOf, seriesScore) {
@@ -1334,6 +1410,13 @@ export function finishMatch(c, match) {
     // either way, so the tight series is the one that moves the needle.
     let formDelta = 0;
     let moraleDelta = 0;
+    // Why morale moved, in the player's words. Empty on a clean game and on a
+    // benched one; plain JSON-safe primitives throughout, because the whole
+    // result object is persisted as c.lastMatch and read back after a reload.
+    const moraleNotes = [];
+    let kdaMoralePenalty = 0;
+    let streakMoralePenalty = 0;
+    let lossRun = 0;
     if (played) {
         const base = (rating - 5.6) * 1.8 + (won ? 4 : -4);
         formDelta = Math.round(clamp(base * (0.78 + 0.42 * tight), -14, 14));
@@ -1346,12 +1429,38 @@ export function finishMatch(c, match) {
         const ratio = fmtKDA(kda.k, kda.d, kda.a).ratio;
         const kdaTerm = ratio >= KDA_SOUR_AT ? 0
             : -clamp((KDA_SOUR_AT - ratio) * KDA_MORALE_STEP, 0, KDA_MORALE_MAX);
+        lossRun = won ? 0 : priorLossStreak(state);
         const streakTerm = won ? 0
-            : -clamp(priorLossStreak(state) * LOSS_STREAK_STEP, 0, LOSS_STREAK_MAX);
-        moraleDelta = Math.round(clamp(
-            (won ? 5 : -5) + (rating - 6) * 1.4 + (mvp ? 4 : 0) + kdaTerm + streakTerm,
-            -12, 12,
-        ));
+            : -clamp(lossRun * LOSS_STREAK_STEP, 0, LOSS_STREAK_MAX);
+
+        const baseTerms = (won ? 5 : -5) + (rating - 6) * 1.4 + (mvp ? 4 : 0);
+        moraleDelta = Math.round(clamp(baseTerms + kdaTerm + streakTerm, -12, 12));
+
+        // WHAT THE PLAYER ACTUALLY PAID, not what the term asked for. A lost
+        // series is already -5 + (rating - 6) * 1.4 before either of these, so
+        // at rating 3 the base alone is -9.2 and the +/-12 clamp swallows most
+        // of the two 3-point terms. A note built off the raw term would name a
+        // penalty that was never charged, which is a worse lie than saying
+        // nothing - the whole reason for these lines is that a meter moving
+        // without an explanation reads as a bug.
+        const askedFor = kdaTerm + streakTerm;
+        const paid = clamp(baseTerms + askedFor, -12, 12) - clamp(baseTerms, -12, 12);
+        const survived = askedFor < 0 ? clamp(paid / askedFor, 0, 1) : 0;
+        kdaMoralePenalty = Math.round(kdaTerm * survived);
+        streakMoralePenalty = Math.round(streakTerm * survived);
+
+        // Only when the term is non-zero AFTER rounding: a clean game says
+        // nothing, and neither does a penalty the clamp ate entirely.
+        if (kdaMoralePenalty < 0) {
+            moraleNotes.push(
+                `Sour stat line ${kda.k}/${kda.d}/${kda.a} (${kdaMoralePenalty} morale)`,
+            );
+        }
+        if (streakMoralePenalty < 0) {
+            moraleNotes.push(
+                `${defeatOrdinal(lossRun + 1)} defeat in a row (${streakMoralePenalty} morale)`,
+            );
+        }
     } else {
         formDelta = won ? 0 : -1;
         // Watching from the bench costs morale — unless the club is the one that
@@ -1407,6 +1516,13 @@ export function finishMatch(c, match) {
 
         formDelta,
         moraleDelta,
+        // The breakdown behind moraleDelta. moraleNotes is what the post-match
+        // screens and the week log print; the three numbers are there so a
+        // reader can recompute rather than parse a sentence.
+        moraleNotes,
+        kdaMoralePenalty,
+        streakMoralePenalty,
+        lossRun,
         hypeDelta,
         goldDelta,
         champPoints,
@@ -1460,7 +1576,12 @@ function autoDraft(state, match) {
     let best = null, bestScore = -Infinity;
     for (const id of opts) {
         const o = draftOption(state, match, id);
-        const score = num(o.matchupSwing, 0) + num(o.proficiencySwing, 0) + (o.isSignature ? 0.001 : 0);
+        // The meta swing belongs here for the same reason the other two do:
+        // roughly half of a career's games are simmed, so leaving it out would
+        // have the AI draft blind to the patch for ever, with no symptom
+        // anywhere except a rating that quietly lags a hand-played career.
+        const score = num(o.matchupSwing, 0) + num(o.proficiencySwing, 0)
+            + num(o.metaSwing, 0) + (o.isSignature ? 0.001 : 0);
         if (score > bestScore) { bestScore = score; best = id; }
     }
     return best ? chooseDraft(match, best) : match;
@@ -1582,10 +1703,16 @@ export function applyMatchResult(result) {
     if (num(result.hypeDelta, 0) !== 0) grantFollowers(result.hypeDelta);
 
     addNews(result.headline, 'match');
+    // WHY the morale meter moved, appended to the one line this match already
+    // writes - exactly as doSoloQueue does. Never a SECOND logWeek call: the
+    // store keeps the last 12 entries only, so a second line would push a real
+    // activity off the player's timeline.
+    const notes = Array.isArray(result.moraleNotes) ? result.moraleNotes.filter(Boolean) : [];
     logWeek(
         won ? 'Match won' : 'Match lost',
         `${result.myTeamName} ${gamesWon}-${gamesLost} ${result.opponentName}`
-            + (played ? ` (${num(result.rating, 0).toFixed(1)})` : ' (did not play)'),
+            + (played ? ` (${num(result.rating, 0).toFixed(1)})` : ' (did not play)')
+            + (notes.length ? `. ${notes.join('. ')}` : ''),
         won ? '#22c55e' : '#ef4444',
     );
 

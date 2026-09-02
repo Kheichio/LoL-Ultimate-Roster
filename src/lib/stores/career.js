@@ -92,6 +92,18 @@ export function blankCareer() {
             // being baked into this field.
             studyLang: null,
 
+            // The club this career is aiming to join, or null. null is not "no
+            // goal exists": it means no goal has been CHOSEN yet, so the screens
+            // that offer one still offer it. Stored as a bare team id, exactly
+            // like clubId, so the ids in constants.CLUBS are permanent - hydrate
+            // degrades an unresolvable one back to null rather than guessing.
+            goalClubId: null,
+            // The champion the 'champ_lab' activity banks its games on, or null.
+            // null is not "practising nothing": it means no lab champion has
+            // been picked, and the activity's own default lives with the
+            // activity rather than being baked into this field.
+            practiceChamp: null,
+
             form: 50,
             morale: 65,
             energy: ENERGY_MAX,
@@ -131,6 +143,14 @@ export function blankCareer() {
             momentum: 0,             // -1..1, how the room is going right now
             roster: {},              // ROLE → a replacement card that overrides the derived seat
             changes: [],             // [{ year, role, inName, outName, reason }] newest first
+            // ROLE -> fractional scrim points, 0..SCRIM_SEAT_CAP. Earned by
+            // scrimming with the seat and spent by whatever reads it. It lives
+            // in this block rather than on the player because it belongs to the
+            // ROOM: teamId scopes the whole thing, so a transfer wipes the
+            // scrim book for free and a new club starts cold. Fractional for
+            // the same reason attrs and languages are - a session pays part of
+            // a point and rounding on write would throw all of those away.
+            scrim: {},
         },
 
         season: {
@@ -206,6 +226,31 @@ export function blankCareer() {
             // in flags.eventLog - that cooldown ledger is truncated to its last
             // 60 entries, so a first Worlds would fall off it and fire again.
             firstSeen: {},
+            // CAREER BUDGET for performance-driven attribute decline, mirroring
+            // flags.breakthroughOVR on the other side of the ledger. `ovrLost`
+            // is how much OVR decline has taken so far and `splits` how many
+            // splits it has bitten in. Bounded FOR THE CAREER, not merely
+            // priced: splits are renewable and a rating is not, so a decline
+            // with no budget grinds every long career into the floor.
+            // `attrs` is the LAST split's per-attribute loss, so the Training
+            // screen can say what a bad split cost rather than only that one
+            // happened. Overwritten each time decline bites, never accumulated.
+            decline: { ovrLost: 0, splits: 0, heldTotal: 0, attrs: {} },
+            // attrKey -> drills done on it THIS SPLIT. This is what makes
+            // training mean "maintain" as well as "improve": an attribute that
+            // was trained this split is protected from that split's decline.
+            // Reset by engine.closeSplit, so it lives on flags rather than in
+            // weekly.* - weekly is rebuilt from a literal every WEEK and a split
+            // is ten times longer than that.
+            splitTrained: {},
+            // consumableId -> lifetime uses, for per-career consumable caps. A
+            // lifetime count, so it is never reset by a split or a season.
+            consumablesUsed: {},
+            // The YEAR the goal club was joined, or 0 for "not yet". Year-stamped
+            // rather than boolean for the firstStandBerth reason: a year reads as
+            // truthy identically and is strictly more informative than a `true`
+            // nobody can date.
+            goalReached: 0,
             retired: false,
             hallOfLegends: false,
             seenIntro: false,
@@ -462,6 +507,22 @@ export function hydrateForeignCareer(raw) {
     return hydrate(raw);
 }
 
+/**
+ * A plain `id -> non-negative integer` ledger, cleaned. Anything that is not an
+ * object degrades to {}, and a rotten entry is DROPPED rather than kept at a
+ * negative or a NaN: every map that uses this shape is a ledger of what has
+ * already been spent or done, so a negative would read as free allowance.
+ */
+function countMap(src) {
+    const clean = {};
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return clean;
+    for (const [id, v] of Object.entries(src)) {
+        const n = Math.floor(Number(v));
+        if (Number.isFinite(n) && n > 0) clean[id] = Math.min(n, 9999);
+    }
+    return clean;
+}
+
 /** Merge a loaded save over the blank shape so new fields added in later
  *  versions never come back undefined on an old save. */
 function hydrate(raw) {
@@ -560,6 +621,49 @@ function hydrate(raw) {
                 }
                 return clean;
             })(),
+            // The decline ledger is a career BUDGET, so rot must degrade to
+            // "nothing spent yet" and can never go negative - a negative would
+            // hand the career back free allowance to lose all over again.
+            decline: (() => {
+                const src = out.flags && out.flags.decline;
+                const d = (src && typeof src === 'object' && !Array.isArray(src)) ? src : {};
+                const nn = (v) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0; };
+                // `attrs` is the LAST split's per-attribute loss record, written
+                // by engine.checkDecline and read by training.declinedThisSplit
+                // so the Training screen can show what a bad split actually
+                // cost. It has to be carried through here or it is deleted on
+                // every load and the readout silently reads 0 forever -- the
+                // same invisible-within-one-session failure club.scrim would
+                // have had if it had not been added to the club rebuild.
+                // Fractional (attribute points are), keys filtered to real
+                // attributes, rot degrades to "nothing lost".
+                const attrs = {};
+                const rawAttrs = d.attrs;
+                if (rawAttrs && typeof rawAttrs === 'object' && !Array.isArray(rawAttrs)) {
+                    for (const k of ATTR_KEYS) {
+                        const v = nn(rawAttrs[k]);
+                        if (v > 0) attrs[k] = Math.round(v * 1000) / 1000;
+                    }
+                }
+                return {
+                    ovrLost: nn(d.ovrLost),
+                    splits: Math.round(nn(d.splits)),
+                    heldTotal: Math.round(nn(d.heldTotal)),
+                    attrs,
+                };
+            })(),
+            // Two plain id -> non-negative integer maps. Same treatment as
+            // weekly.counts and inventory.trades: a rotten entry reads as ZERO,
+            // never as a negative. splitTrained decides which attributes are
+            // protected from decline and consumablesUsed is a per-career cap, so
+            // in both cases a negative would be free allowance.
+            splitTrained: countMap(out.flags && out.flags.splitTrained),
+            consumablesUsed: countMap(out.flags && out.flags.consumablesUsed),
+            // A year, exactly like firstStandBerth. Rot reads as "not reached".
+            goalReached: (() => {
+                const y = Math.round(Number(out.flags && out.flags.goalReached));
+                return Number.isFinite(y) && y > 0 ? y : 0;
+            })(),
         };
     }
     out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
@@ -594,11 +698,26 @@ function hydrate(raw) {
         for (const [role, card] of Object.entries(roster)) {
             if (card && typeof card === 'object' && typeof card.name === 'string') seats[role] = card;
         }
+        // The scrim book. This literal REBUILDS club, so a key missing from it
+        // is deleted on every load - which is invisible inside one session,
+        // because the store keeps the value until the page is reloaded. Keys are
+        // filtered to real role ids and values are clamped and NOT ROUNDED: a
+        // scrim session pays a fraction of a point, exactly like a training gain
+        // or a language lesson, so rounding here would shave part of every
+        // session off every time the save is opened.
+        const rawScrim = (raw.scrim && typeof raw.scrim === 'object' && !Array.isArray(raw.scrim)) ? raw.scrim : {};
+        const scrim = {};
+        for (const [role, v] of Object.entries(rawScrim)) {
+            if (!ROLE_BY_ID[role]) continue;
+            const n = Number(v);
+            if (Number.isFinite(n)) scrim[role] = clamp(n, 0, 10);
+        }
         out.club = {
             teamId: typeof raw.teamId === 'string' ? raw.teamId : null,
             momentum: clamp(Number(raw.momentum) || 0, -1, 1),
             roster: seats,
             changes: Array.isArray(raw.changes) ? raw.changes.filter(Boolean).slice(0, 24) : [],
+            scrim,
         };
     }
 
@@ -667,6 +786,21 @@ function hydrate(raw) {
         out.player.studyLang = LANGUAGE_IDS.includes(out.player.studyLang)
             ? out.player.studyLang : null;
     }
+
+    // The goal club is a bare team id and gets the traits/extraChampions
+    // treatment: a club that was renamed away, or a hand-edited save carrying an
+    // object, must read as "no goal chosen" rather than reaching the screens as
+    // an id nothing resolves. NEVER seeded - a save written before goals existed
+    // did not pick one, and inventing one for them would put a target on a
+    // career that never agreed to it.
+    out.player.goalClubId = (typeof out.player.goalClubId === 'string' && teamById(out.player.goalClubId))
+        ? out.player.goalClubId : null;
+
+    // Same rule for the lab champion, validated the way `champion` and
+    // extraChampions are - through CHAMPION_BY_ID, and deliberately NOT through
+    // championsForStyle(): a practice champion is explicitly one you do not main.
+    out.player.practiceChamp = (typeof out.player.practiceChamp === 'string' && CHAMPION_BY_ID[out.player.practiceChamp])
+        ? out.player.practiceChamp : null;
 
     // weekly.counts is the "how many times already this week" ledger the soloq
     // grind cost is priced off. engine.startCareerWeek rebuilds it from a
@@ -955,6 +1089,43 @@ export function applyAttrGain(key, raw) {
 }
 
 /**
+ * Lower one attribute. The missing half of applyAttrGain, and it has to be its
+ * own function rather than a negative gain: applyAttrGain is structurally
+ * one-directional (it takes Math.max(0, raw) and bails unless the result is
+ * GREATER than the current value), and setAttr rounds through clampAttr, which
+ * cannot express a decay of a tenth at all.
+ *
+ * `floor` is a per-caller minimum - a decline system that must not take an
+ * attribute below where it started passes that in - and is itself floored at
+ * ATTR_MIN so no caller can drive an attribute to zero.
+ *
+ * Attributes stay FRACTIONAL, so the stored value keeps one decimal via the
+ * same Math.round(x * 10) / 10 idiom engine.applyAgeDecay uses. Returns the
+ * amount actually removed as a POSITIVE number, rounded to three decimals like
+ * applyAttrGain's return, so a caller can log what really happened rather than
+ * what it asked for. Returns 0 when nothing moved.
+ */
+export function applyAttrLoss(key, amount, floor = ATTR_MIN) {
+    if (!ATTR_KEYS.includes(key)) return 0;
+    const drop = Number(amount);
+    if (!Number.isFinite(drop) || drop <= 0) return 0;
+    const lo = Math.min(ATTR_MAX, Math.max(Number.isFinite(Number(floor)) ? Number(floor) : ATTR_MIN, ATTR_MIN));
+    let applied = 0;
+    career.update(c => {
+        // Safe on a rotted or missing attrs map: an absent attribute reads as 0,
+        // which is already under any floor, so nothing moves and 0 is returned.
+        const attrs = (c.player && c.player.attrs && typeof c.player.attrs === 'object') ? c.player.attrs : {};
+        const cur = Number(attrs[key]);
+        if (!Number.isFinite(cur)) return c;
+        const next = clamp(Math.round((cur - drop) * 10) / 10, lo, ATTR_MAX);
+        if (!(next < cur)) return c;
+        applied = Math.round((cur - next) * 1000) / 1000;
+        return { ...c, player: { ...c.player, attrs: { ...attrs, [key]: next } } };
+    });
+    return applied;
+}
+
+/**
  * Raise the ceiling. `bonus` is a partial or full attribute map of points to ADD
  * to potential; anything missing or non-positive is left alone.
  *
@@ -1032,6 +1203,41 @@ export function addProficiency(championId, games = 1) {
 export function proficiencyGames(player, championId) {
     const v = Number(player?.proficiency?.[championId]);
     return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/**
+ * Set (or clear, with null) the club this career is aiming to join.
+ *
+ * Validated through teamById for the same reason hydrate degrades an
+ * unresolvable id: an id nothing resolves would render as blank text on every
+ * screen that names the goal. An UNKNOWN id is a no-op rather than a clear -
+ * clearing on a typo would silently throw away a goal the player did set - so
+ * clearing is spelled explicitly as null.
+ */
+export function setGoalClub(teamId) {
+    if (teamId == null) {
+        career.update(c => (c.player.goalClubId === null ? c : { ...c, player: { ...c.player, goalClubId: null } }));
+        saveCareer();
+        return true;
+    }
+    if (typeof teamId !== 'string' || !teamById(teamId)) return false;
+    career.update(c => (c.player.goalClubId === teamId ? c : { ...c, player: { ...c.player, goalClubId: teamId } }));
+    saveCareer();
+    return true;
+}
+
+/** Set (or clear, with null) the champion the lab banks its games on. Same
+ *  unknown-id-is-a-no-op rule as setGoalClub. */
+export function setPracticeChamp(champId) {
+    if (champId == null) {
+        career.update(c => (c.player.practiceChamp === null ? c : { ...c, player: { ...c.player, practiceChamp: null } }));
+        saveCareer();
+        return true;
+    }
+    if (typeof champId !== 'string' || !CHAMPION_BY_ID[champId]) return false;
+    career.update(c => (c.player.practiceChamp === champId ? c : { ...c, player: { ...c.player, practiceChamp: champId } }));
+    saveCareer();
+    return true;
 }
 
 /** Give the player a trait. Idempotent — a trait is never granted twice. */

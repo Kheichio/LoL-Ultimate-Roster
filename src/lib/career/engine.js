@@ -26,6 +26,7 @@ import {
     LANGUAGE_BY_ID, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
     LANGUAGE_IMMERSION_WEEKLY, languageForRegion, languageLevelFor, languageBand,
     studyTargetFor, languageStudyGain,
+    splitForWeek, CHAMPION_BY_ID, PROFICIENCY_GAMES, proficiency01, proficiencyBand,
 } from './constants.js';
 import {
     clamp, randInt, calcOVR, calcPotentialOVR, statusInfo, decayFor, rankFromMMR,
@@ -36,6 +37,7 @@ import {
     generateSchedule, blankStandings, simulateAIWeek, leagueTable,
     playoffSeeds, teamsInRegion, teamStrength, teamStrengthWithPlayer,
     winChance, ROSTER_SLOTS, clubRosterFor, signingFor,
+    clubBlock, SCRIM_SEAT_CAP, SCRIM_SEAT_PER_SESSION,
 } from './teams.js';
 import {
     SOLOQ_GAIN, SCRIM_GAIN, VOD_GAIN, trainingMultiplier, restRecovery,
@@ -58,7 +60,7 @@ import { buildMatch, quickSim, applyMatchResult } from './match.js';
 import {
     career, matchState, careerOverlay, pushOverlay, absWeek, saveCareer, addNews,
     grantGold, spendGold, grantFollowers, adjustCondition, applyAttrGain, spendAction,
-    logWeek, raisePotential, addTrait,
+    logWeek, raisePotential, addTrait, applyAttrLoss, addProficiency,
 } from '../stores/career.js';
 
 // ---------------------------------------------------------------------------
@@ -135,13 +137,59 @@ const DECAY_WEIGHTS = {
     cmp: 0.40, chp: 0.35, ldr: 0.15, knw: 0.10,
 };
 
-/** Which split a calendar week belongs to. Preseason is spring's build-up;
- *  everything from MSI onward is booked against summer. */
-const SPLIT_BY_PHASE = {
-    preseason: 'spring', spring: 'spring', spring_po: 'spring',
-    msi: 'summer', summer: 'summer', summer_po: 'summer',
-    worlds: 'summer', offseason: 'summer',
-};
+/** DECLINE -- the split-by-split way BACKWARD, and the exact mirror of the
+ *  breakthrough dials above.
+ *
+ *  Until this existed, applyAgeDecay() was the only thing in the whole mode that
+ *  ever took a point off a player, and decayFor() is zero for every age up to
+ *  24. A nineteen-year-old could post a 3.5 mean for four straight splits and
+ *  lose nothing: OVR by year was monotonically increasing for every measured
+ *  career until a -1 or -2 in the final season.
+ *
+ *  A split UNDER PAR now costs attribute points -- but the loss is MAINTAINED
+ *  AWAY by training (see DECLINE_TRAIN_OFFSET), which is what makes this a
+ *  tactical system rather than a punitive one: the player is not being taxed for
+ *  a bad split, they are being told which attributes they stopped looking after.
+ *
+ *  Bounded FOR THE CAREER, not merely priced, for the same reason
+ *  BREAKTHROUGH_CAREER_MAX exists on the other side of the ledger: splits are
+ *  renewable and a rating is not, so a repeatable loss with no budget grinds
+ *  every long career into the floor exactly as the un-budgeted first cut of
+ *  Breakthrough took every smoke career to 94-99. */
+/*  PAR IS MEASURED, NOT GUESSED. The mode's mean match rating is ~7.4 with a
+ *  per-game sd of ~1.05, and a split is ~18-20 games, so a SPLIT mean has an sd
+ *  of only about 1.05/sqrt(19) = 0.24. Par at 6.6 is therefore three to four
+ *  sigma under the mode and fires essentially never -- the first cut of this
+ *  system was measured on --seed 42 and bit ZERO splits across eight full
+ *  careers. A gate nobody can trip and a gate that was never wired look
+ *  identical from the outside, which is the failure careerSmoke's inertness
+ *  assertions exist to catch, so these two numbers must be RE-MEASURED against
+ *  the MATCH RATINGS block whenever that block moves. */
+const DECLINE_MIN_GAMES = 10;      // mirror BREAKTHROUGH_MIN_GAMES: a real split
+const DECLINE_RATING = 6.90;       // at or below this mean, the split was under par
+const DECLINE_RATING_BAD = 6.40;   // ...and at or below this it bites harder
+const DECLINE_SLOPE = 4.0;         // attribute points per rating point under par
+/*  ATTRIBUTE points, not OVR points, and the difference is the whole reason
+ *  this number looks large. The share handed to each attribute is NORMALISED so
+ *  the eight of them sum to this total, while OVR is a role-WEIGHTED MEAN whose
+ *  weights sum to 1 -- so a split that takes N attribute points moves OVR by
+ *  only about N/8. The first cut used 1.6 here and measured at -0.0 mean OVR
+ *  across eight full careers: it fired in 8.1 splits each and cost nothing at
+ *  all, which also meant flags.decline.ovrLost never rose and the career budget
+ *  never bound. (Age decay avoids the trap by NOT normalising -- it multiplies
+ *  each DECAY_WEIGHT, which sum to 4.75, so its yearly rate of 3.2 is really
+ *  ~15 attribute points and lands as the 1-2 OVR a season a veteran feels.)
+ *  6.0 here is about 0.75 OVR for a genuinely bad split. */
+const DECLINE_MAX_SPLIT = 6.0;     // total attribute points one split may take
+/** Total OVR a whole career may lose to DECLINE. Age decay is a separate,
+ *  unbudgeted system and is not billed here.
+ *  Exported so tools/careerSmoke.mjs asserts the real budget rather than a copy
+ *  of it that can quietly go stale -- same reason BREAKTHROUGH_CAREER_MAX is. */
+export const DECLINE_CAREER_MAX = 6;
+/** How much one drill on an attribute protects it for the split it was run in.
+ *  Three drills is 1.02, i.e. fully protected; nothing at all takes the full
+ *  share. THIS is the "training maintains as well as improves" mechanic. */
+const DECLINE_TRAIN_OFFSET = 0.34;
 
 const PHASE_BY_ID = PHASES.reduce((m, p) => { m[p.id] = p; return m; }, {});
 
@@ -204,10 +252,6 @@ function fixturesInWeek(c) {
 
 function findFixture(c, id) {
     return scheduleOf(c).find(f => f && f.id === id) || null;
-}
-
-function splitForWeek(week) {
-    return SPLIT_BY_PHASE[phaseForWeek(week).id] || 'spring';
 }
 
 function phaseName(id) {
@@ -867,7 +911,15 @@ const SOLOQ_MORALE_PER_NET = 0.9;
  *  psychologist at a third of the price. */
 const SOLOQ_MORALE_UP_CAP = 2;
 /** A bad session, before tilt. Looser than the up cap on purpose -- that
- *  asymmetry IS feature C. */
+ *  asymmetry IS feature C.
+ *
+ *  DEFENSIVE BOUND, not a live dial: games = randInt(4, 6), so the worst
+ *  possible net is -6 and Math.round(-6 * SOLOQ_MORALE_PER_NET) is -5. Nothing
+ *  can reach -6 today. It is deliberately NOT set to -5, because the day the
+ *  session length or the per-net rate changes this is the rail that stops a
+ *  redesign silently doubling the sink -- and raising the session game count to
+ *  make it bind would move MMR velocity, attribute gain and follower income all
+ *  at once. */
 const SOLOQ_MORALE_DOWN_CAP = -6;
 /** Extra morale lost per session already played this week, LOSING sessions
  *  only. Queueing again after a bad one is the thing being priced, not
@@ -888,12 +940,45 @@ function sessionOrdinal(prior) {
     return SESSION_ORDINALS[i] || `${i + 1}th`;
 }
 
-function doSoloQueue(c) {
-    // Sessions already played this week. doActivity increments weekly.counts
-    // AFTER the handler returns, so this is strictly the ones that came before
-    // this one and the first session of a week reads 0.
-    const counts = c.weekly && typeof c.weekly.counts === 'object' && c.weekly.counts ? c.weekly.counts : {};
+/**
+ * What the NEXT solo queue session of this week will cost, before it is played.
+ *
+ * The model half of the sink was already correct; the player was simply never
+ * told, which is the "a meter that moves with no line explaining it reads as a
+ * bug" rule failing one step earlier than usual. Hub.svelte renders this.
+ *
+ * The SOLOQ_* constants stay private deliberately: exporting the dials would
+ * give the UI a second place to do this arithmetic, and the previewed number and
+ * the charged number must come from ONE place. doSoloQueue() reads this same
+ * helper, so a divergence is not possible.
+ *
+ * Pure and null-safe on a rotted save: an absent or non-object weekly.counts
+ * reads as a first session. `maxTilt` is the WORST case (it is only charged on a
+ * losing session) and is signed negative, the way the week log prints it.
+ */
+export function soloQueueCost(c) {
+    const s = c || snap();
+    const weekly = (s && s.weekly && typeof s.weekly === 'object' && !Array.isArray(s.weekly)) ? s.weekly : {};
+    const counts = (weekly.counts && typeof weekly.counts === 'object' && !Array.isArray(weekly.counts))
+        ? weekly.counts
+        : {};
     const prior = Math.max(0, num(counts.soloq, 0));
+    return {
+        prior,
+        grindHealth: Math.min(SOLOQ_GRIND_HEALTH_MAX, prior * SOLOQ_GRIND_HEALTH_PER),
+        maxTilt: -Math.min(SOLOQ_TILT_MAX, Math.round(prior * SOLOQ_TILT_PER_REPEAT)),
+        benched: !!safe(() => burnoutBenched(s), false),
+    };
+}
+
+function doSoloQueue(c) {
+    // Sessions already played this week, and what they make this one cost.
+    // doActivity increments weekly.counts AFTER the handler returns, so this is
+    // strictly the ones that came before this one and the first session of a
+    // week reads 0. Read through soloQueueCost() so the number the Hub previewed
+    // and the number charged here are computed in exactly one place.
+    const cost = soloQueueCost(c);
+    const prior = cost.prior;
     const games = randInt(4, 6);
     const ovr = calcOVR(c.player.attrs, c.player.role);
     const mmr = clamp(num(c.soloq.mmr, 300), 0, MMR_MAX);
@@ -949,7 +1034,7 @@ function doSoloQueue(c) {
     let tilt = 0;
     if (!burnoutBenched(c)) {
         const base = clamp(Math.round(net * SOLOQ_MORALE_PER_NET), SOLOQ_MORALE_DOWN_CAP, SOLOQ_MORALE_UP_CAP);
-        tilt = net < 0 ? -Math.min(SOLOQ_TILT_MAX, Math.round(prior * SOLOQ_TILT_PER_REPEAT)) : 0;
+        tilt = net < 0 ? cost.maxTilt : 0;
         if (base + tilt !== 0) adjustCondition('morale', base + tilt);
     }
 
@@ -958,7 +1043,7 @@ function doSoloQueue(c) {
     // absent from NO_INJURY_ACTIVITIES, so every session ALSO takes the ordinary
     // ~5% injury roll on top of this; this is the visible, predictable half of
     // the cost and there is no second risk roll anywhere for it.
-    const grind = Math.min(SOLOQ_GRIND_HEALTH_MAX, prior * SOLOQ_GRIND_HEALTH_PER);
+    const grind = cost.grindHealth;
     if (grind > 0) adjustCondition('health', -grind);
 
     // The player is TOLD, in the week log, both times. A meter that moves with
@@ -978,9 +1063,104 @@ function doScrim(c) {
     }));
     adjustCondition('form', randInt(2, 5));
     adjustCondition('morale', 1);
-    const detail = 'Five-man practice: teamfighting, shotcalling and chemistry';
+
+    // THE ROOM GETS BETTER TOO. A scrim block is the one activity whose payload
+    // is not entirely about the player: the other four seats are permanently
+    // sharpened by it, which is what makes scrimming a way to raise the club you
+    // are actually at rather than a slightly worse training drill.
+    //
+    // NEVER the player's own seat. teamStrengthWithPlayer() already prices that
+    // from calcOVR, so paying it here would count the player twice; the
+    // "everything except my role" idiom is runRosterChurn's.
+    //
+    // clubBlock() is the guard on BOTH halves at once. It returns null when the
+    // career is unsigned AND when the stored block still describes a club the
+    // player has left, so a transfer resets the ledger with no hook and an
+    // unsigned career (careerSmoke drives the activity pool directly and reaches
+    // here) writes nothing at all.
+    const clubId = (c.player && c.player.clubId) || null;
+    const block = clubId ? safe(() => clubBlock(c), null) : null;
+    let moved = 0;
+    if (block) {
+        const myRole = ROLE_BY_ID[c.player.role] ? c.player.role : 'MID';
+        const seats = ROSTER_SLOTS.filter(r => r !== myRole);
+        const cur = (block.scrim && typeof block.scrim === 'object' && !Array.isArray(block.scrim))
+            ? block.scrim
+            : {};
+        const scrim = { ...cur };
+        for (const role of seats) {
+            const before = Math.max(0, num(scrim[role], 0));
+            // Stored FRACTIONALLY, like every other accumulating number in the
+            // mode -- rounding to whole points would stall a seat two sessions
+            // short of the cap forever. Two decimals only to keep float dust out
+            // of the save. The min() here merely keeps the stored number tidy;
+            // teams.seatScrimDelta() clamps on READ and is the only authority on
+            // the cap, which is what makes a hand-edited save harmless too.
+            const after = Math.min(SCRIM_SEAT_CAP, Math.round((before + SCRIM_SEAT_PER_SESSION) * 100) / 100);
+            scrim[role] = after;
+            if (after > before) moved++;
+        }
+        writeClub({ teamId: clubId, scrim });
+    }
+
+    const detail = 'Five-man practice: teamfighting, shotcalling and chemistry'
+        + (block
+            ? (moved
+                ? `. The room is sharper for it: ${moved} seat${moved === 1 ? '' : 's'} +${SCRIM_SEAT_PER_SESSION} rating`
+                : '. The other four have had everything scrims can give them')
+            : '');
     logWeek('Scrim Block', detail, '#f59e0b');
     return ok('Scrim block done. The room played better on the second half of it.', detail);
+}
+
+/** Games banked by one lab session. The same 4-6 a solo queue night plays, so
+ *  the two activities read as the same amount of time; PROFICIENCY_GAMES is 40,
+ *  which puts a champion at Practised in one session and Mastered in six. */
+const CHAMP_LAB_GAMES = [4, 6];
+
+/** The lab's only attribute payload. Champion pool is CHP by definition, and it
+ *  is deliberately smaller than a training drill's -- this activity is bought
+ *  for the proficiency, not as a cheaper way to raise an attribute. */
+const CHAMP_LAB_GAIN = { chp: 0.30 };
+
+/**
+ * Hours in a custom game on ONE champion.
+ *
+ * The only activity that moves player.proficiency, which until now was written
+ * exclusively by finishGame() -- i.e. the only way to warm up a cold pick was to
+ * take it into a real game and eat the proficiency penalty while you learned it.
+ * That made the champion pool something that happened to a career rather than
+ * something a player could decide to widen.
+ *
+ * Banked through stores/career.js's addProficiency, the single write path, on
+ * player.practiceChamp and falling back to the signature. A save written before
+ * practiceChamp existed hydrates it to null, so the fallback is what keeps this
+ * activity usable on every old career without auto-assigning anything.
+ */
+function doChampLab(c) {
+    const p = (c && c.player) || {};
+    const pick = (typeof p.practiceChamp === 'string' && CHAMPION_BY_ID[p.practiceChamp])
+        ? p.practiceChamp
+        : ((typeof p.champion === 'string' && CHAMPION_BY_ID[p.champion]) ? p.champion : null);
+    // activityGate() has already run the row's own when(). Reached only by a
+    // direct doActivity('champ_lab') call on a career with no resolvable
+    // champion at all, and the slot is spent by then -- so say what happened
+    // rather than logging practice that did not take place. Same shape as
+    // doLanguage's unresolvable-language bail.
+    if (!pick) return no('You have not set a champion to practise, and there is no signature to fall back on.');
+
+    const def = CHAMPION_BY_ID[pick];
+    const games = randInt(CHAMP_LAB_GAMES[0], CHAMP_LAB_GAMES[1]);
+    const total = num(safe(() => addProficiency(pick, games), 0), 0);
+    const band = safe(() => proficiencyBand(proficiency01(total)), null);
+
+    applyGainTable(c, CHAMP_LAB_GAIN, 1);
+    adjustCondition('form', 1);
+
+    const detail = `${def.name} +${games} games (${Math.min(total, PROFICIENCY_GAMES)}/${PROFICIENCY_GAMES})`
+        + (band ? ` - ${band.name}` : '');
+    logWeek('Champion Practice', detail, (band && band.color) || '#f472b6');
+    return ok(`A block of customs on ${def.name}. ${detail}.`, detail);
 }
 
 function doVod(c) {
@@ -1220,6 +1400,7 @@ export function doActivity(activityId, payload) {
     switch (activityId) {
         case 'soloq':     res = doSoloQueue(c); break;
         case 'scrim':     res = doScrim(c); break;
+        case 'champ_lab': res = doChampLab(c); break;
         case 'vod':       res = doVod(c); break;
         case 'stream':    res = doStream(c); break;
         case 'media':     res = doMedia(c); break;
@@ -1547,7 +1728,12 @@ const MOMENTUM_WINDOW = 6;
 const SIGNING_TENURE_YEARS = 6;
 
 function blankClubBlock(teamId) {
-    return { teamId: teamId || null, momentum: 0, roster: {}, changes: [] };
+    // `scrim` is here rather than left undefined so the shape written on a
+    // transfer or an unsigned reset matches blankCareer()'s club block exactly.
+    // teams.seatScrimDelta() type-checks the map anyway, but a block that is a
+    // different shape depending on how it was created is how a "sometimes it
+    // works" bug gets written six months from now.
+    return { teamId: teamId || null, momentum: 0, roster: {}, changes: [], scrim: {} };
 }
 
 function writeClub(patch) {
@@ -1648,6 +1834,11 @@ function runRosterChurn() {
         : blankClubBlock(clubId);
     const roster = { ...(block.roster && typeof block.roster === 'object' ? block.roster : {}) };
     const changes = Array.isArray(block.changes) ? block.changes.slice() : [];
+    // The scrim ledger moves with the SEAT, and a seat that changes hands starts
+    // again from zero: the sharpening belongs to the five people who did the
+    // hours, not to the chair. Without this a cut player's ten points are
+    // inherited by the rookie who replaced him on his first day.
+    const scrim = { ...(block.scrim && typeof block.scrim === 'object' && !Array.isArray(block.scrim) ? block.scrim : {}) };
 
     // 1. Anyone the club signed long enough ago that they have aged out. The
     //    seat goes back to whoever the card database says plays there, which is
@@ -1657,6 +1848,7 @@ function runRosterChurn() {
         const since = num(held && held.signedYear, year);
         if (year - since < SIGNING_TENURE_YEARS) continue;
         delete roster[role];
+        delete scrim[role];
         changes.unshift({ year, role, outName: (held && held.name) || 'A veteran', inName: '', reason: 'retired' });
         addNews(`${(held && held.name) || 'A veteran'} has retired. ${team.name} go back to the market for a ${role}.`, 'transfer');
     }
@@ -1674,7 +1866,7 @@ function runRosterChurn() {
     moves = Math.min(moves, seats.length);
 
     if (!moves) {
-        writeClub({ teamId: clubId, roster, changes: changes.slice(0, 12) });
+        writeClub({ teamId: clubId, roster, scrim, changes: changes.slice(0, 12) });
         if (changes.length !== (Array.isArray(block.changes) ? block.changes.length : 0)) saveCareer();
         return;
     }
@@ -1735,6 +1927,8 @@ function runRosterChurn() {
         if (!replacement) continue;
 
         roster[role] = { ...replacement, signedYear: year };
+        // New person in the chair, so the room's hours on that seat are gone.
+        scrim[role] = 0;
         taken.add(replacement.id);
         takenNames.add(replacement.name);
         done++;
@@ -1772,11 +1966,12 @@ function runRosterChurn() {
         writeClub({
             teamId: clubId,
             roster,
+            scrim,
             changes: changes.slice(0, 12),
             momentum: clamp(num(block.momentum, 0) * 0.5, -1, 1),
         });
     } else {
-        writeClub({ teamId: clubId, roster, changes: changes.slice(0, 12) });
+        writeClub({ teamId: clubId, roster, scrim, changes: changes.slice(0, 12) });
     }
     saveCareer();
 }
@@ -2353,6 +2548,15 @@ function closeSplit(splitId) {
     // A season good enough to move the ceiling. Checked before the season block
     // is reset, because it reads the split's own per-match ratings.
     safe(() => checkBreakthrough(c, awards, mine), null);
+    // ...and the other half of the ledger. Same pre-reset snapshot, for the same
+    // reason plus one more: it reads flags.splitTrained, which is emptied on the
+    // very next line and must be consumed before it is.
+    safe(() => checkDecline(c, splitId), null);
+
+    // The split's training record has now been spent. Reset AFTER checkDecline,
+    // never before -- the map IS the protection, and clearing it first would
+    // charge a player who drilled every week the full loss.
+    career.update(x => ({ ...x, flags: { ...x.flags, splitTrained: {} } }));
 
     if (!c.player.clubId) { saveCareer(); return; }
 
@@ -2494,6 +2698,199 @@ function checkBreakthrough(c, awards, standing) {
     return { pts, applied };
 }
 
+// ---------------------------------------------------------------------------
+//  LOSING GROUND
+//  The mirror image of the block above, and the answer to the oldest complaint
+//  about this mode: players only ever got better. applyAgeDecay() was the ONLY
+//  thing that ever took a point off anybody, and decayFor() is zero for every
+//  age up to 24 -- so a nineteen-year-old could post a 3.5 mean for four
+//  straight splits and lose nothing at all.
+//
+//  Three rules keep this from being a punishment mechanic:
+//    * it needs a REAL split (DECLINE_MIN_GAMES), which is also what keeps a
+//      burnout-benched player off the hook: he has barely any games.
+//    * TRAINING MAINTAINS. Every drill run on an attribute this split buys back
+//      DECLINE_TRAIN_OFFSET of that attribute's share, so three drills protect
+//      it completely and a neglected one takes the whole thing. The player is
+//      not being taxed for a bad split, they are being shown which attributes
+//      they stopped looking after.
+//    * it is BOUNDED FOR THE CAREER by flags.decline.ovrLost, not merely priced.
+//      Splits are renewable and a rating is not.
+// ---------------------------------------------------------------------------
+
+/** How many attribute points a split under par costs, before protection. */
+function declinePoints(c) {
+    const { mean, games } = splitMeanRating(c);
+    if (games < DECLINE_MIN_GAMES) return { pts: 0, mean, games };
+    if (mean >= DECLINE_RATING) return { pts: 0, mean, games };
+
+    // Linear in how far under par the split was, with a second, steeper term
+    // below DECLINE_RATING_BAD. Symmetric in spirit with breakthroughPoints():
+    // one band for "not good enough", a harder one for "genuinely bad".
+    let pts = (DECLINE_RATING - mean) * DECLINE_SLOPE;
+    if (mean <= DECLINE_RATING_BAD) pts += (DECLINE_RATING_BAD - mean) * DECLINE_SLOPE * 1.4;
+    return { pts: Math.min(DECLINE_MAX_SPLIT, pts), mean, games };
+}
+
+/**
+ * A split that was genuinely under par takes points back off the player.
+ *
+ * Spread by DECAY_WEIGHTS, so it lands in the same shape age decay does -- the
+ * hands go first here too, and shotcalling and game knowledge barely move.
+ * Everything is spent through applyAttrLoss, the single downward writer, so the
+ * two systems can never drift on rounding.
+ *
+ * MUST be called on the PRE-RESET snapshot: it reads the split's own per-match
+ * ratings out of season.schedule and flags.splitTrained out of the split that
+ * just finished. closeSplit() empties splitTrained immediately after this
+ * returns, never before.
+ */
+function checkDecline(c, splitId) {
+    if (!c || !c.created || (c.flags && c.flags.retired)) return null;
+    // An unsigned career has no split to be under par in. The compulsory
+    // first-club ladder runs through the amateur sides and a player between
+    // clubs is not being judged on games he did not play.
+    if (!(c.player && c.player.clubId)) return null;
+
+    const ledger = (c.flags && c.flags.decline && typeof c.flags.decline === 'object'
+        && !Array.isArray(c.flags.decline)) ? c.flags.decline : {};
+    const spent = num(ledger.ovrLost, 0);
+    if (spent >= DECLINE_CAREER_MAX) return null;
+
+    const { pts, mean, games } = declinePoints(c);
+    if (pts <= 0) return null;
+
+    // The same two multipliers age decay reads, and they are read HERE for a
+    // reason: late_bloomer / unbreakable (economy.js) and Iron Wrists / Legend
+    // (ratings.js) are sold as covering decay, and until this existed decay was
+    // one yearly function. A perk that quietly stopped covering half the decline
+    // in the mode is the "every effect key must have a reader" failure one layer
+    // along.
+    const mult = num(perkEffects(c).decayMult, 1) * num(traitEffects(c.player).decayMult, 1);
+    const total = pts * mult;
+    if (total <= 0) return null;
+
+    let wsum = 0;
+    for (const k of ATTR_KEYS) wsum += Math.max(0, num(DECAY_WEIGHTS[k], 0));
+    if (wsum <= 0) return null;
+
+    const trained = (c.flags && c.flags.splitTrained && typeof c.flags.splitTrained === 'object'
+        && !Array.isArray(c.flags.splitTrained)) ? c.flags.splitTrained : {};
+
+    const p = c.player;
+
+    const applied = {};
+    const held = [];
+    for (const k of ATTR_KEYS) {
+        // Normalised, so the shares sum to `total` and DECLINE_MAX_SPLIT is a
+        // real cap on the whole split rather than on one attribute.
+        const share = total * (Math.max(0, num(DECAY_WEIGHTS[k], 0)) / wsum);
+        if (share <= 0) continue;
+        const drills = Math.max(0, num(trained[k], 0));
+        const guard = Math.max(0, 1 - drills * DECLINE_TRAIN_OFFSET);
+        if (guard <= 0) { held.push(k); continue; }
+        const lost = applyAttrLoss(k, share * guard);
+        if (lost > 0) applied[k] = lost;
+    }
+
+    const keys = Object.keys(applied).sort((a, b) => applied[b] - applied[a]);
+    if (!keys.length) return null;
+
+    // Billed in the units the player actually reads, exactly as
+    // checkBreakthrough bills the ceiling in potential OVR -- but billed
+    // UNROUNDED, from the role weights directly, rather than from the difference
+    // of two calcOVR() calls.
+    //
+    // calcOVR rounds, and a single split rarely moves a rounded OVR by a whole
+    // point. Billing the rounded difference therefore charged ZERO for almost
+    // every split, which measured as -0.0 mean OVR lost per career while decline
+    // was in fact firing 8.1 times each: the budget never bound, so the one
+    // thing standing between a long career and the floor was doing nothing.
+    // Tenths accumulate honestly here and DECLINE_CAREER_MAX means what it says.
+    const roleW = (ROLE_BY_ID[p.role] || {}).weights || {};
+    let ovrLost = 0;
+    for (const k of ATTR_KEYS) ovrLost += (num(applied[k], 0) * num(roleW[k], 0));
+    ovrLost = Math.max(0, Math.round(ovrLost * 1000) / 1000);
+    career.update(x => {
+        const cur = (x.flags && x.flags.decline && typeof x.flags.decline === 'object'
+            && !Array.isArray(x.flags.decline)) ? x.flags.decline : {};
+        return {
+            ...x,
+            flags: {
+                ...x.flags,
+                decline: {
+                    ...cur,
+                    ovrLost: num(cur.ovrLost, 0) + ovrLost,
+                    splits: num(cur.splits, 0) + 1,
+                    // Lifetime count of attribute-shares that training held at
+                    // ZERO. This is the only persisted evidence that the
+                    // "maintained by training" half of the system fires at all:
+                    // decline firing and decline firing UNOPPOSED look
+                    // identical from a rating readout, and a protection nobody
+                    // can ever earn is the same dead lever as a gate nobody can
+                    // trip. careerSmoke asserts it is non-zero.
+                    heldTotal: num(cur.heldTotal, 0) + held.length,
+                    // The LAST split's per-attribute record, overwritten rather
+                    // than accumulated: it answers "what did that split cost
+                    // me", which is the question the Training screen asks.
+                    // training.declinedThisSplit() already reads this key and
+                    // returns 0 while it is absent, so an old save is correct
+                    // rather than merely safe.
+                    attrs: applied,
+                },
+            },
+        };
+    });
+
+    // THE CLUB THAT PLAYED THE SPLIT, never the one the player is at now --
+    // closeSplit() files the history row, the placement and every award under
+    // season.clubId for the same reason, and getting this wrong is the bug that
+    // once filed a 13-8 summer as "0-0, G2 Esports".
+    const teamId = (c.season && c.season.clubId) || c.player.clubId || null;
+    const team = teamId ? teamById(teamId) : null;
+    const clubName = team ? team.name : 'the club';
+    const abbr = k => (ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].abbr : String(k).toUpperCase());
+    const lostLine = keys.map(k => `${abbr(k)} -${applied[k].toFixed(1)}`).join(', ');
+    const heldLine = held.length ? held.map(abbr).join(', ') : '';
+    const when = splitId === 'summer' ? 'summer' : (splitId === 'spring' ? 'spring' : 'that split');
+
+    addNews(
+        `A ${when} under par at ${clubName}: ${mean.toFixed(1)} across ${games} games. ${lostLine}.`
+        + (heldLine ? ` ${heldLine} held -- you kept drilling those.` : ' Nothing you drilled was protected, because you drilled nothing.'),
+        'drama',
+    );
+    logWeek('Losing ground', lostLine, '#ef4444');
+
+    // kind:'event', pushOverlay, one acknowledging option. No new overlay kind
+    // is ever added -- the "undismissable until answered" rule and every
+    // valid/accent/markup branch come free, and careerSmoke's drainOverlay
+    // already knows how to answer an event.
+    pushOverlay('event', {
+        id: 'decline_split',
+        type: 'drama',
+        icon: '\u{1F4C9}',
+        title: 'You have lost a step',
+        text: `${mean.toFixed(1)} across ${games} games for ${clubName}. The coaching staff have gone through it `
+            + `and the sheet is honest: ${lostLine}.`
+            + (heldLine
+                ? ` ${heldLine} came through it untouched -- those are the ones you kept drilling.`
+                : ' You drilled none of it this split, so none of it was protected.'),
+        options: [
+            {
+                id: 'ack',
+                label: 'Take the notes',
+                desc: 'There is nothing to decide. The split is already in the books.',
+                apply: () => ({
+                    text: 'You sit through all of it. Nothing more comes off tonight -- the next split is where it goes back on.',
+                    effects: {},
+                }),
+            },
+        ],
+    });
+
+    return { pts, mean, games, applied, held, ovrLost };
+}
+
 /**
  * Roll and reveal the player's genetic trait, once, on the birthday the path
  * says. Deliberately late — a trait you can see at creation is a trait people
@@ -2533,7 +2930,18 @@ export function revealTrait() {
     return trait;
 }
 
-/** How much of decayFor() each attribute takes. See DECAY_WEIGHTS. */
+/**
+ * How much of decayFor() each attribute takes. See DECAY_WEIGHTS.
+ *
+ * Writes through stores/career.js's applyAttrLoss rather than an inline
+ * career.update, and that is not tidying: this and checkDecline() are the two
+ * things in the mode that ever take a point off a player, and two downward
+ * writers rounding independently is exactly how applyAttrGain and setAttr came
+ * to disagree. One writer, one rounding rule, attributes stay FRACTIONAL.
+ *
+ * Behaviour is unchanged -- applyAttrLoss uses the same Math.round(x * 10) / 10
+ * and the same 1..99 clamp this function used to do by hand.
+ */
 function applyAgeDecay() {
     const c = snap();
     const rate = num(decayFor(c.player.age), 0)
@@ -2542,17 +2950,12 @@ function applyAgeDecay() {
     if (rate <= 0) return [];
 
     const lost = [];
-    career.update(x => {
-        const attrs = { ...x.player.attrs };
-        for (const k of ATTR_KEYS) {
-            const drop = rate * num(DECAY_WEIGHTS[k], 0.5);
-            if (drop <= 0) continue;
-            const next = clamp(Math.round((attrs[k] - drop) * 10) / 10, 1, 99);
-            if (next < attrs[k]) lost.push(`${k.toUpperCase()} -${(attrs[k] - next).toFixed(1)}`);
-            attrs[k] = next;
-        }
-        return { ...x, player: { ...x.player, attrs } };
-    });
+    for (const k of ATTR_KEYS) {
+        const drop = rate * num(DECAY_WEIGHTS[k], 0.5);
+        if (drop <= 0) continue;
+        const applied = applyAttrLoss(k, drop);
+        if (applied > 0) lost.push(`${k.toUpperCase()} -${applied.toFixed(1)}`);
+    }
     if (lost.length) {
         addNews(`Another year on the body: ${lost.slice(0, 3).join(', ')}. The hands go first.`, 'system');
     }

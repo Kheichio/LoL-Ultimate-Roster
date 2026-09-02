@@ -624,6 +624,44 @@ export const CLUB_MOMENTUM_STRENGTH = 4;
  *  ROSTER_TILT the derived roster already applies. */
 const CHURN_TILT_CAP = 5;
 
+//  SCRIM  A third club mechanic, scoped to career.club exactly like the other
+//  two: a scrim block permanently sharpens the four team-mates who were not the
+//  player, banked in career.club.scrim as { role: points }. Unlike momentum it
+//  does not decay and unlike churn it does not change who is in the seat -- it
+//  is the room getting better at playing together.
+//
+//  ALL THE MATHS AND THE ENTIRE READ SIDE LIVE HERE. engine.js only decides
+//  WHEN a scrim happened and adds SCRIM_SEAT_PER_SESSION to the four seats;
+//  it must never clamp, scale, read or re-derive the value, because
+//  seatScrimDelta() below is the single place the cap is enforced.
+
+/** HARD cap, per seat, per club. The feature's only bound, and it is applied on
+ *  READ (see seatScrimDelta) so a hand-edited save cannot exceed it either. */
+export const SCRIM_SEAT_CAP = 10;
+
+/** Fractional rating points one scrim pays each of the OTHER FOUR seats. Stored
+ *  fractionally on purpose, like every other accumulating number in the mode --
+ *  rounding on write would stall a seat short of the cap. */
+export const SCRIM_SEAT_PER_SESSION = 0.55;
+
+/** Ceiling on the club-strength contribution of scrims, and a DELIBERATE
+ *  damper rather than a rail the honest maximum sits under.
+ *
+ *  The seat RATING cap is the +10 the feature promises and is what Club.svelte
+ *  shows. Translating all of it into club strength at full weight was measured
+ *  and it inflates the entire mode: on --seed 42 the untamed term took the mean
+ *  match rating from 7.36 to 7.56 against a 7.6 hard fail, and it did it through
+ *  a chain that is invisible from the scrim itself -- stronger club, higher win
+ *  rate, awards 729 -> 911, more legacy points, perks owned 9.6 -> 14.5 of 24,
+ *  which buys the Evergreen/Ascendant CEILING perks and lifts every attribute
+ *  ceiling in the career. A one-directional strength bonus feeding a win rate
+ *  that buys permanent ceiling is the compounding loop CLAUDE.md warns about in
+ *  the club section, and unlike momentum it has no self-limiting target.
+ *
+ *  2.2 keeps a fully-scrimmed room worth roughly half a momentum swing: real,
+ *  visible in the table, and not a second progression system. */
+const SCRIM_STRENGTH_CAP = 2.2;
+
 /** The career's club block, but only when it still describes the club the
  *  player is at. A transfer therefore resets momentum and roster changes with
  *  no hook of any kind: the ids stop matching and the block stops counting. */
@@ -654,6 +692,27 @@ export function teammateFormDelta(c, card) {
     const m = clubMomentum(c);
     if (!m || !card) return 0;
     return Math.round(m * SEAT_FORM_SWING * seatBias(card));
+}
+
+/**
+ * Permanent rating shift on one SEAT from scrims run with this club, 0..cap.
+ *
+ * Keyed by role rather than by card, because the sharpening belongs to the room
+ * and survives the club swapping the person sitting in it. clubBlock() returns
+ * null on a teamId mismatch, so a transfer resets the whole ledger for free --
+ * the same reason momentum and churn need no hook either.
+ *
+ * THE CAP IS ENFORCED HERE, ON READ. engine.js is free to add to the stored
+ * number without knowing the bound, and a hand-edited save that writes 400 into
+ * a seat still reads as SCRIM_SEAT_CAP. Never throws: a rotten block is 0.
+ */
+export function seatScrimDelta(c, role) {
+    const b = clubBlock(c);
+    if (!b) return 0;
+    const scrim = b.scrim;
+    if (!scrim || typeof scrim !== 'object' || Array.isArray(scrim)) return 0;
+    const v = Number(scrim[role]);
+    return clamp(Number.isFinite(v) ? v : 0, 0, SCRIM_SEAT_CAP);
 }
 
 /**
@@ -709,11 +768,17 @@ export function clubRosterFor(c) {
         used.add(String(card.name || '').toLowerCase());
 
         const delta = teammateFormDelta(c, card);
+        const scrim = seatScrimDelta(c, role);
+        // baseRating stays RAW -- the card's own number, with neither form nor
+        // scrim folded in. engine.runRosterChurn ranks and prices replacements
+        // off it, so an inflated baseRating would churn a scrimmed-up seat as an
+        // overachiever and then pay for its replacement at the inflated number.
         out[role] = {
             ...card,
-            rating: clamp(Math.round((Number(card.rating) || 50) + delta), 25, 99),
+            rating: clamp(Math.round((Number(card.rating) || 50) + delta + scrim), 25, 99),
             baseRating: Math.round(Number(card.rating) || 50),
             formDelta: delta,
+            scrimDelta: Math.round(scrim * 10) / 10,
             signing: !!signing,
             signedYear: signing ? Math.round(Number(signing.signedYear) || year) : 0,
         };
@@ -722,10 +787,60 @@ export function clubRosterFor(c) {
 }
 
 /**
+ * ANY club's roster, in clubRosterFor's exact shape, for a scouting UI.
+ *
+ * The player's own club delegates to clubRosterFor so signings, momentum and
+ * scrim are all still visible there. Every OTHER club is the pure derivation of
+ * (teamId, year) it has always been: no momentum, no scrim, no signings. Those
+ * three are documented non-zero only for the club the player plays for, and
+ * teamStrength(team, year) has to stay a pure function of its arguments or the
+ * league table stops being stable between page loads.
+ *
+ * The seats are FRESH SHALLOW COPIES. Returning getTeamRoster()'s objects would
+ * be correct today and one careless `seat.rating = x` away from corrupting the
+ * card database itself -- the same instances are handed to awards.js, match.js,
+ * teamStrength() and the other gamemode's card list.
+ *
+ * A bad or unknown teamId returns the blank shape rather than throwing:
+ * getTeamRoster already yields nulls per seat, and an unfilled seat is a thing
+ * the UI can render.
+ */
+export function rosterForClub(c, teamId) {
+    const blank = {};
+    for (const r of ROSTER_SLOTS) blank[r] = null;
+    blank.COACH = null;
+    if (!teamId) return blank;
+
+    if (teamId === c?.player?.clubId) return clubRosterFor(c);
+
+    const year = Math.round(Number(c?.time?.year) || DEFAULT_START_YEAR);
+    const base = getTeamRoster(teamId, year);
+    const out = {};
+    for (const role of ROSTER_SLOTS.concat(['COACH'])) {
+        const card = base && base[role];
+        if (!card || typeof card !== 'object') { out[role] = null; continue; }
+        out[role] = {
+            ...card,
+            baseRating: Math.round(Number(card.rating) || 50),
+            formDelta: 0,
+            scrimDelta: 0,
+            signing: false,
+            signedYear: 0,
+        };
+    }
+    return out;
+}
+
+/**
  * How far the player's own club is playing from its written line right now:
- * the seats it has changed, plus momentum. Zero for every other club in the
- * mode, which is what keeps teamStrength() a pure function of (team, year) and
- * the league table stable between page loads.
+ * the seats it has changed, plus momentum, plus the scrims it has banked. Zero
+ * for every other club in the mode, which is what keeps teamStrength() a pure
+ * function of (team, year) and the league table stable between page loads.
+ *
+ * This is the LOAD-BEARING read for scrims. clubStrengthDelta never aggregates
+ * clubRosterFor, and match.js -> teamStrengthWithPlayer / clubStrengthFor is the
+ * only path from club state into a game: without the term below, sharpening a
+ * team-mate would change a number on the club screen and nothing else.
  */
 export function clubStrengthDelta(c, teamId) {
     if (!teamId || c?.player?.clubId !== teamId) return 0;
@@ -749,7 +864,26 @@ export function clubStrengthDelta(c, teamId) {
         // upgrade in five seats is one fifth of a roster.
         if (n) delta += clamp((sum / ROSTER_SLOTS.length) * ROSTER_TILT, -CHURN_TILT_CAP, CHURN_TILT_CAP);
     }
-    return clamp(delta, -9, 9);
+
+    // The player's OWN seat is excluded: teamStrengthWithPlayer already prices
+    // that from calcOVR, and a scrim must never raise the player twice.
+    // Averaged over all five slots for the same reason the churn term is: four
+    // sharpened seats are four fifths of a roster.
+    const own = c?.player?.role;
+    let scrimSum = 0;
+    for (const role of ROSTER_SLOTS) {
+        if (role === own) continue;
+        scrimSum += seatScrimDelta(c, role);
+    }
+    const scrimTerm = clamp((scrimSum / ROSTER_SLOTS.length) * ROSTER_TILT, 0, SCRIM_STRENGTH_CAP);
+
+    // Scrims are added OUTSIDE the shared +/-9 rail, with a rail of their own.
+    // That rail already carries momentum (+/-4) and churn (+/-5) and is exactly
+    // full when both are extreme, so a scrim bonus worth up to +4.4 folded in
+    // beneath it would be silently swallowed by any club on a run that had also
+    // just upgraded a seat -- wired and dead, in precisely the case where the
+    // player has most reason to expect it to count.
+    return clamp(delta, -9, 9) + scrimTerm;
 }
 
 /** The club's strength as the player experiences it, without their own seat.

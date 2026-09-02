@@ -103,7 +103,7 @@ src/lib/career/
                     club momentum and offseason roster churn)
 src/lib/stores/career.js          — the whole career state; saves to `lurc_career` (LOCAL ONLY,
                                     deliberately outside the Firebase cloud save)
-src/lib/components/career/        — CareerShell + 9 screens + BracketView + CareerOverlay
+src/lib/components/career/        — CareerShell + 9 screens + BracketView + ClubScout + CareerOverlay
 src/lib/components/career/minigames/ — 8 training minigames + MinigameHost
 ```
 
@@ -580,6 +580,205 @@ morale to tilt. Read `condition`, `solo queue grind` and the `MATCH RATINGS` blo
 the run if the grind cost or the tilt penalty never fires once, because a sink that never bites is
 indistinguishable from one that was never wired.
 
+### A rating can go DOWN now
+Until this landed, `applyAgeDecay()` was the only thing in the mode that ever took a point off a
+player, it ran once a year at rollover, and `AGE_CURVE` gives it a rate of **0 for every age up to
+24** — so a nineteen-year-old could post a 3.5 mean rating for four straight splits and lose
+nothing. Measured OVR-by-year was monotonically increasing for all eight smoke careers until a -1
+or -2 in the final season.
+
+`engine.checkDecline()` is the mirror of `checkBreakthrough()`, called from `closeSplit()` on the
+same pre-reset snapshot. A split whose mean match rating is under par costs attribute points,
+spread by `DECAY_WEIGHTS` (hands first, exactly like age decay).
+
+- **`stores/career.js applyAttrLoss()` is the single downward writer.** `applyAttrGain` is
+  structurally one-directional and `setAttr` ROUNDS, so neither could express a decay of a tenth.
+  `applyAgeDecay` was refactored to write through it *before* the second caller was added, so the
+  two paths can never drift on rounding the way `applyAttrGain` and `setAttr` already had.
+- **TRAINING MAINTAINS.** Each attribute's share is multiplied by
+  `max(0, 1 - drills * DECLINE_TRAIN_OFFSET)`, so three drills on an attribute protect it
+  completely and a neglected one takes the whole share. `flags.splitTrained` is written by
+  `training.completeDrill()` — the one function that proves a paid session happened — and reset by
+  `closeSplit()` **after** `checkDecline` has consumed it, never before. It cannot be derived from
+  `weekly.trained`, which the weekly literal rebuild wipes.
+- **`canTrain()` now ALLOWS a drill on an attribute at its ceiling**, once per split, as a
+  maintenance session that pays zero points and buys only the protection. The old flat refusal meant
+  a career's *best* attributes were the only ones with no defence — a dead end, not a hard choice,
+  and the same shape as the three UI strings that used to call `environmentCap` a wall.
+
+**Two scale traps, both of which shipped in the first cut and both of which measured as silence.**
+- The share is NORMALISED to sum to `DECLINE_MAX_SPLIT`, but OVR is a role-WEIGHTED MEAN whose
+  weights sum to 1, so N attribute points move OVR by about N/8. At the first value (1.6) decline
+  fired in **8.1 splits per career and cost -0.0 mean OVR**. Age decay avoids this by NOT
+  normalising: it multiplies each `DECAY_WEIGHT`, and those sum to 4.75.
+- `ovrLost` was billed from the difference of two `calcOVR()` calls, which ROUND. A split rarely
+  moves a rounded OVR by a whole point, so almost every split billed zero, `flags.decline.ovrLost`
+  never rose and the career budget never bound. It is now billed unrounded off the role weights.
+
+**Par is measured, not guessed.** A split mean averages ~19 games, so its sd is only about
+`1.05/sqrt(19) = 0.24`. Par set anywhere near the per-GAME mean fires never. `DECLINE_RATING` (6.90)
+and `DECLINE_RATING_BAD` (6.40) must be **re-measured against the MATCH RATINGS block** whenever
+that block moves. `DECLINE_CAREER_MAX` (6 OVR) is exported so careerSmoke asserts the real budget.
+
+Measured on `--seed 42`: **-1.1 mean OVR over 6.3 splits per career, 8/8 careers bitten, and 225
+attribute-shares held at zero by training.** careerSmoke fails the run if decline never fires
+(`nodecline2`), if it fires in most splits of every career (`alwaysdecline`), if it exceeds its
+budget (`declinebudget`), or if training never once protected an attribute (`nomaintain`) — that
+last one is the half that is silent when broken, because decline firing says nothing about whether
+the player had any counterplay.
+
+### The split meta
+Some champions are strong for a split and some are weak. `constants.metaFor(year, split)` is a
+**pure derivation, memoised and frozen, and nothing is persisted** — no hydrate shape, no
+careerRender rot state, no slotCheck round trip, and no hand-pasted firestore.rules deploy. Seeded
+`mulberry32(hash32('meta:' + year + ':' + split))`, so it is byte-identical across page loads and
+between a reload and a match the player is halfway through.
+
+- Built **per role**, ~18% strong and ~18% weak, so every role has real picks in both bands every
+  split. A champion legal in two roles takes its tier from the FIRST role it appears in, so per-role
+  band counts legitimately drift from 0.18 for later roles.
+- `match.META_STEP` is 0.035 and **symmetric by construction**: `META_STRONG_FRACTION ===
+  META_WEAK_FRACTION`, so a strong pick pays exactly what a weak pick costs. A pure bonus would lift
+  every rating in the mode against careerSmoke's 7.6 hard fail. Scored inside the existing
+  `draft.picked` block, so a benched game and a pre-champion-select save keep byte-identical
+  arithmetic; added to `simDraft` too, because half a career's games are simmed and omitting it
+  would make the AI draft against the meta forever with no symptom.
+- Scored on a **blind pick as well as a counter**, unlike the matchup term. What patch it is does
+  not depend on seeing the enemy pick.
+- The enemy champion is deliberately still a flat `pick(rolePool)`. Weighting it toward strong-meta
+  champions would break the matchup term's symmetry in a way `championCheck` cannot see, because
+  that bounds the TABLE and not the sampling distribution.
+- `championsForStyle` is untouched, so championCheck's no-starved-playstyle and no-unpickable-
+  champion guarantees stay split-INdependent.
+
+`STYLE_POOL_MIN` rose 8 -> 12 (widening the draft bank; `FIT_MAX` stays 0.24), and the
+`champ_lab` activity banks proficiency games on `player.practiceChamp` — set from the Dossier's
+proficiency panel, falling back to the signature. Measured: 17.8% strong / 64.4% contested / 17.8%
+weak picks, mean swing +0.0000 per pick.
+
+### Scrims sharpen the room
+`doScrim()` now permanently raises the four seats that are NOT the player's own, into
+`career.club.scrim` — the only mutable org state in the mode, scoped by `club.teamId`, which is what
+makes a transfer reset it with no hook. **`teams.seatScrimDelta()` clamps to `SCRIM_SEAT_CAP` (10)
+ON READ**, so a hand-edited save cannot exceed the cap either. `runRosterChurn` clears a seat's
+entry when its occupant is replaced, or the rookie inherits the departed player's ten points.
+
+Two things that would have made it cosmetic or ruinous:
+- **`clubStrengthDelta` is the only path from club state to a game.** A seat bonus applied only in
+  `clubRosterFor` would change the Club screen and nothing the match engine sees. The scrim term is
+  added **outside** the shared `clamp(delta, -9, 9)` rail, with a rail of its own — that rail
+  already carries momentum (+/-4) and churn (+/-5) and is exactly full when both are extreme.
+- **`SCRIM_STRENGTH_CAP` is a DAMPER, not a rail the honest maximum sits under.** The seat RATING
+  cap is the +10 the feature promises. Translating all of it into club strength at full weight was
+  measured and it inflates the whole mode through a chain invisible from the scrim itself: mean
+  match rating 7.36 -> **7.56** against a 7.6 hard fail, via stronger club -> higher win rate ->
+  awards 729 -> **911** -> more legacy points -> perks owned 9.6 -> **14.5** of 24, which buys the
+  Evergreen/Ascendant CEILING perks and lifts every attribute ceiling in the career. Unlike
+  momentum, whose target is a win rate and therefore cannot exceed 1, this loop has no self-limiting
+  term. 2.2 keeps a fully-scrimmed room worth about half a momentum swing.
+
+`baseRating` stays RAW: `runRosterChurn` ranks and prices replacements off it and would otherwise
+churn a scrimmed-up seat as an overachiever and pay for its replacement at the inflated number.
+Known and currently harmless: a departed club's scrim map can sit in the save for up to a week after
+a transfer (~60 seat-weeks a run), read back as 0 because `clubBlock()` scopes it — **any future
+reader that touches `c.club.scrim` directly instead of through `clubBlock()` inherits a live bug.**
+
+### Consumables are bounded
+There were 15 consumables and exactly one bound in the whole system. `buyConsumable(id, 999)` was
+legal, `useConsumable` charged no activity slot and wrote no counter, and `all_nighter` raised
+`weekly.actionsLeft` with **no ceiling against `actionsMax`** — the only mechanic in the mode that
+can exceed the weekly activity budget, and the engine of the whole spam loop.
+
+Bounds are **data on the item** (`maxPerWeek` / `maxPerCareer`), keeping the file's promise that a
+new item is a data edit and nothing else, plus a default `CONSUMABLE_HOLD_MAX`.
+`economy.consumableAllowance()` is the ONE reader; `buyConsumable`, `useConsumable` and
+`consumableSection` all consult it, so a cap can never mean two things.
+
+- **The per-week ledger is `weekly.counts['cons:' + id]`, not a new `weekly` key.** `weekly` is
+  rebuilt from a literal every week, so a new key there would be deleted weekly AND fail careerSmoke's
+  shape check; `weekly.counts` already exists, is already rebuilt and is already hydrate-sanitised.
+- **`psych_session` takes a per-WEEK cap and must never take a per-career one.** It is one of the
+  five escapes from the burnout ladder, and that ladder's second strike TERMINATES THE CONTRACT.
+- The ceiling budget is now charged **by use count**, not by a rounded role-weighted `calcOVR`
+  delta that stopped charging once high-weight ceilings reached 99 while the item kept working.
+- Gate before spend: a refused purchase costs no gold and a refused use consumes no item.
+
+Measured: 628 uses, **91 refused by a cap**. careerSmoke fails the run if no cap ever bites.
+Note the harness's own exhaustion probe is rolled one week in five deliberately — at every call it
+drove `all_nighter` to its cap constantly and moved the documented `condition` readout a long way
+(morale mean 92.6 -> 91.4, min 24 -> 0, and 0 -> 2 contract terminations). Those lines are the only
+honest source for tuning the morale sinks, and a harness probe must not be what sets them.
+
+### Offers match the player
+This was a real bug, not a missing feature. `scoutInterest()` was `50 + (ovr - strength) * 3.1`
+clamped to 100, so at 98 OVR roughly **95 of the 108 clubs tied at exactly 100** while T1
+(strength 88) scored 81 — the ranking was INVERTED at the top. `interestedTeams()` sorts on that
+number and broke ties with `localeCompare` on club NAME, and `generateOffers()` takes the top 14.
+An elite free agent's candidate list was therefore **the alphabetically-first fourteen of the
+world's weakest sides**, and the best orgs never entered the roll at all.
+
+- The curve now turns over past a gap of ~10 (`OVERQUALIFIED_DECAY`), so a bigger gap means LESS
+  interest. Do NOT simply raise the clamp — 100 is a display band `Transfers.svelte` reads.
+- **The current club is exempt from the decay.** `renewalOffer()` prices renewals off
+  `scoutInterest` and returns null under `MIN_OFFER_INTEREST`, so without the exemption an elite
+  player at a mid-table club becomes unrenewable by his own employer — a worse bug than the one
+  being fixed.
+- `signingBlock()` gained tier-2 and tier-3 ceilings off `TIER_OVR_CEILING` (84 / 78, sized well
+  above `UNSIGNED_SOFT_CAP` because that cap is a 0.15x throttle and not a wall). **Both are gated
+  on `flags.everSigned`**, which is what keeps the compulsory first-club ladder open — careerSmoke
+  hard-fails a run where a precomp career is never signed or where its first club is not tier 3.
+  The player's own parent academy is exempt so promotion is never unreachable in reverse.
+- `eligibleClub()` took an `ovr` parameter it never read, and its tier/strength rail sat inside the
+  `if (cur)` branch — so a FREE AGENT, exactly the state an elite player is in during the window,
+  was completely unguarded. It reads it now.
+- **Interest prices the offer sheet; frequency belongs in `generateOffers`.** `buildOffer` derives
+  wage, years, signing bonus and release clause from interest, so depressing it to reduce call rate
+  would quietly cut every elite player's pay.
+
+Measured: **202 tier-1 / 37 tier-2 / 13 tier-3 offers**, 151 of the tier-1 ones to a player past
+OVR 78, and the first-club ladder still intact (4/4 precomp careers start at tier 3, 0 never
+signed). The `interestedTeams(c, 14)` literal is unchanged but now selects an entirely different
+set of clubs, so offer VOLUME must be re-measured rather than assumed.
+
+### The goal club
+`player.goalClubId` is a club the career is aiming for. `contracts.goalProgress(c)` returns an
+`eventQualification`-shaped `{ status, detail, ... }` row and **must live in contracts.js**: it
+needs `clubGate`, `MIN_OFFER_INTEREST` and `T1_STARTER_FLOOR`, all module-private, and
+`Transfers.svelte` already hand-mirrors four constants from that file, which is how a screen and an
+engine come to disagree about who can sign you.
+
+- A readout built from interest alone would be a lie — `eligibleClub` refuses a club that is not a
+  tier up while under contract, `generateOffers` only runs in the window, and `signingBlock` can
+  hard-block on language, age or rating. All of them are folded in.
+- The mechanical effect is a **call-rate multiplier only** (`GOAL_CALL_RATE_BONUS`, beside
+  `HOME_REGION_CALL_RATE` and `FLUENT_CALL_RATE_BONUS`). Putting it in `scoutInterest` would have
+  paid the player more for wanting to be somewhere.
+- `status: 'lost'` surfaces `p.rejected[goalId] >= REJECTIONS_BEFORE_BLACKLIST`, which permanently
+  removes a club from `generateOffers`. That counter existed and was rendered nowhere: a player
+  could destroy their own goal in two clicks with no warning and no way back.
+- `flags.goalReached` is **year-stamped, not boolean** (the `firstStandBerth` idiom) and stamped at
+  BOTH sites that can write a new `player.clubId` — `acceptOffer` and `promotionCheck` — inside
+  their existing `career.update`. A player who targets a tier-1 org and signs its academy arrives
+  by promotion, not by an offer.
+- `hydrate()` degrades a dead or renamed club id to null and NEVER auto-assigns a goal to a save
+  that lacks the key.
+
+### Scouting any club's roster
+`teams.getTeamRoster()` has always worked for all 108 orgs, and until now exactly one component read
+it and only for the player's own club — every other club name in the mode was an inert `<span>`.
+`teams.rosterForClub(c, teamId)` returns **fresh shallow copies** for any club (delegating to
+`clubRosterFor` for the player's own so signings, form and scrim still show), and
+`ClubScout.svelte` renders them from Club, Calendar and the Hub as a component-local dialog —
+**no new `careerScreen` id and no new CareerOverlay kind**, so none of the
+`valid`/`accent`/`dismissible` branches were touched.
+
+Three guards are mandatory and all three are copied from `CareerDossier`: `boardDBReady()`, because
+`getTeamRoster` invents synthetic names when the card DB has not loaded and never corrects itself; a
+`seatCard()` shape guard, because `Card.svelte` does an unguarded `card.name.slice`; and
+`onclick={noop}` on every `<Card>`, or clicking a seat opens the OTHER gamemode's `CardInspectModal`
+from the App root. It renders no momentum or club-strength delta for a foreign club — those read
+`career.club` and are non-zero only for the player's own.
+
 ### The career leaderboard
 A global board of other people's careers: browse, then open a full dossier — their player card,
 their club roster cards, their season-by-season team history and their performance stats.
@@ -650,6 +849,13 @@ mirror), but **adding a row FIELD is still a TWO-STAGE deploy** — `keys().size
 per-field type checks mean a new field is denied until the rules are re-published by hand first.
 
 **Verifying career changes** — `npm run build` passing proves very little here:
+- `node tools/svelteCheck.mjs [file...]` — compiles every `.svelte` (or just the named ones) with
+  the real Svelte compiler in **SSR mode**, which is how careerRender loads them, and writes nothing
+  to disk. It exists because `vite build` writes to a shared `dist/` and two concurrent runs corrupt
+  each other, so it is the only safe compile check while several components are being edited at
+  once. It proves a component PARSES; it does not prove it RENDERS, which is careerRender's job.
+  A new `css-unused-selector` warning means a rule nothing uses or a misspelled class. Baseline is
+  55 components, 0 failed, 39 pre-existing warnings.
 - `node tools/careerSmoke.mjs --seed 42` — plays full 12-24 year careers headlessly with ~30
   invariants asserted every week. Seeded, so failures reproduce. Also asserts the trait system
   (exactly one, never before its reveal age, never a dead id), both ceiling budgets, and that
@@ -667,6 +873,20 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   especially, whose berth survives a year rollover on a flag — is an event nobody can play.
   It asserts the league table can never drift more than one week's games out of step, which is the
   check whose absence let a 45-vs-18 table ship.
+  It now also prints, each with two-sided inertness assertions: **`decline`** and **`maintained by
+  training`** (see "A rating can go DOWN now" — a decline that never fires, one that fires in every
+  split, one that breaks its budget, and one that training can never oppose are four different
+  failures and all four are silent); **`scrim room`** (seats sharpened, best seat against
+  `SCRIM_SEAT_CAP`, and a hard fail if a scrim value is ever non-zero while `club.teamId` has moved
+  on, i.e. the bonus is following the player between orgs); **`consumable caps`** (uses, and how
+  many a cap actually refused — with a cap-exhaustion probe asserting the refusal is clean, gold
+  unmoved and item unconsumed); **`offer quality`** (offers by tier, and a hard fail either way —
+  an elite player receiving a tier-3 offer, OR the run never producing a tier-1 offer to a
+  high-OVR player, because a rule that only removes offers and a rule that was never wired look
+  identical); **`split meta`** (picks by band, failing if neither band is ever landed); and
+  **`goal club`**. Measured mean match rating is now **7.46** against the 7.6 hard fail — the eight
+  new systems spent about half the old margin, so anything adding a one-directional bonus must
+  re-measure this line first.
 - `node tools/eventCheck.mjs` — the in-match decision pools (`matchEvents.js`). That file opens
   with a page of authoring discipline that was, until this existed, enforced entirely by a comment:
   3-or-4 options, a safest and a greedy play at least 0.12 of difficulty apart, safest averaging
@@ -725,9 +945,21 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   bare `c` — every one of those falls through to `c || snapshot()` and would print the VIEWER'S own
   numbers under a stranger's handle. The lint patterns carry their own positive/negative controls,
   because a lint that matches nothing looks exactly like a clean codebase.
-- `node tools/careerRender.mjs` — Vite SSR-renders all 23 career components against 50 game
-  states (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
-  check that exercises the Svelte templates. Note two extra loops beyond the screens matrix: the
+- `node tools/careerRender.mjs` — Vite SSR-renders every career component against the game-state
+  matrix (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
+  check that exercises the Svelte templates. **1174 renders, 0 crashes.**
+  A third loop joined the two below: **ClubScout is driven directly**, because it is a child with
+  three required props mounted only behind `scoutId !== null`, which no SSR pass sets — exactly
+  BracketView's position. Its card-database-unloaded arm needs a second, throwaway Vite graph built
+  while `window.playerDatabase` is absent, because `utils/cards.js` memoises the DB in a
+  module-local cache with no reset and the state builders warm it long before any render.
+  The states that matter most are the ones **no ordinary fixture owns** — a Shop at its consumable
+  caps, a goal club in each of its five statuses, an attribute pinned to its ceiling so the
+  maintenance drill card exists, a populated `flags.decline.attrs`, and a `lastMatch.moraleNotes`
+  (plus one deliberately ABSENT, the pre-change save shape). Before those were added, the markup for
+  every one of them had **zero occurrences in `--dump`** while the harness reported green: the same
+  failure as the signature-slot perk. `--dump` and grep is the only way to tell a state that exists
+  from markup that renders; `tools/.render-dump` is not gitignored, so delete it afterwards. Note two extra loops beyond the screens matrix: the
   **Shop is rendered once per tab** (`initialTab`, a prop only this harness passes — `tab` is
   component-local, so every section but `gear` used to ship untested), and **BracketView is driven
   directly** against a dozen hand-built bracket shapes because it is a child of Calendar and gets no
@@ -745,7 +977,14 @@ per-field type checks mean a new field is denied until the rules are re-publishe
   saves store `player.champion` as a bare string, so every save that picked it is orphaned). Also
   enforces the mod balance envelope, reports the comfort-bonus spread across archetypes, and — since
   signature picks became playstyle-gated — asserts that no playstyle is starved, that no champion is
-  unpickable, and that a playstyle's blurb never names a champion the fit rule rejects. That last
+  unpickable, and that a playstyle's blurb never names a champion the fit rule rejects.
+  It also owns the **split meta** (see that section): purity and memoisation identity, that a
+  forced cache eviction recomputes byte-identically, that every role holds both bands in every
+  split, that no band ever exceeds half a pool, that no champion is strong in a wildly
+  disproportionate share of splits (a permanent buff wearing a meta costume), that
+  `META_STRONG_FRACTION === META_WEAK_FRACTION` — the equality the match term's symmetry rests on —
+  and that `metaTierFor` returns 0 without throwing for every rot shape. Champion ids are permanent
+  save data, so a meta keyed by id must never throw on one it does not know. That last
   check is what caught the Frontline Tank being unable to pick Ornn or Sion. It has one known
   standing warning: `sup_roam` names Pyke, whose archetype really is closer to a lane bully.
 - `node tools/comboSim.mjs` — calibration gate for the MEC drill (**ComboGame**, the osu-style

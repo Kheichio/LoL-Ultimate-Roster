@@ -267,6 +267,10 @@ function fail(severity, file, symptom, evidence, suggestedFix, dedupeKey) {
 let CTX = { label: '?', week: 0, year: 0, cfg: null };
 const FIRST_CLUB = new Map();   // career label -> tier of the first club actually joined
 const SPLIT_CLUB = new Map();   // "label|year|split" -> club the split was PLAYED for
+// Career labels that were EVER observed sitting on their own goal club's roster.
+// Sampled live, once a week, because flags.goalReached is a one-way stamp and a
+// later transfer erases the only other evidence the player was ever there.
+const GOAL_AT = new Set();
 function ctxLine() {
     return `[${CTX.label}] year ${CTX.year} week ${CTX.week}`;
 }
@@ -321,6 +325,70 @@ function checkRange(where, v, lo, hi, file, fix, severity) {
 }
 
 let prevSnapshot = null;
+
+/**
+ * THE THREE CONSUMABLE LEDGERS, walked wherever they are live.
+ *
+ * Two of them persist and can be read once a week from the invariant walker, but
+ * weekly.counts is REBUILT FROM A LITERAL by startCareerWeek -- so sampling it
+ * after advanceWeek() reads an empty map every single time, which is exactly what
+ * the first cut of this block did: the per-week rail could never have fired and
+ * the coverage line printed "busiest week none" on a run that had used 1161
+ * consumables. It is therefore called from exerciseEconomy() as well, mid-week,
+ * while the counters still exist.
+ */
+function checkConsumableLedgers(c) {
+    if (!c) return;
+    const counts = (c.weekly && typeof c.weekly.counts === 'object' && c.weekly.counts
+        && !Array.isArray(c.weekly.counts)) ? c.weekly.counts : {};
+    for (const key of Object.keys(counts)) {
+        if (key.indexOf(E.CONSUMABLE_WEEK_KEY) !== 0) continue;
+        const id = key.slice(E.CONSUMABLE_WEEK_KEY.length);
+        const item = E.CONSUMABLE_BY_ID[id];
+        const v = Math.round(Number(counts[key]) || 0);
+        if (v > (stats.consMaxWeek.get(id) || 0)) stats.consMaxWeek.set(id, v);
+        const cap = Math.round(Number(item && item.maxPerWeek) || 0);
+        if (cap > 0 && v > cap) {
+            fail('wrong', 'src/lib/career/economy.js',
+                'a consumable was used more times in one week than maxPerWeek allows',
+                `${ctxLine()} -> ${id} used ${v} times this week, cap ${cap}`,
+                'useConsumable must read consumableAllowance() BEFORE it consumes anything.',
+                'consweek|' + id);
+        }
+    }
+
+    const used = (c.flags && typeof c.flags.consumablesUsed === 'object' && c.flags.consumablesUsed
+        && !Array.isArray(c.flags.consumablesUsed)) ? c.flags.consumablesUsed : {};
+    for (const id of Object.keys(used)) {
+        const item = E.CONSUMABLE_BY_ID[id];
+        const v = Math.round(Number(used[id]) || 0);
+        if (v > (stats.consMaxCareer.get(id) || 0)) stats.consMaxCareer.set(id, v);
+        const cap = Math.round(Number(item && item.maxPerCareer) || 0);
+        if (cap > 0 && v > cap) {
+            fail('wrong', 'src/lib/career/economy.js',
+                'a consumable was used more times in a career than maxPerCareer allows',
+                `${ctxLine()} -> ${id} used ${v} times this career, cap ${cap}`,
+                'flags.consumablesUsed is the career ledger; consumableAllowance() must gate on it before the effect runs.',
+                'conscareer|' + id);
+        }
+    }
+
+    const bag = (c.inventory && typeof c.inventory.consumables === 'object' && c.inventory.consumables
+        && !Array.isArray(c.inventory.consumables)) ? c.inventory.consumables : {};
+    for (const id of Object.keys(bag)) {
+        const item = E.CONSUMABLE_BY_ID[id];
+        const v = Math.round(Number(bag[id]) || 0);
+        if (v > (stats.consMaxHeld.get(id) || 0)) stats.consMaxHeld.set(id, v);
+        const hold = Math.max(1, Math.round(Number(item && item.holdMax) || E.CONSUMABLE_HOLD_MAX));
+        if (v > hold) {
+            fail('wrong', 'src/lib/career/economy.js',
+                'the bag holds more of one consumable than the hold cap allows',
+                `${ctxLine()} -> ${id} x${v} held, cap ${hold}`,
+                'buyConsumable clamps the quantity to allowance.holdLeft before it spends a single gold.',
+                'conshold|' + id);
+        }
+    }
+}
 
 function assertInvariants(c, tally) {
     if (!c) return;
@@ -502,6 +570,114 @@ function assertInvariants(c, tally) {
             stats.regFormat = stats.regFormat || {};
             stats.regFormat[want] = (stats.regFormat[want] || 0) + 1;
         }
+    }
+
+    // ---- SCRIM SEATS -------------------------------------------------------
+    //  career.club.scrim is the third club mechanic and the only one that is a
+    //  pure BONUS, so every one of its failure modes is silent and generous: a
+    //  seat past the cap, a ledger that survives a transfer, or the player's own
+    //  seat being paid twice (teamStrengthWithPlayer already prices it from
+    //  calcOVR). Sampled every week rather than at retirement because a transfer
+    //  legitimately blanks the whole block -- a career that scrimmed for six
+    //  years and then moved retires holding {}.
+    {
+        const club = (c.club && typeof c.club === 'object' && !Array.isArray(c.club)) ? c.club : null;
+        const raw = (club && club.scrim && typeof club.scrim === 'object' && !Array.isArray(club.scrim))
+            ? club.scrim : {};
+        const ours = !!(club && c.player.clubId && club.teamId === c.player.clubId);
+
+        let total = 0;
+        for (const role of T.ROSTER_SLOTS) {
+            const stored = Number(raw[role]);
+            const read = step('teams.seatScrimDelta', () => T.seatScrimDelta(c, role), 0);
+            const v = Number.isFinite(stored) ? stored : 0;
+            if (v > stats.scrimMaxSeat) stats.scrimMaxSeat = v;
+            if (isNum(read) && read > stats.scrimMaxSeat) stats.scrimMaxSeat = read;
+
+            // THE CAP IS THE FEATURE'S ONLY BOUND. teams.seatScrimDelta clamps on
+            // read, so a stored value past it is still the write side leaking.
+            if (v > T.SCRIM_SEAT_CAP + 1e-9 || (isNum(read) && read > T.SCRIM_SEAT_CAP + 1e-9)) {
+                fail('wrong', 'src/lib/career/teams.js',
+                    'a scrim seat ran past SCRIM_SEAT_CAP',
+                    `${ctxLine()} -> club.scrim.${role} stored ${v}, read back ${read}, cap ${T.SCRIM_SEAT_CAP}`,
+                    'doScrim() clamps on write and seatScrimDelta() clamps on read; one of the two stopped.',
+                    'scrimcap|' + role);
+            }
+            // A BONUS THAT FOLLOWED THE PLAYER OUT OF THE BUILDING.
+            //
+            // ASSERTED ON THE READ, NOT ON THE STORED BLOCK, and that distinction
+            // is the whole point. A promotion or a transfer leaves the OLD club's
+            // block in the save for the rest of the week -- tickClubMomentum()
+            // blanks it on the next advanceWeek, and it fires ~67 times a run
+            // here, most of them an academy player being promoted to the parent
+            // org inside closeSplit() after the tick has already run. That stale
+            // block is harmless because clubBlock() returns null on a teamId
+            // mismatch, so seatScrimDelta(), clubRosterFor() and
+            // clubStrengthDelta() all read zero from it. What would be a real
+            // defect is that scoping going away, and the only way to see that is
+            // to ask for the number the game actually uses.
+            if (isNum(read) && read > 0 && !ours) {
+                fail('wrong', 'src/lib/career/teams.js',
+                    'a scrim bonus followed the player to another club',
+                    `${ctxLine()} -> club.teamId=${(club && club.teamId) || 'null'} player.clubId=${c.player.clubId || 'null'}`
+                    + `, stored club.scrim.${role}=${v} and seatScrimDelta() still reads back ${read}`,
+                    'clubBlock() must return null when club.teamId !== player.clubId; that mismatch IS the '
+                    + 'transfer reset, and every scrim read goes through it.',
+                    'scrimscope');
+            }
+            if (v > 0 && !ours) stats.scrimStaleWeeks++;
+            if (ours && v > 0) {
+                total += v;
+                CTX.scrimSeats && CTX.scrimSeats.add(role);
+            }
+        }
+
+        // NEVER THE PLAYER'S OWN SEAT. teamStrengthWithPlayer() already prices
+        // that seat from calcOVR, so a value here is the player being paid for
+        // himself twice through a term nothing on screen attributes.
+        const own = c.player.role;
+        if (own && Number(raw[own]) > 0) {
+            fail('wrong', 'src/lib/career/engine.js',
+                "a scrim sharpened the player's OWN seat",
+                `${ctxLine()} -> role ${own}, club.scrim.${own} = ${raw[own]}`,
+                'doScrim() must filter ROSTER_SLOTS by `r !== myRole`; clubStrengthDelta skips the same seat '
+                + 'on the read side and would double-count it.',
+                'scrimown');
+        }
+
+        // Points BANKED, not points held: a transfer resets the ledger, so the
+        // lifetime figure has to be accumulated from the rises.
+        if (CTX.scrimSeats) {
+            const prev = Number(CTX.scrimPrev) || 0;
+            if (total > prev) stats.scrimPoints += total - prev;
+            CTX.scrimPrev = total;
+        }
+    }
+
+    checkConsumableLedgers(c);
+
+    // ---- THE GOAL CLUB -----------------------------------------------------
+    //  goalProgress() is a pure read wrapped at every call site, so a throw
+    //  inside it is invisible in the game and shows up here as a crash. The
+    //  membership sample is the other half of the flag assertion at the end of
+    //  the run: flags.goalReached is one-way, and a later transfer erases the
+    //  only other evidence the player was ever on that roster.
+    if (p.goalClubId) {
+        const gp = step('contracts.goalProgress', () => C.goalProgress(c), null);
+        if (!gp) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'goalProgress returned nothing for a career that has a goal club',
+                `${ctxLine()} -> player.goalClubId = ${p.goalClubId}`,
+                'goalProgress returns null only for a missing or unresolvable id; this one resolves.',
+                'goalnull');
+        } else if (!isNum(gp.interest)) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'goalProgress produced a non-finite interest',
+                `${ctxLine()} -> ${JSON.stringify({ status: gp.status, interest: gp.interest })}`,
+                'scoutInterest must always resolve to a number; the row is rendered as a percentage.',
+                'goalinterest');
+        }
+        if (c.player.clubId && c.player.clubId === p.goalClubId) GOAL_AT.add(CTX.label);
     }
 
     if (c.player.clubId && !FIRST_CLUB.has(CTX.label)) {
@@ -840,7 +1016,33 @@ const stats = {
     grindWeeks: 0,
     preGameEvents: 0,
     firstTimeEvents: new Map(),
+    // ---- the five systems this file learned to see -------------------------
+    // Every one of them is a write nothing else in the harness reads. A scrim
+    // that stops banking points, a cap that stops refusing, an offer rail that
+    // only ever REMOVES offers, a meta band that never lands and a goal nobody
+    // can reach all produce exactly the same output as a clean run.
+    scrimPoints: 0,        // fractional seat points banked across the whole run
+    scrimMaxSeat: 0,       // highest single seat value ever OBSERVED, not stored
+    scrimStaleWeeks: 0,    // seat-weeks a departed club's ledger was still in the save
+    consUses: 0,           // successful useConsumable() calls
+    consRefusals: 0,       // uses a cap actually refused
+    consProbes: 0,         // cap-exhaustion probes driven
+    consMaxWeek: new Map(),    // consumable id -> highest weekly.counts['cons:id']
+    consMaxCareer: new Map(),  // consumable id -> highest flags.consumablesUsed[id]
+    consMaxHeld: new Map(),    // consumable id -> highest inventory.consumables[id]
+    offersByTier: { 1: 0, 2: 0, 3: 0 },
+    offerGaps: [],         // ovr - strengthOf(club) for every offer seen
+    acceptedGaps: [],      // ...and for the ones actually signed
+    tier1HighOvr: 0,       // tier-1 offers made to a player past TIER_OVR_CEILING[3]
+    metaPicks: { strong: 0, contested: 0, weak: 0 },
+    metaSwingSum: 0,
+    goalProbes: 0,         // careers that re-pointed their goal at a signing club
 };
+
+/** Champion-select picks whose meta band could not be resolved. Counted apart
+ *  from the three bands so "the meta never lands" and "draftOption stopped
+ *  returning a meta at all" are different numbers. */
+stats.metaUnknown = 0;
 
 /** Count a life event at the moment it is APPLIED, wherever it came from: the
  *  array off advanceWeek (weekly rolls plus the pre-game one) or an overlay the
@@ -1062,20 +1264,41 @@ function playFixtureManually(f) {
                 if (already.length) stats.fearlessSeen++;
                 stats.fearlessMax = Math.max(stats.fearlessMax || 0, already.length);
 
+                const views = new Map();
                 for (const id of opts) {
                     const view = step('match.draftOption', () => M.draftOption(cur(), m, id), null);
+                    if (view) views.set(id, view);
                     if (!view || !view.champion) {
                         fail('wrong', 'src/lib/career/match.js', 'a champion select option does not resolve',
                             `${ctxLine()} -> "${id}"`, 'rollDraft must only ever offer real champion ids.',
                             'draftopt|' + id);
-                    } else if (!isNum(view.matchupSwing) || !isNum(view.proficiencySwing)) {
+                    } else if (!isNum(view.matchupSwing) || !isNum(view.proficiencySwing) || !isNum(view.metaSwing)) {
+                        // metaSwing sits beside the other two because it is
+                        // scored on EVERY pick, blind or countered, while the
+                        // matchup term is not - so a NaN here poisons a game the
+                        // matchup checks would have called clean.
                         fail('wrong', 'src/lib/career/match.js', 'champion select produced a non-numeric swing',
-                            `${ctxLine()} -> ${id} ${JSON.stringify({ m: view.matchupSwing, p: view.proficiencySwing })}`,
-                            'championMatchup/proficiency01 must always resolve to a number.');
+                            `${ctxLine()} -> ${id} ${JSON.stringify({
+                                m: view.matchupSwing, p: view.proficiencySwing, meta: view.metaSwing,
+                            })}`,
+                            'championMatchup/proficiency01/metaTierFor must always resolve to a number.');
                     }
                 }
                 if (opts.length) {
-                    m = step('match.chooseDraft', () => M.chooseDraft(m, rpick(opts)), m);
+                    const chosen = rpick(opts);
+                    // THE SPLIT META, counted on what was LOCKED IN. Counting the
+                    // options offered instead would measure metaFor()'s banding
+                    // and nothing about whether the draft ever surfaces it.
+                    {
+                        const v = views.get(chosen);
+                        const tier = v ? Math.round(Number(v.meta)) : NaN;
+                        if (tier === 1) stats.metaPicks.strong++;
+                        else if (tier === -1) stats.metaPicks.weak++;
+                        else if (tier === 0) stats.metaPicks.contested++;
+                        else stats.metaUnknown++;
+                        if (v && isNum(v.metaSwing)) stats.metaSwingSum += v.metaSwing;
+                    }
+                    m = step('match.chooseDraft', () => M.chooseDraft(m, chosen), m);
                     ST.matchState.set(m);
                     stats.draftPicks++;
                     if (!m.draft || !m.draft.picked) {
@@ -1186,11 +1409,53 @@ function playWeekFixtures() {
         'simFixture/completeMatch is not ticking a fixture off.');
 }
 
+/**
+ * ONE career in the matrix re-points its goal at the club it is about to sign
+ * for, exactly once, immediately before the accept.
+ *
+ * WHY A PROBE AND NOT JUST THE EIGHT NATURAL GOALS. Measured across four seeds,
+ * the natural reach rate off a home-region goal is 0 or 1 careers in 8 -- careers
+ * in this mode overwhelmingly move abroad (7 of 8 on --seed 42), so a home-region
+ * dream club is genuinely hard to get to. That is the system working, and it also
+ * makes "nobody ever reached it" a control that fails on half the seeds for a
+ * reason that has nothing to do with the wiring. The probe makes the STAMP PATH
+ * -- acceptOffer comparing offer team against player.goalClubId and writing the
+ * year -- fire deterministically, while careers 1-7 keep measuring reachability
+ * honestly. Same split as the consumable cap probe above.
+ *
+ * It runs BEFORE acceptOffer, because acceptOffer reads player.goalClubId out of
+ * the snapshot it takes on entry.
+ */
+function goalProbeRepoint(offer) {
+    if (!CTX.cfg || !CTX.cfg.goalProbe || CTX.goalRepointed) return;
+    if (!offer || !offer.teamId || !K.teamById(offer.teamId)) return;
+    const c = cur();
+    if (c.flags && Number(c.flags.goalReached) > 0) return;
+    if (c.player.clubId === offer.teamId) return;
+    if (!step('stores.setGoalClub(probe)', () => ST.setGoalClub(offer.teamId), false)) return;
+    CTX.goalRepointed = true;
+    stats.goalProbes++;
+}
+
 function exerciseContracts(allowAccept) {
     const c = cur();
     const offers = Array.isArray(c.offers) ? c.offers : [];
     if (!offers.length) return;
     stats.offersSeen += offers.length;
+
+    // OFFER QUALITY. scoutInterest used to saturate: at 98 OVR ~95 of the 108
+    // clubs tied on the 100 clamp and the tie-break was localeCompare on the club
+    // NAME, so an elite player's fourteen-club candidate window was the
+    // alphabetically-first fourteen of the world's WEAKEST sides. Nothing threw,
+    // nothing logged, and the offer sheet simply stopped meaning anything -- so
+    // what has to be measured is the GAP between the player and the club that
+    // called, per tier, and not merely that an offer parsed.
+    const ovrNow = step('calcOVR(offers)', () => R.calcOVR(c.player.attrs, c.player.role), NaN);
+    const everSigned = !!(c.flags && c.flags.everSigned);
+    // isOwnAcademy() exempts the parent academy from the tier-2 ceiling, and it
+    // can only ever be true for a player currently at a tier-1 club.
+    const atTier1 = Number(c.player.clubTier) === 1;
+    const gapOf = new Map();
 
     for (const o of offers.slice()) {
         for (const kk of ['salary', 'years', 'signingBonus', 'releaseClause', 'interest']) {
@@ -1198,6 +1463,40 @@ function exerciseContracts(allowAccept) {
                 fail('wrong', 'src/lib/career/contracts.js', `an offer carries a non-numeric ${kk}`,
                     `${ctxLine()} -> ${JSON.stringify(o).slice(0, 240)}`, 'buildOffer must produce numbers.');
             }
+        }
+
+        const tier = Math.round(Number(o.tier) || 0);
+        const club = K.teamById(o.teamId);
+        // contracts.strengthOf() is module-private and calls teamStrength(team)
+        // with no year, so this is the same number the rail was written against.
+        const str = club ? step('teams.teamStrength(offer)', () => T.teamStrength(club), NaN) : NaN;
+        if (isNum(ovrNow) && isNum(str)) {
+            stats.offerGaps.push(ovrNow - str);
+            gapOf.set(o.id, ovrNow - str);
+        }
+        if (tier >= 1 && tier <= 3) stats.offersByTier[tier]++;
+        if (tier === 1 && isNum(ovrNow) && ovrNow > K.TIER_OVR_CEILING[3]) stats.tier1HighOvr++;
+
+        // The two ceilings, both gated on flags.everSigned -- which is what keeps
+        // the compulsory first-club ladder open and the `badFirst` / `neverSigned`
+        // assertions passing. An offer that reaches the player is an offer
+        // signingBlock() let through, so this reads the rail from the outside.
+        if (everSigned && isNum(ovrNow) && tier === 3 && ovrNow > K.TIER_OVR_CEILING[3]) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'the open circuit offered a contract to a player it is not allowed to sign',
+                `${ctxLine()} -> ${o.teamName} (tier 3, strength ${isNum(str) ? str : '?'}) offered to an OVR ${ovrNow}`
+                + ` player, ceiling ${K.TIER_OVR_CEILING[3]}`,
+                'signingBlock clause (e2) must block tier 3 above TIER_OVR_CEILING[3] once flags.everSigned is set.',
+                'tier3ceiling');
+        }
+        if (everSigned && isNum(ovrNow) && tier === 2 && ovrNow > K.TIER_OVR_CEILING[2] && !atTier1) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'an academy offered a contract to a player it is not allowed to sign',
+                `${ctxLine()} -> ${o.teamName} (tier 2, strength ${isNum(str) ? str : '?'}) offered to an OVR ${ovrNow}`
+                + ` player, ceiling ${K.TIER_OVR_CEILING[2]}`,
+                'signingBlock clause (c2) must block tier 2 above TIER_OVR_CEILING[2] once flags.everSigned is set, '
+                + 'with only the player\'s own parent academy exempt.',
+                'tier2ceiling');
         }
     }
 
@@ -1211,10 +1510,138 @@ function exerciseContracts(allowAccept) {
     } else if (roll < 0.4 && !allowAccept) {
         step('contracts.rejectOffer', () => C.rejectOffer(o.id));
     } else if (allowAccept || rand() < 0.6) {
+        goalProbeRepoint(o);
         const r = step('contracts.acceptOffer', () => C.acceptOffer(o.id), null);
-        if (r && r.ok) stats.offersAccepted++;
+        if (r && r.ok) {
+            stats.offersAccepted++;
+            const g = gapOf.get(o.id);
+            if (isNum(g)) stats.acceptedGaps.push(g);
+        }
     } else {
         step('contracts.rejectOffer', () => C.rejectOffer(o.id));
+    }
+}
+
+/**
+ * DRIVE ONE CONSUMABLE PAST ITS WEEKLY CAP AND CHECK THE REFUSAL IS CLEAN.
+ *
+ * Buying one and using one -- which is all this harness did before -- can never
+ * reach a cap, so every bound in economy.js was untested by construction: an item
+ * that stopped reading consumableAllowance() would have looked exactly like this
+ * run does. The probe fills the bag, spends whatever the week still allows, and
+ * then asks for one more.
+ *
+ * WHAT IS ACTUALLY ASSERTED IS THE ORDERING. "Gate before spend" is a stated rule
+ * in economy.js, and a cap checked AFTER spendGold or after addConsumable(-1) is
+ * not a balance bug, it is data loss: the player pays for a refusal. So the probe
+ * compares gold and the bag either side of the refused call and requires both to
+ * be byte-identical.
+ *
+ * Items with `needsClub` are skipped -- their refusal is a different clause and
+ * would make the probe report a cap that never ran.
+ */
+function consumableCapProbe() {
+    // SMOKE_NO_CAPPROBE=1 is the control for the other direction: the probe
+    // deliberately spends items whose effects move the condition meters, so it
+    // has to be possible to ask what the `condition` line reads without it.
+    if (process.env.SMOKE_NO_CAPPROBE) return;
+    // ROLLED RARELY, and that is a measurement decision rather than a cost one.
+    // The pool deliberately still contains all_nighter -- the item the whole cap
+    // system exists for -- and driving that to its cap every seventh week on
+    // every career moved the `condition` readout above by a mile: morale mean
+    // 92.6 -> 91.4, min 24 -> 0, low-morale weeks 4 -> 15, and 0 -> 2 contract
+    // terminations. Those lines are the ONLY honest source for tuning the morale
+    // sinks, so a harness probe must not be what sets them. At one week in five
+    // the probe still refuses ~100 uses a run, which is all a positive control
+    // needs. SMOKE_NO_CAPPROBE=1 turns it off entirely to re-measure.
+    if (rand() >= 0.2) return;
+    const c0 = cur();
+    if (c0.flags && c0.flags.retired) return;
+
+    const capped = E.CONSUMABLES.filter(it => Math.round(Number(it.maxPerWeek) || 0) > 0
+        && !(it.effect && it.effect.needsClub));
+    if (!capped.length) {
+        fail('wrong', 'src/lib/career/economy.js',
+            'no consumable carries a per-week cap at all',
+            `${ctxLine()} -> ${E.CONSUMABLES.length} items and not one has maxPerWeek`,
+            'The bounds are DATA on the item; an empty set means the whole cap system is unreachable.',
+            'nocapped');
+        return;
+    }
+    const item = rpick(capped);
+
+    const allow = step('economy.consumableAllowance', () => E.consumableAllowance(c0, item), null);
+    if (!allow) return;
+    if (allow.careerLeft <= 0) return;          // already spent for the career; nothing to prove
+    const need = Math.max(1, Math.round(Number(allow.weekLeft) || 0) + 1 - Math.round(Number(allow.held) || 0));
+    if (need > allow.holdLeft) return;          // the bag cannot carry the probe
+    if ((Number(c0.money.gold) || 0) < item.cost * need) return;
+
+    const bought = step('economy.buyConsumable(probe)', () => E.buyConsumable(item.id, need), null);
+    if (!bought || !bought.ok) return;
+    stats.shopBuys++;
+    stats.consProbes++;
+
+    // Spend the week down to its cap. Each of these MUST succeed: the allowance
+    // said they were available, and an item that refuses inside its own budget is
+    // the mirror-image bug.
+    let guard = 0;
+    while (guard++ < 8) {
+        const a = step('economy.consumableAllowance', () => E.consumableAllowance(cur(), item), null);
+        if (!a || a.blocked || a.held < 1) break;
+        const r = step('economy.useConsumable(probe)', () => E.useConsumable(item.id), null);
+        if (!r || !r.ok) {
+            fail('wrong', 'src/lib/career/economy.js',
+                'useConsumable refused an item its own allowance said was available',
+                `${ctxLine()} -> ${item.id}: allowance said weekLeft=${a.weekLeft} careerLeft=${a.careerLeft} held=${a.held}, `
+                + `use returned "${(r && r.msg) || 'nothing'}"`,
+                'consumableAllowance() is the ONE place a cap is decided; useConsumable must not re-derive one.',
+                'consdisagree|' + item.id);
+            break;
+        }
+        stats.consUses++;
+    }
+
+    // ---- the refusal ----------------------------------------------------
+    const before = cur();
+    const goldBefore = Math.round(Number(before.money.gold) || 0);
+    const heldBefore = Math.round(Number(before.inventory?.consumables?.[item.id]) || 0);
+    const usedBefore = Math.round(Number(before.flags?.consumablesUsed?.[item.id]) || 0);
+    if (heldBefore < 1) return;                 // nothing left to be refused
+
+    const a2 = step('economy.consumableAllowance', () => E.consumableAllowance(before, item), null);
+    if (!a2 || !a2.blocked) {
+        fail('wrong', 'src/lib/career/economy.js',
+            'a consumable was still usable after its weekly cap was spent',
+            `${ctxLine()} -> ${item.id} maxPerWeek=${item.maxPerWeek}, used ${a2 ? a2.usedWeek : '?'} this week`
+            + `, allowance says blocked=${a2 ? a2.blocked : '?'}`,
+            'weekly.counts[CONSUMABLE_WEEK_KEY + id] is the ledger; useConsumable must bump it on every use.',
+            'nocapbite|' + item.id);
+        return;
+    }
+
+    const refused = step('economy.useConsumable(over cap)', () => E.useConsumable(item.id), null);
+    const after = cur();
+    if (refused && refused.ok) {
+        fail('wrong', 'src/lib/career/economy.js',
+            'a consumable was used past its own weekly cap',
+            `${ctxLine()} -> ${item.id} maxPerWeek=${item.maxPerWeek}, allowance was blocked ("${a2.reason}") and the use succeeded`,
+            'useConsumable must return early on allowance.blocked, before any effect runs.',
+            'capleak|' + item.id);
+        return;
+    }
+    stats.consRefusals++;
+
+    const goldAfter = Math.round(Number(after.money.gold) || 0);
+    const heldAfter = Math.round(Number(after.inventory?.consumables?.[item.id]) || 0);
+    const usedAfter = Math.round(Number(after.flags?.consumablesUsed?.[item.id]) || 0);
+    if (goldAfter !== goldBefore || heldAfter !== heldBefore || usedAfter !== usedBefore) {
+        fail('wrong', 'src/lib/career/economy.js',
+            'a refused consumable still charged the player',
+            `${ctxLine()} -> ${item.id} refused ("${(refused && refused.msg) || a2.reason}") and gold went `
+            + `${goldBefore} -> ${goldAfter}, bag ${heldBefore} -> ${heldAfter}, career ledger ${usedBefore} -> ${usedAfter}`,
+            'GATE BEFORE SPEND: the allowance check must run before spendGold/addConsumable, not after.',
+            'capcharge|' + item.id);
     }
 }
 
@@ -1238,8 +1665,16 @@ function exerciseEconomy() {
     const r2 = step('economy.buyConsumable', () => E.buyConsumable(con.id, 1), null);
     if (r2 && r2.ok) {
         stats.shopBuys++;
-        step('economy.useConsumable', () => E.useConsumable(con.id));
+        const u = step('economy.useConsumable', () => E.useConsumable(con.id), null);
+        if (u && u.ok) stats.consUses++;
+        else if (u) stats.consRefusals++;
     }
+
+    consumableCapProbe();
+    // Mid-week, while weekly.counts still holds this week's 'cons:' counters --
+    // startCareerWeek rebuilds that block from a literal, so the invariant
+    // walker's copy of this call can only ever see an empty map.
+    checkConsumableLedgers(cur());
 
     const life = rpick(E.LIFESTYLE);
     const r3 = step('economy.buyLifestyle', () => E.buyLifestyle(life.id), null);
@@ -1312,6 +1747,41 @@ function maybeChangeRole() {
     if (r && r.ok) stats.roleChanges++;
 }
 
+/**
+ * A club for this career to aim at, drawn off the seeded RNG so the run stays
+ * reproducible.
+ *
+ * HALF THE MATRIX AIMS AT A TOP-FOUR SIDE IN ITS OWN REGION and half at an
+ * academy there, because both inertness assertions below are two-sided: a goal
+ * nobody can reach and a goal everybody reaches are equally broken, and picking
+ * only dream clubs (or only reachable ones) would decide which of the two fires
+ * by the choice of goal rather than by the system.
+ *
+ * The club the career was CREATED at is excluded. The Academy Debut path signs a
+ * random tier-2 side in region at creation, so a goal that landed on it would be
+ * "reached" on week 1 with nothing to stamp flags.goalReached -- a false failure
+ * of the if-and-only-if assertion, caused entirely by this function.
+ */
+function pickGoalClub(regionId, excludeId) {
+    // SMOKE_NO_GOAL=1 runs the whole matrix with no goal at all, which is the
+    // control that says whether a failure belongs to the goal system or was
+    // simply uncovered by it. GOAL_CALL_RATE_BONUS raises how often ONE club
+    // calls, so a goal measurably raises transfer VOLUME -- and on seeds 7 and
+    // 1234 that is enough to surface the pre-existing `table-spread`, `histclub`
+    // and `histempty` failures, two of which seed 7 already fails without any
+    // goal set. Keep it: without the control those look like new bugs.
+    if (process.env.SMOKE_NO_GOAL) return null;
+    const all = K.allTeams().filter(t => t && t.region === regionId && t.id !== excludeId);
+    const byStrength = (a, b) => (Number(b.strength) || 0) - (Number(a.strength) || 0)
+        || (a.id < b.id ? -1 : 1);
+    const t1 = all.filter(t => Number(t.tier) === 1).sort(byStrength);
+    const t2 = all.filter(t => Number(t.tier) === 2).sort(byStrength);
+    const dream = rand() < 0.5;
+    const pool = dream ? t1.slice(0, 4) : (t2.length ? t2 : t1.slice(0, 4));
+    if (!pool.length) return null;
+    return pool[Math.floor(rand() * pool.length)].id;
+}
+
 // ---------------------------------------------------------------------------
 //  ONE CAREER
 // ---------------------------------------------------------------------------
@@ -1322,7 +1792,12 @@ function runCareer(cfg, label) {
 
     // `lessons` rides on CTX because spendActions() is module-level and has no
     // other handle on which career it is spending for.
-    CTX = { label, week: 1, year: K.DEFAULT_START_YEAR, cfg, lessons: 0 };
+    // `scrimSeats` and `scrimPrev` ride on CTX for the same reason `lessons`
+    // does: assertInvariants is module-level and has no other handle on which
+    // career it is walking. `scrimPrev` is the last TOTAL seen, so a transfer
+    // (which blanks the ledger) resets the baseline instead of banking a
+    // negative.
+    CTX = { label, week: 1, year: K.DEFAULT_START_YEAR, cfg, lessons: 0, scrimSeats: new Set(), scrimPrev: 0 };
 
     const created = step('createCareer', () => ST.createCareer(cfg), null);
     if (!created) {
@@ -1330,6 +1805,23 @@ function runCareer(cfg, label) {
             `cfg = ${JSON.stringify(cfg)}`, 'Creation must always produce a career.');
         return null;
     }
+
+    // THE GOAL CLUB. createCareer() does not take one -- it is set through
+    // stores/career.js's own setGoalClub(), which is the single write path and
+    // the one every screen uses, so this is the real code path rather than a
+    // hand-written player field.
+    const goalClubId = pickGoalClub(cur().player.region, cur().player.clubId);
+    if (goalClubId) {
+        const okGoal = step('stores.setGoalClub', () => ST.setGoalClub(goalClubId), false);
+        if (!okGoal || cur().player.goalClubId !== goalClubId) {
+            fail('wrong', 'src/lib/stores/career.js',
+                'setGoalClub did not take a real club id',
+                `${label} -> asked for ${goalClubId}, player.goalClubId is ${cur().player.goalClubId}`,
+                'setGoalClub validates through teamById and is a no-op on an unknown id; this one resolves.',
+                'setgoal');
+        }
+    }
+
     step('engine.ensureSeason', () => G.ensureSeason());
     step('engine.startCareerWeek', () => G.startCareerWeek());
 
@@ -1616,6 +2108,12 @@ function runCareer(cfg, label) {
         endStrikes: Number(end.player && end.player.contract && end.player.contract.strikes) || 0,
         breakthroughOVR: Number(end.flags && end.flags.breakthroughOVR) || 0,
         boughtCeilingOVR: Number(end.flags && end.flags.boughtCeilingOVR) || 0,
+        // The other side of that ledger: OVR taken back off by a split under
+        // par. Budgeted for the career exactly as the two ceiling levers are,
+        // because splits are renewable and a rating is not.
+        declineOVR: Number(end.flags && end.flags.decline && end.flags.decline.ovrLost) || 0,
+        declineSplits: Number(end.flags && end.flags.decline && end.flags.decline.splits) || 0,
+        declineHeld: Number(end.flags && end.flags.decline && end.flags.decline.heldTotal) || 0,
         // Roster churn and club momentum. club.changes belongs to a CLUB and is
         // wiped by a transfer, so the lifetime total has to come off the flag.
         rosterChanges: Number(end.flags && end.flags.rosterMoves) || 0,
@@ -1623,6 +2121,19 @@ function runCareer(cfg, label) {
             ? Object.keys(end.club.roster).length : 0,
         changes: (end.club && Array.isArray(end.club.changes)) ? end.club.changes.slice() : [],
         momentum: Number(end.club && end.club.momentum) || 0,
+        // The scrim ledger as it stands at retirement, which is NOT the lifetime
+        // figure: a transfer blanks the block, so a career that scrimmed for six
+        // years and then moved retires holding {}. The run-level totals come off
+        // the weekly sample in assertInvariants.
+        scrim: (end.club && end.club.scrim && typeof end.club.scrim === 'object'
+            && !Array.isArray(end.club.scrim)) ? { ...end.club.scrim } : {},
+        scrimSeatsEver: CTX.scrimSeats ? CTX.scrimSeats.size : 0,
+        // The goal club, and the two facts the if-and-only-if assertion needs:
+        // whether the flag was stamped, and whether the player was ever actually
+        // observed on that roster.
+        goalClubId: end.player.goalClubId || null,
+        goalReached: Math.round(Number(end.flags && end.flags.goalReached) || 0),
+        everAtGoal: GOAL_AT.has(label),
         monuments: (end.inventory && Array.isArray(end.inventory.monuments))
             ? end.inventory.monuments.length : 0,
         trades: (end.inventory && end.inventory.trades && typeof end.inventory.trades === 'object')
@@ -1682,6 +2193,10 @@ function buildConfigs(n) {
             // would call a dead system green. Not career 2: that one throws its
             // attributes away on a role change and is already an outlier.
             grind: i === 5,
+            // The goal-club stamp probe. Not career 2 (the role switch) and not
+            // career 5 (the grinder): both are already outliers, and this one
+            // needs an ordinary career that signs an ordinary run of contracts.
+            goalProbe: i === 7,
         });
     }
     return out;
@@ -2382,6 +2897,69 @@ console.log(`  role changes           : ${stats.roleChanges}`);
     console.log(`  ceiling earned / bought: +${mean(bt).toFixed(1)} / +${mean(camp).toFixed(1)} mean OVR`
         + ` (budgets ${G.BREAKTHROUGH_CAREER_MAX} / ${E.CEILING_PURCHASE_MAX})`);
 }
+// DECLINE. The mirror of the two ceiling levers above, and the only system in
+// the mode that takes a rating back off a player for how they PLAYED rather
+// than for how old they are. Two-sided inertness, for the reason this whole
+// file exists: a decline that never fires and a decline that was never wired
+// look identical from the outside -- and a decline that fires every split is a
+// tuning failure the pass/fail line would never catch on its own.
+//
+// The par constants in engine.js are measured against the MATCH RATINGS block
+// a few lines above. If that mean moves, these numbers move with it, so read
+// the two together and re-measure rather than re-asserting.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const lost = results.map(r => Number(r.declineOVR) || 0);
+    const splits = results.map(r => Number(r.declineSplits) || 0);
+    const bitten = results.filter(r => (Number(r.declineSplits) || 0) > 0).length;
+    const totalSplits = splits.reduce((s, v) => s + v, 0);
+    const held = results.map(r => Number(r.declineHeld) || 0);
+    const heldTotal = held.reduce((s, v) => s + v, 0);
+    console.log(`  decline                : -${mean(lost).toFixed(1)} mean OVR over ${mean(splits).toFixed(1)} splits per career`
+        + ` (budget ${G.DECLINE_CAREER_MAX}), ${bitten}/${results.length} careers bitten at least once`);
+    console.log(`  maintained by training : ${heldTotal} attribute-shares held at zero by drilling them that split`
+        + ` (${mean(held).toFixed(1)} per career)`);
+
+    // The OTHER half of the feature, and the one that is silent when broken.
+    // Decline firing proves the punishment works; it says nothing at all about
+    // whether the player had any counterplay. If training never once protected
+    // an attribute, DECLINE_TRAIN_OFFSET is dead and the system is a tax.
+    if (totalSplits > 0 && heldTotal === 0) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'decline fires but training never once protected an attribute',
+            `${totalSplits} splits under par, ${heldTotal} attributes held`,
+            'checkDecline reads flags.splitTrained, which training.completeDrill writes and closeSplit resets AFTER checkDecline consumes it. '
+            + 'If completeDrill stopped writing it, or closeSplit resets it first, the "maintained by training" half is gone and only the tax remains.',
+            'nomaintain');
+    }
+
+    if (totalSplits === 0) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'no career ever declined -- the under-par system never fired',
+            `${results.length} careers, ${totalSplits} splits under par`,
+            'checkDecline is gated on DECLINE_RATING, and a split mean has an sd of only ~0.24 because it averages ~19 games. '
+            + 'Par set near the per-GAME mean fires never. Re-read the MATCH RATINGS block above and set DECLINE_RATING relative to it.',
+            'nodecline2');
+    }
+    if (bitten === results.length && mean(splits) > 8) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'every career declined in most of its splits -- par is set too high',
+            `${bitten}/${results.length} careers, ${mean(splits).toFixed(1)} splits each`,
+            'Decline is meant to punish a bad split, not to be a tax on playing. Lower DECLINE_RATING.',
+            'alwaysdecline');
+    }
+    for (const r of results) {
+        // One split may overshoot on its final grant, exactly as the
+        // breakthrough budget assertion allows for.
+        if ((Number(r.declineOVR) || 0) > G.DECLINE_CAREER_MAX + 2) {
+            fail('wrong', 'src/lib/career/engine.js',
+                'decline took more OVR than its career budget allows',
+                `${r.label} -> flags.decline.ovrLost=${r.declineOVR} budget=${G.DECLINE_CAREER_MAX}`,
+                'checkDecline must return early once flags.decline.ovrLost has reached DECLINE_CAREER_MAX.',
+                'declinebudget');
+        }
+    }
+}
 // Condition. Morale and health reach successChance directly now, so these are
 // the numbers that make the match-rating mean attributable — and the two-sided
 // inertness check is the one that matters: a meter that never moves has been
@@ -2706,6 +3284,245 @@ console.log(`  role changes           : ${stats.roleChanges}`);
             }
             seen.add(key);
         }
+    }
+}
+// SCRIM SEATS. The third club mechanic, and the only one that is a pure bonus,
+// which is what makes both of its failure modes silent: a write side that stops
+// banking reads as "nobody scrimmed", and a cap that stops clamping reads as a
+// club that is simply doing well. Sampled every week rather than at retirement,
+// because a transfer legitimately blanks the whole ledger.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const seats = results.map(r => Number(r.scrimSeatsEver) || 0);
+    const scrimmed = results.filter(r => (Number(r.scrimSeatsEver) || 0) > 0).length;
+    console.log(`  scrim room             : ${mean(seats).toFixed(1)} seats sharpened per career`
+        + `, best seat +${stats.scrimMaxSeat.toFixed(2)} of ${T.SCRIM_SEAT_CAP}`
+        + `, ${stats.scrimPoints.toFixed(1)} points banked, ${scrimmed}/${results.length} careers scrimmed`);
+    // Not a failure. A promotion or a transfer leaves the old club's ledger in
+    // the save until the next tickClubMomentum, and every read is scoped by
+    // clubBlock() so none of it reaches a game. Printed so the number is visible
+    // if it ever stops being a handful of weeks a career.
+    console.log(`                           ${stats.scrimStaleWeeks} seat-weeks held a departed club's ledger`
+        + ` (read back as 0 -- clubBlock scopes it)`);
+
+    if (stats.scrimPoints <= 0) {
+        fail('wrong', 'src/lib/career/engine.js',
+            'no career ever banked a single scrim point',
+            `${results.length} careers, ${stats.scrimPoints} points across the run`,
+            "doScrim() writes club.scrim for the four seats that are not the player's, behind clubBlock(c) -- "
+            + 'which is null while unsigned AND on a teamId mismatch. If the write moved outside that guard, or '
+            + "the 'scrim' activity stopped reaching doScrim, the room stops improving with nothing to say so.",
+            'noscrim');
+    }
+    // Two-sided: the cap is the feature's ONLY bound, so a run that never
+    // approaches it says the ceiling was never exercised either.
+    if (stats.scrimMaxSeat > T.SCRIM_SEAT_CAP + 1e-9) {
+        fail('wrong', 'src/lib/career/teams.js',
+            'a scrim seat was observed above SCRIM_SEAT_CAP',
+            `highest seat seen ${stats.scrimMaxSeat}, cap ${T.SCRIM_SEAT_CAP}`,
+            'seatScrimDelta() clamps on READ and is the single authority on the cap.',
+            'scrimcapmax');
+    }
+}
+// CONSUMABLE CAPS. Three ledgers -- weekly.counts['cons:id'], flags.
+// consumablesUsed[id] and the bag itself -- all decided in one function. Buying
+// one and using one, which is all this harness did before, can never reach any
+// of them, so the whole system was untested by construction. The probe in
+// consumableCapProbe() is what makes the refusal count below non-zero.
+{
+    const worstWeek = Array.from(stats.consMaxWeek.entries())
+        .sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([id, n]) => `${id} x${n}`).join(', ');
+    const worstHeld = Array.from(stats.consMaxHeld.entries())
+        .sort((a, b) => b[1] - a[1]).slice(0, 2)
+        .map(([id, n]) => `${id} x${n}`).join(', ');
+    console.log(`  consumable caps        : ${stats.consUses} uses, ${stats.consRefusals} refused by a cap`
+        + ` over ${stats.consProbes} exhaustion probes`);
+    console.log(`                           busiest week ${worstWeek || 'none'}`
+        + `; deepest bag ${worstHeld || 'none'} (hold cap ${E.CONSUMABLE_HOLD_MAX})`);
+
+    if (stats.consRefusals === 0) {
+        fail('wrong', 'src/lib/career/economy.js',
+            'no consumable cap ever refused anything across the whole run',
+            `${stats.consUses} uses and ${stats.consProbes} probes that deliberately drove an item past its `
+            + `weekly cap, and not one was turned down`,
+            'consumableAllowance() is the one place a cap is decided and buyConsumable/useConsumable/'
+            + 'consumableSection all read it. A cap that never fires is indistinguishable from one that was '
+            + 'never wired -- check useConsumable still returns early on allowance.blocked.',
+            'nocapbite');
+    }
+}
+// OFFER QUALITY. scoutInterest used to saturate at the 100 clamp, so an elite
+// player's fourteen-club candidate window was decided by localeCompare on the
+// club NAME and filled with the weakest sides on the circuit while T1 scored 81.
+// The two tier ceilings that now sit in signingBlock() only ever REMOVE offers,
+// which is why the positive control matters more than the two rails: a rule that
+// deletes everything and a rule that was never wired look identical.
+{
+    const mean = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+    const t = stats.offersByTier;
+    console.log(`  offer quality          : ${t[1]} tier-1 / ${t[2]} tier-2 / ${t[3]} tier-3 offers`
+        + ` (${stats.tier1HighOvr} tier-1 to a player past OVR ${K.TIER_OVR_CEILING[3]})`);
+    console.log(`                           mean OVR-minus-club-strength ${mean(stats.offerGaps).toFixed(1)} offered`
+        + `, ${mean(stats.acceptedGaps).toFixed(1)} accepted over ${stats.acceptedGaps.length} signings`);
+
+    if (stats.tier1HighOvr === 0) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'no main-league club ever called a player good enough for one',
+            `${stats.offersSeen} offers seen across the run, ${t[1]} of them tier 1, and none reached a player `
+            + `past OVR ${K.TIER_OVR_CEILING[3]} -- the rating above which the open circuit is closed to them`,
+            'scoutInterest() turns the curve over past a gap of ~10 so the candidate window stops tying on the '
+            + '100 clamp. If the window is still sorted by a saturated interest, the strongest clubs never enter '
+            + 'it and the tier ceilings simply delete the offers that are left.',
+            'notier1');
+    }
+    // Volume. The candidate window now selects a completely different set of
+    // clubs, so a collapse toward zero is the regression this change most
+    // plausibly causes and it would pass every rail above.
+    if (stats.offersSeen && stats.offersAccepted === 0) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'offers are generated but none is ever signable',
+            `${stats.offersSeen} offers seen, 0 accepted`,
+            'acceptOffer refuses on the window, the age gate or a stale offer; one of them now refuses everything.',
+            'noaccept');
+    }
+}
+// THE SPLIT META. A symmetric +/-META_STEP on every pick, blind or countered.
+// Both bands have to LAND: metaFor() bands each role's pool, but the draft only
+// ever offers three champions out of that pool, so a tiering that is correct in
+// isolation can still be invisible in every game anybody plays.
+{
+    const mp = stats.metaPicks;
+    const total = mp.strong + mp.contested + mp.weak;
+    const share = n => (total ? ((n / total) * 100).toFixed(1) + '%' : '-');
+    console.log(`  split meta             : ${mp.strong} strong (${share(mp.strong)}) / `
+        + `${mp.contested} contested (${share(mp.contested)}) / ${mp.weak} weak (${share(mp.weak)})`
+        + (stats.metaUnknown ? `, ${stats.metaUnknown} unresolved` : ''));
+    console.log(`                           mean swing ${total ? (stats.metaSwingSum / total >= 0 ? '+' : '')
+        + (stats.metaSwingSum / total).toFixed(4) : '-'} per pick`
+        + ` (one step is +/-${K.META_STEP_REF}, and the two bands are meant to cancel)`);
+
+    if (stats.metaUnknown) {
+        fail('wrong', 'src/lib/career/match.js',
+            'a champion select pick had no resolvable meta band',
+            `${stats.metaUnknown} of ${total + stats.metaUnknown} picks came back with a non -1/0/1 meta`,
+            'metaTierFor() returns 0 and never throws for a dead id; a missing value means draftOption '
+            + 'stopped writing the field at all.',
+            'metaunknown');
+    }
+    if (total && !mp.strong && !mp.weak) {
+        fail('wrong', 'src/lib/career/constants.js',
+            'the split meta never landed on either band -- the whole term is inert',
+            `${total} champion select picks, every one of them contested`,
+            'metaFor() bands META_STRONG_FRACTION / META_WEAK_FRACTION of each ROLE pool. If the bands are '
+            + 'computed over a pool the draft never draws from, or nStrong/nWeak collapse to 0, successChance '
+            + 'scores +/-META_STEP * 0 for ever and nothing anywhere says so.',
+            'nometa');
+    }
+
+    // MEMOISATION PURITY. metaFor() hands the SAME frozen object to every caller
+    // and caches it, so a reader that wrote into it would poison the split for
+    // the session -- and a cache keyed too loosely would give two splits one meta.
+    {
+        const y = K.DEFAULT_START_YEAR;
+        const a1 = step('constants.metaFor(spring)', () => K.metaFor(y, 'spring'), null);
+        const a2 = step('constants.metaFor(spring again)', () => K.metaFor(y, 'spring'), null);
+        const su = step('constants.metaFor(summer)', () => K.metaFor(y, 'summer'), null);
+        if (!a1 || !a2 || !su) {
+            fail('crash', 'src/lib/career/constants.js', 'metaFor did not return a meta',
+                `year ${y}`, 'metaFor must always return { byId, strong, weak }.', 'metanull');
+        } else {
+            if (a1 !== a2) {
+                fail('wrong', 'src/lib/career/constants.js',
+                    'metaFor is not memoised -- a second call rebuilds the split',
+                    `metaFor(${y}, 'spring') returned two different objects`,
+                    'The derivation walks all 173 champions and is read several times per match; _META_CACHE '
+                    + 'must return the same frozen object.',
+                    'metamemo');
+            }
+            if (!Object.isFrozen(a1) || !Object.isFrozen(a1.byId)) {
+                fail('wrong', 'src/lib/career/constants.js',
+                    'the memoised meta is not frozen',
+                    `Object.isFrozen(meta)=${Object.isFrozen(a1)} byId=${Object.isFrozen(a1.byId)}`,
+                    'The object is handed to every caller; a writer would poison the split for the session.',
+                    'metafreeze');
+            }
+            const ids = Object.keys(a1.byId);
+            const same = ids.length && ids.every(id => a1.byId[id] === su.byId[id]);
+            if (same) {
+                fail('wrong', 'src/lib/career/constants.js',
+                    'spring and summer share one meta -- the split is not in the cache key',
+                    `${ids.length} champions and every tier identical across both splits of ${y}`,
+                    "metaFor's key is `year + ':' + split`; if the split stopped reaching the hash, a champion "
+                    + 'is strong or weak for a whole year and the meta stops turning over.',
+                    'metasplit');
+            }
+        }
+    }
+}
+// THE GOAL CLUB. Two-sided by construction: a goal NOBODY ever reaches means the
+// clubs the player is told to aim at cannot sign him, and a goal EVERY career
+// reaches means the nomination is decorative. flags.goalReached is a YEAR, not a
+// boolean -- the same idiom as flags.firstStandBerth -- so it is asserted against
+// a live weekly sample of who the player was actually playing for.
+{
+    const withGoal = results.filter(r => r.goalClubId);
+    const reached = withGoal.filter(r => r.goalReached > 0);
+    const natural = withGoal.filter(r => !(r.cfg && r.cfg.goalProbe));
+    const naturalReached = natural.filter(r => r.goalReached > 0);
+    const nm = id => { const t = K.teamById(id); return t ? t.name : String(id); };
+    console.log(`  goal club              : ${reached.length}/${withGoal.length} careers reached the club they`
+        + ` nominated` + (reached.length
+            ? ` (${reached.map(r => `${nm(r.goalClubId)} ${r.goalReached}`).join(', ')})`
+            : ''));
+    console.log(`                           ${naturalReached.length}/${natural.length} of those a home-region goal`
+        + ` set at creation, ${stats.goalProbes} re-pointed by the stamp probe`);
+
+    for (const r of withGoal) {
+        if (r.goalReached > 0 && !r.everAtGoal) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'flags.goalReached was stamped for a club the player never played for',
+                `${r.label} -> goal ${nm(r.goalClubId)}, stamped ${r.goalReached}, never observed on that roster`,
+                'acceptOffer stamps the year only when offer team === player.goalClubId; a stamp with no '
+                + 'membership means the comparison is matching something else.',
+                'goalstamp');
+        }
+        if (r.everAtGoal && r.goalReached <= 0) {
+            fail('wrong', 'src/lib/career/contracts.js',
+                'a career played for its goal club and the flag was never stamped',
+                `${r.label} -> goal ${nm(r.goalClubId)}, observed on that roster, flags.goalReached = ${r.goalReached}`,
+                'Both routes in have to stamp it: acceptOffer() for a signing and the promotion path in '
+                + 'contracts.js for an academy player moving up to the parent org.',
+                'goalnostamp');
+        }
+    }
+
+    if (withGoal.length && reached.length === 0) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'not one career ever reached the club it was aiming for',
+            `${withGoal.length} careers nominated a club, ${stats.goalProbes} of them re-pointed at the very club `
+            + `they were signing for, and flags.goalReached was never stamped once`,
+            'acceptOffer compares offer team against player.goalClubId and writes c.time.year into '
+            + 'flags.goalReached in the SAME career.update as the contract. A goal nothing can ever satisfy is a '
+            + 'label on an unreachable club.',
+            'nogoalreached');
+    }
+    if (stats.goalProbes === 0) {
+        fail('wrong', 'tools/careerSmoke.mjs',
+            'the goal-club stamp probe never fired',
+            `${results.length} careers and none of them re-pointed a goal at a club it then signed for`,
+            'buildConfigs must flag one career with goalProbe: true, and that career must reach '
+            + 'exerciseContracts\' accept branch at least once. Without it the reach rate is 0 or 1 in 8 '
+            + 'depending on the seed and the inertness arm below stops meaning anything.',
+            'nogoalprobe');
+    }
+    if (withGoal.length > 2 && reached.length === withGoal.length) {
+        fail('wrong', 'src/lib/career/contracts.js',
+            'every career reached its goal club -- the nomination costs nothing',
+            `${reached.length}/${withGoal.length}`,
+            'GOAL_CALL_RATE_BONUS is a call-FREQUENCY bonus and must never reprice interest, the wage or the '
+            + 'signing gate; if it does, nominating a club is simply how you sign for it.',
+            'allgoalreached');
     }
 }
 // signingFor() has to land on the rating it was asked for. The synthetic

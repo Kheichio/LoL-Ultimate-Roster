@@ -15,20 +15,21 @@
     //  value is read from the store or derived by a career module.
 
     import Card from '../card/Card.svelte';
+    import ClubScout from './ClubScout.svelte';
     import {
         career, careerScreen, careerOVR, currentTeam, soloRank,
     } from '../../stores/career.js';
     import { playSound } from '../../utils/sound.js';
     import {
         CLUB_TIERS, CLUB_TRAINING_SLOTS, REGION_BY_ID, ROLE_BY_ID,
-        UNSIGNED_SOFT_CAP,
+        UNSIGNED_SOFT_CAP, teamById,
     } from '../../career/constants.js';
     import {
         statusInfo, toCareerCard, fmtGold, SCOUT_MMR_GATE,
     } from '../../career/ratings.js';
     import {
         ROSTER_SLOTS, describeTeam, teamStrength, teammatesOf, leagueTable, rivalFor,
-        clubStrengthFor, clubMomentum, clubBlock,
+        clubStrengthFor, clubMomentum, clubBlock, SCRIM_SEAT_CAP,
     } from '../../career/teams.js';
     import {
         contractStatusLine, contractYearsLeft, clubReview, promotionEligible,
@@ -114,6 +115,36 @@
         if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
     }
 
+    // -- scouting panel ---------------------------------------------------
+    //  A component-local dialog, deliberately NOT a CareerOverlay kind and not a
+    //  router screen: it is a read of one club that has to be dismissable from
+    //  wherever the name was clicked. Its z-index sits above the career header
+    //  (40) and below CareerOverlay (90), so a queued bracket draw or event
+    //  still wins the screen.
+    let scoutId = null;
+
+    /** A name is only a button when there is a real club behind it. */
+    function scoutable(id) {
+        if (!id) return false;
+        try { return !!teamById(id); } catch (e) { return false; }
+    }
+
+    function openScout(id) {
+        if (!scoutable(id)) return;
+        playSound('click');
+        scoutId = id;
+    }
+
+    function closeScout() {
+        if (scoutId === null) return;
+        playSound('click');
+        scoutId = null;
+    }
+
+    function scoutKey(e) {
+        if (scoutId !== null && e && e.key === 'Escape') closeScout();
+    }
+
     // -- shared --------------------------------------------------------
     $: c = $career;
     $: p = c.player;
@@ -190,6 +221,26 @@
         const d = Math.round(Number(card && card.formDelta) || 0);
         if (!d) return null;
         return { text: (d > 0 ? '+' : '') + d, up: d > 0 };
+    }
+
+    /** The scrim chip on a teammate card, and the ONLY place in the mode a
+     *  player can see that scrims sharpen the room.
+     *
+     *  Every scrim permanently raises the four OTHER seats, capped at
+     *  SCRIM_SEAT_CAP per seat -- the cap is applied on read in
+     *  teams.seatScrimDelta, so a hand-edited save cannot beat it here either.
+     *  Null at zero, so an un-scrimmed room renders exactly as it always did. */
+    function scrimChip(card) {
+        const raw = Number(card && card.scrimDelta);
+        const v = Number.isFinite(raw) ? Math.max(0, Math.min(SCRIM_SEAT_CAP, raw)) : 0;
+        if (v <= 0) return null;
+        const r = Math.round(v * 10) / 10;
+        return {
+            text: '+' + (Number.isInteger(r) ? String(r) : r.toFixed(1)),
+            cap: SCRIM_SEAT_CAP,
+            pct: Math.max(0, Math.min(100, (r / SCRIM_SEAT_CAP) * 100)),
+            maxed: r >= SCRIM_SEAT_CAP,
+        };
     }
 
     $: table = signed ? leagueTable(c) : [];
@@ -517,6 +568,7 @@
                 {#each five as seat (seat.slot)}
                     {@const role = ROLE_BY_ID[seat.slot]}
                     {@const chip = seat.me ? null : formChip(seat.card)}
+                    {@const scrim = seat.me ? null : scrimChip(seat.card)}
                     {@const fresh = !!(seat.card && seat.card.signing
                         && Number(seat.card.signedYear) >= year - 1)}
                     <div class="seat" class:seat-me={seat.me}>
@@ -527,6 +579,24 @@
                             {#if seat.me}<span class="seat-you">You</span>{/if}
                             {#if chip}
                                 <span class="seat-form" class:seat-form-up={chip.up}>{chip.text}</span>
+                            {/if}
+                            <!-- Scrims sharpen the four seats around you, for
+                                 good, up to SCRIM_SEAT_CAP each. Nothing else in
+                                 the mode shows that happening, so the chip
+                                 carries both the number and how much room is
+                                 left in it. -->
+                            {#if scrim}
+                                <span
+                                    class="seat-scrim"
+                                    class:seat-scrim-max={scrim.maxed}
+                                    title="Scrims with this club have permanently added {scrim.text} rating to the {seat.slot} seat. It caps at +{scrim.cap}."
+                                >
+                                    <span class="ss-n">{scrim.text}</span>
+                                    <span class="ss-track" aria-hidden="true">
+                                        <span class="ss-fill" style="width:{scrim.pct}%"></span>
+                                    </span>
+                                    <span class="ss-cap">{scrim.cap}</span>
+                                </span>
                             {/if}
                             <!-- Recency, not "is an override". A signing stays
                                  in the seat for up to SIGNING_TENURE_YEARS, so
@@ -602,8 +672,21 @@
                                 >
                                     <td class="c-rank mono">{row.rank}</td>
                                     <td class="c-team">
-                                        <span class="t-dot" aria-hidden="true"></span>
-                                        <span class="t-name">{row.team.name}</span>
+                                        {#if scoutable(row.team.id)}
+                                            <button
+                                                class="t-btn"
+                                                type="button"
+                                                on:click={() => openScout(row.team.id)}
+                                                aria-label="Scouting report for {row.team.name}"
+                                                title="Open {row.team.name}'s roster"
+                                            >
+                                                <span class="t-dot" aria-hidden="true"></span>
+                                                <span class="t-name">{row.team.name}</span>
+                                            </button>
+                                        {:else}
+                                            <span class="t-dot" aria-hidden="true"></span>
+                                            <span class="t-name">{row.team.name}</span>
+                                        {/if}
                                         {#if row.isMine}<span class="t-you">You</span>{/if}
                                     </td>
                                     <td class="c-num mono">{row.w}</td>
@@ -640,7 +723,17 @@
                     <div class="rival-head">
                         <span class="rival-dot" aria-hidden="true"></span>
                         <div>
-                            <div class="rival-name">{rival.name}</div>
+                            {#if scoutable(rival.id)}
+                                <button
+                                    class="rival-name rival-btn"
+                                    type="button"
+                                    on:click={() => openScout(rival.id)}
+                                    aria-label="Scouting report for {rival.name}"
+                                    title="Open {rival.name}'s roster"
+                                >{rival.name}</button>
+                            {:else}
+                                <div class="rival-name">{rival.name}</div>
+                            {/if}
                             <div class="rival-sub">
                                 <span class="flag" aria-hidden="true">{rivalReg.flag}</span>
                                 {rivalReg.league}
@@ -684,6 +777,21 @@
     </div>
 {/if}
 </section>
+
+<!-- ========================= SCOUTING REPORT =========================
+     A component-local dialog, in the Training.svelte in-screen dialog idiom.
+     Deliberately not a CareerOverlay kind and not a router screen: it is a read
+     of one club, opened from a name and closed straight back to it. -->
+<svelte:window on:keydown={scoutKey} />
+
+{#if scoutId !== null}
+    <div class="scout-over" role="dialog" aria-modal="true" aria-label="Club scouting report">
+        <button class="scout-bg" type="button" on:click={closeScout} aria-label="Close the scouting report"></button>
+        <div class="scout-panel">
+            <ClubScout teamId={scoutId} {year} onClose={closeScout} />
+        </div>
+    </div>
+{/if}
 
 <style>
     .club {
@@ -1015,8 +1123,8 @@
     .roster { display: flex; align-items: flex-start; gap: 22px; }
     .five { display: flex; flex-wrap: wrap; gap: 14px; flex: 1; min-width: 0; }
     .seat { display: flex; flex-direction: column; gap: 8px; width: 180px; }
-    /* Four chips now fit here at most (role + you/form + new), so the row wraps
-       rather than being pinned to one line at a fixed height. */
+    /* Five chips now fit here at most (role + you/form + scrim + new), so the
+       row wraps rather than being pinned to one line at a fixed height. */
     .seat-top { display: flex; align-items: center; gap: 5px; min-height: 18px; flex-wrap: wrap; }
     .seat-form, .seat-new {
         flex: none;
@@ -1026,6 +1134,27 @@
     .seat-form { color: #fca5a5; background: rgba(127, 29, 29, 0.28); border: 1px solid rgba(248, 113, 113, 0.3); }
     .seat-form-up { color: #86efac; background: rgba(20, 83, 45, 0.28); border-color: rgba(74, 222, 128, 0.3); }
     .seat-new { color: #93c5fd; background: rgba(30, 58, 138, 0.3); border: 1px solid rgba(96, 165, 250, 0.32); text-transform: uppercase; }
+
+    /* Permanent seat sharpening banked from scrims. Teal so it can never be
+       mistaken for form (red/green) or for a new signing (blue), and it carries
+       a track because the number only means something against the cap. */
+    .seat-scrim {
+        flex: none;
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 8.5px; font-weight: 900; letter-spacing: 0.6px;
+        padding: 3px 6px; border-radius: 5px;
+        color: #5eead4;
+        background: rgba(19, 78, 74, 0.3);
+        border: 1px solid rgba(45, 212, 191, 0.3);
+    }
+    .seat-scrim-max { color: #99f6e4; border-color: rgba(45, 212, 191, 0.62); }
+    .ss-track {
+        width: 22px; height: 3px; border-radius: 3px;
+        background: rgba(148, 163, 184, 0.18);
+        overflow: hidden;
+    }
+    .ss-fill { display: block; height: 100%; border-radius: 3px; background: #2dd4bf; }
+    .ss-cap { color: #3f7a76; }
 
     /* ---------- the room ---------- */
     .mom-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -1121,6 +1250,17 @@
         vertical-align: middle;
     }
     .t-name { font-size: 12.5px; font-weight: 600; color: #b6c3d8; vertical-align: middle; }
+    /* Every club in the table opens its own roster. The cell keeps its exact
+       look -- the button is a wrapper, not a control that draws itself. */
+    .t-btn {
+        display: inline-flex; align-items: center; min-width: 0; max-width: 100%;
+        margin: 0; padding: 0;
+        background: none; border: none; border-radius: 6px;
+        font-family: inherit; text-align: left; cursor: pointer;
+        vertical-align: middle;
+    }
+    .t-btn:hover .t-name { color: #e8eefb; text-decoration: underline; }
+    .t-btn:focus-visible { outline: 2px solid rgba(139, 92, 246, 0.5); outline-offset: 2px; }
     .t-you {
         margin-left: 8px;
         font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
@@ -1153,6 +1293,15 @@
         font-family: 'Space Grotesk', 'Quicksand', sans-serif;
         font-size: 16px; font-weight: 700; color: #e8eefb;
     }
+    /* Same wrapper trick as .t-btn: no font-family here, or it would beat the
+       Space Grotesk .rival-name sets on the very same element. */
+    .rival-btn {
+        display: block; margin: 0; padding: 0;
+        background: none; border: none; border-radius: 6px;
+        text-align: left; cursor: pointer;
+    }
+    .rival-btn:hover { text-decoration: underline; }
+    .rival-btn:focus-visible { outline: 2px solid rgba(139, 92, 246, 0.5); outline-offset: 2px; }
     .rival-sub { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: #56688a; margin-top: 3px; }
     .h2h {
         display: grid;
@@ -1174,6 +1323,38 @@
     }
     .h2h-l { display: block; font-size: 8px; font-weight: 800; letter-spacing: 0.9px; text-transform: uppercase; color: #475569; margin-top: 4px; }
     .rival-note { font-size: 11.5px; line-height: 1.65; color: #7e8ea9; }
+
+    /* ---------- scouting dialog ---------- */
+    /* Above the career header (40) and below CareerOverlay (90) on purpose: a
+       queued bracket draw or event overlay must still take the screen off it. */
+    .scout-over {
+        position: fixed; inset: 0; z-index: 60;
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
+    }
+    .scout-bg {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        margin: 0; padding: 0; border: none; cursor: pointer;
+        background: rgba(3, 6, 15, 0.82);
+        backdrop-filter: blur(9px);
+        -webkit-backdrop-filter: blur(9px);
+    }
+    .scout-panel {
+        position: relative;
+        width: 100%; max-width: 940px; max-height: 92vh; overflow-y: auto;
+        padding: 20px;
+        border-radius: 20px;
+        background: linear-gradient(170deg, #0d1224 0%, #0a0f1c 100%);
+        border: 1px solid rgba(51, 65, 85, 0.4);
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.6);
+        animation: scoutIn 170ms ease-out;
+    }
+    @keyframes scoutIn {
+        from { opacity: 0; transform: translateY(10px) scale(0.985); }
+        to { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { .scout-panel { animation: none; } }
 
     /* ---------- responsive ---------- */
     @media (max-width: 1180px) {

@@ -472,6 +472,13 @@
         { key: 'cp',     label: 'Champ Pts', v: num(res.champPoints), fmt: 'plain' },
     ].filter(r => r.v !== 0) : [];
 
+    // The breakdown behind the single net Morale figure. finishMatch writes
+    // ready-to-print sentences; a result persisted as c.lastMatch before that
+    // change carries none, so this must survive an absent or rotten field.
+    $: resMoraleNotes = res && Array.isArray(res.moraleNotes)
+        ? res.moraleNotes.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim())
+        : [];
+
     function signedNum(n) { return (n > 0 ? '+' : '') + Math.round(n); }
     function rewardText(r) {
         if (r.fmt === 'gold') return (r.v > 0 ? '+' : '-') + fmtGold(Math.abs(r.v));
@@ -772,15 +779,24 @@
                     </div>
                 {/if}
 
-                {#if resRewards.length}
+                {#if resRewards.length || resMoraleNotes.length}
                     <p class="co-lbl">What it moved</p>
-                    <div class="co-chips">
-                        {#each resRewards as r (r.key)}
-                            <span class="co-chip" class:co-up={r.v > 0} class:co-down={r.v < 0}>
-                                {r.label} {rewardText(r)}
-                            </span>
-                        {/each}
-                    </div>
+                    {#if resRewards.length}
+                        <div class="co-chips">
+                            {#each resRewards as r (r.key)}
+                                <span class="co-chip" class:co-up={r.v > 0} class:co-down={r.v < 0}>
+                                    {r.label} {rewardText(r)}
+                                </span>
+                            {/each}
+                        </div>
+                    {/if}
+                    {#if resMoraleNotes.length}
+                        <div class="co-subnotes">
+                            {#each resMoraleNotes as n, i (n + '_' + i)}
+                                <span class="co-subnote">{n}</span>
+                            {/each}
+                        </div>
+                    {/if}
                 {/if}
 
                 <div class="co-acts">
@@ -1399,6 +1415,8 @@
     .co-chip.co-up { color: #4ade80; background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.28); }
     .co-chip.co-down { color: #f87171; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.28); }
     .co-chip.co-gold { color: #fbbf24; background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3); }
+    .co-subnotes { display: flex; flex-direction: column; gap: 4px; margin-top: 9px; }
+    .co-subnote { font-size: 11px; line-height: 1.55; color: #5d6f8d; }
 
     /* ============ RESULT ============ */
     .co-score {

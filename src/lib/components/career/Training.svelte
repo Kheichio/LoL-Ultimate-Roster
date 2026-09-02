@@ -8,6 +8,15 @@
     //    3. drills         - the minigame that pays them out
     //  Everything numeric on this screen comes straight out of training.js so
     //  the preview the player reads is the same maths that runs on completion.
+    //
+    //  It is also the only screen that can say whether an attribute is being
+    //  MAINTAINED. engine.checkDecline() takes points off at the split close
+    //  from every attribute that was not drilled during the split, so a drill is
+    //  no longer only how a number goes up - it is how it stays. Every row here
+    //  therefore carries a held/exposed chip, and an attribute sitting AT its
+    //  ceiling still has a real session to run: canTrain() returns
+    //  { ok: true, maintenance: true } for it, and that is an option, not an
+    //  error. Nothing on this screen may call a ceiling "done".
     // =====================================================================
 
     import { onDestroy } from 'svelte';
@@ -74,12 +83,15 @@
     $: role = ROLE_BY_ID[p.role] || ROLE_BY_ID.MID;
 
     $: mult = trainingMultiplier(c);
-    $: breakdown = trainingMultiplierBreakdown(c);
+    // The second argument is what makes the trailing maintenance row speak about
+    // ONE attribute instead of the whole split. It changes no arithmetic: that
+    // row's mult is a neutral 1.0 so the column still multiplies out to `mult`.
+    $: breakdown = safeBreakdown(c, selectedAttr);
     $: slots = weeklyTrainingSlots(c);
     $: slotsUnlimited = !Number.isFinite(slots.max);
     $: slotsFull = !slotsUnlimited && slots.used >= slots.max;
 
-    $: overview = trainingOverview(c);
+    $: overview = safeOverview(c);
     $: energy = Math.round(p.energy || 0);
     $: energyInfo = energyLabel(energy);
 
@@ -88,27 +100,133 @@
 
     $: throttled = overview.filter(a => a.throttled);
     $: maxedOut = overview.filter(a => a.headroom <= 0);
+    $: exposed = overview.filter(a => !a.held);
+    $: declinedLast = overview.filter(a => a.declined > 0);
+    $: declinedTotal = declinedLast.reduce((s, a) => s + a.declined, 0);
     $: unsigned = !p.clubId;
     // Not the constant: the Self-Made legacy perk moves this player's own cap,
     // so the screen has to ask rather than quote.
     $: unsignedCap = Math.round(unsignedCapFor(c));
 
     $: selectedRow = overview.find(a => a.key === selectedAttr) || null;
-    $: selectedDrills = selectedAttr ? drillsForAttr(selectedAttr) : [];
+    $: selectedDrills = selectedAttr ? safeDrills(selectedAttr) : [];
     $: drillRows = selectedDrills.map(d => {
-        const gain = expectedGain(c, d);
-        const gate = canTrain(c, d);
-        const cost = runDrill(c, d, 0.5);
+        const gain = safeGain(c, d);
+        const gate = safeGate(c, d);
+        const cost = safeCost(c, d);
         return {
             d,
             gain,
             gate,
+            // A MAINTENANCE session: allowed, pays nothing, and its whole value
+            // is that it keeps the attribute out of the split-close decline.
+            // Never a refusal, never an ordinary gain drill.
+            maint: gate.ok && gate.maintenance,
             energyCost: cost.energyCost,
             risk: cost.injuryRisk,
             tier: DRILL_TIERS[d.difficulty] || DRILL_TIERS[1],
             locked: $careerOVR < d.reqOVR,
         };
     });
+
+    // ---- safe model reads ----------------------------------------------
+    // Same house pattern as Hub.svelte's safeGate: every training.js call is
+    // wrapped and normalised, because careerRender drives this screen against
+    // deliberately rotted saves and one unguarded read blanks the whole page.
+    function safeOverview(career_) {
+        let rows = [];
+        try {
+            const r = trainingOverview(career_);
+            if (Array.isArray(r)) rows = r;
+        } catch (e) { rows = []; }
+        return rows.filter(a => a && typeof a === 'object').map(a => {
+            const declined = Number(a.declinedThisSplit);
+            return {
+                ...a,
+                key: String(a.key || ''),
+                name: String(a.name || a.key || ''),
+                abbr: String(a.abbr || ''),
+                color: typeof a.color === 'string' ? a.color : '#94a3b8',
+                value: Number(a.value) || 0,
+                ceiling: Number(a.ceiling) || 0,
+                headroom: Number(a.headroom) || 0,
+                trainedThisWeek: Number(a.trainedThisWeek) || 0,
+                // `held` rather than `protected`: the row publishes the boolean
+                // as `protected`, which is a reserved word to read around in a
+                // template, and "held" is the word the chips use anyway.
+                held: a.protected === true,
+                heldCount: Number(a.trainedThisSplit) > 0 ? Math.floor(Number(a.trainedThisSplit)) : 0,
+                note: typeof a.maintenanceNote === 'string' ? a.maintenanceNote : '',
+                declined: Number.isFinite(declined) && declined > 0 ? declined : 0,
+            };
+        });
+    }
+
+    function safeBreakdown(career_, attrKey) {
+        let rows = [];
+        try {
+            const r = trainingMultiplierBreakdown(career_, attrKey || undefined);
+            if (Array.isArray(r)) rows = r;
+        } catch (e) { rows = []; }
+        return rows.filter(r => r && typeof r === 'object').map((r, i) => ({
+            key: String(r.key || 'row' + i),
+            label: String(r.label || ''),
+            note: String(r.note || ''),
+            status: String(r.status || ''),
+            held: r.protected === true,
+            // A neutral 1.0 keeps the panel's contract intact when a row is
+            // unreadable: multiplying the column still reproduces the total.
+            mult: Number.isFinite(Number(r.mult)) ? Number(r.mult) : 1,
+        }));
+    }
+
+    function safeDrills(attrKey) {
+        try {
+            const r = drillsForAttr(attrKey);
+            return Array.isArray(r) ? r.filter(d => d && typeof d === 'object') : [];
+        } catch (e) { return []; }
+    }
+
+    function safeGate(career_, d) {
+        try {
+            const g = canTrain(career_, d);
+            if (g && typeof g === 'object') {
+                return {
+                    ok: g.ok === true,
+                    maintenance: g.maintenance === true,
+                    reason: typeof g.reason === 'string' ? g.reason : '',
+                };
+            }
+        } catch (e) { /* fall through to the refusal below */ }
+        return { ok: false, maintenance: false, reason: 'Unavailable.' };
+    }
+
+    function safeGain(career_, d) {
+        try {
+            const g = expectedGain(career_, d);
+            if (g && typeof g === 'object') {
+                return {
+                    min: Number(g.min) || 0,
+                    max: Number(g.max) || 0,
+                    capped: g.capped === true,
+                };
+            }
+        } catch (e) { /* fall through */ }
+        return { min: 0, max: 0, capped: true };
+    }
+
+    function safeCost(career_, d) {
+        try {
+            const r = runDrill(career_, d, 0.5);
+            if (r && typeof r === 'object') {
+                return {
+                    energyCost: Number(r.energyCost) || 0,
+                    injuryRisk: Number(r.injuryRisk) || 0,
+                };
+            }
+        } catch (e) { /* fall through */ }
+        return { energyCost: Number(d && d.energy) || 0, injuryRisk: 0 };
+    }
 
     // ---- week log ------------------------------------------------------
     // logWeek() writes a drill's own name as the entry label, so matching the
@@ -166,10 +284,14 @@
 
     // ---------------------------------------------------------------- drills
     function start(d) {
-        const gate = canTrain(c, d);
+        const gate = safeGate(c, d);
+        // Only a REAL refusal toasts. A maintenance session comes back ok:true
+        // with a reason that explains why zero points is the point, and toasting
+        // that as an error would turn the one move a maxed attribute has left
+        // into something that looks broken.
         if (!gate.ok) {
             playSound('click');
-            showToast(gate.reason, 'error');
+            showToast(gate.reason || 'That session could not be run.', 'error');
             return;
         }
         playSound('click');
@@ -227,6 +349,11 @@
     $: resPct = Math.round(clamp(lastScore, 0, 1) * 100);
     $: resDetail = lastMeta && typeof lastMeta.detail === 'string' ? lastMeta.detail : '';
     $: coachLine = result ? (result.blurb || trainingBlurb(lastScore)) : '';
+    // completeDrill() reports whether THIS session is the one that bought the
+    // split's protection. A save written before maintenance existed has no such
+    // field, so an absent value reads as "no claim made".
+    $: resHeld = !!(result && result.ok && result.firstOfSplit === true);
+    $: resGain = result && Number.isFinite(Number(result.gain)) ? Number(result.gain) : 0;
 </script>
 
 <svelte:window on:keydown={onWindowKey} />
@@ -238,8 +365,9 @@
         <div>
             <h2 class="tr-h">Training</h2>
             <p class="tr-sub">
-                Drills are the only place your attributes rise on purpose. Everything in the
-                effectiveness panel multiplies what a single session is worth.
+                Drills are the only place your attributes rise on purpose - and the only thing
+                that keeps them where they are. Anything you go a whole split without drilling
+                loses points at the split close, ceiling or no ceiling.
             </p>
         </div>
         <div class="tr-role" style="--rc:{role.accent}">
@@ -251,7 +379,14 @@
     <!-- ======================= EFFECTIVENESS ========================= -->
     <div class="eff">
         <div class="eff-main">
-            <div class="side-label">Training Effectiveness</div>
+            <div class="side-label eff-label">
+                Training Effectiveness
+                {#if selectedRow}
+                    <span class="eff-scope" style="--sc:{selectedRow.color}">
+                        Maintenance row: {selectedRow.abbr}
+                    </span>
+                {/if}
+            </div>
 
             <div class="eff-head">
                 <div class="eff-big" style="color:{multColor(mult)}">
@@ -259,24 +394,40 @@
                 </div>
                 <p class="eff-note">
                     Every point a drill would pay out is multiplied by this before the
-                    potential ceiling gets its say. Each factor below stacks.
+                    potential ceiling gets its say. Each factor below stacks. The
+                    maintenance row is a status rather than a rate, so it is a flat
+                    1.00x by design - it decides whether points stay, not how fast they arrive.
                 </p>
             </div>
 
             <ul class="fac">
                 {#each breakdown as row (row.key)}
-                    <li class="fac-row">
-                        <span class="fac-key">{row.label}</span>
-                        <span class="fac-note">{row.note}</span>
-                        <span class="fac-bar" aria-hidden="true">
-                            <span
-                                class="fac-fill"
-                                class:fac-down={row.mult < 1}
-                                style="width:{clamp(Math.abs(row.mult - 1) * 220, 3, 100)}%; background:{rowColor(row.mult)}"
-                            ></span>
-                        </span>
-                        <span class="fac-val" style="color:{rowColor(row.mult)}">{row.mult.toFixed(2)}x</span>
-                    </li>
+                    {#if row.key === 'maintenance'}
+                        <!-- A STATUS row, not a rate. Its 1.00x is deliberate and
+                             keeps the column multiplying out to the total exactly;
+                             the sentence carries the whole meaning. -->
+                        <li class="fac-row fac-maint" class:fac-maint-on={row.held}>
+                            <span class="fac-key">{row.label}</span>
+                            <span class="fac-note fac-note-full">{row.note}</span>
+                            <span class="fac-flag">{row.held ? 'Held' : 'Exposed'}</span>
+                            <span class="fac-val fac-val-flat" title="Maintenance decides whether points stay, not how fast they arrive - so it is a neutral 1.00x on purpose">
+                                {row.mult.toFixed(2)}x
+                            </span>
+                        </li>
+                    {:else}
+                        <li class="fac-row">
+                            <span class="fac-key">{row.label}</span>
+                            <span class="fac-note">{row.note}</span>
+                            <span class="fac-bar" aria-hidden="true">
+                                <span
+                                    class="fac-fill"
+                                    class:fac-down={row.mult < 1}
+                                    style="width:{clamp(Math.abs(row.mult - 1) * 220, 3, 100)}%; background:{rowColor(row.mult)}"
+                                ></span>
+                            </span>
+                            <span class="fac-val" style="color:{rowColor(row.mult)}">{row.mult.toFixed(2)}x</span>
+                        </li>
+                    {/if}
                 {/each}
                 <li class="fac-row fac-total">
                     <span class="fac-key">Total</span>
@@ -385,6 +536,19 @@
             </div>
         {/if}
 
+        {#if declinedLast.length}
+            <div class="warn warn-warn">
+                <span class="warn-ico" aria-hidden="true">&#x1F4C9;</span>
+                <span class="warn-t">
+                    <strong>The last split close took {fmtNum(declinedTotal)} points off you.</strong>
+                    {declinedLast.map(a => a.abbr + ' -' + fmtNum(a.declined)).join(', ')}. An attribute
+                    that goes a whole split without a single drill loses ground at the close, whether it
+                    is at your ceiling or nowhere near it. One session anywhere in the split is the whole
+                    requirement.
+                </span>
+            </div>
+        {/if}
+
         {#if slotsFull}
             <div class="warn warn-info">
                 <span class="warn-ico" aria-hidden="true">&#x1F4C5;</span>
@@ -445,6 +609,17 @@
     <div class="side-label attr-title">
         Attributes
         <span class="attr-title-n">{maxedOut.length} of {ATTRS.length} at ceiling</span>
+        {#if exposed.length}
+            <span class="attr-title-n attr-title-warn">
+                {exposed.length} undrilled this split - exposed to decline
+            </span>
+        {:else if overview.length}
+            <!-- Only claimable when there are rows to have claimed it about: an
+                 empty overview is a save we could not read, not a clean sheet. -->
+            <span class="attr-title-n attr-title-ok">
+                All {overview.length} drilled this split - nothing can decline
+            </span>
+        {/if}
     </div>
 
     <div class="attrs">
@@ -464,9 +639,16 @@
                         <span class="attr-line">
                             <span class="attr-name">{a.name}</span>
                             {#if a.headroom <= 0}
-                                <span class="tag tag-max">Maxed</span>
+                                <span class="tag tag-max" title="At your ceiling. A drill no longer adds points to it - it is what stops it losing them.">At ceiling</span>
                             {:else if a.throttled}
                                 <span class="tag tag-cap">Unsigned cap</span>
+                            {/if}
+                            {#if a.held}
+                                <span class="tag tag-held" title={a.note}>
+                                    Held{a.heldCount > 1 ? ' x' + a.heldCount : ''}
+                                </span>
+                            {:else}
+                                <span class="tag tag-slip" title={a.note || (a.name + ' has not been drilled this split - exposed to decline')}>Exposed</span>
                             {/if}
                             {#if a.trainedThisWeek > 0}
                                 <span class="tag tag-rep">{a.trainedThisWeek} this week</span>
@@ -483,6 +665,11 @@
                         <span class="attr-cur">{Math.round(a.value)}</span>
                         <span class="attr-slash">/</span>
                         <span class="attr-pot">{Math.round(a.ceiling)}</span>
+                        {#if a.declined > 0}
+                            <span class="attr-loss" title="The last split close took {fmtNum(a.declined)} off {a.name} because it went the split undrilled">
+                                -{fmtNum(a.declined)}
+                            </span>
+                        {/if}
                     </span>
 
                     <span
@@ -504,18 +691,31 @@
                 {#if open}
                     <div class="drills" id={'drills-' + a.key}>
                         {#if selectedRow && selectedRow.headroom <= 0}
-                            <p class="drills-note">
-                                {a.name} is at your ceiling of {Math.round(a.ceiling)}. No drill moves it
-                                again - but the ceiling itself is not fixed. A breakthrough split, the
-                                Evergreen legacy perk or a performance camp all raise it.
+                            <p class="drills-note" class:drills-note-warn={!a.held}>
+                                {a.name} is at your ceiling of {Math.round(a.ceiling)}, so a drill adds no
+                                points to it. It is not finished with: an attribute that goes a whole split
+                                without one loses ground at the split close, and a session is the only thing
+                                that stops it.
+                                {#if a.held}
+                                    Drilled {a.heldCount}{a.heldCount === 1 ? ' time' : ' times'} this split,
+                                    so it is already safe until the close.
+                                {:else}
+                                    Not drilled this split yet - one maintenance session anywhere in the
+                                    split is the whole requirement.
+                                {/if}
+                                Raising the roof itself is a separate job: a breakthrough split, the
+                                Evergreen legacy perk or a performance camp.
                             </p>
                         {/if}
 
                         <div class="drill-grid">
                             {#each drillRows as row (row.d.id)}
-                                <article class="drill" class:drill-off={!row.gate.ok} style="--dc:{row.tier.accent}">
+                                <article class="drill" class:drill-off={!row.gate.ok} class:drill-maint={row.maint} style="--dc:{row.tier.accent}">
                                     <header class="drill-head">
                                         <span class="drill-tier">{row.tier.name}</span>
+                                        {#if row.maint}
+                                            <span class="drill-flag">Maintenance</span>
+                                        {/if}
                                         <span class="pips" role="img" aria-label={'Difficulty ' + row.d.difficulty + ' of 3'}>
                                             <span class="pip" class:on={row.d.difficulty >= 1}></span>
                                             <span class="pip" class:on={row.d.difficulty >= 2}></span>
@@ -549,17 +749,25 @@
                                         </div>
                                     </dl>
 
-                                    <div class="gain" class:gain-capped={row.gain.capped}>
-                                        <span class="gain-l">Expected gain</span>
+                                    <div
+                                        class="gain"
+                                        class:gain-capped={row.gain.capped && !row.maint}
+                                        class:gain-hold={row.maint}
+                                    >
+                                        <span class="gain-l">{row.maint ? 'Holds the line' : 'Expected gain'}</span>
                                         <span class="gain-v">
-                                            {#if row.gain.capped}
+                                            {#if row.maint}
+                                                +0.00, on purpose
+                                            {:else if row.gain.capped}
                                                 Ceiling reached
                                             {:else}
                                                 +{row.gain.min.toFixed(2)} to +{row.gain.max.toFixed(2)}
                                             {/if}
                                         </span>
                                         <span class="gain-sub">
-                                            {#if row.gain.capped}
+                                            {#if row.maint}
+                                                buys {a.abbr} protection, not points
+                                            {:else if row.gain.capped}
                                                 Tops out at {Math.min(row.d.attrCap, Math.round(a.ceiling))}
                                             {:else}
                                                 bad session {ARROW} perfect run
@@ -569,14 +777,23 @@
 
                                     <button
                                         class="drill-go"
+                                        class:drill-go-maint={row.maint}
                                         disabled={!row.gate.ok}
                                         on:click={() => start(row.d)}
-                                        aria-label={'Start ' + row.d.name}
+                                        aria-label={(row.maint ? 'Run maintenance session: ' : 'Start ') + row.d.name}
                                     >
-                                        {row.gate.ok ? 'Start Drill' : 'Unavailable'}
+                                        {#if row.maint}
+                                            Run Maintenance
+                                        {:else if row.gate.ok}
+                                            Start Drill
+                                        {:else}
+                                            Unavailable
+                                        {/if}
                                     </button>
 
-                                    {#if !row.gate.ok}
+                                    {#if row.maint}
+                                        <p class="drill-hold">{row.gate.reason}</p>
+                                    {:else if !row.gate.ok}
                                         <p class="drill-block">{row.gate.reason}</p>
                                     {/if}
                                 </article>
@@ -631,8 +848,14 @@
                 <div class="res-rows">
                     <div class="res-row">
                         <span class="rr-l">{result.attrName}</span>
-                        <span class="rr-v" style="color:{result.gain > 0 ? '#4ade80' : '#64748b'}">
-                            {result.gain > 0 ? '+' + fmtNum(result.gain) : 'no measurable gain'}
+                        <span class="rr-v" style="color:{resGain > 0 ? '#4ade80' : (resHeld ? '#38bdf8' : '#64748b')}">
+                            {#if resGain > 0}
+                                +{fmtNum(resGain)}
+                            {:else if resHeld}
+                                held, no points
+                            {:else}
+                                no measurable gain
+                            {/if}
                         </span>
                     </div>
 
@@ -657,6 +880,14 @@
                         </div>
                     {/if}
                 </div>
+
+                {#if resHeld}
+                    <div class="res-hold">
+                        <strong>{result.attrName} is protected.</strong> That was the first session on it
+                        this split, so the split close cannot take points off it. Every session after this
+                        one is for the points.
+                    </div>
+                {/if}
 
                 {#if result.injured}
                     <div class="res-injury">
@@ -716,6 +947,15 @@
     }
     .eff-main { border-color: rgba(139, 92, 246, 0.2); }
 
+    .eff-label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .eff-scope {
+        font-size: 8px; font-weight: 900; letter-spacing: 1px;
+        padding: 2px 6px; border-radius: 5px;
+        color: var(--sc);
+        background: color-mix(in srgb, var(--sc) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--sc) 26%, transparent);
+    }
+
     .eff-head { display: flex; align-items: center; gap: 18px; margin-bottom: 16px; flex-wrap: wrap; }
     .eff-big {
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -741,6 +981,27 @@
     .fac-total { margin-top: 6px; border-top: 1px solid rgba(51, 65, 85, 0.3); border-radius: 0; background: none !important; padding-top: 11px; }
     .fac-total .fac-key { color: #e2e8f0; text-transform: uppercase; font-size: 10px; letter-spacing: 1.2px; }
     .fac-total .fac-val { font-size: 14px; }
+
+    /* The maintenance row. A STATUS, not a rate: its 1.00x is deliberate, so it
+       gets a tinted panel and a held/exposed flag instead of a factor bar, and
+       is never allowed to read as a broken 1.00x. */
+    .fac-row.fac-maint {
+        margin-top: 5px;
+        background: rgba(245, 158, 11, 0.07);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+    }
+    .fac-row.fac-maint-on { background: rgba(34, 197, 94, 0.07); border-color: rgba(34, 197, 94, 0.2); }
+    .fac-maint .fac-key { color: #fbbf24; }
+    .fac-maint-on .fac-key { color: #4ade80; }
+    .fac-note-full { white-space: normal; overflow: visible; line-height: 1.5; color: #64748b; }
+    .fac-flag {
+        justify-self: center; text-align: center;
+        font-size: 8px; font-weight: 900; letter-spacing: 0.9px; text-transform: uppercase;
+        padding: 2px 6px; border-radius: 5px;
+        color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.28);
+    }
+    .fac-maint-on .fac-flag { color: #4ade80; background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.28); }
+    .fac-val-flat { color: #475569; }
 
     .eff-link {
         margin-top: 14px; padding: 0; background: none; border: none; cursor: pointer;
@@ -821,6 +1082,8 @@
     /* ---------------- attributes ---------------- */
     .attr-title { display: flex; align-items: baseline; gap: 10px; }
     .attr-title-n { font-size: 9px; font-weight: 800; letter-spacing: 0.8px; color: #2c3a52; }
+    .attr-title-warn { color: #a1741f; }
+    .attr-title-ok { color: #2f7048; }
     .attrs { display: flex; flex-direction: column; gap: 8px; }
 
     .attr {
@@ -863,6 +1126,10 @@
     .tag-max { color: #4ade80; background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.25); }
     .tag-cap { color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.25); }
     .tag-rep { color: #94a3b8; background: rgba(148, 163, 184, 0.09); border: 1px solid rgba(148, 163, 184, 0.16); }
+    /* Maintenance, scannable down the column: one drill this split and the
+       attribute is out of range of the split-close decline, otherwise it is not. */
+    .tag-held { color: #7dd3fc; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.26); }
+    .tag-slip { color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.26); }
     .attr-desc {
         font-size: 10.5px; line-height: 1.5; color: #4a5b76;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -875,6 +1142,7 @@
     .attr-cur { font-size: 19px; font-weight: 800; color: #e8eefb; }
     .attr-slash { font-size: 12px; color: #2c3a52; }
     .attr-pot { font-size: 12px; font-weight: 700; color: #56688a; }
+    .attr-loss { font-size: 11px; font-weight: 800; color: #f87171; margin-left: 6px; }
 
     .attr-w { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 46px; }
     .attr-w-n { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 800; color: #56688a; }
@@ -893,6 +1161,7 @@
         border-radius: 10px; background: rgba(34, 197, 94, 0.06);
         border: 1px solid rgba(34, 197, 94, 0.16);
     }
+    .drills-note-warn { background: rgba(245, 158, 11, 0.07); border-color: rgba(245, 158, 11, 0.2); }
     .drill-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px; margin-top: 12px; }
     .drill {
         display: flex; flex-direction: column;
@@ -902,9 +1171,22 @@
         border-top: 2px solid var(--dc);
     }
     .drill-off { opacity: 0.62; }
+    /* A maintenance session is a real, chosen option: never dimmed, never
+       styled as a refusal, and visibly a different job from a gain drill. */
+    .drill-maint {
+        background: rgba(56, 189, 248, 0.05);
+        border-color: rgba(56, 189, 248, 0.26);
+        border-top-color: var(--dc);
+    }
     .drill-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
     .drill-tier { font-size: 8.5px; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dc); }
+    .drill-flag {
+        font-size: 8px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
+        padding: 2px 6px; border-radius: 5px;
+        color: #7dd3fc; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.28);
+    }
     .pips { display: inline-flex; gap: 4px; }
+    .drill-head .pips { margin-left: auto; }
     .pip { width: 6px; height: 6px; border-radius: 50%; background: rgba(100, 116, 139, 0.26); }
     .pip.on { background: var(--dc); }
     .drill-name { font-size: 13px; font-weight: 800; color: #e2e8f0; margin-bottom: 5px; }
@@ -925,6 +1207,9 @@
     .gain-l { font-size: 7.5px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #334155; }
     .gain-v { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 14px; font-weight: 800; color: #4ade80; }
     .gain-capped .gain-v { color: #64748b; font-size: 12px; }
+    .gain-hold { background: rgba(56, 189, 248, 0.07); border-color: rgba(56, 189, 248, 0.2); }
+    .gain-hold .gain-v { color: #7dd3fc; font-size: 13px; }
+    .gain-hold .gain-l { color: #3f6a86; }
     .gain-sub { font-size: 9px; color: #475569; }
 
     .drill-go {
@@ -937,7 +1222,13 @@
     }
     .drill-go:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(139, 92, 246, 0.28); }
     .drill-go:disabled { background: rgba(30, 41, 59, 0.6); border-color: rgba(51, 65, 85, 0.3); color: #475569; cursor: not-allowed; }
+    .drill-go-maint {
+        color: #ecfeff; border-color: rgba(56, 189, 248, 0.42);
+        background: linear-gradient(135deg, rgba(2, 132, 199, 0.85), rgba(56, 189, 248, 0.62));
+    }
+    .drill-go-maint:hover:not(:disabled) { box-shadow: 0 6px 18px rgba(56, 189, 248, 0.28); }
     .drill-block { font-size: 10px; line-height: 1.5; color: #64748b; margin-top: 8px; }
+    .drill-hold { font-size: 10px; line-height: 1.5; color: #6ea8c6; margin-top: 8px; }
 
     /* ---------------- result panel ---------------- */
     .res-over { position: fixed; inset: 0; z-index: 130; display: flex; align-items: center; justify-content: center; padding: 16px; }
@@ -987,9 +1278,11 @@
     .rr-up { color: #a78bfa; }
     .rr-flat { color: #64748b; }
 
-    .res-injury, .res-up { font-size: 11px; line-height: 1.6; padding: 10px 12px; border-radius: 11px; margin-bottom: 14px; color: #94a3b8; }
+    .res-injury, .res-up, .res-hold { font-size: 11px; line-height: 1.6; padding: 10px 12px; border-radius: 11px; margin-bottom: 14px; color: #94a3b8; }
     .res-injury { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.22); }
     .res-injury strong { color: #f87171; }
+    .res-hold { background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); }
+    .res-hold strong { color: #7dd3fc; }
     .res-up { background: rgba(139, 92, 246, 0.09); border: 1px solid rgba(139, 92, 246, 0.24); }
     .res-up strong { color: #c4b5fd; }
     .res-fine { font-size: 10.5px; color: #475569; margin-bottom: 14px; }
@@ -1008,6 +1301,11 @@
     @media (max-width: 720px) {
         .fac-row { grid-template-columns: minmax(70px, 1fr) 52px; row-gap: 2px; }
         .fac-note, .fac-bar { display: none; }
+        /* The maintenance row's whole content is its sentence, so it keeps the
+           note and drops the flag rather than the other way round. */
+        .fac-flag { display: none; }
+        .fac-row.fac-maint .fac-val { grid-row: 1; grid-column: 2; }
+        .fac-row.fac-maint .fac-note-full { display: block; grid-column: 1 / -1; grid-row: 2; }
         .attr-head { grid-template-columns: 40px minmax(0, 1fr) auto 18px; gap: 10px; padding: 11px 12px; }
         .attr-w { display: none; }
         .attr-desc { display: none; }

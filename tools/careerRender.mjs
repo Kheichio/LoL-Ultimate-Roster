@@ -340,6 +340,13 @@ async function renderComponent(rel) {
 /**
  * Render one component in one state. `expect` describes what the screen owes
  * the player so a silent bail can be told apart from a deliberately terse box.
+ *
+ * `expect.component` is an ALREADY-LOADED SSR component, used instead of
+ * loading `rel` off the shared graph. It exists for exactly one caller -- the
+ * card-database-unloaded arm of CLUB SCOUT, which has to come out of a second,
+ * throwaway module graph because utils/cards.js memoises the database in a
+ * module-local cache with no reset. `rel` is still passed so the dump file, the
+ * findings ledger and the size table all attribute it to the right file.
  */
 async function render(name, rel, props, stateName, expect = {}) {
     const minChars = expect.minChars === undefined ? 200 : expect.minChars;
@@ -347,7 +354,7 @@ async function render(name, rel, props, stateName, expect = {}) {
     let html = '';
     renders++;
     try {
-        const Comp = await renderComponent(rel);
+        const Comp = expect.component || await renderComponent(rel);
         const out = Comp.render(props || {});
         html = out && typeof out.html === 'string' ? out.html : '';
     } catch (e) {
@@ -794,6 +801,75 @@ const SINGLE_ROT = [
     // week tick -- which is exactly when the Hub renders.
     ['weekly-counts-is-null',    c => ({ ...c, weekly: { ...c.weekly, counts: null } })],
     ['firstseen-is-array',       c => ({ ...c, flags: { ...c.flags, firstSeen: [1, 2] } })],
+
+    // player.goalClubId is a bare club id persisted exactly like player.champion
+    // and player.studyLang, so a renamed or deleted org lands here. It has ONE
+    // reader -- contracts.goalProgress() -- and that function returns null both
+    // for "no goal" and for "the goal does not resolve", so a rotten id and an
+    // unset one are the same panel on screen unless both are actually driven.
+    ['goalclub-is-a-dead-id',    c => ({ ...c, player: { ...c.player, goalClubId: 'org_deleted_in_a_patch' } })],
+    ['goalclub-is-an-object',    c => ({ ...c, player: { ...c.player, goalClubId: { id: 'lec_g2' } } })],
+    ['goalclub-is-null',         c => ({ ...c, player: { ...c.player, goalClubId: null } })],
+    // The goal already reached: goalProgress short-circuits on p.clubId === t.id
+    // before any of the gate arithmetic runs, so this is its own code path.
+    ['goalclub-is-my-own-club',  c => ({ ...c, player: { ...c.player, goalClubId: c.player.clubId } })],
+
+    // player.practiceChamp is the same shape again -- a bare champion id, read
+    // by the Hub's activity row and by the Dossier's "In the lab" line, with a
+    // fallback to the signature pick when it does not resolve.
+    ['practicechamp-dead-id',    c => ({ ...c, player: { ...c.player, practiceChamp: 'no_such_champion' } })],
+    ['practicechamp-is-object',  c => ({ ...c, player: { ...c.player, practiceChamp: { id: 'ahri' } } })],
+    ['practicechamp-is-null',    c => ({ ...c, player: { ...c.player, practiceChamp: null } })],
+
+    // career.club.scrim is a role -> fractional points map, scoped by
+    // club.teamId exactly like momentum and roster, so every one of these has to
+    // carry the player's own club id or the whole block is ignored and the rot
+    // is never reached. teams.seatScrimDelta() clamps on READ, which is the
+    // claim these shapes exist to check.
+    ['club-scrim-holds-junk',    c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0.2, roster: {}, changes: [], scrim: { TOP: 'sharp', JNG: NaN, MID: -4, ADC: 999, SUP: null } } })],
+    ['club-scrim-unknown-role',  c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0, roster: {}, changes: [], scrim: { NOT_A_ROLE: 6, TOP: 3.5 } } })],
+    ['club-scrim-is-an-array',   c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0, roster: {}, changes: [], scrim: [1, 2, 3] } })],
+    ['club-scrim-is-a-string',   c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0, roster: {}, changes: [], scrim: 'sharpened' } })],
+    // ...and one HONEST block, so the seat chip actually renders. A rot state
+    // that only ever proves nothing crashed cannot tell a guarded chip apart
+    // from a chip that was never wired.
+    ['club-scrim-is-real',       c => ({ ...c, club: { teamId: c.player.clubId, momentum: 0.35, roster: {}, changes: [], scrim: { TOP: 10, JNG: 7.4, MID: 2.2, ADC: 10, SUP: 0.55 } } })],
+
+    // flags.decline is the split-close ledger. `attrs` is the per-attribute row
+    // the Training screen reads through training.declinedThisSplit(), and it is
+    // absent on every save written before decline existed -- so the populated
+    // shape is the one that has to be built by hand.
+    ['decline-is-a-string',      c => ({ ...c, flags: { ...c.flags, decline: 'a bad split' } })],
+    ['decline-is-an-array',      c => ({ ...c, flags: { ...c.flags, decline: [1, 2] } })],
+    ['decline-is-negative',      c => ({ ...c, flags: { ...c.flags, decline: { ovrLost: -4, splits: -1, heldTotal: -2, attrs: { mec: -1.5 } } } })],
+    ['decline-is-populated',     c => ({ ...c, flags: { ...c.flags, decline: { ovrLost: 2.4, splits: 3, heldTotal: 11, attrs: { mec: 1.4, cmp: 0.6 } } } })],
+
+    // flags.splitTrained is what decides the Held / Exposed chip on every
+    // attribute row, and an empty map is the DEFAULT -- so without a populated
+    // one the Held half of that pair has no coverage at all.
+    ['splittrained-holds-junk',  c => ({ ...c, flags: { ...c.flags, splitTrained: { mec: 'twice', lne: NaN, map: -3, not_an_attr: 2 } } })],
+    ['splittrained-is-an-array', c => ({ ...c, flags: { ...c.flags, splitTrained: [1, 2] } })],
+    ['splittrained-populated',   c => ({ ...c, flags: { ...c.flags, splitTrained: { mec: 2, lne: 1, map: 1, tmf: 1, cmp: 4, ldr: 1, chp: 1, knw: 1 } } })],
+
+    // flags.consumablesUsed is the per-career use ledger behind the Shop's cap
+    // chrome. Driven here as well as in the SHOP TABS block because the Hub and
+    // the Dossier read the same inventory around it.
+    ['consumables-used-at-cap',  c => ({
+        ...c,
+        flags: { ...c.flags, consumablesUsed: { performance_camp: 3, energy_drink: 41 } },
+        weekly: { ...c.weekly, counts: { ...(c.weekly && c.weekly.counts), 'cons:energy_drink': 2 } },
+        inventory: { ...c.inventory, consumables: { ...(c.inventory && c.inventory.consumables), energy_drink: 2, performance_camp: 1 } },
+    })],
+    ['consumables-used-is-junk', c => ({ ...c, flags: { ...c.flags, consumablesUsed: 'lots of them' } })],
+
+    // lastMatch.moraleNotes -- the breakdown behind the net morale figure.
+    // ABSENT is the pre-change save shape and must keep rendering exactly as it
+    // always did, so it is a state in its own right rather than an assumption.
+    ['morale-notes-absent',      c => { const lm = { ...(c.lastMatch || {}) }; delete lm.moraleNotes; return { ...c, lastMatch: lm }; }],
+    ['morale-notes-populated',   c => ({ ...c, lastMatch: { ...(c.lastMatch || {}), moraleDelta: -6, moraleNotes: ['A 1.2 KDA across the series cost you.', 'Three straight losses before this one.'] } })],
+    ['morale-notes-is-a-string', c => ({ ...c, lastMatch: { ...(c.lastMatch || {}), moraleNotes: 'you played badly' } })],
+    ['morale-notes-hold-objects', c => ({ ...c, lastMatch: { ...(c.lastMatch || {}), moraleNotes: [{ text: 'x' }, null, '', 7] } })],
+    ['morale-notes-is-null',     c => ({ ...c, lastMatch: { ...(c.lastMatch || {}), moraleNotes: null } })],
 ];
 const SINGLE_STATES = [];
 for (const [label, fn] of SINGLE_ROT) {
@@ -851,11 +927,206 @@ for (const st of [...STATES, ...SINGLE_STATES]) {
 console.log('');
 console.log('---- SHOP TABS -------------------------------------------');
 const SHOP_TABS = ['gear', 'consumables', 'lifestyle', 'perks', 'exchange', 'sponsors'];
-for (const st of [S_MID, S_HOSTILE, S_ROTTEN, S_RETIRED, S_PRECOMP]) {
+
+// ---- CAPPED CONSUMABLES ---------------------------------------------------
+//  The consumable caps ship with markup that NO ordinary fixture can reach.
+//  `limitOut()` needs a counter actually AT zero and `blockNote()` needs an
+//  item that is held, affordable and still unusable -- and every state above
+//  has an empty bag, an empty weekly.counts and an untouched ceiling budget, so
+//  the c-limit-out chip and the whole block-note branch would render green
+//  while being unreachable. That is the exact failure the signature-slot perk
+//  shipped with: correct model, correct markup, no fixture that could see it.
+//
+//  Two shapes, because the two bounds are different clauses in
+//  economy.consumableAllowance(): a COUNT at its cap, and the career ceiling
+//  BUDGET spent while the count still has room.
+const S_CONS_CAPPED = {
+    name: 'shop-consumable-caps-reached',
+    note: 'weekly and career consumable counters at their caps, bag stocked',
+    snap: (() => {
+        const x = clone(S_MID.snap);
+        x.money = { ...(x.money || {}), gold: 400000 };
+        x.weekly = {
+            ...(x.weekly || {}),
+            counts: {
+                ...((x.weekly && x.weekly.counts) || {}),
+                'cons:energy_drink': 2, 'cons:sleep_kit': 1, 'cons:psych_session': 1,
+                'cons:all_nighter': 1, 'cons:meta_report': 1, 'cons:vod_package': 1,
+                'cons:team_dinner': 1, 'cons:sports_massage': 1, 'cons:pr_blast': 2,
+                'cons:private_coaching': 1,
+            },
+        };
+        x.flags = { ...(x.flags || {}), consumablesUsed: { performance_camp: 3 } };
+        x.inventory = {
+            ...(x.inventory || {}),
+            consumables: {
+                ...((x.inventory && x.inventory.consumables) || {}),
+                energy_drink: 3, sleep_kit: 1, psych_session: 1, all_nighter: 1,
+                meta_report: 1, performance_camp: 1,
+            },
+        };
+        return x;
+    })(),
+};
+// The Performance Camp with its COUNT still open and the career ceiling budget
+// spent: a full bag and a dead Use button, which is the one block with no other
+// tell on the card and therefore the only thing blockNote() exists to say.
+const S_CEILING_SPENT = {
+    name: 'shop-ceiling-budget-spent',
+    note: 'boughtCeilingOVR at CEILING_PURCHASE_MAX with camps still in the bag',
+    snap: (() => {
+        const x = clone(S_MID.snap);
+        x.money = { ...(x.money || {}), gold: 400000 };
+        x.flags = { ...(x.flags || {}), boughtCeilingOVR: 3 };
+        x.inventory = {
+            ...(x.inventory || {}),
+            consumables: { ...((x.inventory && x.inventory.consumables) || {}), performance_camp: 2 },
+        };
+        return x;
+    })(),
+};
+
+for (const st of [S_MID, S_HOSTILE, S_ROTTEN, S_RETIRED, S_PRECOMP, S_CONS_CAPPED, S_CEILING_SPENT]) {
     for (const tab of SHOP_TABS) {
         applyState(st.snap);
         await render('Shop(' + tab + ')', COMPONENT_DIR + 'Shop.svelte',
             { initialTab: tab }, st.name, { minText: 120 });
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  TRANSFERS -- THE GOAL CLUB
+//  The whole panel is behind `{#if !goalRow}`, and goalRow is null unless
+//  player.goalClubId names a club that still resolves. No fixture above sets
+//  one, so everything from the interest bar to the rejection counter would
+//  render green and be unreachable.
+//
+//  Every status contracts.goalProgress() can return is driven, because they are
+//  five different arms of that function and four of them return EARLY: reached
+//  short-circuits on the club id, reached-in-the-past on flags.goalReached, lost
+//  on the rejection counter and blocked on signingBlock(). Only `chase` and
+//  `live` fall through to the "what is still in the way" ladder.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- TRANSFERS: THE GOAL CLUB ----------------------------');
+{
+    const TF = COMPONENT_DIR + 'Transfers.svelte';
+    const ALL_T = safe('allTeams', () => K.allTeams(), []) || [];
+    const own = (S_MID.snap.player && S_MID.snap.player.clubId) || null;
+    const homeReg = (S_MID.snap.player && S_MID.snap.player.region) || 'LEC';
+    const pick = (fn) => { const t = ALL_T.find(fn); return t ? t.id : null; };
+    // A tier-1 club at home, a tier-1 club behind a language the player has not
+    // studied, and an open-circuit side whose gate anybody clears.
+    const G_HOME = pick(t => t && t.id !== own && Number(t.tier) === 1 && t.region === homeReg) || 'lec_g2';
+    const G_FOREIGN = pick(t => t && Number(t.tier) === 1 && t.region === 'LCK') || G_HOME;
+    const G_OPEN = pick(t => t && Number(t.tier) === 3) || 'am_pug1';
+
+    const withGoal = (id, mutate) => {
+        const x = clone(S_MID.snap);
+        x.player = { ...x.player, goalClubId: id };
+        if (typeof mutate === 'function') mutate(x);
+        return x;
+    };
+
+    const GOALS = [
+        // The ordinary case: a real club, still to be reached.
+        ['tf-goal-chase', withGoal(G_HOME)],
+        // REACHED, both ways it can be reached -- the club you are at now, and
+        // one you signed for years ago and have since left.
+        ['tf-goal-reached-now', withGoal(own || G_HOME)],
+        ['tf-goal-reached-in-the-past', withGoal(G_HOME, x => {
+            x.flags = { ...(x.flags || {}), goalReached: Number(x.time && x.time.year) || 2027 };
+        })],
+        // LOST. The rejection counter is a permanent, silent dead end in
+        // generateOffers(); this panel is the only thing that ever says so.
+        ['tf-goal-lost-to-rejections', withGoal(G_HOME, x => {
+            x.player = { ...x.player, rejected: { ...(x.player.rejected || {}), [G_HOME]: 3 } };
+        })],
+        // One refusal on file but not yet a blacklist: the counter chip without
+        // the dead-end panel.
+        ['tf-goal-one-refusal', withGoal(G_HOME, x => {
+            x.player = { ...x.player, rejected: { ...(x.player.rejected || {}), [G_HOME]: 1 } };
+        })],
+        // A hard signing gate. An LEC player with no Korean cannot be signed in
+        // the LCK at all, which is signingBlock()'s language clause.
+        ['tf-goal-behind-a-language', withGoal(G_FOREIGN, x => {
+            x.player = { ...x.player, languages: { en: 100 } };
+        })],
+        // The window, open and shut, against a gate the player clears.
+        ['tf-goal-window-open', withGoal(G_OPEN, x => {
+            x.time = { ...(x.time || {}), week: 38 };
+        })],
+        ['tf-goal-window-shut', withGoal(G_OPEN, x => {
+            x.time = { ...(x.time || {}), week: 10 };
+        })],
+        // A goal set by an unsigned thirteen-year-old, which is the state the
+        // panel is really for and the one no signed fixture reaches.
+        ['tf-goal-unsigned-rookie', (() => {
+            const x = clone(S_PRECOMP.snap);
+            x.player = { ...x.player, goalClubId: G_HOME };
+            return x;
+        })()],
+    ];
+    for (const [label, snapx] of GOALS) {
+        applyState(snapx);
+        await render('Transfers', TF, {}, label, { minText: 120 });
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  TRAINING -- THE MAINTENANCE DRILL
+//  training.canTrain() returns { ok: true, maintenance: true } for exactly one
+//  shape: an attribute AT its ceiling that has NOT been drilled this split.
+//  Every fixture above is mid-career with headroom left in the attribute the
+//  screen opens on, so the Maintenance flag, the drill-note branch that
+//  explains it and the Held/Exposed pair around it have no reachable state.
+//
+//  Built by hand rather than driven, because reaching a ceiling honestly takes
+//  a twelve-year career and would still only cover whichever attribute that run
+//  happened to max.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- TRAINING: THE MAINTENANCE DRILL ---------------------');
+{
+    const TRN = COMPONENT_DIR + 'Training.svelte';
+    const AK = Array.isArray(K.ATTR_KEYS) ? K.ATTR_KEYS : ['mec', 'lne', 'map', 'tmf', 'cmp', 'ldr', 'chp', 'knw'];
+
+    /** state 3 with every attribute pinned to its own ceiling, the week's slots
+     *  free and the gold and energy in hand -- so the ONLY thing left deciding
+     *  the gate is flags.splitTrained, which is the argument. */
+    const atCeiling = (splitTrained) => {
+        const x = clone(S_MID.snap);
+        const pot = (x.player && x.player.potential) || {};
+        x.player = { ...x.player, attrs: { ...(x.player.attrs || {}) }, energy: 100 };
+        for (const k of AK) {
+            const v = Number(pot[k]);
+            if (Number.isFinite(v)) x.player.attrs[k] = v;
+        }
+        x.money = { ...(x.money || {}), gold: 400000 };
+        x.weekly = { ...(x.weekly || {}), actionsLeft: 5, actionsMax: 5, trained: {} };
+        x.flags = { ...(x.flags || {}), splitTrained };
+        return x;
+    };
+    const everyAttrHeld = AK.reduce((m, k) => { m[k] = 2; return m; }, {});
+
+    const MAINT = [
+        // ok:true, maintenance:true -- the session that pays nothing and buys
+        // the protection.
+        ['tr-maintenance-available', atCeiling({})],
+        // ...and the refusal on the other side of it: at the ceiling AND already
+        // drilled, so the session would buy literally nothing.
+        ['tr-maintenance-already-held', atCeiling(everyAttrHeld)],
+        // The same screen with last split's bill actually on it, which is the
+        // only state where the per-attribute decline readout has anything to say.
+        ['tr-maintenance-after-a-decline', (() => {
+            const x = atCeiling({});
+            x.flags = { ...(x.flags || {}), decline: { ovrLost: 2.4, splits: 3, heldTotal: 11, attrs: { mec: 1.4, cmp: 0.6 } } };
+            return x;
+        })()],
+    ];
+    for (const [label, snapx] of MAINT) {
+        applyState(snapx);
+        await render('Training', TRN, {}, label, { minText: 120 });
     }
 }
 
@@ -1143,6 +1414,144 @@ console.log('---- BRACKET VIEW ----------------------------------------');
 }
 
 // ---------------------------------------------------------------------------
+//  CLUB SCOUT
+//  A child of Club, Calendar and Hub rather than a routed screen -- exactly the
+//  position BracketView holds under Calendar -- and it takes three required
+//  props (teamId, year, onClose), so the SCREENS loop handing over {} gives it
+//  no coverage of any kind. Rendered here for the same reason BracketView is.
+//
+//  It is also the ONLY panel in the mode that draws a club the player has never
+//  played for, so the foreign-club arm of teams.rosterForClub() has no other
+//  reader anywhere in the harness. Every tier is driven, because a tier-3
+//  amateur side and a tier-1 org resolve their seats down different branches,
+//  and the player's OWN club is driven because that id is the one case where
+//  the panel delegates to the signings-and-form copy rather than the derived
+//  roster.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- CLUB SCOUT ------------------------------------------');
+{
+    const CS = COMPONENT_DIR + 'ClubScout.svelte';
+    const ALL_T = safe('allTeams', () => K.allTeams(), []) || [];
+    const own = (S_MID.snap.player && S_MID.snap.player.clubId) || null;
+    const pickTier = (tier) => {
+        const t = ALL_T.find(x => x && x.id !== own && Number(x.tier) === tier);
+        return t ? t.id : null;
+    };
+    const T1 = pickTier(1) || 'lec_g2';
+    const T2 = pickTier(2) || 'lec_g2';
+    const T3 = pickTier(3) || 'am_pug1';
+    const YR = Number(S_MID.snap.time && S_MID.snap.time.year) || 2027;
+    const noop = () => {};
+
+    console.log('  clubs: t1=' + T1 + ' t2=' + T2 + ' t3=' + T3 + ' mine=' + own + ' year=' + YR);
+
+    const SCOUTS = [
+        ['cs-tier1-org',          { teamId: T1, year: YR, onClose: noop }],
+        ['cs-tier2-academy',      { teamId: T2, year: YR, onClose: noop }],
+        ['cs-tier3-amateur',      { teamId: T3, year: YR, onClose: noop }],
+        // The delegating arm: teamId === player.clubId routes through
+        // clubRosterFor(), which folds in signings, form and scrim sharpening.
+        ['cs-my-own-club',        { teamId: own, year: YR, onClose: noop }],
+        // An org that is not in the table any more. The panel owes a written
+        // empty state here rather than a header over five blank seats.
+        ['cs-unknown-team',       { teamId: 'org_that_no_longer_exists', year: YR, onClose: noop }],
+        ['cs-team-is-null',       { teamId: null, year: YR, onClose: noop }],
+        ['cs-team-is-a-number',   { teamId: 7, year: YR, onClose: noop }],
+        ['cs-team-is-an-object',  { teamId: { id: T1 }, year: YR, onClose: noop }],
+        // A non-finite year. Every seat is a derivation of (teamId, year), and
+        // rosterForClub() reads the field through `Number(x) || DEFAULT`, so a
+        // year the header rejects and the roster accepts would put a different
+        // number on the cards from the one printed above them.
+        ['cs-year-is-nan',        { teamId: T1, year: NaN, onClose: noop }],
+        ['cs-year-is-infinity',   { teamId: T1, year: Infinity, onClose: noop }],
+        ['cs-year-is-a-string',   { teamId: T1, year: 'soon', onClose: noop }],
+        ['cs-year-is-negative',   { teamId: T1, year: -2027, onClose: noop }],
+        ['cs-year-is-zero',       { teamId: T1, year: 0, onClose: noop }],
+        // onClose is optional and gates the panel's own close control.
+        ['cs-no-close-handler',   { teamId: T1, year: YR, onClose: null }],
+        ['cs-close-is-not-a-fn',  { teamId: T1, year: YR, onClose: 'close' }],
+    ];
+    for (const [label, props] of SCOUTS) {
+        applyState(S_MID.snap);
+        await render('ClubScout', CS, props, label, { minText: 60 });
+    }
+
+    // The same panel over every damaged save. `mine` is derived from
+    // $career.player.clubId, so a save whose own club id is dead is the one
+    // shape where the delegating arm and the derived arm disagree.
+    for (const st of [S_HOSTILE, S_ROTTEN, S_PRECOMP, S_RETIRED, S_VETERAN]) {
+        applyState(st.snap);
+        await render('ClubScout', CS, {
+            teamId: (st.snap.player && st.snap.player.clubId) || T1,
+            year: 0, onClose: noop,
+        }, 'cs-on-' + st.name, { minText: 60 });
+    }
+
+    // ---- THE CARD DATABASE NOT LOADED ------------------------------------
+    //  The panel gates its whole roster on board.boardDBReady(), because
+    //  teams.getTeamRoster() invents five synthetic names when the database is
+    //  missing and never visibly corrects itself -- five strangers presented as
+    //  a real club's starting five.
+    //
+    //  That arm is UNREACHABLE from the graph above. utils/cards.js memoises the
+    //  database in a module-local `_dbCache` the moment anything asks for a
+    //  card, which the state builders did thousands of times before this block
+    //  runs, and the module exports no reset. So it is rendered through a
+    //  SECOND, throwaway Vite graph loaded while window.playerDatabase is
+    //  absent. Nothing from that graph is kept: one component is rendered and
+    //  the server is closed, so the real graph -- and the store every other
+    //  render in this file subscribes to -- is never touched.
+    {
+        const savedDB = win.playerDatabase;
+        let s2 = null;
+        const Comp = await (async () => {
+            try {
+                win.playerDatabase = undefined;
+                s2 = await createServer({
+                    root: ROOT,
+                    configFile: path.join(ROOT, 'vite.config.js'),
+                    // An EXPLICIT hmr port, not `hmr: false` and not 0. Vite 4
+                    // builds its websocket server in middleware mode whatever
+                    // hmr says and falls back to a hardcoded 24678 for any
+                    // falsy port, so a second server alive at the same time
+                    // prints "Port is already in use" on stderr -- which in a
+                    // tool whose whole output is a findings list reads like a
+                    // failure. Derived from the pid so two runs of this harness
+                    // side by side do not collide either.
+                    server: { middlewareMode: true, hmr: { port: 24700 + (process.pid % 250) } },
+                    appType: 'custom',
+                    logLevel: 'error',
+                    optimizeDeps: { noDiscovery: true },
+                });
+                const mod = await s2.ssrLoadModule(CS);
+                return (mod && mod.default && typeof mod.default.render === 'function') ? mod.default : null;
+            } catch (e) {
+                fail('crash', 'src/lib/components/career/ClubScout.svelte',
+                    'ClubScout cannot even be loaded without the card database',
+                    (e && e.message) + '\n' + String((e && e.stack) || '').split('\n').slice(0, 4).join('\n'),
+                    'Something on the import path dereferences window.playerDatabase at module scope; ' +
+                    'the panel is supposed to render its own empty state instead.',
+                    'clubscout|nodb|load');
+                return null;
+            }
+        })();
+
+        if (Comp) {
+            for (const [label, props] of [
+                ['cs-nodb-tier1', { teamId: T1, year: YR, onClose: noop }],
+                ['cs-nodb-own-club', { teamId: own, year: YR, onClose: noop }],
+                ['cs-nodb-unknown', { teamId: 'org_that_no_longer_exists', year: YR, onClose: noop }],
+            ]) {
+                await render('ClubScout', CS, props, label, { minText: 60, component: Comp });
+            }
+        }
+        win.playerDatabase = savedDB;
+        if (s2) await s2.close();
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  CAREER DOSSIER
 //  A child of CareerBoard rather than a routed screen -- the same position
 //  BracketView holds under Calendar -- so it gets no coverage at all from the
@@ -1402,6 +1811,60 @@ function buildMatchStages() {
             const rotten = clone(f2);
             rotten.draft = { ...rotten.draft, options: ['no_such_champ', 'also_fake'], enemyId: 'ghost', picked: null };
             stages.push(['draft-dead-ids', rotten]);
+
+            // ---- THE META CHIP -------------------------------------------
+            //  Champion select prints where each option sits in THIS split's
+            //  meta, and the tone comes from constants.metaTierFor(champion,
+            //  year, split) -- a property of the ROLE POOL and the calendar, not
+            //  of the match object. So which of the three tones a run renders is
+            //  decided by the seed: a draft can easily come back three
+            //  Contested picks and leave the strong and weak arms unrendered.
+            //
+            //  Extending the existing draft states rather than inventing a path:
+            //  the same match object, the same `draft.options` array of bare
+            //  champion ids, only the ids chosen so each band is guaranteed.
+            const cNow = cur();
+            const yearNow = Number(cNow.time && cNow.time.year) || 2027;
+            const splitNow = safe('splitForWeek', () => K.splitForWeek(Number(cNow.time && cNow.time.week) || 1), 'spring');
+            const roleNow = (cNow.player && cNow.player.role) || 'MID';
+            const poolNow = (safe('championsForRole', () => K.championsForRole(roleNow), []) || [])
+                .map(ch => ch && ch.id).filter(Boolean);
+            const band = (tier) => poolNow.filter(id => {
+                const t = safe('metaTierFor', () => K.metaTierFor(id, yearNow, splitNow), 0);
+                return tier > 0 ? t > 0 : (tier < 0 ? t < 0 : t === 0);
+            });
+            const strongIds = band(1), evenIds = band(0), weakIds = band(-1);
+            const META_DRAFTS = [
+                ['draft-meta-strong', strongIds.slice(0, 3)],
+                ['draft-meta-weak', weakIds.slice(0, 3)],
+                ['draft-meta-mixed', [strongIds[0], evenIds[0], weakIds[0]].filter(Boolean)],
+            ];
+            for (const [label, ids] of META_DRAFTS) {
+                if (ids.length < 2) continue;   // this split's pool has no such band
+                const v = clone(f2);
+                v.draft = { ...v.draft, counter: true, picked: null, options: ids };
+                stages.push([label, v]);
+            }
+
+            // ...and the same chip on the LOCKED-IN strip, which is a different
+            // reader (MatchDay's `lockedIn`, via draftOption) on a different
+            // stage -- an answered champion select is no longer stage 'draft'.
+            const lockedIds = strongIds.length ? strongIds : (evenIds.length ? evenIds : poolNow);
+            if (lockedIds.length) {
+                const locked = clone(f2);
+                locked.draft = { ...locked.draft, counter: true, picked: lockedIds[0] };
+                stages.push(['draft-locked-in', locked]);
+
+                const lockedBlind = clone(f2);
+                lockedBlind.draft = { ...lockedBlind.draft, counter: false, enemyId: null, picked: lockedIds[0] };
+                stages.push(['draft-locked-in-blind', lockedBlind]);
+            }
+            // A pick that no longer resolves, locked in. draftOption() has to
+            // come back null and the strip has to disappear rather than print a
+            // nameless champion with an undefined meta band.
+            const lockedDead = clone(f2);
+            lockedDead.draft = { ...lockedDead.draft, counter: true, picked: 'no_such_champ' };
+            stages.push(['draft-locked-in-dead-id', lockedDead]);
         }
 
         // mid-game: two decisions resolved
@@ -1613,6 +2076,52 @@ for (const [label, payload] of [['pregame', PREGAME_PAYLOAD], ['first-time', FIR
     applyState(S_HOSTILE.snap);
     ST.careerOverlay.set({ kind: 'event', payload });
     await render('CareerOverlay(event)', COMPONENT_DIR + 'CareerOverlay.svelte', {}, 'overlay-hostile-' + label, { minText: 40 });
+}
+
+// ---- THE MORALE-NOTE BREAKDOWN ------------------------------------------
+//  match.finishMatch writes ready-to-print sentences into result.moraleNotes,
+//  and the RESULT OVERLAY is the only thing in the app that renders them:
+//  MatchDay owns a second copy of the same list, but it hangs off `finalResult`,
+//  which is assigned inside an event handler SSR never runs.
+//
+//  ABSENT is the pre-change save shape -- every result persisted before the
+//  field existed carries none -- so it is driven as a state of its own rather
+//  than assumed, alongside the rot shapes a hand-edited save can hold.
+{
+    const CO = COMPONENT_DIR + 'CareerOverlay.svelte';
+    const cM = clone(S_MID.snap);
+    const RES_BASE = (cM.lastMatch && typeof cM.lastMatch === 'object' && !Array.isArray(cM.lastMatch))
+        ? clone(cM.lastMatch)
+        : {
+            won: false, score: [1, 2], rating: 5.4, kda: { k: 2, d: 7, a: 3 }, cs: 190,
+            myTeamName: 'Your team', opponentName: 'Opponent', played: true,
+            week: 9, year: Number(cM.time && cM.time.year) || 2027,
+        };
+    const NOTES = [
+        // The state that has to keep rendering exactly as it always did.
+        ['absent', undefined],
+        ['populated', ['A 1.2 KDA across the series cost you.', 'Three straight losses before this one.']],
+        ['a-string', 'you played badly'],
+        ['holds-objects', [{ text: 'x' }, null, '', 7]],
+        ['is-null', null],
+        ['is-empty', []],
+        ['holds-whitespace', ['   ', '\t']],
+    ];
+    for (const [label, notes] of NOTES) {
+        const res = { ...RES_BASE, moraleDelta: -6 };
+        if (notes === undefined) delete res.moraleNotes; else res.moraleNotes = notes;
+        applyState(S_MID.snap);
+        ST.careerOverlay.set({ kind: 'result', payload: res });
+        await render('CareerOverlay(result)', CO, {}, 'overlay-morale-notes-' + label, { minText: 40 });
+    }
+    // A net of exactly zero WITH notes attached is the one case the row must not
+    // paint as a loss, and it is unreachable from any result the engine wrote.
+    {
+        const res = { ...RES_BASE, moraleDelta: 0, moraleNotes: ['A 1.4 KDA is not what won that.'] };
+        applyState(S_MID.snap);
+        ST.careerOverlay.set({ kind: 'result', payload: res });
+        await render('CareerOverlay(result)', CO, {}, 'overlay-morale-notes-net-zero', { minText: 40 });
+    }
 }
 
 // ---------------------------------------------------------------------------

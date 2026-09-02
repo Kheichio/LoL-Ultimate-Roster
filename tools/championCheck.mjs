@@ -15,6 +15,12 @@
 //  None of that shows up in a build, a render pass or a smoke run. It shows up
 //  as a career that is mysteriously worse than another one. Hence this file.
 //
+//  It also validates the PER-SPLIT CHAMPION META, which fails the same way: the
+//  meta is DERIVED from (year, split) and never stored, so the only thing making
+//  it real is that the derivation is pure. A meta that reshuffled between page
+//  loads would change a match the player is halfway through, and nothing in the
+//  build, the render pass or the smoke run would say a word about it.
+//
 //      node tools/championCheck.mjs           validate, exit non-zero on error
 //      node tools/championCheck.mjs --list    and print the pool per role
 // ===========================================================================
@@ -24,6 +30,8 @@ import {
     ARCHETYPE_BIAS, PLAYSTYLES, championsForStyle, biasDistance,
     FIT_MAX, STYLE_POOL_MIN,
     ARCHETYPE_COUNTERS, archetypeMatchup, championMatchup,
+    metaFor, metaTierFor, metaLabelFor,
+    META_STRONG_FRACTION, META_WEAK_FRACTION, META_STEP_REF,
 } from '../src/lib/career/constants.js';
 import fs from 'node:fs';
 
@@ -383,6 +391,327 @@ if (!biases.length) {
     } else if (spread > 0.42) {
         warn('archetype comfort spread ' + spread.toFixed(3) + ' is getting wide ('
             + best.name + ' vs ' + worst.name + ')');
+    }
+}
+
+// ------------------------------------------------------------ champion meta
+//  The per-split meta is a PURE DERIVATION of (year, split). Nothing about it
+//  is written to the save, which is what lets it need no grandfathering -- and
+//  which also means the ONLY thing making it real is that the derivation is
+//  byte-identical every time it runs. If it ever reshuffled, a champion the
+//  player picked as Strong at champion select would silently be Weak by the
+//  third game of the series, on the same save, with no way to tell.
+//
+//  It is built PER ROLE, and a champion legal in two roles takes its tier from
+//  the FIRST role it appears in (ROLES declaration order). So per-role band
+//  COUNTS legitimately drift away from META_STRONG_FRACTION for later roles --
+//  the checks below bound the drift rather than asserting the fraction.
+console.log('');
+console.log('=== champion meta ==================================================');
+console.log('  strong ' + META_STRONG_FRACTION + ' / weak ' + META_WEAK_FRACTION
+    + ' of each role pool, step ref ' + META_STEP_REF);
+
+// A wide sample: 100 years x 2 splits. Deliberately more than the 40-entry
+// cache so the sweep exercises eviction as a side effect of doing its job.
+const META_YEAR_0 = 2020, META_YEARS = 100;
+const META_SPLITS = [];
+for (let y = META_YEAR_0; y < META_YEAR_0 + META_YEARS; y++) {
+    META_SPLITS.push([y, 'spring'], [y, 'summer']);
+}
+
+// ---- 6. SYMMETRY -------------------------------------------------------
+//  Asserted directly, and first, because every other number in this section
+//  is sized against it. The strong band and the weak band are the same size
+//  ON PURPOSE: that is what makes the match-engine's meta term symmetric, so
+//  a good split pays exactly what a bad one costs and the two cancel across a
+//  career. Make the strong band bigger and every match rating in the mode
+//  drifts up -- careerSmoke hard-fails a run above a 7.6 mean match rating.
+if (META_STRONG_FRACTION !== META_WEAK_FRACTION) {
+    err('META_STRONG_FRACTION (' + META_STRONG_FRACTION + ') != META_WEAK_FRACTION ('
+        + META_WEAK_FRACTION + ') - the meta term is no longer symmetric, so it is a '
+        + 'career-long bonus or penalty rather than something that cancels out. '
+        + 'careerSmoke hard-fails a run above a 7.6 mean match rating.');
+}
+
+// ---- 1. DETERMINISM / PURITY -------------------------------------------
+const metaA = metaFor(2031, 'spring');
+const metaB = metaFor(2031, 'spring');
+if (metaA !== metaB) {
+    err('metaFor(2031, spring) returned two different objects - the memoisation in '
+        + '_META_CACHE is not being hit, so every reader re-derives and the cost the '
+        + 'cache exists to pay is being paid anyway');
+}
+if (!Object.isFrozen(metaA) || !Object.isFrozen(metaA.byId)) {
+    err('metaFor() result is not frozen - it is memoised and handed to every caller, '
+        + 'so one reader writing into it would poison the split for the whole session');
+}
+const beforeSnap = JSON.stringify(metaA);
+try { metaA.byId.ahri = 1; metaA.strong.push('nope'); } catch (e) { /* strict-mode throw is fine */ }
+if (JSON.stringify(metaFor(2031, 'spring')) !== beforeSnap) {
+    err('the memoised meta was mutated through a caller reference');
+}
+
+// Walk far more than META_CACHE_MAX distinct keys to force the wholesale
+// clear, then recompute the SAME key from scratch. This is the property the
+// whole design rests on: the meta is never stored, so "the same split" and
+// "computed again later" have to be the same bytes.
+for (const [y, s] of META_SPLITS) metaFor(y, s);
+const metaC = metaFor(2031, 'spring');
+if (JSON.stringify(metaC) !== beforeSnap) {
+    err('metaFor(2031, spring) is NOT byte-identical after the cache was evicted - the '
+        + 'meta is derived and never stored, so this reshuffles a match the player is '
+        + 'halfway through');
+}
+if (metaC === metaA) {
+    warn('the meta cache never evicted across ' + META_SPLITS.length + ' distinct keys - '
+        + 'the recompute check above compared a cached object with itself and proved nothing');
+}
+
+// ---- 2. COVERAGE -------------------------------------------------------
+const metaIds = Object.keys(metaA.byId);
+for (const id of metaIds) {
+    if (!CHAMPION_BY_ID[id]) err('meta byId has an entry for "' + id + '", which is not a champion');
+    const t = metaA.byId[id];
+    if (t !== 1 && t !== 0 && t !== -1) err('meta tier for "' + id + '" is ' + JSON.stringify(t) + ', want 1|0|-1');
+}
+for (const c of CHAMPIONS) {
+    if (!Object.prototype.hasOwnProperty.call(metaA.byId, c.id)) {
+        err(c.id + ' ("' + c.name + '") has no meta entry - it is legal to pick and '
+            + 'permanently Contested while every champion beside it moves');
+    }
+}
+// strong/weak are derived from byId and must never be able to disagree with it.
+{
+    const s = new Set(metaA.strong), w = new Set(metaA.weak);
+    for (const id of metaIds) {
+        const t = metaA.byId[id];
+        if ((t === 1) !== s.has(id)) err(id + ': byId says ' + t + ' but strong[] disagrees');
+        if ((t === -1) !== w.has(id)) err(id + ': byId says ' + t + ' but weak[] disagrees');
+    }
+    if (s.size !== metaA.strong.length) err('meta strong[] has duplicates');
+    if (w.size !== metaA.weak.length) err('meta weak[] has duplicates');
+    for (const id of [...s].filter(x => w.has(x))) err(id + ' is in BOTH the strong and weak bands');
+    // metaTierFor is the only reader anything outside constants.js uses. It
+    // must agree with the table it is reading.
+    for (const id of metaIds) {
+        if (metaTierFor(id, 2031, 'spring') !== metaA.byId[id]) {
+            err('metaTierFor("' + id + '") disagrees with metaFor().byId');
+        }
+    }
+}
+for (const [tier, want] of [[1, 'Strong'], [0, 'Contested'], [-1, 'Weak']]) {
+    if (metaLabelFor(tier) !== want) err('metaLabelFor(' + tier + ') = "' + metaLabelFor(tier) + '", want "' + want + '"');
+}
+
+// ---- rules, as pure functions so they can be controlled -----------------
+/** Per-role band counts for one meta. Counts a champion under EVERY role it is
+ *  legal in, which is how a player experiences it: the draft only ever offers
+ *  picks from your own role, so a role whose pool is all Contested has no meta
+ *  whatever the global totals say. */
+function metaBandCounts(meta) {
+    const out = [];
+    for (const role of ROLES) {
+        const pool = championsForRole(role.id);
+        let strong = 0, weak = 0;
+        for (const c of pool) {
+            const t = meta.byId[c.id];
+            if (t === 1) strong++; else if (t === -1) weak++;
+        }
+        out.push({ role: role.id, n: pool.length, strong, weak });
+    }
+    return out;
+}
+/** 3. A role with no strong pick is a role where the mechanic does not exist. */
+function starvedRoles(counts) {
+    return counts.filter(r => r.n && (!r.strong || !r.weak))
+        .map(r => r.role + ' (strong ' + r.strong + ', weak ' + r.weak + ')');
+}
+/** 4. More than half a role in one band is not a meta, it is a re-tuning of
+ *  the role. metaFor() clamps to half by construction; this asserts it. */
+function runawayRoles(counts) {
+    const out = [];
+    for (const r of counts) {
+        if (!r.n) continue;
+        if (r.strong * 2 > r.n) out.push(r.role + ' strong ' + r.strong + '/' + r.n);
+        if (r.weak * 2 > r.n) out.push(r.role + ' weak ' + r.weak + '/' + r.n);
+    }
+    return out;
+}
+/** 5. Summed over many splits, no champion may be strong (or weak) in a wildly
+ *  disproportionate share of them. The expectation is META_STRONG_FRACTION
+ *  (0.18); the bound is 0.40, i.e. a bit over TWICE the expected share, which
+ *  is far outside anything sampling noise produces over 200 splits and still
+ *  unmistakably "this champion is just good". A champion strong 80% of the
+ *  time is a permanent buff wearing a meta costume, and the whole point of the
+ *  term is that it cancels out across a career. */
+const META_BLESSING_MAX = 0.40;
+function blessingViolations(shares, bound) {
+    const out = [];
+    for (const r of shares) {
+        if (r.strongShare > bound) out.push(r.id + ' strong in ' + (r.strongShare * 100).toFixed(1) + '% of splits');
+        if (r.weakShare > bound) out.push(r.id + ' weak in ' + (r.weakShare * 100).toFixed(1) + '% of splits');
+    }
+    return out;
+}
+
+// ---- 3 + 4 across the wide sample --------------------------------------
+let starvedHits = 0, runawayHits = 0;
+for (const [y, s] of META_SPLITS) {
+    const counts = metaBandCounts(metaFor(y, s));
+    for (const bad of starvedRoles(counts)) {
+        starvedHits++;
+        if (starvedHits <= 3) err(y + ' ' + s + ': ' + bad + ' - no strong (or no weak) pick in the role, '
+            + 'so for that role the meta does not exist this split');
+    }
+    for (const bad of runawayRoles(counts)) {
+        runawayHits++;
+        if (runawayHits <= 3) err(y + ' ' + s + ': ' + bad + ' - more than half the role in one band');
+    }
+}
+if (starvedHits > 3) err('...and ' + (starvedHits - 3) + ' more starved role-splits');
+if (runawayHits > 3) err('...and ' + (runawayHits - 3) + ' more runaway bands');
+
+// ---- 5 across the wide sample ------------------------------------------
+const tally = new Map(CHAMPIONS.map(c => [c.id, { id: c.id, s: 0, w: 0 }]));
+for (const [y, s] of META_SPLITS) {
+    const meta = metaFor(y, s);
+    for (const id of meta.strong) { const t = tally.get(id); if (t) t.s++; }
+    for (const id of meta.weak) { const t = tally.get(id); if (t) t.w++; }
+}
+const NS = META_SPLITS.length;
+const shares = [...tally.values()].map(t => ({ id: t.id, strongShare: t.s / NS, weakShare: t.w / NS }));
+for (const bad of blessingViolations(shares, META_BLESSING_MAX)) {
+    err(bad + ' (bound ' + (META_BLESSING_MAX * 100).toFixed(0) + '%, expected '
+        + (META_STRONG_FRACTION * 100).toFixed(0) + '%) - that is a permanent buff wearing '
+        + 'a meta costume, not a term that cancels out across a career');
+}
+
+// ---- 7. ROT ------------------------------------------------------------
+//  Champion ids are permanent persisted save data and a save can carry an id
+//  this build no longer knows. metaTierFor() must read it as Contested rather
+//  than break a match.
+const ROT_IDS = [
+    ['undefined', undefined], ['null', null], ['empty string', ''], ['number 0', 0],
+    ['unknown id', 'notachampion'], ['object', {}], ['array', []], ['NaN', NaN],
+    ['false', false], ['bare number', 4], ['prototype key', 'constructor'],
+];
+for (const [label, v] of ROT_IDS) {
+    let got;
+    try { got = metaTierFor(v, 2030, 'spring'); }
+    catch (e) { err('metaTierFor(' + label + ') threw: ' + e.message); continue; }
+    if (got !== 0) err('metaTierFor(' + label + ') = ' + JSON.stringify(got) + ', want 0');
+}
+// A VALID id with a rotted year/split is a different case and asserting 0 here
+// would be asserting a bug: metaFor() coerces the year to 0 and anything that
+// is not 'summer' to spring, so the lookup lands on a real, deterministic meta
+// and the champion gets a real tier. The contract is "never throws, always a
+// legal tier", not "always contested".
+const ROT_WHEN = [
+    ['NaN / "winter"', NaN, 'winter'], ['undefined / null', undefined, null],
+    ['{} / []', {}, []], ['Infinity / 7', Infinity, 7],
+    ['"2030" / "SUMMER"', '2030', 'SUMMER'],
+];
+for (const [label, y, s] of ROT_WHEN) {
+    let got;
+    try { got = metaTierFor('ahri', y, s); }
+    catch (e) { err('metaTierFor(ahri, ' + label + ') threw: ' + e.message); continue; }
+    if (got !== 1 && got !== 0 && got !== -1) {
+        err('metaTierFor(ahri, ' + label + ') = ' + JSON.stringify(got) + ', want 1|0|-1');
+    }
+    if (String(metaTierFor('ahri', y, s)) !== String(got)) {
+        err('metaTierFor(ahri, ' + label + ') is not stable across two calls');
+    }
+}
+try {
+    if (typeof metaLabelFor(undefined) !== 'string' || typeof metaLabelFor('x') !== 'string'
+        || typeof metaLabelFor(null) !== 'string') err('metaLabelFor() returned a non-string for rot');
+} catch (e) { err('metaLabelFor() threw on rot: ' + e.message); }
+
+// ---- 8. CONTROLS -------------------------------------------------------
+//  A lint that matches nothing looks exactly like a clean codebase. Each rule
+//  above is run once against a shape it MUST accept and once against a shape
+//  it MUST reject, so a rule that has quietly stopped testing anything fails
+//  here instead of passing everywhere.
+{
+    const real = metaFor(2031, 'spring');
+    const realCounts = metaBandCounts(real);
+
+    // positive controls -- the real meta must satisfy every rule
+    if (starvedRoles(realCounts).length) err('control: starvedRoles() rejects the real meta');
+    if (runawayRoles(realCounts).length) err('control: runawayRoles() rejects the real meta');
+    if (blessingViolations(shares, META_BLESSING_MAX).length) err('control: blessingViolations() rejects the real spread');
+
+    // negative control: a meta where TOP has no strong pick at all
+    const topIds = championsForRole('TOP').map(c => c.id);
+    const noStrongTop = { byId: Object.assign({}, real.byId) };
+    for (const id of topIds) if (noStrongTop.byId[id] === 1) noStrongTop.byId[id] = 0;
+    const starvedCtl = starvedRoles(metaBandCounts(noStrongTop));
+    if (!starvedCtl.some(x => x.startsWith('TOP'))) {
+        err('control: starvedRoles() did NOT fire on a meta with zero strong TOP picks - '
+            + 'rule 3 is inert and would never catch a starved role');
+    }
+
+    // negative control: a meta where every TOP champion is strong
+    const allStrongTop = { byId: Object.assign({}, real.byId) };
+    for (const id of topIds) allStrongTop.byId[id] = 1;
+    const runawayCtl = runawayRoles(metaBandCounts(allStrongTop));
+    if (!runawayCtl.some(x => x.startsWith('TOP strong'))) {
+        err('control: runawayRoles() did NOT fire on a meta with every TOP champion strong - '
+            + 'rule 4 is inert');
+    }
+
+    // negative control: a champion strong in 80% of splits
+    const blessed = shares.map(r => (r.id === 'ahri' ? { id: r.id, strongShare: 0.8, weakShare: 0 } : r));
+    if (!blessingViolations(blessed, META_BLESSING_MAX).some(x => x.startsWith('ahri'))) {
+        err('control: blessingViolations() did NOT fire on a champion strong 80% of the time - '
+            + 'rule 5 is inert and a permanent buff would ship as a meta');
+    }
+    // ...and must still not fire on a champion sitting exactly at expectation.
+    const fair = shares.map(r => (r.id === 'ahri'
+        ? { id: r.id, strongShare: META_STRONG_FRACTION, weakShare: META_WEAK_FRACTION } : r));
+    if (blessingViolations(fair, META_BLESSING_MAX).some(x => x.startsWith('ahri'))) {
+        err('control: blessingViolations() fires at the EXPECTED share - the bound is below '
+            + 'the fraction the meta is built to produce, so it can only ever be red');
+    }
+}
+
+// ---- readout -----------------------------------------------------------
+{
+    const sampleY = 2031, sampleS = 'spring';
+    const counts = metaBandCounts(metaFor(sampleY, sampleS));
+    console.log('  sample split ' + sampleY + ' ' + sampleS + ':');
+    for (const r of counts) {
+        const pctS = r.n ? Math.round((r.strong / r.n) * 100) : 0;
+        const pctW = r.n ? Math.round((r.weak / r.n) * 100) : 0;
+        console.log('        ' + r.role.padEnd(4) + String(r.n).padStart(3) + ' champions   '
+            + metaLabelFor(1).padEnd(6) + String(r.strong).padStart(3) + ' (' + String(pctS).padStart(2) + '%)   '
+            + metaLabelFor(-1).padEnd(4) + String(r.weak).padStart(3) + ' (' + String(pctW).padStart(2) + '%)');
+    }
+    const totS = counts.reduce((a, r) => a + r.strong, 0);
+    const totW = counts.reduce((a, r) => a + r.weak, 0);
+    console.log('        ' + 'all'.padEnd(4) + String(CHAMPIONS.length).padStart(3) + ' champions   '
+        + 'Strong' + String(metaFor(sampleY, sampleS).strong.length).padStart(4)
+        + '        Weak' + String(metaFor(sampleY, sampleS).weak.length).padStart(4)
+        + '   (per-role sums ' + totS + '/' + totW + ' - dual-role champions counted twice)');
+
+    const sorted = [...shares].sort((a, b) => b.strongShare - a.strongShare);
+    const meanS = shares.reduce((a, r) => a + r.strongShare, 0) / shares.length;
+    const meanW = shares.reduce((a, r) => a + r.weakShare, 0) / shares.length;
+    const hi = sorted[0], lo = sorted[sorted.length - 1];
+    const wSorted = [...shares].sort((a, b) => b.weakShare - a.weakShare);
+    console.log('  strong share across ' + NS + ' splits (' + META_YEARS + ' years x 2), bound '
+        + (META_BLESSING_MAX * 100).toFixed(0) + '%:');
+    console.log('        mean strong ' + (meanS * 100).toFixed(1) + '%   mean weak ' + (meanW * 100).toFixed(1)
+        + '%   (fraction ' + (META_STRONG_FRACTION * 100).toFixed(0) + '%)');
+    console.log('        most strong  ' + hi.id.padEnd(12) + (hi.strongShare * 100).toFixed(1) + '%');
+    console.log('        least strong ' + lo.id.padEnd(12) + (lo.strongShare * 100).toFixed(1) + '%');
+    console.log('        most weak    ' + wSorted[0].id.padEnd(12) + (wSorted[0].weakShare * 100).toFixed(1) + '%');
+    console.log('        spread ' + ((hi.strongShare - lo.strongShare) * 100).toFixed(1) + ' points');
+    if (LIST) {
+        console.log('        ' + sampleY + ' ' + sampleS + ' Strong: '
+            + metaFor(sampleY, sampleS).strong.map(id => CHAMPION_BY_ID[id].name).sort().join(', '));
+        console.log('        ' + sampleY + ' ' + sampleS + ' Weak:   '
+            + metaFor(sampleY, sampleS).weak.map(id => CHAMPION_BY_ID[id].name).sort().join(', '));
     }
 }
 

@@ -20,7 +20,7 @@ import {
     LANGUAGE_BY_ID, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
     LANGUAGE_ARRIVAL_BOOST, LANGUAGE_INTEREST_REFUND,
     languageForRegion, languageLevelFor, languageBand, fluencyForRegion,
-    speaksForRegion,
+    speaksForRegion, TIER_OVR_CEILING,
 } from './constants.js';
 import {
     calcOVR, calcPotentialOVR, deservedStatus, statusInfo, weeklySalaryFor,
@@ -116,6 +116,36 @@ const FLUENT_CALL_RATE_BONUS = 0.35;
  *  starting seat under 72. Below it a tier-1 club will only ever promise a
  *  bench spot, and below 68 they will not promise anything at all. */
 const T1_STARTER_FLOOR = 72;
+
+/** BEING TOO GOOD FOR A CLUB.
+ *
+ *  For a long time interest was `50 + (ovr - str) * 3.1` clamped to 0-100, and
+ *  clamping is not a curve: at 98 OVR roughly ninety-five of the hundred and
+ *  eight clubs in the world tied on exactly 100 while T1 (strength 88) scored
+ *  81. interestedTeams() sorts on that number and breaks ties on club NAME, so
+ *  an elite free agent's fourteen candidates were the alphabetically-first
+ *  fourteen of the weakest sides on the circuit and no real org ever reached
+ *  generateOffers(). The ranking was inverted precisely where it mattered most.
+ *
+ *  So the slope holds for OVERQUALIFIED_TURN points of gap and then TURNS OVER.
+ *  Past the turn a club is not being told it can afford you, it is being told
+ *  you would be wasted on it -- which is the honest reading of a 98 looking at
+ *  an open-circuit roster.
+ *
+ *  OVR_OVER_QUALIFIED is the separate, blunter line the SIGNING rules use:
+ *  at or above it a club is simply beneath the player and will not pretend
+ *  otherwise (signingBlock's tier 2 / tier 3 clauses, eligibleClub's free-agent
+ *  rail). Kept apart from the decay because one is a price and one is a wall.
+ */
+const OVERQUALIFIED_TURN = 10;             // where the interest curve rolls over
+export const OVR_OVER_QUALIFIED = 18;      // ovr - strength at or above this means the club is beneath the player
+export const OVERQUALIFIED_DECAY = 1.2;    // interest lost per point of gap past the turnover
+
+/** The club you told the game you were aiming for calls sooner. FREQUENCY only,
+ *  exactly like HOME_REGION_CALL_RATE and FLUENT_CALL_RATE_BONUS: putting a goal
+ *  into scoutInterest() would raise the wage, the years, the signing bonus and
+ *  the release clause, so wanting a club would quietly make it pay you more. */
+export const GOAL_CALL_RATE_BONUS = 1.6;
 
 // ---------------------------------------------------------------------------
 //  SIGNING STANDARDS, PER CLUB
@@ -424,8 +454,27 @@ export function scoutInterest(c, team) {
     const mmr = Number(c.soloq?.mmr) || 0;
     const hype = Math.max(0, Number(p.hype) || 0);
 
-    // 50 means "you are exactly the level of this roster".
-    let v = 50 + (ovr - str) * 3.1;
+    // 50 means "you are exactly the level of this roster". The slope is
+    // unchanged for the first OVERQUALIFIED_TURN points of gap and then turns
+    // over: past that a bigger gap means LESS interest, not more. See the
+    // OVR_OVER_QUALIFIED comment for why clamping at 100 was not enough -- it
+    // inverted the ranking at the top and handed elite free agents a shortlist
+    // of the weakest clubs in the world, in alphabetical order.
+    //
+    // Do NOT "fix" this by raising the clamp: 0-100 is a documented display band
+    // and Transfers.svelte's interestBand reads it.
+    const gap = ovr - str;
+    let v = 50 + Math.min(gap, OVERQUALIFIED_TURN) * 3.1;
+
+    // YOUR OWN CLUB IS EXEMPT from the turn. renewalOffer() prices a renewal off
+    // this number and returns null under MIN_OFFER_INTEREST, so decaying it here
+    // would make an elite player at a mid-table club unrenewable by the club he
+    // already plays for -- a far worse bug than the one being fixed. Same rule
+    // and the same reason as signingBlock()'s first clause: over-qualification
+    // is a statement about ARRIVING somewhere, not about staying.
+    if (gap > OVERQUALIFIED_TURN && !(p.clubId && t.id === p.clubId)) {
+        v -= (gap - OVERQUALIFIED_TURN) * OVERQUALIFIED_DECAY;
+    }
 
     // Upside. A 15-year-old with twenty points of headroom is chased harder
     // than a finished 22-year-old of the same rating. This is the single
@@ -511,6 +560,13 @@ export function interestedTeams(c, limit = 8) {
             // Carried so the screen can say WHY a club that clearly rates the
             // player is not going to call. Silently omitting them is what makes
             // an age or first-club rule read as the game being broken.
+            //
+            // This board deliberately does NOT run eligibleClub(): that is the
+            // OFFER rail (window, step-up, mid-season academy calls) and a
+            // scouting screen is allowed to show a club that will call in the
+            // window. Over-qualification is the one part of it a player must be
+            // told about, and it lives in signingBlock() rather than here, so
+            // this row picks it up with no change to the shape.
             const block = signingBlock(c, t);
             return { team: t, interest: scoutInterest(c, t), tier: t.tier, blocked: block.blocked, blockReason: block.reason };
         })
@@ -698,6 +754,26 @@ export function pruneExpiredOffers() {
 }
 
 /**
+ * Is this academy the one attached to the club the player already plays for?
+ *
+ * Card-database-free and only ever reached behind an `ovr > TIER_OVR_CEILING[2]`
+ * short circuit, so signingBlock() stays cheap enough for the transfer screen to
+ * call once per club per render. Uses the same two signals parentClubFor() does
+ * -- academies carry their parent org's accent, and orgName() strips the suffix
+ * every naming convention in constants.js appends.
+ */
+function isOwnAcademy(c, t) {
+    const p = c && c.player;
+    if (!p || !p.clubId || Number(t.tier) !== 2) return false;
+    const cur = resolveTeam(p.clubId);
+    if (!cur || Number(cur.tier) !== 1) return false;
+    if (String(t.accent).toLowerCase() === String(cur.accent).toLowerCase()) return true;
+    const org = orgName(t.name).toLowerCase();
+    const mine = String(cur.name).toLowerCase();
+    return !!org && (org === mine || (org.length >= 4 && (mine.includes(org) || org.includes(mine))));
+}
+
+/**
  * WHY A CLUB WILL NOT SIGN YOU, as a sentence.
  *
  * One predicate, exported, so the transfer screens can print the reason instead
@@ -795,11 +871,33 @@ export function signingBlock(c, team) {
         if (mmr < g.mmr) {
             return { blocked: true, reason: `${t.name} want to see ${rankNameFor(g.mmr)} on the ladder first.` };
         }
+        // (c2) AND AN ACADEMY IS NOT A PARKING SPACE. A player past the academy
+        // ceiling is not somebody they can develop, and the staff know it.
+        //
+        // GATED ON everSigned, like (a) and (b): the compulsory first-club
+        // ladder must stay open or careerSmoke's neverSigned check fails, and a
+        // prospect who has never been signed is by definition not too good for
+        // anybody. The player's own parent academy is exempt too, so nothing can
+        // make the promotion path unreachable from the other direction.
+        if (everSigned && ovr > TIER_OVR_CEILING[2] && !isOwnAcademy(c, t)) {
+            return {
+                blocked: true,
+                reason: `${t.name} are an academy and you are a ${ovr} rated professional. They would be holding your career up, and they will not do it.`,
+            };
+        }
     }
 
     // (e) OPEN CIRCUIT. The weakest teams in the mode, and priced like it.
     if (tier === 3) {
         if (p.clubId) return { blocked: true, reason: 'You are already at a club. Nobody drops to the open circuit.' };
+        // (e2) The same rule one tier down, and the same everSigned guard for the
+        // same reason -- this is the rung every precomp career has to stand on.
+        if (everSigned && ovr > TIER_OVR_CEILING[3]) {
+            return {
+                blocked: true,
+                reason: `You are a ${ovr} rated player. The open circuit is five people in a Discord and they are not going to pretend they can use you.`,
+            };
+        }
         const g = clubGate(c, t, 3);
         if (ovr < g.ovr) {
             return { blocked: true, reason: `Even ${t.name} want ${g.ovr}. You are ${ovr}.` };
@@ -831,8 +929,155 @@ function eligibleClub(c, t, ovr, cur, curStrength, midSeasonScout) {
         // promotion even when the numbers look sideways.
         const tierUp = t.tier < cur.tier;
         if (!tierUp && (t.tier > cur.tier || str < curStrength + 4)) return false;
+    } else if (c.flags && c.flags.everSigned) {
+        // FREE AGENT. The rail above sat entirely inside `if (cur)`, so the one
+        // state an elite player is actually in during the window -- expired,
+        // released or terminated -- was completely unguarded, and `ovr` was a
+        // parameter this function took and never read. A club fifteen strength
+        // points below you is not a move, it is a retirement home.
+        //
+        // The everSigned escape is the same one signingBlock's first-club ladder
+        // runs on: a prospect nobody has ever signed can still be called by
+        // anybody, which is what keeps careerSmoke's neverSigned check passing.
+        if (str < ovr - OVR_OVER_QUALIFIED) return false;
     }
     return true;
+}
+
+/**
+ * THE CLUB THE PLAYER IS AIMING FOR, as an honest readout.
+ *
+ * Lives here rather than in a component because an honest answer needs
+ * clubGate(), MIN_OFFER_INTEREST and T1_STARTER_FLOOR, all module-private, plus
+ * the eligibleClub() rail and the offer window -- and Transfers.svelte already
+ * hand-mirrors four constants out of this file, which is exactly how a screen
+ * and an engine come to disagree about who can sign you.
+ *
+ * Same status+detail idiom as teams.eventQualification(): a status the UI can
+ * colour and a sentence saying what is actually still required. Interest alone
+ * is not an answer -- a club can rate the player at 90 and still be unable to
+ * sign him because of language, age, the window, or a rejection counter that
+ * has already run out.
+ *
+ * PURE, cheap, never throws, and returns null when there is no goal.
+ */
+export function goalProgress(c) {
+    try {
+        const p = c && c.player;
+        if (!p) return null;
+        const id = p.goalClubId;
+        if (!id || typeof id !== 'string') return null;
+        const t = resolveTeam(id);
+        if (!t) return null;
+
+        const tier = Number(t.tier) || 1;
+        const ovr = calcOVR(p.attrs, p.role);
+        const interest = scoutInterest(c, t);
+        const block = signingBlock(c, t);
+        const rejected = Math.max(0, Number((p.rejected || {})[t.id]) || 0);
+
+        // The window, resolved the way generateOffers() resolves it -- including
+        // the year-round academy call, which is the one hole in it.
+        const phase = phaseForWeek(Number(c.time && c.time.week) || 1).id;
+        const inWindow = phase === 'offseason' || phase === 'preseason';
+        const onAmateur = Number(p.clubTier) === 3;
+        const scoutable = (!p.clubId || onAmateur)
+            && (!p.clubId ? (Number(c.soloq && c.soloq.mmr) || 0) >= SCOUT_MMR_GATE : true)
+            && ovr >= ACADEMY_OVR_GATE;
+        const windowOpen = inWindow || (tier === 2 && scoutable);
+
+        // The STRUCTURAL half of the offer rail only -- signingBlock, the
+        // step-up rule and the free-agent strength rail. `midSeasonScout` is
+        // passed false deliberately: that argument is the window, `windowOpen`
+        // above already models it (academy hole included), and folding the two
+        // together made an out-of-window row say "they only call clubs near your
+        // rating" when the honest answer was "it is week 10".
+        const cur = p.clubId ? resolveTeam(p.clubId) : null;
+        const eligible = eligibleClub(c, t, ovr, cur, cur ? strengthOf(cur) : 0, false);
+
+        // What this club asks for. Tier 1 has no clubGate -- its bar is the
+        // main-league depth floor, six under the starting floor.
+        const gate = tier === 1
+            ? { ovr: T1_STARTER_FLOOR - 6, mmr: 0 }
+            : clubGate(c, t, tier);
+
+        const row = {
+            teamId: t.id,
+            name: t.name,
+            tier,
+            region: t.region,
+            status: 'chase',
+            interest,
+            need: '',
+            gate,
+            blockReason: block.reason || '',
+            windowOpen,
+            rejected,
+            detail: '',
+        };
+
+        // --- REACHED. The club you play for, or the one you already played for.
+        const reachedYear = Math.round(Number(c.flags && c.flags.goalReached) || 0);
+        if (p.clubId === t.id) {
+            row.status = 'reached';
+            row.need = 'Nothing. You are there.';
+            row.detail = `You play for ${t.name}. That was the whole point.`;
+            return row;
+        }
+        if (reachedYear > 0) {
+            row.status = 'reached';
+            row.need = 'Nothing. You got there.';
+            row.detail = `You signed for ${t.name} in ${reachedYear}. Wherever you are now, that one is done.`;
+            return row;
+        }
+
+        // --- LOST. The rejection counter is a permanent, silent dead end in
+        // generateOffers(); surfacing it is half the reason this row exists.
+        if (rejected >= REJECTIONS_BEFORE_BLACKLIST) {
+            row.status = 'lost';
+            row.need = 'Nothing you can do.';
+            row.detail = `${t.name} have crossed you off after ${rejected} refusals. They are never calling again.`;
+            return row;
+        }
+
+        // --- BLOCKED. A hard rule: language, age, rating, first club, or being
+        // too good for the level. signingBlock() already wrote the sentence.
+        if (block.blocked) {
+            row.status = 'blocked';
+            row.need = block.reason;
+            row.detail = block.reason;
+            return row;
+        }
+
+        // --- What is still in the way, most concrete first.
+        if (tier !== 1 && ovr < gate.ovr) {
+            row.need = `${gate.ovr} rating`;
+            row.detail = `${t.name} are looking at ${gate.ovr} rated players. You are ${ovr}.`;
+        } else if (tier === 1 && ovr < T1_STARTER_FLOOR) {
+            row.need = `${T1_STARTER_FLOOR} rating for a seat`;
+            row.detail = `${t.name} would take you as depth at ${ovr}, but nobody starts in the main league under ${T1_STARTER_FLOOR}.`;
+        } else if (interest < MIN_OFFER_INTEREST) {
+            row.need = `${MIN_OFFER_INTEREST} interest`;
+            row.detail = `${t.name} rate you ${interest} out of 100. Under ${MIN_OFFER_INTEREST} a club is curious, not interested, and does not make the call.`;
+        } else if (!eligible && cur) {
+            row.need = 'A club they would call you away from';
+            row.detail = `${t.name} rate you ${interest}, but they will not phone a contracted player about a sideways move. Run the deal down, or be somewhere they have to beat.`;
+        } else if (!eligible) {
+            row.need = 'A club nearer their level';
+            row.detail = `${t.name} rate you ${interest}, but a free agent only hears from clubs inside ${OVR_OVER_QUALIFIED} strength of his own rating.`;
+        } else if (!windowOpen) {
+            row.need = 'The transfer window';
+            row.detail = `${t.name} rate you ${interest} and there is nothing else in the way. Nobody signs anybody until the offseason.`;
+        } else {
+            row.status = 'live';
+            row.need = 'A phone call';
+            row.detail = `${t.name} rate you ${interest}, the window is open and nothing is blocking it. Expect them.`;
+        }
+
+        return row;
+    } catch (e) {
+        return null;
+    }
 }
 
 /**
@@ -890,6 +1135,14 @@ export function generateOffers(c) {
     // the five offseason weeks without flooding them in week one.
     const rate = inWindow ? (phase === 'offseason' ? 0.34 : 0.14) : 0.10;
 
+    // FOURTEEN IS NOW AN UNMEASURED NUMBER. It was tuned against an ordering
+    // that was inverted at the top: interest saturated at 100 for almost every
+    // club in the world, so the tie-break fell through to a localeCompare on
+    // club name and these fourteen rows were, for an elite player, the
+    // alphabetically-first fourteen of the weakest sides on the circuit. With
+    // the curve turned over they are an entirely different fourteen clubs, so
+    // re-measure offer volume with careerSmoke before changing the literal --
+    // the old figure proves nothing about the new list.
     const rows = interestedTeams(c, 14).filter(row => {
         const t = row.team;
         if (taken.has(t.id)) return false;
@@ -910,11 +1163,17 @@ export function generateOffers(c) {
         // you can already talk to picks the phone up sooner than one you cannot.
         // It is exactly 1 at zero fluency -- the flat rate every foreign club
         // used to get -- so a save that has never studied calls as it always did.
+        //
+        // And the third member of the family: the club the player nominated as
+        // the one to aim for picks the phone up sooner than the rest. Same split
+        // for the same reason -- a goal is a preference, and a preference must
+        // never reprice the offer sheet.
         const home = row.team.region === 'ALL' || row.team.region === p.region;
         const homeRate = home
             ? HOME_REGION_CALL_RATE
             : (1 + fluencyForRegion(c, row.team.region) * FLUENT_CALL_RATE_BONUS);
-        if (Math.random() * 100 >= row.interest * rate * homeRate) continue;
+        const goalRate = (p.goalClubId && row.team.id === p.goalClubId) ? GOAL_CALL_RATE_BONUS : 1;
+        if (Math.random() * 100 >= row.interest * rate * homeRate * goalRate) continue;
         const offer = buildOffer(c, row.team, { interest: row.interest });
         if (!offer) continue;
         out.push(offer);
@@ -994,6 +1253,12 @@ export function acceptOffer(offerId) {
     const arrivalLang = languageForRegion(offer.region);
     const crashCourse = !!arrivalLang && languageLevelFor(c, arrivalLang) < LANGUAGE_FLUENT;
 
+    // Reaching the club you nominated. Bare string equality, no lookups, and
+    // stamped with the YEAR rather than `true` -- a year reads as truthy exactly
+    // the same way and is strictly more informative, the same idiom as
+    // flags.firstStandBerth and flags.firstSeen.
+    const reachedGoal = !!c.player.goalClubId && c.player.goalClubId === team.id;
+
     career.update(x => ({
         ...x,
         player: {
@@ -1022,7 +1287,12 @@ export function acceptOffer(offerId) {
             transferRequested: false,
         },
         offers: [],
-        flags: { ...x.flags, everSigned: true },
+        // Written in the SAME update as the contract, for the same reason the
+        // language boost is: a second career.update() here would be a second
+        // debounced save of a half-signed player.
+        flags: reachedGoal
+            ? { ...x.flags, everSigned: true, goalReached: c.time.year }
+            : { ...x.flags, everSigned: true },
     }));
 
     if (offer.signingBonus > 0) grantGold(offer.signingBonus);
@@ -1033,6 +1303,9 @@ export function acceptOffer(offerId) {
         : `Signed for ${team.name} ${DASH} ${statusInfo(offer.status).name}, ${fmtGold(offer.salary)}/wk for ${term}.`;
 
     addNews(msg, 'transfer');
+    if (reachedGoal) {
+        addNews(`${team.name} were the club you were aiming for. You are on their roster.`, 'transfer');
+    }
     if (offer.signingBonus > 0) {
         addNews(`${team.name} paid a ${fmtGold(offer.signingBonus)} signing bonus.`, 'money');
     }
@@ -1832,8 +2105,8 @@ const REVIEW_TEXT = {
     untouchable: (n) => `${n} are not listening to offers. You are the piece they build around and the front office has told everybody so.`,
     happy:       (n) => `${n} are happy. You did the job you were signed to do and the staff said as much in the debrief.`,
     watching:    (n) => `${n} are neither impressed nor worried. Another split like that and somebody else makes the decision for you.`,
-    concerned:   (n) => `${n} sat you down. The ratings are not there, the room has noticed, and your minutes are under review.`,
-    cutting:     (n) => `${n} have run out of patience. Unless something changes before the window they are moving you on.`,
+    concerned:   (n) => `${n} sat you down. The ratings are not there, the room has noticed, and your minutes are under review. Nobody comes out of a split like that one sharper than they went in.`,
+    cutting:     (n) => `${n} have run out of patience. Unless something changes before the window they are moving you on, and a split spent this way costs you more than the seat.`,
 };
 
 /**
@@ -1903,6 +2176,21 @@ export function clubReview(c) {
 
     let text = REVIEW_TEXT[verdict](name);
     if (games > 0) text += ` Average match rating ${avg.toFixed(1)} across ${games} games.`;
+
+    // A bad split can now COST ATTRIBUTES outright (engine.checkDecline writes
+    // flags.decline). The punishment and the explanation have to come out of the
+    // same mouth: a player who loses rating from one system and is told why by
+    // none of them is reading a bug, not a consequence. Defensive on shape so
+    // this holds on a save written before the field existed.
+    if (verdict === 'concerned' || verdict === 'cutting') {
+        const lost = num(c && c.flags && c.flags.decline && c.flags.decline.ovrLost, 0);
+        const splits = num(c && c.flags && c.flags.decline && c.flags.decline.splits, 0);
+        if (lost > 0) {
+            text += ` And the coaches have the numbers: ${Math.round(lost)} rating gone`
+                + (splits > 1 ? ` across ${splits} splits of this` : ' since this started')
+                + `. Slipping backwards is not the same thing as standing still.`;
+        }
+    }
     if (statusChange) {
         text += ` Squad status: ${statusInfo(p.status).name}${ARROW}${statusInfo(statusChange).name}.`;
     }
@@ -2163,10 +2451,21 @@ export function promotionCheck(c) {
             transferRequested: false,
         },
         offers: [],
+        // The other, and probably more common, way a goal is reached: a player
+        // who aims at a tier-1 org signs its academy and arrives upstairs rather
+        // than through an offer. Stamped in the SAME update as the contract, and
+        // a bare string equality with no lookups -- promotionCheck() runs inside
+        // rolloverYear() under safe(), which swallows a throw silently.
+        flags: (p.goalClubId && p.goalClubId === parent.id)
+            ? { ...x.flags, goalReached: state.time.year }
+            : x.flags,
     }));
 
     const msg = `${parent.name} promoted you to the main roster ${DASH} ${statusInfo(status).name} on ${fmtGold(salary)}/wk.`;
     addNews(msg, 'transfer');
+    if (p.goalClubId && p.goalClubId === parent.id) {
+        addNews(`${parent.name} were the club you were aiming for. You came up through their own academy.`, 'transfer');
+    }
     showToast('Promoted to the main roster', 'success');
     playSound('rare');
     saveCareer();

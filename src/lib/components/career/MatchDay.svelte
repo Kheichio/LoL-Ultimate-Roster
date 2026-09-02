@@ -112,6 +112,23 @@
         return { name: 'Highwire', color: '#ef4444' };
     }
 
+    // Where a pick sits in THIS split's meta. match.js scores it on every call
+    // through metaSwing, on a blind pick as well as a counter, so the screen
+    // has to name it or the net figure below the card is unexplainable.
+    // `meta` is absent on a match object persisted before it existed, hence the
+    // numeric default - an undefined must never reach the arithmetic.
+    const META_TONES = {
+        '1':  { tone: 'strong', label: 'Strong',    color: '#4ade80' },
+        '0':  { tone: 'even',   label: 'Contested', color: '#7d93b8' },
+        '-1': { tone: 'weak',   label: 'Weak',      color: '#f87171' },
+    };
+    function metaChip(v) {
+        const t = num(v && v.meta, 0);
+        const base = META_TONES[String(t > 0 ? 1 : t < 0 ? -1 : 0)];
+        const label = firstStr(v, ['metaLabel']) || base.label;
+        return { tone: base.tone, color: base.color, label };
+    }
+
     function fmtDuration(mins, secs) {
         const s = Math.max(0, Math.min(59, Math.round(secs)));
         return Math.max(1, Math.round(mins)) + ':' + String(s).padStart(2, '0');
@@ -507,6 +524,8 @@
         if (!view || !view.champion) return null;
         return {
             ...view,
+            // Named apart from view.meta, which is the raw -1/0/1 tier.
+            metaTag: metaChip(view),
             enemy: m.draft.counter ? (CHAMPION_BY_ID[m.draft.enemyId] || null) : null,
         };
     })();
@@ -539,10 +558,26 @@
         const form = num(r.formDelta);
         if (form) rows.push({ key: 'form', label: 'Form', text: signed(form), good: form > 0, icon: '\u{1F4C8}' });
         const mor = num(r.moraleDelta);
-        if (mor) rows.push({ key: 'mor', label: 'Morale', text: signed(mor), good: mor > 0, icon: '\u{1F642}' });
+        const notes = moraleNotes(r);
+        // The net figure stays the headline - it is the truth. The notes only
+        // say which of the penalties inside it actually fired.
+        if (mor || notes.length) {
+            // A net of exactly 0 with notes attached is a wash, not a loss, so
+            // it must not paint the row red.
+            rows.push({ key: 'mor', label: 'Morale', text: signed(mor), good: mor >= 0, icon: '\u{1F642}', notes });
+        }
         const cp = num(r.champPoints);
         if (cp) rows.push({ key: 'cp', label: 'Champ Points', text: signed(cp), good: cp > 0, icon: '\u{1F3C6}' });
         return rows;
+    }
+
+    /** The breakdown behind the single net Morale number. finishMatch writes
+     *  ready-to-print sentences; a result persisted before it did has none. */
+    function moraleNotes(r) {
+        const list = r && Array.isArray(r.moraleNotes) ? r.moraleNotes : [];
+        return list
+            .filter(n => typeof n === 'string' && n.trim())
+            .map(n => n.trim());
     }
 
     function attrChip(key) {
@@ -603,6 +638,8 @@
                         {lockedIn.champion.archetype}
                         <span class="dr-dot">&#183;</span>
                         <span style="color:{lockedIn.band.color}">{lockedIn.band.name}</span>
+                        <span class="dr-dot">&#183;</span>
+                        <span style="color:{lockedIn.metaTag.color}">{lockedIn.metaTag.label} meta</span>
                         <span class="dr-dot">&#183;</span>
                         {lockedIn.games} {lockedIn.games === 1 ? 'game' : 'games'}
                     </span>
@@ -724,9 +761,18 @@
                         <div class="rw-list">
                             {#each rewards as r (r.key)}
                                 <div class="rw" class:rw-bad={!r.good}>
-                                    <span class="rw-ico" aria-hidden="true">{r.icon}</span>
-                                    <span class="rw-lbl">{r.label}</span>
-                                    <span class="rw-val">{r.text}</span>
+                                    <span class="rw-top">
+                                        <span class="rw-ico" aria-hidden="true">{r.icon}</span>
+                                        <span class="rw-lbl">{r.label}</span>
+                                        <span class="rw-val">{r.text}</span>
+                                    </span>
+                                    {#if Array.isArray(r.notes) && r.notes.length}
+                                        <span class="rw-notes">
+                                            {#each r.notes as n, i (n + '_' + i)}
+                                                <span class="rw-note">{n}</span>
+                                            {/each}
+                                        </span>
+                                    {/if}
                                 </div>
                             {/each}
                         </div>
@@ -814,11 +860,17 @@
 
                         <div class="cs-grid">
                             {#each draftViews as v (v.id)}
-                                {@const swing = v.matchupSwing + v.proficiencySwing}
+                                {@const mc = metaChip(v)}
+                                {@const swing = num(v.matchupSwing) + num(v.proficiencySwing) + num(v.metaSwing)}
                                 <button class="cs-opt" on:click={() => pickChampion(v.id)} disabled={busy}>
                                     <span class="cs-top">
                                         <span class="cs-name">{v.champion.name}</span>
                                         {#if v.isSignature}<span class="cs-sig">Signature</span>{/if}
+                                        <span
+                                            class="cs-meta"
+                                            style="--mc:{mc.color}"
+                                            title="Where this pick sits in this split's meta"
+                                        >{mc.label} meta</span>
                                     </span>
                                     <span class="cs-arch">{v.champion.archetype}</span>
 
@@ -1151,6 +1203,12 @@
         padding: 2px 6px; border-radius: 4px;
         color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3);
     }
+    .cs-meta {
+        font-size: 8px; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase;
+        padding: 2px 6px; border-radius: 4px; color: var(--mc);
+        background: color-mix(in srgb, var(--mc) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--mc) 30%, transparent);
+    }
     .cs-arch { font-size: 10.5px; color: #4e5f7a; margin-bottom: 4px; }
     .cs-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
     .cs-lbl { font-size: 10.5px; color: #56688a; }
@@ -1368,8 +1426,11 @@
     .rs-bench-p { margin-top: 8px; font-size: 12px; line-height: 1.65; color: #5d6f8d; }
 
     .rw-list { display: flex; flex-direction: column; gap: 7px; }
-    .rw { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(34,197,94,0.18); }
+    .rw { display: flex; flex-direction: column; padding: 11px 14px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(34,197,94,0.18); }
     .rw-bad { border-color: rgba(239,68,68,0.2); }
+    .rw-top { display: flex; align-items: center; gap: 10px; }
+    .rw-notes { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(51,65,85,0.3); }
+    .rw-note { font-size: 10.5px; line-height: 1.55; color: #5d6f8d; }
     .rw-ico { font-size: 12px; opacity: 0.85; }
     .rw-lbl { flex: 1; font-size: 11px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #56688a; }
     .rw-val { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; font-weight: 800; color: #4ade80; }

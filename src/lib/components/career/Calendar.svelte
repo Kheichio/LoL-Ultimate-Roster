@@ -32,6 +32,7 @@
     } from '../../career/teams.js';
     import { matchRatingLabel } from '../../career/match.js';
     import BracketView from './BracketView.svelte';
+    import ClubScout from './ClubScout.svelte';
     import {
         ensureSeason, canAdvanceWeek, advanceWeek,
         startFixture, simFixture, completeMatch,
@@ -105,6 +106,38 @@
     function opponentOf(f) {
         const t = teamById(f && f.opponentId);
         return t || { id: f && f.opponentId, name: 'To be confirmed', accent: '#475569', tier: 3, strength: 50 };
+    }
+
+    // -- scouting panel ---------------------------------------------------
+    //  Every opponent name on this screen opens that club's roster. A local
+    //  dialog, in the Training.svelte in-screen idiom: deliberately not a
+    //  CareerOverlay kind and not a router screen, so a queued bracket draw or
+    //  event still wins the screen over it.
+    let scoutId = null;
+
+    /** THE GUARD. opponentOf() fabricates a "To be confirmed" stand-in for a
+     *  bracket slot that has not been drawn, carrying whatever unresolved id the
+     *  fixture held -- that name must never become a button, because there is no
+     *  club behind it to scout. */
+    function scoutable(id) {
+        if (!id) return false;
+        try { return !!teamById(id); } catch (e) { return false; }
+    }
+
+    function openScout(id) {
+        if (!scoutable(id)) return;
+        playSound('click');
+        scoutId = id;
+    }
+
+    function closeScout() {
+        if (scoutId === null) return;
+        playSound('click');
+        scoutId = null;
+    }
+
+    function scoutKey(e) {
+        if (scoutId !== null && e && e.key === 'Escape') closeScout();
     }
 
     function strengthOf(o) {
@@ -463,7 +496,17 @@
                                     </span>
                                     <span class="fx-bar" aria-hidden="true"></span>
                                     <span class="fx-opp">
-                                        <span class="fx-name">{o.name}</span>
+                                        {#if scoutable(o.id)}
+                                            <button
+                                                class="fx-name fx-name-btn"
+                                                type="button"
+                                                on:click={() => openScout(o.id)}
+                                                aria-label="Scouting report for {o.name}"
+                                                title="Open {o.name}'s roster"
+                                            >{o.name}</button>
+                                        {:else}
+                                            <span class="fx-name">{o.name}</span>
+                                        {/if}
                                         {#if f.kind === 'scrim'}
                                             <span class="fx-kind">scrim</span>
                                         {:else if Number(f.bestOf) > 1}
@@ -589,6 +632,20 @@
         {/if}
     </div>
 </section>
+
+<!-- ========================= SCOUTING REPORT =========================
+     Any opponent on the fixture list, read as a roster. Local dialog, no
+     overlay kind, no router screen. -->
+<svelte:window on:keydown={scoutKey} />
+
+{#if scoutId !== null}
+    <div class="scout-over" role="dialog" aria-modal="true" aria-label="Club scouting report">
+        <button class="scout-bg" type="button" on:click={closeScout} aria-label="Close the scouting report"></button>
+        <div class="scout-panel">
+            <ClubScout teamId={scoutId} {year} onClose={closeScout} />
+        </div>
+    </div>
+{/if}
 
 <style>
     .cal {
@@ -864,6 +921,17 @@
         font-size: 12.5px; font-weight: 700; color: #cbd5e1;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* The opponent's name opens their roster. It is a wrapper on the existing
+       label, not a control that draws itself, so the row is unchanged until it
+       is hovered or focused. */
+    .fx-name-btn {
+        display: block; min-width: 0; max-width: 100%;
+        margin: 0; padding: 0;
+        background: none; border: none; border-radius: 6px;
+        font-family: inherit; text-align: left; cursor: pointer;
+    }
+    .fx-name-btn:hover { color: #e8eefb; text-decoration: underline; }
+    .fx-name-btn:focus-visible { outline: 2px solid rgba(139, 92, 246, 0.5); outline-offset: 2px; }
     .fx-kind {
         font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
         color: #475569; padding: 2px 5px; border-radius: 4px; flex-shrink: 0;
@@ -959,6 +1027,38 @@
         font-size: 15px; font-weight: 700; color: #cbd5e1; margin: 0 0 8px;
     }
     .empty-p { font-size: 12px; line-height: 1.65; color: #56688a; max-width: 440px; margin: 0 auto; }
+
+    /* =========== SCOUTING DIALOG =========== */
+    /* Above the career header (40) and below CareerOverlay (90) on purpose: a
+       queued bracket draw or event overlay must still take the screen off it. */
+    .scout-over {
+        position: fixed; inset: 0; z-index: 60;
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
+    }
+    .scout-bg {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        margin: 0; padding: 0; border: none; cursor: pointer;
+        background: rgba(3, 6, 15, 0.82);
+        backdrop-filter: blur(9px);
+        -webkit-backdrop-filter: blur(9px);
+    }
+    .scout-panel {
+        position: relative;
+        width: 100%; max-width: 940px; max-height: 92vh; overflow-y: auto;
+        padding: 20px;
+        border-radius: 20px;
+        background: linear-gradient(170deg, #0d1224 0%, #0a0f1c 100%);
+        border: 1px solid rgba(51, 65, 85, 0.4);
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.6);
+        animation: scoutIn 170ms ease-out;
+    }
+    @keyframes scoutIn {
+        from { opacity: 0; transform: translateY(10px) scale(0.985); }
+        to { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { .scout-panel { animation: none; } }
 
     /* =========== RESPONSIVE =========== */
     @media (max-width: 860px) {

@@ -876,6 +876,164 @@ export function matchupLabel(n) {
     return { text: 'Hard counter against you', tone: 'bad' };
 }
 
+// -------------------------------------------------------------------------
+//  DETERMINISTIC RANDOM
+//  Verbatim copies of teams.js's hash32/mulberry32. They are duplicated
+//  rather than imported because this file's contract is "pure data, no
+//  imports" -- and because teams.js may not import constants.js's own
+//  consumers without a cycle. Anything seeded here must be a pure function
+//  of its arguments: the meta below is regenerated on every page load and
+//  mid-match, and would flicker if it were not.
+// -------------------------------------------------------------------------
+export function hash32(str) {
+    let h = 0x811c9dc5;
+    const s = String(str);
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+export function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function next() {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// -------------------------------------------------------------------------
+//  THE CHAMPION META
+//  Every split, some champions are strong and some are not. This is a PURE
+//  DERIVATION of (year, split): nothing about it is stored on the save, so a
+//  reload, a page load and a match already in progress all agree, and a save
+//  written before the meta existed needs no grandfathering at all.
+//
+//  Built PER ROLE, over the champions legal in that role, so every role has
+//  strong AND weak picks every split -- a global tiering would routinely hand
+//  one role five strong picks and another none, and the draft only ever offers
+//  a player champions from their own role.
+//
+//  The step SIZE is deliberately NOT owned here. META_STEP_REF documents the
+//  reference magnitude the tiering was sized against; match.js owns the live
+//  constant, because it is the file careerSmoke's 7.6 mean-rating hard fail
+//  actually measures. A meta tier is a SYMMETRIC term by construction -- the
+//  strong band and the weak band are the same size, so across a career the
+//  two cancel and the mean rating does not drift.
+// -------------------------------------------------------------------------
+
+/** Reference size of one meta step, documented here and owned by match.js. */
+export const META_STEP_REF = 0.035;
+/** Share of each role's pool that is strong this split. */
+export const META_STRONG_FRACTION = 0.18;
+/** Share of each role's pool that is weak this split. Equal to the strong
+ *  share on purpose: the term has to be symmetric. */
+export const META_WEAK_FRACTION = 0.18;
+
+// 'year:split' -> frozen meta. Same idiom as teams._rosterCache: the meta is
+// re-derived on every page load and read several times per match, and the
+// derivation walks all 173 champions. Capped and cleared wholesale rather
+// than evicted one by one -- a career touches two keys a year, so the cap is
+// only ever reached by a harness sweeping decades.
+const _META_CACHE = new Map();
+const META_CACHE_MAX = 40;
+
+/**
+ * The meta for one split: { byId: {championId: -1|0|1}, strong: [ids], weak: [ids] }.
+ *
+ * A champion legal in two roles gets ONE tier, taken from the FIRST role it is
+ * legal in, walking ROLES in declaration order (TOP, JNG, MID, ADC, SUP). One
+ * champion id must map to exactly one tier -- `byId` is keyed by champion, and
+ * a per-role tier would make metaTierFor() depend on which role asked, which
+ * the draft and the dossier would then have to agree about forever. `strong`
+ * and `weak` are derived from `byId` and therefore can never contradict it.
+ */
+export function metaFor(year, split) {
+    const y = Math.floor(Number(year)) || 0;
+    // Only two splits exist; anything else is rot and is read as spring, which
+    // keeps the cache key set bounded as well as the answer deterministic.
+    const s = String(split) === 'summer' ? 'summer' : 'spring';
+    const key = y + ':' + s;
+
+    const hit = _META_CACHE.get(key);
+    if (hit) return hit;
+
+    const byId = {};
+    const strong = [];
+    const weak = [];
+
+    // ONE stream for the whole split, consumed in ROLES order with exactly one
+    // draw per champion in CHAMPIONS order, so the stream advances identically
+    // however the bands fall out.
+    const rnd = mulberry32(hash32('meta:' + y + ':' + s));
+
+    for (const role of ROLES) {
+        const pool = championsForRole(role.id);
+        const n = pool.length;
+        if (!n) continue;
+
+        const ranked = pool
+            .map(c => ({ id: c.id, k: rnd() }))
+            .sort((a, b) => (a.k - b.k) || (a.id < b.id ? -1 : 1));
+
+        // At least one of each however small the pool, never more than half of
+        // it in either band, and never both bands overlapping.
+        const half = Math.max(1, Math.floor(n / 2));
+        const nStrong = Math.min(half, Math.max(1, Math.round(n * META_STRONG_FRACTION)));
+        let nWeak = Math.min(half, Math.max(1, Math.round(n * META_WEAK_FRACTION)));
+        if (nStrong + nWeak > n) nWeak = Math.max(0, n - nStrong);
+
+        for (let i = 0; i < ranked.length; i++) {
+            const id = ranked[i].id;
+            if (Object.prototype.hasOwnProperty.call(byId, id)) continue;  // first role wins
+            const tier = i < nStrong ? 1 : (i >= n - nWeak ? -1 : 0);
+            byId[id] = tier;
+            if (tier === 1) strong.push(id);
+            else if (tier === -1) weak.push(id);
+        }
+    }
+
+    // Frozen because the object is memoised and handed to every caller: a
+    // reader that wrote into it would poison the split for the session.
+    const out = Object.freeze({
+        byId: Object.freeze(byId),
+        strong: Object.freeze(strong),
+        weak: Object.freeze(weak),
+    });
+
+    if (_META_CACHE.size >= META_CACHE_MAX) _META_CACHE.clear();
+    _META_CACHE.set(key, out);
+    return out;
+}
+
+/**
+ * 1 strong, -1 weak, 0 otherwise. Returns 0 and NEVER throws for an unknown,
+ * dead or empty id: champion ids are permanent persisted save data, and a save
+ * carrying an id this build no longer knows must simply read as contested
+ * rather than break a match.
+ */
+export function metaTierFor(championId, year, split) {
+    try {
+        if (!championId || !CHAMPION_BY_ID[championId]) return 0;
+        const t = metaFor(year, split).byId[championId];
+        return t === 1 ? 1 : (t === -1 ? -1 : 0);
+    } catch (e) {
+        return 0;
+    }
+}
+
+/** Human label for a meta tier, for champion select and the dossier. */
+export function metaLabelFor(tier) {
+    const t = Number(tier) || 0;
+    if (t > 0) return 'Strong';
+    if (t < 0) return 'Weak';
+    return 'Contested';
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  CHAMPION PROFICIENCY
 //  Games played on a champion, and what that is worth.
@@ -947,8 +1105,17 @@ export function biasDistance(a, b) {
 // tools/championCheck.mjs asserts the floor holds for all twenty playstyles,
 // that no champion is left unpickable, and that a style's blurb never names a
 // champion the rule rejects.
+//
+// STYLE_POOL_MIN was raised from 8 to 12 to WIDEN THE DRAFT BANK: champion
+// select offers three picks a game and the per-split meta now moves which of
+// them are worth having, so a style whose whole bank is eight champions sees
+// the same three names all season and has nothing to rotate into when its
+// picks fall out of the meta. FIT_MAX stays at 0.24 -- the calibration above
+// records why, and loosening the FIT threshold would widen the bank by letting
+// in champions the playstyle does not actually play, which is a different and
+// worse thing than topping the thin pools up by nearest distance.
 export const FIT_MAX = 0.24;
-export const STYLE_POOL_MIN = 8;
+export const STYLE_POOL_MIN = 12;
 
 /** How well one champion suits one playstyle: 1 is identical, 0 is opposite. */
 export function championFit(champ, playstyleId) {
@@ -1236,6 +1403,29 @@ export function phaseForWeek(week) {
     return PHASES.find(p => w >= p.from && w <= p.to) || PHASES[0];
 }
 
+/** Which split a calendar week belongs to. Preseason is spring's build-up;
+ *  everything from MSI onward is booked against summer.
+ *
+ *  Lifted VERBATIM out of engine.js, where it was private, because the meta
+ *  above is keyed by (year, split) and match.js must be able to ask which
+ *  split a week is in without importing the engine (match.js importing
+ *  engine.js is a cycle -- engine.js already imports match.js).
+ *
+ *  `first_stand` is deliberately absent from the table, exactly as it was in
+ *  engine.js: weeks 2-4 fall through to the 'spring' default, which is the
+ *  same answer preseason gives and the same answer this function has always
+ *  given. Do not "complete" the table -- it would change what split a First
+ *  Stand week books against. */
+const SPLIT_BY_PHASE = {
+    preseason: 'spring', spring: 'spring', spring_po: 'spring',
+    msi: 'summer', summer: 'summer', summer_po: 'summer',
+    worlds: 'summer', offseason: 'summer',
+};
+
+export function splitForWeek(week) {
+    return SPLIT_BY_PHASE[phaseForWeek(week).id] || 'spring';
+}
+
 // Regular-season weeks play two matches; playoff/international weeks play a series.
 export const MATCHES_PER_REG_WEEK = 2;
 export const REG_SPLIT_WEEKS = 9;   // spring and summer are both 9 weeks
@@ -1253,13 +1443,23 @@ export const ACTIVITIES = [
     },
     {
         id: 'soloq', name: 'Solo Queue', icon: '\u{1F3AE}', accent: '#22c55e', energy: 18,
-        desc: 'Grind the ladder. Small all-round gains, ranked progress and a trickle of followers.',
+        desc: 'Grind the ladder. Small all-round gains, ranked progress and a trickle of followers. A losing night costs morale, and queueing again in the same week costs health.',
         needsClub: false, group: 'practice',
     },
     {
         id: 'scrim', name: 'Scrim Block', icon: '\u{2694}', accent: '#f59e0b', energy: 22,
-        desc: 'Practise with the roster. Builds teamfighting, shotcalling and team chemistry.',
+        desc: 'Practise with the roster. Builds teamfighting, shotcalling and team chemistry, and sharpens your four team-mates for good, up to a limit.',
         needsClub: true, group: 'practice',
+    },
+    // Champion practice. The only activity that touches player.proficiency
+    // rather than an attribute: it banks games on ONE champion in your pool,
+    // which is what makes a cold pick warm before the meta rewards it. Cheap
+    // in energy because it competes with training for a slot, not with rest.
+    // The handler lives in engine.js.
+    {
+        id: 'champ_lab', name: 'Champion Practice', icon: '\u{1F9EA}', accent: '#f472b6', energy: 12,
+        desc: 'Hours in a custom game on one champion from your pool. Banks games on your practice champion, and nothing else.',
+        needsClub: false, group: 'practice',
     },
     {
         id: 'vod', name: 'VOD Review', icon: '\u{1F4FC}', accent: '#a855f7', energy: 10,
@@ -1356,7 +1556,7 @@ export const ACTIVITIES = [
 
 export const ACTIVITY_BY_ID = ACTIVITIES.reduce((m, a) => { m[a.id] = a; return m; }, {});
 
-/** Fifteen activities against a three-slot week is too many undifferentiated
+/** Sixteen activities against a three-slot week is too many undifferentiated
  *  buttons, so the Hub renders them in labelled sections. Order is the order
  *  they appear on screen. */
 export const ACTIVITY_GROUPS = [
@@ -1429,6 +1629,24 @@ export const CLUB_TIERS = {
     2: { id: 2, name: 'Academy',       short: 'T2', accent: '#3b82f6', salaryMult: 0.22, trainingMult: 1.10, prestige: 2 },
     3: { id: 3, name: 'Amateur',       short: 'T3', accent: '#64748b', salaryMult: 0.05, trainingMult: 0.95, prestige: 1 },
 };
+
+// The rating a club of each tier can still plausibly house. `prestige` above
+// has never had a reader; this is the number that actually does something:
+// contracts.js refuses a club that is beneath the player, so an 80-OVR starter
+// stops being called by amateur sides that could never field him.
+//
+// Sized against the unsigned prospect, not against the league table.
+// UNSIGNED_SOFT_CAP is 72 and environmentCap() is a 0.15x THROTTLE rather than
+// a wall, so an unsigned player genuinely drifts past 72 given enough weeks --
+// the tier-3 ceiling therefore has to sit CLEARLY above anything an unsigned
+// player could plausibly reach, or the amateur circuit would stop calling the
+// very prospects it exists to sign and the compulsory first-club ladder (which
+// careerSmoke hard-fails a run for missing) would have nobody left to run
+// through. 78 is that clearance. Tier 2 at 84 leaves academies the whole band
+// between a good prospect and a main-league starter, and tier 1 at 99 is not a
+// gate at all -- it is written out so the table has no missing key and nothing
+// has to guess a default.
+export const TIER_OVR_CEILING = { 1: 99, 2: 84, 3: 78 };
 
 // Weekly club training sessions by tier — the debut path's main constraint.
 export const CLUB_TRAINING_SLOTS = { 1: 3, 2: 2, 3: 1 };

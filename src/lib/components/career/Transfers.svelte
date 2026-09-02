@@ -10,10 +10,10 @@
 
     import {
         career, careerOVR, careerPotOVR, currentTeam, marketValue, soloRank,
-        saveCareer, absWeek,
+        saveCareer, absWeek, setGoalClub,
     } from '../../stores/career.js';
     import {
-        ROLES, ROLE_BY_ID, REGION_BY_ID, CLUB_TIERS, SQUAD_STATUS,
+        ROLES, ROLE_BY_ID, REGION_BY_ID, REGION_IDS, CLUB_TIERS, SQUAD_STATUS,
         PLAYSTYLES, championsForStyle, championFitsStyle, phaseForWeek, ATTRS, UNSIGNED_SOFT_CAP,
         LANGUAGES, REGION_LANGUAGE, LANGUAGE_MAX, LANGUAGE_FLUENT, LANGUAGE_SIGN_MIN,
         languageLevelFor, languageBand, studyTargetFor,
@@ -24,8 +24,9 @@
     import {
         expireOffers, acceptOffer, rejectOffer, negotiateOffer, interestedTeams,
         contractStatusLine, contractYearsLeft, renewalOffer, requestTransfer,
-        releaseFromClub, canChangeRole, roleChangePreview, changeRole,
+        releaseFromClub, canChangeRole, roleChangePreview, changeRole, goalProgress,
     } from '../../career/contracts.js';
+    import { allTeamsForPlayer } from '../../career/teams.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -168,6 +169,119 @@
         career.update(x => ({ ...x, player: { ...x.player, studyLang: id } }));
         saveCareer();
         showToast('Lessons now go into ' + (lang ? lang.name : 'that language') + '.', 'info');
+    }
+
+    // ---------------------------------------------------------------------
+    //  GOAL CLUB
+    //  One nominated club and an honest answer about what is still in the way.
+    //  Every gate -- the signing block, the rating a club of that level looks
+    //  at, the interest floor, the transfer window and the rejection counter --
+    //  is read off contracts.goalProgress(), sentence included. Nothing here
+    //  recomputes any of it: a screen that does its own arithmetic is how a
+    //  screen and an engine come to disagree about who can sign you.
+    // ---------------------------------------------------------------------
+    const GOAL_STATUS = {
+        reached: { id: 'reached', label: 'You are there',     color: '#22c55e' },
+        live:    { id: 'live',    label: 'They are calling',  color: '#eab308' },
+        chase:   { id: 'chase',   label: 'Keep working',      color: '#3b82f6' },
+        blocked: { id: 'blocked', label: 'A rule refuses you', color: '#f59e0b' },
+        lost:    { id: 'lost',    label: 'Gone for good',     color: '#ef4444' },
+    };
+    function goalStatusOf(id) { return GOAL_STATUS[id] || GOAL_STATUS.chase; }
+
+    let goalPicker = false;
+    let goalRegion = null;     // which league the picker is showing
+
+    function safeGoalRow(state) {
+        try {
+            const r = goalProgress(state);
+            return r && typeof r === 'object' ? r : null;
+        } catch (e) { return null; }
+    }
+    function safeAllTeams(state) {
+        try {
+            const r = allTeamsForPlayer(state);
+            return Array.isArray(r) ? r : [];
+        } catch (e) { return []; }
+    }
+
+    /** The 108 clubs, grouped league then tier. Ordered by REGION_IDS rather
+     *  than by whatever order the list arrived in, with anything unrecognised
+     *  (the open circuit, or a region added later) swept up at the end. */
+    function buildGoalGroups(list) {
+        const by = new Map();
+        for (const t of list) {
+            if (!t || typeof t.id !== 'string') continue;
+            const rid = typeof t.region === 'string' && t.region ? t.region : 'ALL';
+            if (!by.has(rid)) by.set(rid, new Map());
+            const tiers = by.get(rid);
+            const tn = Math.round(Number(t.tier)) || 1;
+            if (!tiers.has(tn)) tiers.set(tn, []);
+            tiers.get(tn).push(t);
+        }
+        const order = REGION_IDS.filter(id => by.has(id))
+            .concat([...by.keys()].filter(id => !REGION_IDS.includes(id)));
+        return order.map(rid => {
+            const reg = regionOf(rid);
+            const tiers = by.get(rid);
+            return {
+                id: rid,
+                label: reg ? reg.league : 'Open circuit',
+                flag: reg ? reg.flag : '',
+                accent: reg ? reg.accent : '#64748b',
+                tiers: [...tiers.keys()].sort((a, b) => a - b)
+                    .map(tier => ({ tier, info: tierOf(tier), teams: tiers.get(tier) })),
+            };
+        });
+    }
+
+    $: goalRow = safeGoalRow(c);
+    $: goalMeta = goalStatusOf(goalRow ? goalRow.status : 'chase');
+    $: goalGate = (goalRow && goalRow.gate && typeof goalRow.gate === 'object') ? goalRow.gate : { ovr: 0, mmr: 0 };
+    $: goalInterest = Math.max(0, Math.min(100, Math.round(Number(goalRow ? goalRow.interest : 0) || 0)));
+    $: goalRejected = Math.max(0, Math.round(Number(goalRow ? goalRow.rejected : 0) || 0));
+    $: goalBlockWhy = (goalRow && typeof goalRow.blockReason === 'string') ? goalRow.blockReason : '';
+    $: goalDetail = (goalRow && typeof goalRow.detail === 'string') ? goalRow.detail : '';
+    $: goalNeed = (goalRow && typeof goalRow.need === 'string') ? goalRow.need : '';
+
+    $: goalTeams = safeAllTeams(c);
+    $: goalGroups = buildGoalGroups(goalTeams);
+    $: goalGroup = goalGroups.find(g => g.id === goalRegion) || goalGroups[0] || null;
+
+    function openGoalPicker() {
+        playSound('click');
+        // Open on the league that is already the answer: the goal's own region,
+        // then the one the player is from, then whatever the list starts with.
+        const wanted = [goalRow ? goalRow.region : null, p.region]
+            .find(id => id && goalGroups.some(g => g.id === id));
+        goalRegion = wanted || (goalGroups.length ? goalGroups[0].id : null);
+        goalPicker = true;
+    }
+    function toggleGoalPicker() {
+        if (!goalPicker) { openGoalPicker(); return; }
+        playSound('click');
+        goalPicker = false;
+    }
+    function closeGoalPicker() {
+        playSound('click');
+        goalPicker = false;
+    }
+
+    function pickGoal(t) {
+        playSound('click');
+        if (!setGoalClub(t ? t.id : null)) {
+            showToast('That club is not on the circuit any more.', 'error');
+            return;
+        }
+        goalPicker = false;
+        showToast('You are aiming for ' + (t && t.name ? t.name : 'that club') + '.', 'info');
+    }
+
+    function clearGoal() {
+        playSound('click');
+        setGoalClub(null);
+        goalPicker = false;
+        showToast('Goal club cleared.', 'info');
     }
 
     // ---------------------------------------------------------------------
@@ -820,6 +934,154 @@
             </div>
         </section>
 
+        <!-- ======================= YOUR GOAL =======================
+             Shares order.scout with the languages panel above and the board
+             below, for the reason spelled out there: a flexbox order tie falls
+             back on document order, so this lands between the two without a
+             fifth order slot. It belongs here because the board underneath is
+             the same question asked about everybody else -- who rates you, and
+             who cannot sign you whatever they think. -->
+        <section class="tf-sec" style="order:{order.scout}">
+            <div class="side-label">Your goal</div>
+            <p class="sec-note">
+                Nominate one club to aim the career at. Everything below comes straight out of the rules that
+                decide who actually phones you &#x2014; the signing gate, the rating a club at that level looks
+                at, what they think of you today, and whether the window is even open.
+            </p>
+
+            {#if !goalRow}
+                <div class="panel empty">
+                    <div class="empty-ico" aria-hidden="true">&#x1F3AF;</div>
+                    <h3 class="empty-h">No club picked</h3>
+                    <p class="empty-p">
+                        Choose the club you want to end up at and this becomes a checklist: what they are looking
+                        for, how close you are, and the one thing still standing in the way.
+                    </p>
+                    <div class="goal-actions goal-centre">
+                        <button class="b b-nego" on:click={openGoalPicker}>Choose a club</button>
+                    </div>
+                </div>
+            {:else}
+                {@const gTier = tierOf(goalRow.tier)}
+                {@const gReg = regionOf(goalRow.region)}
+                <div class="goal-wrap">
+                    <div
+                        class="scout goal-row"
+                        class:goal-lost={goalRow.status === 'lost'}
+                        style="--ac:{goalMeta.color}"
+                    >
+                        <div class="sc-id">
+                            <span class="sc-name">{goalRow.name || 'Unknown club'}</span>
+                            <span class="sc-meta">
+                                <span class="sc-tier" style="--tg:{gTier.accent}">{gTier.short}</span>
+                                {#if gReg}<span aria-hidden="true">{gReg.flag}</span> {gReg.league}{:else}Open circuit{/if}
+                                <span class="meta-dot">&#x00B7;</span> Looks at {Math.round(Number(goalGate.ovr) || 0)} rated
+                                {#if (Number(goalGate.mmr) || 0) > 0}
+                                    <span class="meta-dot">&#x00B7;</span> {Math.round(Number(goalGate.mmr))} MMR
+                                {/if}
+                                <span class="meta-dot">&#x00B7;</span> Window {goalRow.windowOpen ? 'open' : 'closed'}
+                            </span>
+                        </div>
+
+                        {#if goalRow.status === 'lost'}
+                            <!-- The rejection counter is a permanent dead end the
+                                 engine never mentions again. Saying so out loud is
+                                 half the reason this panel exists. -->
+                            <div class="sc-int sc-blocked">
+                                <span class="sc-block-lbl">Never calling again</span>
+                                <span class="sc-block-why">
+                                    {goalRejected} refusal{goalRejected === 1 ? '' : 's'} on file. There is no way back.
+                                </span>
+                            </div>
+                        {:else if goalRow.status === 'blocked'}
+                            <div class="sc-int sc-blocked">
+                                <span class="sc-block-lbl">Cannot sign you</span>
+                                <span class="sc-block-why">{goalBlockWhy || 'A rule refuses this move.'}</span>
+                            </div>
+                        {:else}
+                            <div class="sc-int">
+                                <div class="sc-bar" aria-hidden="true">
+                                    <div class="sc-fill" style="width:{Math.max(2, goalInterest)}%; background:{goalMeta.color}"></div>
+                                </div>
+                                <span class="sc-num" style="color:{goalMeta.color}">{goalInterest}</span>
+                                <span class="sc-lbl">{goalMeta.label}</span>
+                            </div>
+                        {/if}
+                    </div>
+
+                    <div class="goal-foot">
+                        {#if goalDetail && goalDetail !== goalBlockWhy}
+                            <p class="goal-detail">{goalDetail}</p>
+                        {/if}
+                        <div class="goal-tags">
+                            <span class="goal-pill" style="--ac:{goalMeta.color}">{goalMeta.label}</span>
+                            {#if goalNeed && goalRow.status !== 'blocked' && goalRow.status !== 'lost'}
+                                <span class="goal-need">Still needed: {goalNeed}</span>
+                            {/if}
+                            {#if goalRejected > 0}
+                                <span class="goal-rejects" class:goal-dead={goalRow.status === 'lost'}>
+                                    {goalRejected} refusal{goalRejected === 1 ? '' : 's'} on file
+                                </span>
+                            {/if}
+                        </div>
+                        <div class="goal-actions">
+                            <button class="b b-nego" class:b-on={goalPicker} aria-expanded={goalPicker} on:click={toggleGoalPicker}>
+                                {goalPicker ? 'Close the list' : 'Aim somewhere else'}
+                            </button>
+                            <button class="b b-ghost" on:click={clearGoal}>Clear goal</button>
+                        </div>
+                    </div>
+                </div>
+            {/if}
+
+            {#if goalPicker}
+                <div class="panel goal-picker">
+                    <div class="goal-pick-head">
+                        <span class="goal-pick-h">Every club on the circuit</span>
+                        <button class="b b-ghost" on:click={closeGoalPicker}>Close</button>
+                    </div>
+
+                    {#if !goalGroups.length}
+                        <p class="goal-detail">There are no clubs to aim at right now.</p>
+                    {:else}
+                        <div class="pick" role="group" aria-label="Choose a league">
+                            {#each goalGroups as g (g.id)}
+                                <button
+                                    class="pick-b"
+                                    class:pick-on={!!goalGroup && goalGroup.id === g.id}
+                                    aria-pressed={!!goalGroup && goalGroup.id === g.id}
+                                    style="--pk:{g.accent}"
+                                    on:click={() => { playSound('click'); goalRegion = g.id; }}
+                                >{#if g.flag}<span aria-hidden="true">{g.flag}</span> {/if}{g.label}</button>
+                            {/each}
+                        </div>
+
+                        {#if goalGroup}
+                            {#each goalGroup.tiers as tg (tg.tier)}
+                                <div class="goal-tier">
+                                    <div class="side-label">{tg.info.name} &#x00B7; {tg.teams.length} clubs</div>
+                                    <div class="goal-clubs">
+                                        {#each tg.teams as t (t.id)}
+                                            <button
+                                                class="goal-club"
+                                                class:goal-on={!!goalRow && goalRow.teamId === t.id}
+                                                aria-pressed={!!goalRow && goalRow.teamId === t.id}
+                                                style="--ac:{t.accent || '#64748b'}"
+                                                on:click={() => pickGoal(t)}
+                                            >
+                                                <span class="gc-n">{t.name || 'Unnamed club'}</span>
+                                                <span class="gc-m">Strength {Math.round(Number(t.strength) || 0)}</span>
+                                            </button>
+                                        {/each}
+                                    </div>
+                                </div>
+                            {/each}
+                        {/if}
+                    {/if}
+                </div>
+            {/if}
+        </section>
+
         <!-- ===================== SCOUTING BOARD ===================== -->
         <section class="tf-sec" style="order:{order.scout}">
             <div class="side-label">Scouting board</div>
@@ -1081,7 +1343,7 @@
     .off-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 10px; font-weight: 700; color: #475569; }
     .meta-dot { color: #2c3a52; }
     .meta-urgent { color: #f59e0b; }
-    .off-actions, .confirm-row, .nego-actions, .renew-actions, .dz-confirm, .rc-actions, .rcc-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .off-actions, .confirm-row, .nego-actions, .renew-actions, .dz-confirm, .rc-actions, .rcc-actions, .goal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .confirm-q { font-size: 11px; font-weight: 700; color: #fca5a5; }
 
     /* ============ BUTTONS ============ */
@@ -1178,6 +1440,34 @@
     .lang-band { font-size: 8.5px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #3f5069; }
     .lang-done { flex-shrink: 0; font-size: 9px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #475569; }
     .lang-cur { color: var(--ac); }
+
+    /* ============ GOAL CLUB ============
+       The readout is a .scout row wearing the status colour, so the two
+       compound selectors are deliberate: .scout is declared below this block
+       and would otherwise win the tie on source order. */
+    .goal-wrap { display: flex; flex-direction: column; gap: 10px; }
+    .scout.goal-row { align-items: flex-start; background: color-mix(in srgb, var(--ac) 7%, rgba(12,16,28,0.5)); border-color: color-mix(in srgb, var(--ac) 24%, transparent); border-left-color: var(--ac); }
+    .scout.goal-lost { border-style: dashed; }
+    .goal-lost .sc-block-lbl { color: #f87171; }
+    .goal-foot { display: flex; flex-direction: column; gap: 10px; padding: 0 2px; }
+    .goal-detail { font-size: 12px; color: #8ea0be; line-height: 1.7; max-width: 720px; }
+    .goal-tags { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .goal-pill { font-size: 8.5px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 5px; color: var(--ac); background: color-mix(in srgb, var(--ac) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ac) 30%, transparent); }
+    .goal-need { font-size: 10px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #475569; }
+    .goal-rejects { font-size: 10px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #f59e0b; }
+    .goal-dead { color: #f87171; }
+    .goal-centre { justify-content: center; margin-top: 14px; }
+
+    .goal-picker { display: flex; flex-direction: column; gap: 14px; padding: 14px; margin-top: 12px; }
+    .goal-pick-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .goal-pick-h { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 13px; font-weight: 700; color: #c4b5fd; }
+    .goal-tier { display: flex; flex-direction: column; }
+    .goal-clubs { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(152px, 1fr)); }
+    .goal-club { display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.42); border: 1px solid rgba(51,65,85,0.24); border-left: 3px solid var(--ac); font-family: inherit; cursor: pointer; min-width: 0; }
+    .goal-club:hover { border-color: color-mix(in srgb, var(--ac) 45%, transparent); border-left-color: var(--ac); }
+    .goal-club.goal-on { background: color-mix(in srgb, var(--ac) 12%, rgba(15,23,42,0.42)); border-color: color-mix(in srgb, var(--ac) 48%, transparent); border-left-color: var(--ac); }
+    .gc-n { font-size: 11.5px; font-weight: 700; color: #dbe4f5; overflow-wrap: anywhere; }
+    .gc-m { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #475569; }
 
     /* ============ SCOUTING ============ */
     .scout-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }

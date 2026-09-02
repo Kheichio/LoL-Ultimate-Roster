@@ -25,11 +25,12 @@
 
     import Card from '../card/Card.svelte';
 
-    import { blankCareer, pushOverlay, saveCareer } from '../../stores/career.js';
+    import { blankCareer, pushOverlay, saveCareer, setPracticeChamp } from '../../stores/career.js';
     import {
         ATTRS, ATTR_BY_KEY, ROLE_BY_ID, REGION_BY_ID, PLAYSTYLE_BY_ID,
         CHAMPION_BY_ID, PATH_BY_ID, teamById, RETIREMENT_AGE_MIN,
         TRAIT_RARITIES, championFit, proficiency01, proficiencyBand,
+        metaTierFor, metaLabelFor, splitForWeek,
     } from '../../career/constants.js';
     import {
         calcOVR, ovrTier, ovrLabel, ageBand, growthFor, statusInfo, toCareerCard,
@@ -99,6 +100,31 @@
     $: age = Number.isFinite(Number(p.age)) ? Math.round(Number(p.age)) : BLANK.player.age;
     $: startAge = Number.isFinite(Number(p.startAge))
         ? Math.round(Number(p.startAge)) : BLANK.player.startAge;
+
+    // ---- champion meta --------------------------------------------------
+    //  Which champions this split rewards. metaFor() is a pure memoised
+    //  derivation of (year, split), so it is exactly as true for a stranger's
+    //  dossier as for the local save -- there is nothing per-career in it, and
+    //  nothing here writes. splitForWeek() is wrapped anyway: `time` is a raw
+    //  save field and careerRender parks junk in it.
+    function safeSplit(w) {
+        try {
+            return splitForWeek(w) === 'summer' ? 'summer' : 'spring';
+        } catch (e) { return 'spring'; }
+    }
+    $: metaSplit = safeSplit(time.week);
+    /** Takes `yr` and `sp` as ARGUMENTS rather than closing over them: Svelte
+     *  only re-runs a template expression when the variables the expression
+     *  itself names change, so a badge computed off a closed-over `year` would
+     *  freeze on the split it first rendered in. */
+    function metaOf(id, yr, sp) {
+        try {
+            if (typeof id !== 'string' || !CHAMPION_BY_ID[id]) return null;
+            const tier = metaTierFor(id, yr, sp);
+            return { tier, label: metaLabelFor(tier) };
+        } catch (e) { return null; }
+    }
+
     $: soloq = c0.soloq || BLANK.soloq;
     $: retired = !!(c0.flags && c0.flags.retired);
     $: region = REGION_BY_ID[p.region] || REGION_BY_ID.LEC;
@@ -196,6 +222,43 @@
     $: kda = fmtKDA(t.kills, t.deaths, t.assists);
     $: avgRating = (t.games || 0) > 0 ? Math.round((t.ratingSum / t.games) * 100) / 100 : 0;
     $: peak = remote ? remote.peakOVR : peakOVR(c0);
+
+    // ---- peak vs now ----------------------------------------------------
+    //  Attributes REGRESS now (engine.checkDecline), so an overall rating is no
+    //  longer a high-water mark. totals.peakOVR is refreshed every week and is
+    //  already read for the totals tile, which makes "now 84, peaked 89" free --
+    //  and without it a career that gave points back reads as though it was
+    //  never any better than this.
+    $: peakNum = Math.max(0, Math.round(fin(peak)));
+    $: ovrNum = Math.max(0, Math.round(fin(ovr)));
+    $: peakDrop = Math.max(0, peakNum - ovrNum);
+
+    /** What a career has given back: the decline ledger, or null on any save
+     *  written before decline existed and on any dossier that did not carry it.
+     *  Every field is a career BUDGET counter, so rot reads as "nothing lost". */
+    $: declined = (() => {
+        const src = c0.flags && c0.flags.decline;
+        if (!src || typeof src !== 'object' || Array.isArray(src)) return null;
+        const splits = Math.max(0, Math.round(fin(src.splits)));
+        if (!splits) return null;
+        const attrSrc = (src.attrs && typeof src.attrs === 'object' && !Array.isArray(src.attrs))
+            ? src.attrs : {};
+        const worst = Object.keys(attrSrc)
+            .map(k => ({
+                key: k,
+                abbr: ATTR_BY_KEY[k] ? ATTR_BY_KEY[k].abbr : '',
+                lost: Math.round(fin(attrSrc[k]) * 10) / 10,
+            }))
+            .filter(x => x.abbr && x.lost > 0)
+            .sort((a, b) => b.lost - a.lost)
+            .slice(0, 3);
+        return {
+            splits,
+            ovrLost: Math.round(fin(src.ovrLost) * 10) / 10,
+            held: Math.round(fin(src.heldTotal) * 10) / 10,
+            worst,
+        };
+    })();
 
     function ratingTone(r) {
         if (r >= 8.5) return '#eab308';
@@ -445,6 +508,8 @@
             return {
                 id, champ: ch, games: n, prof: pr, band: proficiencyBand(pr),
                 isSignature: p.champion === id,
+                isPractice: p.practiceChamp === id,
+                meta: metaOf(id, year, metaSplit),
             };
         })
         .filter(Boolean)
@@ -453,6 +518,35 @@
     $: profMastered = profRows.filter(r => r.prof >= 0.85).length;
     let profAll = false;
     $: profShown = profAll ? profRows : profRows.slice(0, 8);
+
+    // ---- practice champion ----------------------------------------------
+    //  THE CALLER FOR 'champ_lab'. player.practiceChamp had no writer anywhere
+    //  in src/lib/components, so it was null on every career forever and the
+    //  Champion Practice activity silently banked its games on the signature
+    //  pick instead -- the exact wired-and-dead failure the extra signature slot
+    //  shipped with. setPracticeChamp() WRITES THE STORE, so every control below
+    //  is owner-only; a stranger's dossier has no store to write to.
+    $: practiceChamp = (typeof p.practiceChamp === 'string' && CHAMPION_BY_ID[p.practiceChamp])
+        ? CHAMPION_BY_ID[p.practiceChamp] : null;
+    $: canPractise = mine && !retired;
+
+    function pickPractice(id) {
+        if (!canPractise) return;
+        playSound('click');
+        const ch = CHAMPION_BY_ID[id];
+        if (!setPracticeChamp(id)) {
+            showToast('That champion is no longer in the game.', 'error');
+            return;
+        }
+        showToast(`Champion Practice now banks its games on ${ch ? ch.name : 'that pick'}.`, 'success');
+    }
+
+    function clearPractice() {
+        if (!canPractise) return;
+        playSound('click');
+        setPracticeChamp(null);
+        showToast('Champion Practice falls back to your signature pick.', 'info');
+    }
 
     // ---- retirement ----------------------------------------------------
     //  Owner-only for the same reason as the switch flow: both actions raise the
@@ -551,6 +645,18 @@
         const d = Math.round(Number(card && card.formDelta) || 0);
         if (!d) return null;
         return { text: (d > 0 ? '+' : '') + d, up: d > 0 };
+    }
+
+    /** Permanent rating a seat has been handed by scrim blocks, capped by
+     *  teams.SCRIM_SEAT_CAP. Nothing at zero, which is also what a DOWNLOADED
+     *  dossier shows: board.js rebuilds a stranger's seats from the published
+     *  override rating and carries no scrimDelta at all, so the field is simply
+     *  absent there. That is correct rather than missing -- the number is a fact
+     *  about the local save's own club block. */
+    function scrimChip(card) {
+        const d = Math.round((Number(card && card.scrimDelta) || 0) * 10) / 10;
+        if (!(d > 0)) return null;
+        return { text: '+' + d };
     }
 
     /** Card.svelte falls back to the GLOBAL inspectingCard store when it is
@@ -738,6 +844,37 @@
             </p>
             {/if}
 
+            <!-- PEAK VS NOW. An overall rating stopped being a high-water mark
+                 the moment attributes could regress, so the two numbers are
+                 printed side by side. A career that has given points back reads
+                 honestly instead of looking as though it was never better. -->
+            {#if peakNum > 0}
+                <div class="peak" class:peak-off={peakDrop > 0}>
+                    <span class="peak-pair">
+                        <span class="peak-v">{ovrNum}</span>
+                        <span class="peak-l">now</span>
+                    </span>
+                    <span class="peak-sep" aria-hidden="true">/</span>
+                    <span class="peak-pair">
+                        <span class="peak-v peak-v-hi">{peakNum}</span>
+                        <span class="peak-l">peak</span>
+                    </span>
+                    <p class="peak-note">
+                        {#if peakDrop > 0 && mine}
+                            {peakDrop} overall off your best. Attributes go back when a split goes
+                            badly and the drills stop &#8212; training an attribute is what protects it.
+                        {:else if peakDrop > 0}
+                            {peakDrop} overall off {whom} at their best. Attributes go back when a
+                            split goes badly and the drills stop.
+                        {:else if mine}
+                            This is the best you have ever rated. Nothing has been given back yet.
+                        {:else}
+                            The best {whom} has ever rated. Nothing has been given back.
+                        {/if}
+                    </p>
+                </div>
+            {/if}
+
             <div class="dev">
                 <div class="dev-n">&#215;{growth.toFixed(2)}</div>
                 <div class="dev-txt">
@@ -791,6 +928,20 @@
                 <p class="lg-endow">
                     {lEarned.toLocaleString()} earned, {lEndowed.toLocaleString()} endowed.
                     The Hall of Legends vote counts the earned half only.
+                </p>
+            {/if}
+
+            {#if declined}
+                <!-- WHAT THIS CAREER GAVE BACK. The other side of the ledger:
+                     legacy only ever goes up, and a rating does not. Every field
+                     is guarded because flags.decline is absent on every save
+                     written before decline existed. -->
+                <p class="lg-give">
+                    Gave back <strong>{declined.ovrLost}</strong> overall across
+                    {declined.splits} under-par {declined.splits === 1 ? 'split' : 'splits'}{#if declined.worst.length}, the last one costing {#each declined.worst as w, i (w.key)}{i > 0 ? ', ' : ''}{w.abbr} {w.lost}{/each}{/if}.
+                    {#if declined.held > 0}
+                        Training held {declined.held} more at zero.
+                    {/if}
                 </p>
             {/if}
 
@@ -879,6 +1030,7 @@
                     {#each roomSeats as seat (seat.slot)}
                         {@const r = ROLE_BY_ID[seat.slot]}
                         {@const chip = seat.me ? null : formChip(seat.card)}
+                        {@const scrim = seat.me ? null : scrimChip(seat.card)}
                         <div class="room-seat" class:room-seat-me={seat.me}>
                             <div class="room-seat-top">
                                 <span class="room-role" style="--k:{r ? r.accent : '#64748b'}">
@@ -887,8 +1039,22 @@
                                 {#if seat.me}
                                     <span class="room-you">{mine ? 'You' : who}</span>
                                 {/if}
-                                {#if chip}
-                                    <span class="room-form" class:room-form-up={chip.up}>{chip.text}</span>
+                                {#if chip || scrim}
+                                    <span class="room-chips">
+                                        {#if chip}
+                                            <span
+                                                class="room-form"
+                                                class:room-form-up={chip.up}
+                                                title="Form: {chip.text} rating this week, from how the club is going"
+                                            >{chip.text}</span>
+                                        {/if}
+                                        {#if scrim}
+                                            <span
+                                                class="room-scrim"
+                                                title="Scrims: {scrim.text} rating, sharpened for good by scrim blocks"
+                                            >{scrim.text}</span>
+                                        {/if}
+                                    </span>
                                 {/if}
                             </div>
                             {#if seat.card}
@@ -962,7 +1128,23 @@
         <div class="slab">Signature Pick</div>
 
         <div class="sig-now" style="--k:{champ ? role.accent : '#64748b'}">
-            <span class="sig-name">{champ ? champ.name : 'No signature pick'}</span>
+            <span class="sig-top">
+                <span class="sig-name">{champ ? champ.name : 'No signature pick'}</span>
+                <!-- The split's own meta, not this career's. metaFor() is a pure
+                     derivation of (year, split), so it reads the same on a
+                     stranger's dossier as on the local save. -->
+                {#if champ}
+                    {@const m = metaOf(champ.id, year, metaSplit)}
+                    {#if m}
+                        <span
+                            class="mchip"
+                            class:mchip-up={m.tier > 0}
+                            class:mchip-down={m.tier < 0}
+                            title="{m.label} in the {year} {metaSplit} meta"
+                        >{m.label}</span>
+                    {/if}
+                {/if}
+            </span>
             <span class="sig-meta">
                 {#if champ}
                     {champ.archetype}
@@ -1014,12 +1196,22 @@
 
             <div class="sig-grid">
                 {#each switchPool as ch (ch.id)}
+                    {@const m = metaOf(ch.id, year, metaSplit)}
                     <button
                         class="sig-opt"
                         class:sig-opt-on={switchPick === ch.id}
                         on:click={() => pickSwitch(ch.id)}
                     >
-                        <span class="sig-opt-n">{ch.name}</span>
+                        <span class="sig-opt-top">
+                            <span class="sig-opt-n">{ch.name}</span>
+                            {#if m}
+                                <span
+                                    class="mchip"
+                                    class:mchip-up={m.tier > 0}
+                                    class:mchip-down={m.tier < 0}
+                                >{m.label}</span>
+                            {/if}
+                        </span>
                         <span class="sig-opt-a">{ch.archetype}</span>
                     </button>
                 {:else}
@@ -1082,8 +1274,17 @@
                 {#if sigExtras.length}
                     <div class="sig-extra-list">
                         {#each sigExtras as ch (ch.id)}
+                            {@const m = metaOf(ch.id, year, metaSplit)}
                             <div class="sig-extra-row">
                                 <span class="sig-extra-n">{ch.name}</span>
+                                {#if m}
+                                    <span
+                                        class="mchip"
+                                        class:mchip-up={m.tier > 0}
+                                        class:mchip-down={m.tier < 0}
+                                        title="{m.label} in the {year} {metaSplit} meta"
+                                    >{m.label}</span>
+                                {/if}
                                 <span class="sig-extra-a">{ch.archetype}</span>
                                 {#if mine && !retired}
                                     <button class="lnk" on:click={() => doDropSignature(ch.id)}>Drop</button>
@@ -1110,12 +1311,22 @@
 
                         <div class="sig-grid">
                             {#each designatePool as ch (ch.id)}
+                                {@const m = metaOf(ch.id, year, metaSplit)}
                                 <button
                                     class="sig-opt"
                                     class:sig-opt-on={designatePick === ch.id}
                                     on:click={() => pickDesignate(ch.id)}
                                 >
-                                    <span class="sig-opt-n">{ch.name}</span>
+                                    <span class="sig-opt-top">
+                                        <span class="sig-opt-n">{ch.name}</span>
+                                        {#if m}
+                                            <span
+                                                class="mchip"
+                                                class:mchip-up={m.tier > 0}
+                                                class:mchip-down={m.tier < 0}
+                                            >{m.label}</span>
+                                        {/if}
+                                    </span>
                                     <span class="sig-opt-a">{ch.archetype}</span>
                                 </button>
                             {:else}
@@ -1171,22 +1382,77 @@
             </p>
             {/if}
 
+            <!-- ---- CHAMPION PRACTICE ----
+                 The only writer of player.practiceChamp anywhere in the app. The
+                 Champion Practice activity banks its games on whatever is named
+                 here and falls back to the signature pick when nothing is, so
+                 without this control the fallback was every player's only
+                 option, permanently and invisibly. OWNER-ONLY: setPracticeChamp
+                 writes the local store, and a stranger has no store to write. -->
+            {#if canPractise}
+                <div class="lab">
+                    <span class="lab-l">In the lab</span>
+                    <span class="lab-v">{practiceChamp ? practiceChamp.name : (champ ? champ.name + ' (signature)' : 'Nothing set')}</span>
+                    <span class="lab-n">
+                        Champion Practice banks its games here.
+                        {#if !practiceChamp}Pick one below to practise something you do not main.{/if}
+                    </span>
+                    {#if practiceChamp}
+                        <button class="lnk" on:click={clearPractice}>Clear</button>
+                    {/if}
+                </div>
+            {/if}
+
             <div class="prof">
                 {#each profShown as r (r.id)}
-                    <div class="pf-row" style="--k:{r.band.color}">
+                    <div class="pf-row" class:pf-row-own={canPractise} style="--k:{r.band.color}">
                         <span class="pf-name">
                             {r.champ.name}
                             {#if r.isSignature}<span class="pf-sig">Signature</span>{/if}
+                            {#if r.isPractice}<span class="pf-lab">Lab</span>{/if}
                         </span>
                         <span class="pf-arch">{r.champ.archetype}</span>
                         <span class="pf-bar" aria-hidden="true">
                             <span class="pf-fill" style="width:{Math.round(r.prof * 100)}%"></span>
                         </span>
+                        <span class="pf-meta">
+                            {#if r.meta}
+                                <span
+                                    class="mchip"
+                                    class:mchip-up={r.meta.tier > 0}
+                                    class:mchip-down={r.meta.tier < 0}
+                                    title="{r.meta.label} in the {year} {metaSplit} meta"
+                                >{r.meta.label}</span>
+                            {/if}
+                        </span>
                         <span class="pf-band">{r.band.name}</span>
                         <span class="pf-games">{r.games}</span>
+                        {#if canPractise}
+                            <span class="pf-pick">
+                                {#if r.isPractice}
+                                    <button
+                                        class="pf-pick-btn pf-pick-on"
+                                        on:click={clearPractice}
+                                        title="Stop practising {r.champ.name}"
+                                    >Practising</button>
+                                {:else}
+                                    <button
+                                        class="pf-pick-btn"
+                                        on:click={() => pickPractice(r.id)}
+                                        title="Bank Champion Practice games on {r.champ.name}"
+                                    >Practise</button>
+                                {/if}
+                            </span>
+                        {/if}
                     </div>
                 {/each}
             </div>
+
+            <p class="note note-tight">
+                The badge on each row is how the {year} {metaSplit} split rates that champion. It is
+                the same for everybody, it moves every split, and champion select weighs it when it
+                offers three picks.
+            </p>
         {:else if mine}
             <p class="note">
                 Nothing played yet. Champion select offers you three picks before every game, and
@@ -1573,10 +1839,15 @@
     .prof { display: flex; flex-direction: column; gap: 6px; }
     .pf-row {
         display: grid;
-        grid-template-columns: minmax(110px, 1.3fr) minmax(70px, 0.9fr) minmax(80px, 1.6fr) 74px 42px;
+        grid-template-columns: minmax(104px, 1.25fr) minmax(62px, 0.75fr) minmax(70px, 1.35fr) 74px 68px 40px;
         align-items: center; gap: 10px;
         padding: 8px 12px; border-radius: 9px;
         background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.32);
+    }
+    /* Owner only: the practice-pick column exists solely for the person whose
+       save it is, so the grid gains a track rather than reserving a dead one. */
+    .pf-row-own {
+        grid-template-columns: minmax(104px, 1.25fr) minmax(62px, 0.75fr) minmax(70px, 1.35fr) 74px 68px 40px 86px;
     }
     .pf-name {
         display: flex; align-items: center; gap: 7px;
@@ -1588,16 +1859,66 @@
         padding: 2px 5px; border-radius: 4px; flex-shrink: 0;
         color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.28);
     }
+    .pf-lab {
+        font-size: 8px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+        padding: 2px 5px; border-radius: 4px; flex-shrink: 0;
+        color: #f9a8d4; background: rgba(244, 114, 182, 0.12); border: 1px solid rgba(244, 114, 182, 0.3);
+    }
     .pf-arch { font-size: 10.5px; color: #4e5f7a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pf-bar { height: 5px; border-radius: 99px; background: rgba(15, 23, 42, 0.85); overflow: hidden; }
     .pf-fill { display: block; height: 100%; border-radius: 99px; background: var(--k); }
+    .pf-meta { display: flex; justify-content: flex-end; min-width: 0; }
     .pf-band { font-size: 10.5px; font-weight: 700; color: var(--k); text-align: right; }
     .pf-games {
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         font-size: 12px; color: #56688a; text-align: right;
     }
+    .pf-pick { display: flex; justify-content: flex-end; min-width: 0; }
+    .pf-pick-btn {
+        font-family: inherit; font-size: 10px; font-weight: 700;
+        padding: 5px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+        color: #64748b; background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(51, 65, 85, 0.4);
+        transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .pf-pick-btn:hover { color: #f9a8d4; border-color: rgba(244, 114, 182, 0.5); }
+    .pf-pick-on {
+        color: #f9a8d4; background: rgba(244, 114, 182, 0.12); border-color: rgba(244, 114, 182, 0.36);
+    }
+
+    /* ---- the lab strip: what Champion Practice is pointed at ---- */
+    .lab {
+        display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+        padding: 11px 14px; margin-bottom: 12px; border-radius: 11px;
+        background: rgba(244, 114, 182, 0.06); border: 1px solid rgba(244, 114, 182, 0.22);
+    }
+    .lab-l {
+        font-size: 8.5px; font-weight: 800; letter-spacing: 1.2px;
+        text-transform: uppercase; color: #9d5b7e;
+    }
+    .lab-v {
+        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
+        font-size: 13.5px; font-weight: 700; color: #f9a8d4;
+    }
+    .lab-n { flex: 1; min-width: 160px; font-size: 10.5px; line-height: 1.55; color: #56688a; }
+
+    /* ---- meta badge: how this split rates a champion ---- */
+    .mchip {
+        font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+        padding: 2px 6px; border-radius: 4px; flex-shrink: 0; white-space: nowrap;
+        color: #64748b; background: rgba(100, 116, 139, 0.1);
+        border: 1px solid rgba(100, 116, 139, 0.26);
+    }
+    .mchip-up {
+        color: #4ade80; background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.3);
+    }
+    .mchip-down {
+        color: #f87171; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.28);
+    }
+
     @media (max-width: 620px) {
-        .pf-row { grid-template-columns: 1fr 60px 40px; }
+        .pf-row { grid-template-columns: 1fr 68px 56px 34px; }
+        .pf-row-own { grid-template-columns: 1fr 68px 56px 34px 82px; }
         .pf-arch, .pf-bar { display: none; }
     }
 
@@ -1629,6 +1950,7 @@
         background: color-mix(in srgb, var(--k) 6%, rgba(15, 23, 42, 0.45));
         border: 1px solid color-mix(in srgb, var(--k) 26%, transparent);
     }
+    .sig-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; min-width: 0; }
     .sig-name {
         font-family: 'Space Grotesk', 'Quicksand', sans-serif;
         font-size: 18px; font-weight: 700; color: #e8eefb;
@@ -1665,7 +1987,11 @@
     }
     .sig-opt:hover { border-color: rgba(71, 85, 105, 0.7); background: rgba(30, 41, 59, 0.5); }
     .sig-opt-on { border-color: rgba(139, 92, 246, 0.6); background: rgba(139, 92, 246, 0.12); }
-    .sig-opt-n { font-size: 12.5px; font-weight: 700; color: #cbd5e1; }
+    .sig-opt-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .sig-opt-n {
+        font-size: 12.5px; font-weight: 700; color: #cbd5e1;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .sig-opt-a { font-size: 10px; color: #56688a; }
 
     .sig-prev {
@@ -1765,6 +2091,23 @@
     .split-even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 
     /* ---------- ATTRIBUTES ---------- */
+    .peak {
+        display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+        padding: 11px 14px; border-radius: 12px; margin-bottom: 12px;
+        background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(51, 65, 85, 0.26);
+    }
+    .peak-off { background: rgba(245, 158, 11, 0.06); border-color: rgba(245, 158, 11, 0.2); }
+    .peak-pair { display: flex; align-items: baseline; gap: 5px; }
+    .peak-v {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 22px; font-weight: 800; line-height: 1; color: #e2e8f0;
+    }
+    .peak-v-hi { color: #a78bfa; }
+    .peak-off .peak-v-hi { color: #fbbf24; }
+    .peak-l { font-size: 8.5px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #334155; }
+    .peak-sep { font-size: 16px; font-weight: 700; color: #26344a; }
+    .peak-note { flex: 1; min-width: 180px; margin: 0; font-size: 10.5px; line-height: 1.55; color: #46587a; }
+
     .dev {
         display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px;
         background: rgba(139,92,246,0.07); border: 1px solid rgba(139,92,246,0.22);
@@ -1801,6 +2144,15 @@
     .lg-tier { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 15px; font-weight: 700; color: #e2e8f0; }
     .lg-blurb { font-size: 11.5px; line-height: 1.6; color: #56688a; margin: 10px 0 14px; }
     .lg-endow { font-size: 10.5px; line-height: 1.55; color: #475569; margin: -8px 0 14px; }
+    .lg-give {
+        font-size: 10.5px; line-height: 1.55; color: #7f6a52; margin: -8px 0 14px;
+        padding: 8px 11px; border-radius: 9px;
+        background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.18);
+    }
+    .lg-give strong {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-weight: 800; color: #fbbf24;
+    }
     .lg-prog-bar { height: 5px; border-radius: 4px; background: rgba(148,163,184,0.1); overflow: hidden; }
     .lg-prog-fill { height: 100%; border-radius: 4px; background: var(--k); transition: width 0.4s ease; }
     .lg-next { font-size: 11px; font-weight: 600; color: #56688a; margin: 8px 0 0; }
@@ -1838,11 +2190,19 @@
         font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
         color: #a78bfa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 96px;
     }
+    .room-chips { margin-left: auto; display: flex; align-items: center; gap: 6px; }
     .room-form {
         margin-left: auto; font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         font-size: 10px; font-weight: 800; color: #ef4444;
     }
     .room-form-up { color: #22c55e; }
+    /* Scrim blocks sharpen a team-mate PERMANENTLY, up to teams.SCRIM_SEAT_CAP,
+       so it sits beside form rather than inside it: one is this week, the other
+       does not go away. Absent on a downloaded dossier, which shows no chip. */
+    .room-scrim {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 10px; font-weight: 800; color: #f59e0b;
+    }
     .room-gap {
         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
         width: 180px; height: 214px; border-radius: 14px;

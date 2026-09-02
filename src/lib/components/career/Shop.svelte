@@ -9,7 +9,7 @@
     //  here for free.
 
     import { onDestroy } from 'svelte';
-    import { career, absWeek, saveCareer, consumableCount } from '../../stores/career.js';
+    import { career, absWeek, saveCareer } from '../../stores/career.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { ATTR_BY_KEY } from '../../career/constants.js';
@@ -90,13 +90,17 @@
 
     function onBuyGear(catId, tier)  { report(buyGear(catId, tier)); }
     function onBuyConsumable(id, n)  { report(buyConsumable(id, n)); }
-    function onUseConsumable(id) {
-        if (consumableCount(id) < 1) {
+    /** Takes the ITEM, not an id. The view model already resolved every use-side
+     *  gate - the bag, the club, the weekly cap, the career cap and the ceiling
+     *  budget - into `usable` / `useLockReason`, so re-deriving "do you have one"
+     *  here could only ever disagree with the button the player just pressed. */
+    function onUseConsumable(item) {
+        if (!item || !item.usable) {
             playSound('lose');
-            showToast('You have none of those left.', 'error');
+            showToast(useReason(item), 'error');
             return;
         }
-        report(useConsumable(id));
+        report(useConsumable(item.id));
     }
     function onBuyLifestyle(id)      { report(buyLifestyle(id)); }
     function onBuyPerk(id)           { report(buyPerk(id)); }
@@ -208,8 +212,14 @@
             return `${owned}/${total}`;
         }
         if (s.id === 'consumables') {
-            const held = s.items.reduce((n, i) => n + i.held, 0);
-            return held > 0 ? `${held} held` : '';
+            const list = Array.isArray(s.items) ? s.items : [];
+            const held = list.reduce((n, i) => n + (Number(i && i.held) || 0), 0);
+            // A cap that is biting right now belongs on the rail too, quietly:
+            // the honest sentence lives on the card, this is only the hint that
+            // there is one to go and read.
+            const out = list.some(i => limitOut(i));
+            if (held > 0) return out ? `${held} held, capped` : `${held} held`;
+            return out ? 'capped' : '';
         }
         if (s.id === 'lifestyle' || s.id === 'perks') {
             return `${s.items.filter(i => i.owned).length}/${s.items.length}`;
@@ -248,9 +258,90 @@
         return Math.max(1, (Number(d.endWeekAbs) || 0) - (Number(d.startWeekAbs) || 0));
     }
 
-    // Quantity stepper for consumables. Local, never persisted.
+    // -- consumable caps ----------------------------------------------------
+    //  Three separate bounds live on every consumable now - a hold cap on the
+    //  bag, a per-week use cap and a per-career use cap - and economy.js
+    //  resolves all three into the item before the markup sees it. Nothing here
+    //  does arithmetic on them: `buyLimit` is the stepper ceiling, `limitLabel`
+    //  is the pre-rendered sentence, and `usesLeftWeek` / `usesLeftCareer` are
+    //  read as flags only, never printed (they are null on an uncapped item).
+
+    /** How many of `item` a Buy press actually takes. A missing `buyLimit`
+     *  reads as no limit at all, which is how this behaved before caps existed
+     *  and is what keeps an older fixture rendering unchanged. */
+    function buyQty(item, n) {
+        const want = Math.max(1, Math.round(Number(n) || 1));
+        const lim = Math.round(Number(item && item.buyLimit));
+        if (!Number.isFinite(lim) || lim <= 0) return want;
+        return Math.max(1, Math.min(want, lim));
+    }
+
+    /** A bulk step nothing on the board could take is not offered at all. */
+    function stepOffered(items, n) {
+        const list = Array.isArray(items) ? items : [];
+        let any = false;
+        for (const it of list) {
+            if (!it || it.locked) continue;
+            any = true;
+            const lim = Math.round(Number(it.buyLimit));
+            if (!Number.isFinite(lim) || lim <= 0) return true;
+            if (lim >= n) return true;
+        }
+        return !any;
+    }
+
+    /** Is a use cap currently at zero? Read as a flag, so no number and no null
+     *  ever reaches the markup. */
+    function limitOut(item) {
+        if (!item) return false;
+        const wk = item.usesLeftWeek;
+        const cr = item.usesLeftCareer;
+        if (typeof cr === 'number' && cr <= 0) return true;
+        if (typeof wk === 'number' && wk <= 0) return true;
+        return false;
+    }
+
+    /** The model's own cap sentence, or nothing at all when the item is
+     *  uncapped - which is most of them, and they must not grow chrome. */
+    function capText(item) {
+        const s = item && item.limitLabel;
+        return (typeof s === 'string' && s.trim()) ? s : '';
+    }
+
+    /** Why a HELD item still cannot be used, and only when nothing else on the
+     *  card has already said so - an empty bag is what a missing held chip
+     *  says, a counter at zero is what the cap line says, and a Needs-a-club is
+     *  what the Buy button says. What is left is the block with no other tell:
+     *  a Performance Camp whose career ceiling budget is spent, which otherwise
+     *  renders as a full bag and a dead button for no visible reason. */
+    function blockNote(item) {
+        if (!item || item.usable || item.locked) return '';
+        if (!(Number(item.held) > 0)) return '';
+        if (limitOut(item)) return '';
+        const s = item.useLockReason;
+        return (typeof s === 'string' && s.trim()) ? s : '';
+    }
+
+    function useReason(item) {
+        const s = item && item.useLockReason;
+        return (typeof s === 'string' && s.trim()) ? s : 'You cannot use that right now.';
+    }
+
+    // Quantity stepper for consumables. Local, never persisted. The step is the
+    // player's preference; what a Buy press takes is clamped per item, because
+    // the bag cap and the career budget are per item and the stepper is not.
     let bulk = 1;
     const BULK_STEPS = [1, 3, 5];
+
+    $: consItems = (activeSec && activeSec.id === 'consumables' && Array.isArray(activeSec.items))
+        ? activeSec.items
+        : null;
+
+    // Never leave the stepper parked on a quantity nothing can take.
+    $: if (consItems) {
+        const open = BULK_STEPS.filter(n => stepOffered(consItems, n));
+        if (open.length && open.indexOf(bulk) < 0) bulk = open[open.length - 1];
+    }
 
     onDestroy(() => { saveCareer(); });
 </script>
@@ -422,10 +513,13 @@
                     <span class="bulk-lbl">Buy quantity</span>
                     <div class="bulk-btns" role="group" aria-label="Purchase quantity">
                         {#each BULK_STEPS as n}
+                            {@const open = stepOffered(activeSec.items, n)}
                             <button
                                 class="bulk-b"
-                                class:bulk-on={bulk === n}
-                                aria-pressed={bulk === n}
+                                class:bulk-on={bulk === n && open}
+                                aria-pressed={bulk === n && open}
+                                disabled={!open}
+                                title={open ? 'Buy ' + n + ' at a time' : 'Nothing on the board has room for ' + n}
                                 on:click={() => { bulk = n; playSound('click'); }}
                             >x{n}</button>
                         {/each}
@@ -433,17 +527,24 @@
                 </div>
                 <div class="cons-grid">
                     {#each activeSec.items as item (item.id)}
+                        {@const qty = buyQty(item, bulk)}
                         <article class="ccard" class:ccard-held={item.held > 0}>
                             <header class="c-head">
                                 <span class="c-ico" aria-hidden="true">{item.icon}</span>
                                 <span class="c-id">
                                     <span class="c-name">{item.name}</span>
-                                    <span class="c-cost">{priceLabel(item)}{bulk > 1 ? ' each' : ''}</span>
+                                    <span class="c-cost">{priceLabel(item)}{qty > 1 ? ' each' : ''}</span>
                                 </span>
                                 {#if item.held > 0}
                                     <span class="c-held" title="In the bag">x{item.held}</span>
                                 {/if}
                             </header>
+                            {#if capText(item)}
+                                <span class="c-limit" class:c-limit-out={limitOut(item)}>{capText(item)}</span>
+                            {/if}
+                            {#if blockNote(item)}
+                                <span class="c-limit c-limit-out">{blockNote(item)}</span>
+                            {/if}
                             <p class="c-desc">{item.desc}</p>
                             <div class="chips">
                                 {#each effectChips(item.effect) as ch, i (i)}
@@ -454,15 +555,15 @@
                                 {#if item.locked}
                                     <button class="buy buy-off" disabled>{item.lockReason || 'Locked'}</button>
                                 {:else}
-                                    <button class="buy" on:click={() => onBuyConsumable(item.id, bulk)}>
-                                        Buy{bulk > 1 ? ' x' + bulk : ''} &middot; {fmtGold(item.cost * bulk)} G
+                                    <button class="buy" on:click={() => onBuyConsumable(item.id, qty)}>
+                                        Buy{qty > 1 ? ' x' + qty : ''} &middot; {fmtGold(item.cost * qty)} G
                                     </button>
                                 {/if}
                                 <button
                                     class="use"
                                     disabled={!item.usable}
-                                    title={item.usable ? 'Use one ' + item.name : 'Nothing in the bag'}
-                                    on:click={() => onUseConsumable(item.id)}
+                                    title={item.usable ? 'Use one ' + item.name : useReason(item)}
+                                    on:click={() => onUseConsumable(item)}
                                 >Use</button>
                             </div>
                         </article>
@@ -936,7 +1037,11 @@
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         font-size: 11px; font-weight: 800; color: #64748b; cursor: pointer;
     }
-    .bulk-b:hover { color: #cbd5e1; }
+    .bulk-b:hover:not(:disabled) { color: #cbd5e1; }
+    .bulk-b:disabled {
+        color: #2c3a4f; background: rgba(15, 23, 42, 0.4);
+        border-color: rgba(51, 65, 85, 0.18); cursor: not-allowed;
+    }
     .bulk-on { color: #c4b5fd; background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.3); }
 
     .cons-grid {
@@ -966,6 +1071,14 @@
         padding: 3px 8px; border-radius: 6px;
         background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.28);
     }
+    /* The cap line. Only an item that actually carries a use cap grows one, so
+       the uncapped majority of the board is byte-for-byte the card it was. */
+    .c-limit {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 9.5px; font-weight: 700; letter-spacing: 0.2px;
+        color: #4a5b76; line-height: 1.5; margin-top: -4px;
+    }
+    .c-limit-out { color: #b08a4a; }
     .c-desc { font-size: 10.5px; color: #56688a; line-height: 1.55; flex: 1; }
     .c-actions { display: flex; gap: 7px; }
     .c-actions .buy { flex: 1; }

@@ -25,6 +25,7 @@
 
     import {
         ACTIVITIES, ACTIVITY_GROUPS, NEWS_TYPES, CLUB_TIERS, teamById,
+        CHAMPION_BY_ID, metaFor, metaTierFor, metaLabelFor, splitForWeek,
     } from '../../career/constants.js';
     import {
         statusInfo, fmtGold, fmtRecord, fmtKDA, ordinal,
@@ -36,9 +37,11 @@
     import { contractStatusLine, interestedTeams } from '../../career/contracts.js';
     import { matchRatingLabel } from '../../career/match.js';
     import BracketView from './BracketView.svelte';
+    import ClubScout from './ClubScout.svelte';
     import {
         ensureSeason, weekSummary, canAdvanceWeek, doActivity,
         startFixture, simFixture, advanceWeek, benchOrStart, activityGate,
+        soloQueueCost,
     } from '../../career/engine.js';
 
     // ---------------------------------------------------------------
@@ -48,6 +51,10 @@
     let busy = false;
     let flash = null;              // { id, text } - echo of the last activity
     let flashTimer = null;
+    // The opponent scouting panel, as an in-screen dialog. A team id, never a
+    // team object: opponentOf()-style stand-ins for an unconfirmed bracket slot
+    // must never reach ClubScout, so this is only ever set from a resolved club.
+    let scoutId = null;
 
     onMount(() => {
         try { ensureSeason(); saveCareer(); } catch (e) { /* fresh career, no season yet */ }
@@ -174,6 +181,81 @@
         try { return teamStrength(team, year); } catch (e) { return team.strength || 50; }
     }
 
+    // What the NEXT solo queue session costs on top of its energy. The engine
+    // owns the arithmetic (engine.soloQueueCost); this only has to survive a
+    // save with no weekly.counts at all, which is a state careerRender drives.
+    function safeSoloCost(career) {
+        try {
+            const r = soloQueueCost(career);
+            if (!r || typeof r !== 'object') return null;
+            return {
+                prior: Math.max(0, Number(r.prior) || 0),
+                grindHealth: Math.max(0, Number(r.grindHealth) || 0),
+                maxTilt: Number(r.maxTilt) || 0,
+                benched: !!r.benched,
+            };
+        } catch (e) { return null; }
+    }
+
+    // Which champion Champion Practice will actually bank games on. Mirrors
+    // engine.doChampLab's own resolution - practiceChamp first, signature as
+    // the fallback - so the tag and the activity can never name different
+    // champions. The picker itself lives in the Dossier.
+    function practiceChampFor(career) {
+        try {
+            const pl = (career && career.player) || {};
+            const set = typeof pl.practiceChamp === 'string' && CHAMPION_BY_ID[pl.practiceChamp]
+                ? pl.practiceChamp
+                : null;
+            const sig = typeof pl.champion === 'string' && CHAMPION_BY_ID[pl.champion]
+                ? pl.champion
+                : null;
+            const id = set || sig;
+            if (!id) return null;
+            const def = CHAMPION_BY_ID[id];
+            return { id, name: (def && def.name) || id, fallback: !set };
+        } catch (e) { return null; }
+    }
+
+    // ---------------------------------------------------------------
+    //  this split's meta
+    //  metaFor() hands back a FROZEN, memoised object shared with the match
+    //  engine, so every list is copied before it is filtered or sorted.
+    // ---------------------------------------------------------------
+    const META_SHOW = 5;
+
+    function readMeta(career) {
+        const out = { split: 'Spring', year: 0, strong: [], weak: [], mine: null, ok: false };
+        try {
+            const year = Math.floor(Number(career.time.year)) || 0;
+            const split = splitForWeek(career.time.week);
+            out.year = year;
+            out.split = split === 'summer' ? 'Summer' : 'Spring';
+
+            const m = metaFor(year, split);
+            if (!m || typeof m !== 'object') return out;
+
+            const role = (career.player && career.player.role) || '';
+            const band = (list) => (Array.isArray(list) ? list.slice() : [])
+                .map(id => CHAMPION_BY_ID[id])
+                .filter(ch => ch && Array.isArray(ch.roles) && ch.roles.indexOf(role) >= 0)
+                .sort((a, b) => (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0)))
+                .slice(0, META_SHOW)
+                .map(ch => ({ id: ch.id, name: ch.name }));
+
+            out.strong = band(m.strong);
+            out.weak = band(m.weak);
+            out.ok = true;
+
+            const sig = career.player && career.player.champion;
+            if (typeof sig === 'string' && CHAMPION_BY_ID[sig]) {
+                const tier = metaTierFor(sig, year, split);
+                out.mine = { name: CHAMPION_BY_ID[sig].name, tier, label: metaLabelFor(tier) };
+            }
+        } catch (e) { return out; }
+        return out;
+    }
+
     // ---------------------------------------------------------------
     //  derived view
     // ---------------------------------------------------------------
@@ -188,6 +270,7 @@
     $: blockers = normBlockers(summary.blockers);
     $: income = normIncome(summary.income);
 
+    $: nowYear = Number.isFinite(Number(c.time && c.time.year)) ? Number(c.time.year) : 0;
     $: opponent = nextFixture ? teamById(nextFixture.opponentId) : null;
     $: oppLine = opponent ? describeTeam(opponent) : '';
     $: oppPower = oppStrengthFor(opponent, c.time.year);
@@ -215,11 +298,22 @@
     // ONE gate, shared with engine.doActivity(). This used to re-derive three
     // rules inline, which meant every new rule had to be written twice or the
     // screen and the engine would disagree about what is legal.
+    $: soloCost = safeSoloCost(c);
+    $: practiceChamp = practiceChampFor(c);
+
     $: activities = ACTIVITIES.map(a => {
         // 'train' is legal here and routed to the Training screen by the engine,
         // so it is gated on everything EXCEPT the engine's own redirect.
         const g = safeGate(c, a);
-        return { act: a, disabled: !g.ok, reason: g.reason };
+        return {
+            act: a,
+            disabled: !g.ok,
+            reason: g.reason,
+            // Both are per-row so the markup never has to test the id twice.
+            cost: a.id === 'soloq' ? soloCost : null,
+            practice: a.id === 'champ_lab' ? practiceChamp : null,
+            namesChamp: a.id === 'champ_lab',
+        };
     });
 
     $: activityGroups = ACTIVITY_GROUPS
@@ -253,6 +347,8 @@
     $: table = safeTable(c);
     $: myRow = table.find(r => r.isMine) || null;
 
+    $: meta = readMeta(c);
+
     $: news = (Array.isArray(c.news) ? c.news : [])
         .filter(n => n && typeof n === 'object');
     $: shownNews = showAllNews ? news.slice(0, 40) : news.slice(0, 12);
@@ -278,6 +374,19 @@
         careerScreen.set(screen);
         if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
     }
+
+    // A bracket tie whose other half is undecided still renders a fixture, and
+    // the id on it resolves to nothing. Re-check through teamById rather than
+    // trusting the panel, so a stand-in can never open a scouting report.
+    function openScout(id) {
+        if (!id || typeof id !== 'string') return;
+        let real = false;
+        try { real = !!teamById(id); } catch (e) { real = false; }
+        if (!real) { showToast('That opponent has not been confirmed yet.', 'error'); return; }
+        playSound('click');
+        scoutId = id;
+    }
+    function closeScout() { scoutId = null; }
 
     function playMatch() {
         if (!nextFixture || busy) return;
@@ -418,6 +527,15 @@
                             <span class="fx-opp">{opponent.name}</span>
                         </div>
                         <p class="fx-desc">{oppLine}</p>
+                        {#if opponent.id}
+                            <button
+                                class="linkbtn scoutbtn"
+                                on:click={() => openScout(opponent.id)}
+                                aria-label="Scout {opponent.name}"
+                            >
+                                Scout them &#x2192;
+                            </button>
+                        {/if}
                     </div>
 
                     <div class="h2h" role="group" aria-label="Head to head team strength">
@@ -512,6 +630,33 @@
                                     {#if a.gold}<span class="act-tag act-tag-gold">{a.gold} gold</span>{/if}
                                     {#if a.once}<span class="act-tag">once a week</span>{/if}
                                     {#if a.minAge}<span class="act-tag">{a.minAge}+</span>{/if}
+                                    <!-- The repeat cost of solo queue, previewed before the click.
+                                         The grind number is the REPEAT charge only - a session also
+                                         takes the ordinary injury roll on top, so it is never
+                                         presented as the whole health risk. During a burnout bench
+                                         the engine suppresses the morale half, so the tilt tag is
+                                         suppressed with it rather than promising a cost nobody pays. -->
+                                    {#if entry.cost && entry.cost.grindHealth > 0}
+                                        <span class="act-tag act-tag-warn">
+                                            repeat costs {Math.round(entry.cost.grindHealth)} health
+                                        </span>
+                                    {/if}
+                                    {#if entry.cost && entry.cost.maxTilt !== 0 && !entry.cost.benched}
+                                        <span class="act-tag act-tag-warn">
+                                            losing costs {Math.abs(Math.round(entry.cost.maxTilt))} more morale
+                                        </span>
+                                    {/if}
+                                    {#if entry.namesChamp}
+                                        {#if entry.practice}
+                                            <span class="act-tag">
+                                                {entry.practice.fallback
+                                                    ? entry.practice.name + ' - your signature, by default'
+                                                    : 'practising ' + entry.practice.name}
+                                            </span>
+                                        {:else}
+                                            <span class="act-tag act-tag-warn">no champion to practise</span>
+                                        {/if}
+                                    {/if}
                                 </span>
                                 {#if entry.disabled}
                                     <span class="act-block">{entry.reason}</span>
@@ -689,6 +834,61 @@
             </section>
         {/if}
 
+        <!-- ---------- SPLIT META ---------- -->
+        <!-- A split-level fact with nowhere else to live: the draft reads it in
+             champion select, but the player has to be able to plan around it
+             from the week screen. Own role only - this is a status readout,
+             not a champion browser. -->
+        <section class="panel block" aria-labelledby="hub-meta">
+            <div class="blk-head">
+                <h2 class="lbl" id="hub-meta">Split Meta</h2>
+                <span class="mini">{meta.split} {meta.year}</span>
+            </div>
+
+            {#if meta.mine}
+                <div
+                    class="meta-mine"
+                    class:meta-strong={meta.mine.tier > 0}
+                    class:meta-weak={meta.mine.tier < 0}
+                >
+                    <span class="meta-mine-k">Your signature</span>
+                    <span class="meta-mine-n">{meta.mine.name}</span>
+                    <span class="meta-mine-t">{meta.mine.label}</span>
+                </div>
+            {/if}
+
+            {#if meta.ok && (meta.strong.length || meta.weak.length)}
+                <div class="meta-band">
+                    <span class="meta-k meta-strong">Strong</span>
+                    <span class="meta-list">
+                        {#each meta.strong as ch (ch.id)}
+                            <span class="meta-ch">{ch.name}</span>
+                        {:else}
+                            <span class="meta-ch meta-nil">nothing in your role</span>
+                        {/each}
+                    </span>
+                </div>
+                <div class="meta-band">
+                    <span class="meta-k meta-weak">Weak</span>
+                    <span class="meta-list">
+                        {#each meta.weak as ch (ch.id)}
+                            <span class="meta-ch">{ch.name}</span>
+                        {:else}
+                            <span class="meta-ch meta-nil">nothing in your role</span>
+                        {/each}
+                    </span>
+                </div>
+                <span class="meta-note">
+                    The meta redraws every split. A strong pick swings a game your way, a weak one
+                    works against you, and everything else is contested.
+                </span>
+            {:else}
+                <p class="empty small">
+                    No meta read for your role yet. It appears once your player is created.
+                </p>
+            {/if}
+        </section>
+
         <!-- ---------- OFFERS ---------- -->
         <section class="panel block offers" class:offers-live={offers.length > 0} aria-labelledby="hub-offers">
             <div class="off-in">
@@ -841,6 +1041,13 @@
     </div>
 </div>
 
+<!-- ---------- OPPONENT SCOUTING ---------- -->
+<!-- A component-local dialog, not a screen: reading the other side's roster
+     should not cost the player their place on the week board. -->
+{#if scoutId}
+    <ClubScout teamId={scoutId} year={nowYear} onClose={closeScout} />
+{/if}
+
 <style>
     /* ===================== LAYOUT ===================== */
     .hub {
@@ -928,6 +1135,7 @@
         margin: 8px 0 0;
         font-size: 12px; line-height: 1.65; color: #6a7d9d;
     }
+    .scoutbtn { margin-top: 9px; }
 
     .h2h {
         padding: 14px;
@@ -1035,6 +1243,7 @@
         padding: 2px 6px; border-radius: 5px;
     }
     .act-tag-gold { color: #eab308; border-color: rgba(234, 179, 8, 0.28); }
+    .act-tag-warn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.28); }
     .act {
         display: flex; flex-direction: column; gap: 7px;
         text-align: left;
@@ -1180,6 +1389,45 @@
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         font-size: 11px; font-weight: 800; color: var(--a);
     }
+
+    /* ===================== SIDE: SPLIT META ===================== */
+    .meta-mine {
+        display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+        padding: 9px 11px;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.5);
+        border-left: 2px solid #64748b;
+    }
+    .meta-mine.meta-strong { border-left-color: #4ade80; }
+    .meta-mine.meta-weak { border-left-color: #f87171; }
+    .meta-mine-k { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #334155; }
+    .meta-mine-n {
+        flex: 1; min-width: 0;
+        font-size: 12px; font-weight: 800; color: #dbe5f5;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .meta-mine-t {
+        font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+        color: #94a3b8;
+    }
+    .meta-mine.meta-strong .meta-mine-t { color: #4ade80; }
+    .meta-mine.meta-weak .meta-mine-t { color: #f87171; }
+
+    .meta-band { display: flex; align-items: baseline; gap: 9px; margin-top: 11px; }
+    .meta-k {
+        flex-shrink: 0; width: 42px;
+        font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
+    }
+    .meta-k.meta-strong { color: #4ade80; }
+    .meta-k.meta-weak { color: #f87171; }
+    .meta-list { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+    .meta-ch {
+        font-size: 9.5px; font-weight: 700; color: #8fa1c0;
+        background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.4);
+        padding: 2px 6px; border-radius: 5px;
+    }
+    .meta-ch.meta-nil { color: #475569; font-weight: 600; font-style: italic; }
+    .meta-note { display: block; margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #55688a; }
 
     /* ===================== SIDE: OFFERS ===================== */
     .offers-live { border-color: rgba(168, 85, 247, 0.32); }

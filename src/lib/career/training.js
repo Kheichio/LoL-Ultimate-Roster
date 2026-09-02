@@ -326,12 +326,111 @@ function traitLabel(player) {
     return list.length ? list.map(t => t.name).join(', ') : 'No trait yet';
 }
 
+// ---------------------------------------------------------------------------
+//  MAINTENANCE
+//  Training is not only how an attribute goes up, it is how it stays where it
+//  is. engine.checkDecline() takes points off after a bad split and skips any
+//  attribute that was actually drilled during it; the ledger it reads is
+//  flags.splitTrained, which completeDrill() writes and closeSplit() resets.
+//
+//  This lives here rather than in engine.js because engine.js already imports
+//  this file -- see the note on burnoutTrainingMult. Everything below is a
+//  pure read of the store, so it is safe from a tooltip or an SSR render.
+// ---------------------------------------------------------------------------
+
+/** Drills run on this attribute SINCE THE LAST SPLIT CLOSE. Never derived from
+ *  weekly.trained: startCareerWeek rebuilds weekly.* from a literal every week,
+ *  so that ledger cannot answer a question about a ten-week split. */
+export function trainedThisSplit(c, attrKey) {
+    const s = c || snap();
+    const map = (s && s.flags && s.flags.splitTrained) || {};
+    const n = Number(map[attrKey]);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * Points this attribute lost at the LAST split close.
+ *
+ * flags.decline is a career budget (`ovrLost`, `splits`) and carries no
+ * per-attribute record today, so this reads 0 for every attribute. It is
+ * written as a lookup rather than a literal 0 so that the day engine.js starts
+ * filing a per-attr row under flags.decline.attrs, every reader of
+ * trainingOverview() picks it up with no further change here. An unknown or
+ * rotten shape degrades to 0 -- a decline the UI cannot describe must cost the
+ * player nothing to look at.
+ */
+export function declinedThisSplit(c, attrKey) {
+    const s = c || snap();
+    const dec = (s && s.flags && s.flags.decline) || {};
+    const per = dec.attrs || dec.lastAttrs || null;
+    if (!per || typeof per !== 'object') return 0;
+    const n = Number(per[attrKey]);
+    return Number.isFinite(n) && n > 0 ? round2(n) : 0;
+}
+
+/** One attribute's maintenance state, as the training screen and the multiplier
+ *  breakdown both want it. `protected_` is deliberately the same boolean both
+ *  callers publish as `protected`. */
+export function attrMaintenance(c, attrKey) {
+    const s = c || snap();
+    const trained = trainedThisSplit(s, attrKey);
+    const name = ATTR_BY_KEY[attrKey] ? ATTR_BY_KEY[attrKey].name : String(attrKey || '');
+    return {
+        attr: attrKey,
+        trainedThisSplit: trained,
+        protected_: trained > 0,
+        declinedThisSplit: declinedThisSplit(s, attrKey),
+        status: trained > 0 ? 'protected' : 'exposed',
+        note: trained > 0
+            ? `${name} drilled ${trained}x this split -- protected from decline`
+            : `${name} has not been drilled this split -- exposed to decline`,
+    };
+}
+
+/** The split-wide version, for when the breakdown is asked about the player
+ *  rather than about one attribute. */
+function maintenanceSummary(s) {
+    const total = ATTR_KEYS.length;
+    let count = 0;
+    for (const k of ATTR_KEYS) if (trainedThisSplit(s, k) > 0) count += 1;
+    if (count >= total) {
+        return { status: 'protected', label: 'Fully maintained', note: 'Every attribute drilled this split -- none can decline' };
+    }
+    if (count > 0) {
+        return { status: 'partial', label: 'Partly maintained', note: `${count} of ${total} attributes drilled this split -- the other ${total - count} are exposed to decline` };
+    }
+    return { status: 'exposed', label: 'Not maintained', note: `Nothing drilled this split -- all ${total} attributes are exposed to decline` };
+}
+
+/**
+ * The maintenance row of the multiplier breakdown. It is a STATUS row: its
+ * factor is a neutral 1.0 so the column still multiplies out to exactly what
+ * trainingMultiplier() returns, and the sentence carries the whole meaning.
+ * Maintenance does not change how fast you improve, it changes whether what
+ * you already have is still there next split.
+ */
+function maintenanceRow(s, attrKey) {
+    const m = attrKey ? attrMaintenance(s, attrKey) : maintenanceSummary(s);
+    return {
+        key: 'maintenance',
+        label: attrKey ? (m.protected_ ? 'Maintained' : 'Not maintained') : m.label,
+        mult: 1,
+        note: m.note,
+        status: m.status,
+        protected: attrKey ? m.protected_ : m.status === 'protected',
+    };
+}
+
 /**
  * Every component of the player's training effectiveness, in the order the UI
  * should list them. Multiply the `mult` column together and you get exactly
  * what trainingMultiplier() returns -- that is the point of this function.
+ *
+ * `attrKey` is optional and changes nothing in the arithmetic: it only makes
+ * the maintenance row speak about one attribute instead of the whole split.
+ * trainingMultiplier() calls this with one argument and must keep working.
  */
-export function trainingMultiplierBreakdown(c) {
+export function trainingMultiplierBreakdown(c, attrKey) {
     const s = c || snap();
     const p = (s && s.player) || {};
 
@@ -365,6 +464,12 @@ export function trainingMultiplierBreakdown(c) {
         // a bug, not a mechanic.
         { key: 'burnout',   label: 'Burnt out',                     mult: burnoutTrainingMult(s),
                                                                     note: 'Weeks of not wanting to be here' },
+        // Same rule one line down: decline is the other half of what training
+        // is for, so it gets a row of its own rather than being a surprise at
+        // the split close. Neutral 1.0 on purpose -- the panel's contract is
+        // that multiplying this column reproduces the final multiplier exactly,
+        // and this row carries a STATUS, not a rate.
+        maintenanceRow(s, attrKey),
     ].map(row => ({ ...row, mult: round2(row.mult) }));
 }
 
@@ -557,12 +662,37 @@ export function canTrain(c, drill_) {
     const cur = (p.attrs && p.attrs[d.attr]) || 0;
     const attrName = ATTR_BY_KEY[d.attr] ? ATTR_BY_KEY[d.attr].name : d.attr;
     if (cur >= attrCeiling(p, d.attr)) {
-        // The ceiling is no longer the end of the road, so say where the road
-        // goes. Breakthroughs, the Evergreen perk and a performance camp all
-        // move this number; a drill never will.
+        // THE MAINTENANCE SESSION, and the one place this gate had to stop
+        // being a flat refusal.
+        //
+        // The old rule was "block rather than allow a guaranteed zero". That was
+        // right while a drill could only ever ADD, because a session that cannot
+        // pay out is a wasted slot. Decline changed what a drill is FOR: an
+        // attribute takes its split-close share unless it was drilled, and
+        // canTrain is the only thing standing between the player and writing
+        // flags.splitTrained. Refusing here meant an attribute AT its ceiling
+        // could never be protected -- so a career's BEST attributes, the ones it
+        // spent twelve years buying, were the only ones with no defence, and the
+        // player had no move at all. That is not a hard choice, it is a dead
+        // end, and it is the same shape as the three UI strings that used to
+        // call environmentCap a wall.
+        //
+        // So: at the ceiling and NOT yet protected, the drill is allowed and
+        // pays nothing but the protection. That is a real cost -- a slot, the
+        // energy and the gold, for zero points -- which is exactly the tradeoff
+        // that gives the top of a career something to spend slots on. Once the
+        // attribute IS protected the session would buy literally nothing, so the
+        // original refusal stands.
+        if (trainedThisSplit(s, d.attr) > 0) {
+            return {
+                ok: false,
+                reason: `${attrName} is at your ceiling and already drilled this split, so it is protected. Only a breakthrough season, a legacy perk or a performance camp raises the ceiling itself.`,
+            };
+        }
         return {
-            ok: false,
-            reason: `${attrName} is at your ceiling. Only a breakthrough season, a legacy perk or a performance camp raises it now.`,
+            ok: true,
+            maintenance: true,
+            reason: `${attrName} is at your ceiling, so this session adds nothing -- it holds the line. Drill it and it is protected from this split's decline.`,
         };
     }
     if (cur >= d.attrCap) {
@@ -709,6 +839,9 @@ export function completeDrill(drill_, score01) {
     const score = clamp(score01, 0, 1);
     const res = runDrill(before, d, score);
     const ovrBefore = calcOVR(before.player.attrs, before.player.role);
+    // Read BEFORE the store write below, so this is "was it already protected
+    // when I sat down", not "is it protected now" (which is always true).
+    const firstOfSplit = trainedThisSplit(before, d.attr) === 0;
 
     // Pay first. Either of these failing means the state moved under us between
     // canTrain and here, so bail without half-applying the session.
@@ -724,12 +857,28 @@ export function completeDrill(drill_, score01) {
 
     // Book the session against this week's club schedule. clubSlotsLeft is
     // mirrored so any screen reading it stays truthful.
+    //
+    // flags.splitTrained is booked in the SAME update, because this is the one
+    // function that has already proved a paid session happened -- the slot, the
+    // gold and the energy are all spent by the lines above. It cannot be
+    // derived from weekly.trained afterwards: startCareerWeek rebuilds weekly.*
+    // from a literal every week, so that ledger is empty by the second week of
+    // a split and could never answer "did you drill this attribute this split".
+    // engine.closeSplit reads it to decide which attributes checkDecline skips,
+    // and resets it there.
     career.update(c => ({
         ...c,
         weekly: {
             ...c.weekly,
             trained: { ...c.weekly.trained, [d.attr]: (c.weekly.trained[d.attr] || 0) + 1 },
             clubSlotsLeft: Math.max(0, (c.weekly.clubSlotsLeft || 0) - 1),
+        },
+        flags: {
+            ...c.flags,
+            splitTrained: {
+                ...((c.flags && c.flags.splitTrained) || {}),
+                [d.attr]: (Number(c.flags && c.flags.splitTrained && c.flags.splitTrained[d.attr]) || 0) + 1,
+            },
         },
     }));
 
@@ -771,9 +920,15 @@ export function completeDrill(drill_, score01) {
         }
     }
 
+    // A meter that moves with no line explaining it reads as a bug, and this
+    // session just moved an attribute OUT of range of the split-close decline.
+    // Said once, on the drill that actually earned the protection, rather than
+    // on every repeat of it.
     logWeek(
         d.name,
-        injured ? `${gainText} -- picked up a knock` : gainText,
+        injured
+            ? `${gainText} -- picked up a knock`
+            : (firstOfSplit ? `${gainText} -- ${attrName} protected from this split's decline` : gainText),
         injured ? '#ef4444' : (ATTR_BY_KEY[d.attr] ? ATTR_BY_KEY[d.attr].color : '#3b82f6'),
     );
 
@@ -805,6 +960,10 @@ export function completeDrill(drill_, score01) {
         sharpness: res.sharpness,
         band: trainingBand(score),
         goldSpent: d.goldCost || 0,
+        // Maintenance half of the result, for the result panel.
+        firstOfSplit,
+        protected: true,
+        trainedThisSplit: trainedThisSplit(after, d.attr),
     };
 }
 
@@ -819,12 +978,27 @@ export function trainingOverview(c) {
     return ATTRS.map(a => {
         const cur = (p.attrs && p.attrs[a.key]) || 0;
         const ceiling = attrCeiling(p, a.key);
+        // The maintenance half, resolved here so the Training screen never has
+        // to import engine.js for it -- engine.js imports this file and the
+        // cycle would be real (see the note above burnoutTrainingMult).
+        const m = attrMaintenance(s, a.key);
         return {
             ...a,
             value: cur,
             ceiling,
             headroom: Math.max(0, ceiling - cur),
             trainedThisWeek: (s && s.weekly && s.weekly.trained && s.weekly.trained[a.key]) || 0,
+            // Drills run on this attribute since the last split close. Survives
+            // the weekly rebuild of weekly.*, which trainedThisWeek does not.
+            trainedThisSplit: m.trainedThisSplit,
+            // True while this attribute is out of range of the split-close
+            // decline. One drill is the whole requirement.
+            protected: m.protected_,
+            maintenance: m.status,
+            maintenanceNote: m.note,
+            // Points taken off at the last split close. 0 for everything today:
+            // flags.decline records a career budget, not a per-attribute row.
+            declinedThisSplit: m.declinedThisSplit,
             // Above the soft cap an unsigned player is running at 15% of normal.
             // environmentCap(), not the constant: the Self-Made perk moves it.
             throttled: !p.clubId && cur >= environmentCap(p),
