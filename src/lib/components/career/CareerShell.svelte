@@ -15,7 +15,8 @@
         careerOVR, careerPotOVR, currentTeam, currentPhase, soloRank,
         initCareer, flushCareer, saveCareer,
     } from '../../stores/career.js';
-    import { maybeAutoPublish } from '../../stores/careerBoard.js';
+    import { maybeAutoPublish, autoSyncBoard } from '../../stores/careerBoard.js';
+    import { currentUser } from '../../stores/auth.js';
     import { activeSlot } from '../../utils/storage.js';
     import {
         CAREER_SCREENS, REGION_BY_ID, ROLE_BY_ID, ENERGY_MAX, HEALTH_MAX,
@@ -44,22 +45,38 @@
 
     // Career mode owns the whole viewport while it is open; the roster shell's
     // footer spacing does not apply here.
-    const autoSave = setInterval(() => saveCareer(), 60 * 1000);
+    // The board rides along with the autosave, deliberately: the same tick that
+    // makes a career durable on this device makes it current on the board, so
+    // "what is published" and "what is saved" can never be a minute apart in
+    // opposite directions. autoSyncBoard() is cheap when there is nothing to do
+    // -- it refuses on a content signature, not on a timer alone -- and it is
+    // inert with no Firestore, signed out, or under SSR.
+    // FLUSH, NOT SAVE, BECAUSE THE UPLOADER READS THE DISK. saveCareer() only
+    // SCHEDULES a write 120ms out; the board publishes what careerSlotRaw()
+    // finds in localStorage, never the store object it was handed. Calling the
+    // debounced saver and then reading the file in the same tick publishes the
+    // state from before this tick's changes -- self-correcting inside a
+    // one-minute timer, but free to avoid, and fatal on the event path below.
+    // flushCareer() is safe here for the same reason it is safe in onDestroy:
+    // it refuses to write a career that has not been created.
+    const autoSave = setInterval(() => {
+        flushCareer();
+        autoSyncBoard();
+    }, 60 * 1000);
     onDestroy(() => { clearInterval(autoSave); flushCareer(); });
 
-    // Keep a PUBLISHED board entry current, scoped to real career EVENTS rather
-    // than to the store as a whole. history.length increments exactly once per
-    // split close, so this fires at a split close and at retirement and nowhere
-    // else -- never on a gold grant, never on a week tick, never on a view.
+    // Keep the ACTIVE slot's entry current on real career EVENTS as well as on
+    // the timer. history.length increments exactly once per split close, so this
+    // fires at a split close and at retirement and nowhere else -- never on a
+    // gold grant, never on a week tick, never on a view. It exists because those
+    // are the two moments the ranked fields move a long way at once, and waiting
+    // out the timer for them would show a stale row on the one screen a player
+    // is most likely to go and look at straight afterwards.
     //
     // It lives here because CareerShell is the one place initCareer() has
     // provably run, and because putting it in engine.js or awards.js would drag
     // Firebase into the career subsystem, which today imports nothing from auth
     // or Firebase at all.
-    //
-    // maybeAutoPublish() is itself a no-op unless the account already has a
-    // published row whose careerId matches this save, so nothing is ever put on
-    // the board without an explicit first press.
     let _pubSig = '';
     $: {
         const sig = $career.created
@@ -67,8 +84,29 @@
             : '';
         if (sig && sig !== _pubSig) {
             _pubSig = sig;
+            // THE FLUSH IS LOAD-BEARING HERE, not tidiness. This block runs in
+            // the microtask right after the store update, while saveCareer()
+            // has only scheduled its write 120ms out -- and the uploader reads
+            // the SLOT ON DISK, not the career it is handed. Without this it
+            // publishes the state from before the split close that triggered
+            // it: a row that is one whole split behind, at the exact two
+            // moments (a split closing, a career retiring) the ranked fields
+            // move furthest and the player is most likely to go and look.
+            flushCareer();
             maybeAutoPublish($career, activeSlot('career'));
         }
+    }
+
+    // AND ON THE ACCOUNT. Firebase reports the signed-in user asynchronously
+    // after a page load, so at the moment this component mounts there is very
+    // often nobody signed in yet -- a sweep fired only from onMount would miss
+    // every reload. Reacting to the store catches the initial resolution, a
+    // sign-in from the menu, and a switch of account, which is also the moment
+    // the previous account's cached entries have to stop being trusted.
+    let _syncAccount = undefined;
+    $: if ($currentUser !== _syncAccount) {
+        _syncAccount = $currentUser;
+        if ($currentUser) autoSyncBoard({ force: true });
     }
 
     $: p = $career.player;

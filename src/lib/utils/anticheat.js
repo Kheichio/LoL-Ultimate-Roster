@@ -174,7 +174,12 @@ export const CAREER_ENUMS = {
 // board load. Adding a row field is still a two-stage deploy for that reason —
 // re-publish the rules by hand FIRST, then ship the client.
 export const CAREER_ROW_KEYS = 25;
-export const CAREER_DOSSIER_KEYS = 4;
+// 5, not 4: the dossier carries `hidden` as well as { v, careerId, blob,
+// updatedAt }. It is the only durable board state the client keeps — hiding a
+// career deletes its ranking row and marks this document — and it must be
+// present on EVERY dossier write, because the rules deny on dereferencing a key
+// the document does not carry.
+export const CAREER_DOSSIER_KEYS = 5;
 
 // Maximum realistic values — generous enough for legit play, low enough to flag hacks
 export const BOUNDS = {

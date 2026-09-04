@@ -1587,10 +1587,25 @@ function snapshotStorage() {
 
 AUTH.currentUser.set({ uid: 'boardcheck-uid', displayName: 'Board Tester' });
 
-/** Records every collection/doc/set/delete/get. Nothing is stored: the point is
- *  the CALL LOG, not a working database. */
-function makeDbStub() {
+/**
+ * Records every collection/doc/set/delete/get, AND remembers what was written.
+ *
+ * It used to remember nothing, and that turned out to hide the thing most worth
+ * checking. The uploader decides whether to write by comparing a signature of
+ * what it is about to send against a signature of what the server already
+ * holds -- so a stub whose get() always answers "no such document" makes every
+ * sweep look like a first publish, and the entire skip-if-unchanged path goes
+ * untested while reporting green. The same amnesia hides the cross-device case,
+ * where a row disappearing between two reads is the whole signal.
+ *
+ * `docs` is shared between stubs on purpose: the blocks below are one
+ * continuous session against one world, and a fresh Map per block would put
+ * every one of them back in the amnesiac state.
+ */
+function makeDbStub(docs) {
+    const store = docs instanceof Map ? docs : new Map();
     const calls = [];
+    const key = (c, id) => c + '/' + id;
     const api = {
         collection(name) {
             calls.push({ op: 'collection', name });
@@ -1598,11 +1613,23 @@ function makeDbStub() {
                 doc(id) {
                     calls.push({ op: 'doc', collection: name, id });
                     return {
-                        async set(data) { calls.push({ op: 'set', collection: name, id, data }); },
-                        async delete() { calls.push({ op: 'delete', collection: name, id }); },
+                        async set(data) {
+                            calls.push({ op: 'set', collection: name, id, data });
+                            // A deep copy, because Firestore hands back a fresh
+                            // object and the caller is free to mutate what it
+                            // sent. Sharing the instance would let a later edit
+                            // silently rewrite history.
+                            store.set(key(name, id), JSON.parse(JSON.stringify(data)));
+                        },
+                        async delete() {
+                            calls.push({ op: 'delete', collection: name, id });
+                            store.delete(key(name, id));
+                        },
                         async get() {
                             calls.push({ op: 'get', collection: name, id });
-                            return { exists: false, id, data: () => ({}) };
+                            const has = store.has(key(name, id));
+                            const data = has ? store.get(key(name, id)) : {};
+                            return { exists: has, id, data: () => JSON.parse(JSON.stringify(data)) };
                         },
                     };
                 },
@@ -1612,8 +1639,11 @@ function makeDbStub() {
             };
         },
     };
-    return { api, calls };
+    return { api, calls, store };
 }
+
+/** The one world every stub in this section writes into. */
+const DB_WORLD = new Map();
 
 const beforeStorage = snapshotStorage();
 const beforeStore = JSON.stringify(readStore(ST.career));
@@ -1625,7 +1655,7 @@ const goldBefore = { 1: ST.careerSlotRaw(1).money.gold, 2: ST.careerSlotRaw(2).m
 truthy('the two slots hold different gold to begin with', goldBefore[1] !== goldBefore[2],
     'If both slots looked identical, reading the wrong one would be invisible below.');
 
-const stub = makeDbStub();
+const stub = makeDbStub(DB_WORLD);
 win.fbDb = stub.api;
 
 const pub = await CB.publishCareerSlot(2);
@@ -1648,10 +1678,19 @@ eq('the DOSSIER is written first', sets[0] && sets[0].collection, 'careerBoardPr
     + 'mechanism. A failed row write leaves a dossier nobody can rank -- harmless. The reverse leaves '
     + 'a ranked row pointing at a stale dossier.');
 eq('the RANKING ROW is written second', sets[1] && sets[1].collection, 'careerBoard');
-eq('both documents are keyed by the uid', (sets[0] && sets[0].id) + '/' + (sets[1] && sets[1].id),
-    'boardcheck-uid/boardcheck-uid',
-    'The document path IS the ownership proof; no rule ever parses a doc id.');
-falsy('nothing was deleted', stub.calls.some(c => c.op === 'delete'));
+eq('both documents are keyed by uid AND SLOT', (sets[0] && sets[0].id) + '/' + (sets[1] && sets[1].id),
+    'boardcheck-uid__2/boardcheck-uid__2',
+    'ONE DOCUMENT PER SAVE SLOT. Keying on the uid alone is what made a second career replace the '
+    + 'first. The path is still the ownership proof -- firestore.rules rebuilds these three ids from '
+    + 'request.auth.uid rather than parsing this one.');
+eq('the client and the rules build the SAME entry id', B.entryIdFor('boardcheck-uid', 2),
+    'boardcheck-uid__2',
+    'ownsCareerSlot() in firestore.rules is three literal comparisons against uid + "__1".."__3". '
+    + 'A separator that disagreed with entryIdFor would deny every publish, silently and for ever.');
+falsy('nothing was deleted', stub.calls.some(c => c.op === 'delete'),
+    'The legacy pre-slot document is only purged when a read actually FOUND one. A blind delete '
+    + 'would spend two writes a session on every account that has never published, and would make '
+    + 'this assertion untestable.');
 
 // The document that actually went over the wire is the one the rules judge.
 if (sets[1]) {
@@ -1677,35 +1716,215 @@ eq('asking the question wrote nothing', snapshotStorage(), beforeStorage,
     'A published FLAG in the save would survive a slot delete, a cloud restore and a sign-out, and '
     + 'every one of those makes it a lie.');
 
-// ---- unpublish, and the auto refresh --------------------------------------
+// ---- hide, and the automatic uploader -------------------------------------
+//  HIDE IS NOT UNPUBLISH. It deletes the ranking row -- that is what takes the
+//  career off the board -- and then REWRITES the dossier with hidden:true. If it
+//  deleted both, the career would be back within a minute: publication is
+//  automatic now, so the only thing that can keep a career down is a durable
+//  marker the uploader consults. That marker cannot live in the save (this file
+//  is read-side machinery) and it cannot live on the row (the row is gone), so
+//  it lives in the one document that is left.
 {
-    const stub2 = makeDbStub();
+    const stub2 = makeDbStub(DB_WORLD);
     win.fbDb = stub2.api;
-    const un = await CB.unpublishCareer();
-    truthy('unpublishCareer succeeded', un.ok === true);
+    const un = await CB.hideCareerSlot(2);
+    truthy('hideCareerSlot succeeded', un.ok === true);
+
     const dels = stub2.calls.filter(c => c.op === 'delete');
-    eq('exactly two documents were deleted', dels.length, 2);
-    eq('the RANKING ROW is deleted first', dels[0] && dels[0].collection, 'careerBoard',
-        'The exact inverse of publish: the row is what makes a career visible, so it goes even if the '
-        + 'second delete never lands.');
-    eq('the dossier is deleted second', dels[1] && dels[1].collection, 'careerBoardProfiles');
-    eq('unpublishing wrote nothing to disk', snapshotStorage(), beforeStorage);
-    eq('unpublishing did not touch the career store', JSON.stringify(readStore(ST.career)), beforeStore);
+    eq('exactly one document was deleted', dels.length, 1);
+    eq('the RANKING ROW is what gets deleted', dels[0] && dels[0].collection, 'careerBoard',
+        'The row is what makes a career visible and rankable, so it goes first and unconditionally.');
+    eq('the deleted row is the right SLOT', dels[0] && dels[0].id, 'boardcheck-uid__2',
+        'Hiding slot 2 must not touch slot 1 or slot 3. They are three independent entries.');
+
+    const hideSets = stub2.calls.filter(c => c.op === 'set');
+    eq('the dossier is REWRITTEN, not deleted', hideSets.length, 1);
+    eq('...in the dossier collection', hideSets[0] && hideSets[0].collection, 'careerBoardProfiles');
+    eq('...at the same slot', hideSets[0] && hideSets[0].id, 'boardcheck-uid__2');
+    truthy('...carrying hidden: true', hideSets[0] && hideSets[0].data.hidden === true,
+        'This flag IS the feature. Without it the uploader re-lists the career on the next sweep, '
+        + 'and on every other device the player signs in on.');
+    eq('...with the blob emptied', hideSets[0] && hideSets[0].data.blob, '',
+        'A hidden career must not leave a readable copy of itself at a guessable public path. The '
+        + 'rules no longer require blob.size() > 0 for exactly this write.');
+    eq('the hidden dossier is still the closed field set',
+        hideSets[0] ? Object.keys(hideSets[0].data).length : 0, AC.CAREER_DOSSIER_KEYS);
+    truthy('isSlotHidden(2) is true after hiding it', CB.isSlotHidden(2));
+    falsy('isSlotHidden(1) is unaffected', CB.isSlotHidden(1),
+        'Hiding one slot must say nothing about the others.');
+    eq('hiding wrote nothing to disk', snapshotStorage(), beforeStorage);
+    eq('hiding did not touch the career store', JSON.stringify(readStore(ST.career)), beforeStore);
 }
 {
-    // Nothing may FIRST publish from the background refresh -- it only ever
-    // keeps a row the player opted into current.
-    const stub3 = makeDbStub();
+    // A HIDDEN SLOT IS NEVER RE-PUBLISHED BY THE UPLOADER. This is the whole
+    // contract of the Hide button, and it is silent when broken -- the career
+    // simply reappears a minute later and the player cannot tell whether they
+    // mis-clicked.
+    const stub3 = makeDbStub(DB_WORLD);
     win.fbDb = stub3.api;
-    const fired = await CB.maybeAutoPublish(readStore(ST.career), 1);
-    falsy('maybeAutoPublish does NOT publish an unpublished career', fired,
-        'It requires an existing row for this account; nothing here initiates a first publish.');
-    eq('maybeAutoPublish wrote nothing at all', stub3.calls.filter(c => c.op === 'set').length, 0);
-    eq('maybeAutoPublish wrote nothing to disk', snapshotStorage(), beforeStorage);
+    const fired = await CB.maybeAutoPublish(ST.careerSlotRaw(2), 2);
+    falsy('maybeAutoPublish REFUSES a hidden slot', fired);
+    eq('...and wrote nothing at all', stub3.calls.filter(c => c.op === 'set').length, 0);
+    eq('...and wrote nothing to disk', snapshotStorage(), beforeStorage);
+
+    // And it comes back on a press, because clearing the flag alone would leave
+    // the button looking broken for a minute.
+    const stub3b = makeDbStub(DB_WORLD);
+    win.fbDb = stub3b.api;
+    const shown = await CB.showCareerSlot(2, { silent: true });
+    truthy('showCareerSlot re-publishes immediately', shown.ok === true);
+    const backSets = stub3b.calls.filter(c => c.op === 'set');
+    eq('...writing both documents again', backSets.length, 2);
+    truthy('...with hidden back to false', backSets[0] && backSets[0].data.hidden === false);
+    truthy('...and a real blob', !!(backSets[0] && backSets[0].data.blob.length > 10));
+    falsy('isSlotHidden(2) is false again', CB.isSlotHidden(2));
+    eq('showing wrote nothing to disk', snapshotStorage(), beforeStorage);
+}
+{
+    // PUBLICATION IS NO LONGER AN OPT-IN. The old contract was the exact
+    // opposite -- "nothing may FIRST publish from the background refresh" -- and
+    // it is asserted here in its new form so the change is deliberate rather
+    // than a regression somebody has to guess at.
+    const stub4 = makeDbStub(DB_WORLD);
+    win.fbDb = stub4.api;
+    const fired = await CB.maybeAutoPublish(ST.careerSlotRaw(1), 1);
+    truthy('maybeAutoPublish DOES publish a slot that has never been up', fired,
+        'Every career goes on the board on its own now; the only decision left to the player is Hide.');
+    const autoSets = stub4.calls.filter(c => c.op === 'set');
+    eq('...writing exactly two documents', autoSets.length, 2);
+    eq('...the dossier first', autoSets[0] && autoSets[0].collection, 'careerBoardProfiles');
+    eq('...both at slot 1', (autoSets[0] && autoSets[0].id) + '/' + (autoSets[1] && autoSets[1].id),
+        'boardcheck-uid__1/boardcheck-uid__1');
+    eq('...for the career actually in slot 1', autoSets[1] && autoSets[1].data.handle, 'SlotOne',
+        'Reading the wrong slot would put one career on the board under the other one\'s id.');
+    eq('the automatic upload wrote nothing to disk', snapshotStorage(), beforeStorage);
+    eq('the automatic upload did not touch the career store',
+        JSON.stringify(readStore(ST.career)), beforeStore);
+
+    // ...and having just written it, it must not write it again. THE CONTENT
+    // SIGNATURE IS THE REAL GATE, and this proves that rather than the timer:
+    // autoSyncBoard({force:true}) skips both rate limits, so anything that
+    // still refuses is refusing on content. A timer alone would upload three
+    // unchanged documents a minute for ever, and a signature that never matched
+    // -- which is what hashing the objects wholesale would give, since
+    // sanitizeRow adds fields buildBoardDocs never wrote -- would look
+    // identical from the outside.
+    const stub4b = makeDbStub(DB_WORLD);
+    win.fbDb = stub4b.api;
+    const again = await CB.autoSyncBoard({ force: true });
+    falsy('a forced sweep does NOT rewrite unchanged documents', again);
+    eq('...writing nothing at all', stub4b.calls.filter(c => c.op === 'set').length, 0,
+        'The signature must read the same for a row built by buildBoardDocs and the same row read '
+        + 'back through sanitizeRow, or "Sync now" becomes a write amplifier.');
+    truthy('...but it did re-read', stub4b.calls.some(c => c.op === 'get'),
+        'A sweep that skipped the read as well would never notice a change made on another device.');
+}
+{
+    // THE THREE SLOTS ARE INDEPENDENT. This is the bug the whole change exists
+    // to fix: publishing a second career used to delete the first.
+    const stub5 = makeDbStub(DB_WORLD);
+    win.fbDb = stub5.api;
+    await CB.publishCareerSlot(1, { silent: true });
+    await CB.publishCareerSlot(2, { silent: true });
+    const ids = stub5.calls.filter(c => c.op === 'set' && c.collection === 'careerBoard').map(c => c.id);
+    eq('two slots published to two different documents', ids.join(','),
+        'boardcheck-uid__1,boardcheck-uid__2',
+        'One document per uid meant the second career overwrote the first and the board could only '
+        + 'ever show one of a player\'s three.');
+    falsy('publishing a second slot deleted nothing', stub5.calls.some(c => c.op === 'delete'),
+        'The old flow deleted the previous entry, by design. Nothing may do that now.');
+    const entries = readStore(CB.myBoardEntries);
+    truthy('both entries are held at once', !!entries[1] && !!entries[2]);
+    eq('...under their own slot numbers', entries[1].slot + '/' + entries[2].slot, '1/2');
+    truthy('...and remember which account they belong to',
+        entries[1].uid === 'boardcheck-uid' && entries[2].uid === 'boardcheck-uid',
+        'sanitizeRow parses the account out of the path so all three of a player\'s rows can be '
+        + 'marked "(You)" -- markMine compares on uid, not on the entry id.');
+    eq('publishing two slots wrote nothing to disk', snapshotStorage(), beforeStorage);
+}
+{
+    // ANOTHER DEVICE HID IT. This is the one case a device-local flag cannot
+    // cover and the reason `hidden` is a field on the dossier at all: the
+    // player hides a career on their phone, and the desktop that is still open
+    // must not put it back inside the minute.
+    //
+    // Reaching in and editing the world directly is the point -- it is exactly
+    // what a second client does, and there is no other way to express "somebody
+    // else changed this" from inside one session.
+    DB_WORLD.delete('careerBoard/boardcheck-uid__1');
+    DB_WORLD.set('careerBoardProfiles/boardcheck-uid__1',
+        { v: 1, careerId: 'cWHATEVER', blob: '', hidden: true, updatedAt: 1 });
+
+    const stub6 = makeDbStub(DB_WORLD);
+    win.fbDb = stub6.api;
+    const wrote = await CB.autoSyncBoard({ force: true });
+
+    falsy('a career hidden on ANOTHER device is not re-listed', wrote);
+    falsy('...and no row was written for it',
+        stub6.calls.some(c => c.op === 'set' && c.collection === 'careerBoard'
+            && c.id === 'boardcheck-uid__1'),
+        'The session believed slot 1 was up and not hidden. A row it had disappearing is the only '
+        + 'signal that belief is stale, and it must trigger a dossier re-read rather than a re-publish.');
+    truthy('...the dossier WAS re-read to find that out',
+        stub6.calls.some(c => c.op === 'get' && c.collection === 'careerBoardProfiles'
+            && c.id === 'boardcheck-uid__1'),
+        'Skipping the read because the flag was already "known" is precisely the bug: what was known '
+        + 'is now out of date.');
+    truthy('isSlotHidden(1) now reports the other device\'s decision', CB.isSlotHidden(1));
+    eq('learning that wrote nothing to disk', snapshotStorage(), beforeStorage);
+
+    // And a slot whose row vanished with NO hidden marker is a genuinely
+    // deleted entry, which SHOULD go back up -- otherwise a lost write is
+    // permanent. The two cases are told apart by the dossier and nothing else.
+    DB_WORLD.delete('careerBoard/boardcheck-uid__2');
+    DB_WORLD.delete('careerBoardProfiles/boardcheck-uid__2');
+    const stub7 = makeDbStub(DB_WORLD);
+    win.fbDb = stub7.api;
+    await CB.autoSyncBoard({ force: true });
+    truthy('a row that vanished with no hidden marker IS re-published',
+        stub7.calls.some(c => c.op === 'set' && c.collection === 'careerBoard'
+            && c.id === 'boardcheck-uid__2'),
+        'Treating every disappearance as a hide would make one lost write permanent, and the player '
+        + 'would have no button that fixes it.');
+}
+{
+    // The entry id round trip, with the shapes that actually reach it.
+    const cases = [
+        ['abc__1', 'abc', 1],
+        ['abc__3', 'abc', 3],
+        // A uid containing a single underscore -- legal in a Firebase uid, and
+        // the reason the separator is two of them.
+        ['a_b__2', 'a_b', 2],
+        // Pre-slot documents: a bare uid, which must still resolve and render.
+        ['abc', 'abc', 0],
+        // Out of range, and not a number. Neither may be trusted as a slot.
+        ['abc__4', 'abc__4', 0],
+        ['abc__0', 'abc__0', 0],
+        ['abc__x', 'abc__x', 0],
+        ['__1', '__1', 0],
+    ];
+    for (const [id, uid, slot] of cases) {
+        const got = B.parseEntryId(id);
+        eq('parseEntryId(' + JSON.stringify(id) + ')', got.uid + '/' + got.slot, uid + '/' + slot,
+            'A doc id is remote input on every row but the viewer\'s own. It is parsed for DISPLAY '
+            + 'only -- the rules already proved ownership from the path -- but a mis-parse still '
+            + 'mislabels whose career a row is.');
+    }
+    for (const n of [1, 2, 3]) {
+        eq('entryIdFor round trips slot ' + n, B.parseEntryId(B.entryIdFor('someuid', n)).slot, n);
+    }
+    // Rot: sanitizeRow must never throw on an id it cannot make sense of.
+    for (const junk of [null, undefined, '', 7, {}, [], '__', 'x'.repeat(400)]) {
+        let r = null;
+        try { r = B.sanitizeRow(junk, {}); }
+        catch (e) { bad('sanitizeRow survives id ' + JSON.stringify(junk), 'threw: ' + e.message); continue; }
+        truthy('sanitizeRow(' + JSON.stringify(junk) + ') yields string ids',
+            typeof r.entryId === 'string' && typeof r.uid === 'string');
+    }
 }
 {
     // And it must survive every rot shape careerRender parks in the store.
-    const stub4 = makeDbStub();
+    const stub4 = makeDbStub(DB_WORLD);
     win.fbDb = stub4.api;
     for (const shape of [null, undefined, {}, 'x', 7, { created: true }, { created: true, player: null },
         { created: true, history: null }, { created: true, flags: null }]) {
@@ -1738,7 +1957,7 @@ eq('asking the question wrote nothing', snapshotStorage(), beforeStorage,
 {
     // signed out
     AUTH.currentUser.set(null);
-    win.fbDb = makeDbStub().api;
+    win.fbDb = makeDbStub(DB_WORLD).api;
     eq('publishing signed out is refused', (await CB.publishCareerSlot(2)).code, 'signed-out');
     eq('an empty slot is refused', (await (async () => {
         AUTH.currentUser.set({ uid: 'boardcheck-uid', displayName: 'Board Tester' });
@@ -1784,7 +2003,7 @@ const LINT_FILES = [
  *  this a call site, which is what keeps `import { blankCareer }` legal. */
 function writerCall(fn) { return new RegExp('(^|[^\\w$])' + fn + '\\s*\\(', 'm'); }
 /** A store write on the career store specifically. Here a preceding dot DOES
- *  matter: myBoardRow.set() and _pages.set() are legitimate and constant. */
+ *  matter: myBoardEntries.set() and _pages.set() are legitimate and constant. */
 function storeCall(prop) { return new RegExp('(^|[^\\w.$])career\\s*\\.\\s*' + prop + '\\s*\\(', 'm'); }
 
 // A lint that matches nothing is indistinguishable from a clean codebase, which
@@ -1802,7 +2021,7 @@ function storeCall(prop) { return new RegExp('(^|[^\\w.$])career\\s*\\.\\s*' + p
     falsy('lint self-test: a property read is NOT caught', writerCall('retire').test('if (flags.retired) {}'));
     truthy('lint self-test: career.set is caught', storeCall('set').test('career.set(blankCareer());'));
     truthy('lint self-test: career.update is caught', storeCall('update').test('  career.update(x => x);'));
-    falsy('lint self-test: another store\'s set is NOT caught', storeCall('set').test('myBoardRow.set(row);'));
+    falsy('lint self-test: another store\'s set is NOT caught', storeCall('set').test('myBoardEntries.set(row);'));
     falsy('lint self-test: a namespaced career.set is NOT confused',
         storeCall('set').test('_pages.set(key, rows);'));
     truthy('lint self-test: comments are stripped',
@@ -1848,6 +2067,45 @@ for (const rel of LINT_FILES) {
     truthy('CareerBoard.svelte guards on window.fbDb, not typeof window',
         /window\s*&&\s*window\.fbDb|window\.fbDb/.test(body),
         'careerRender sets globalThis.window and never defines fbDb.');
+}
+
+// ---- the ranked table may never be keyed on the ACCOUNT --------------------
+//  NO OTHER HARNESS CAN SEE THIS. Svelte's SSR generator discards each-block
+//  keys entirely, so careerRender compiles the same file with zero occurrences
+//  of validate_each_keys and 1356 clean renders prove nothing about it; and
+//  svelteCheck compiles in SSR mode too, while a duplicate key is a RUNTIME
+//  error. So it is a text lint, and it is here because one account now
+//  legitimately owns up to three rows that all carry the same uid: keying on
+//  the account throws "Cannot have duplicate keys in a keyed each" in dev, and
+//  in a production build mounts one shared block twice and silently drops a
+//  career out of the table. This shipped once already.
+{
+    const cbv = fs.readFileSync(path.join(ROOT, 'src', 'lib', 'components', 'career', 'CareerBoard.svelte'), 'utf8');
+    const eachKeys = [];
+    const re = /\{#each\s+([^}]*?)\s+as\s+[^}(]*\(\s*([A-Za-z0-9_$.]+)\s*\)\s*\}/g;
+    let m;
+    while ((m = re.exec(cbv))) eachKeys.push({ list: m[1].trim(), key: m[2] });
+
+    truthy('the lint found the keyed each blocks at all', eachKeys.length >= 3,
+        'A lint that matches nothing is indistinguishable from a clean codebase.');
+
+    const rowBlocks = eachKeys.filter(e => /shownRows|boardRows|\brows\b/.test(e.list));
+    truthy('the ranked table is a keyed each over the rows', rowBlocks.length >= 1);
+    for (const e of rowBlocks) {
+        falsy('the ranked table is NOT keyed on the account (' + e.list + ')', /\buid$/.test(e.key),
+            'One account holds up to three rows and sanitizeRow gives all three the same uid. '
+            + 'decorate() de-duplicates entryId for exactly this.');
+        eq('the ranked table is keyed on the ENTRY id (' + e.list + ')', e.key, 'r.entryId');
+    }
+    // Positive and negative controls for the pattern itself.
+    truthy('lint self-test: a uid key IS caught',
+        /\{#each\s+([^}]*?)\s+as\s+[^}(]*\(\s*([A-Za-z0-9_$.]+)\s*\)\s*\}/.test('{#each shownRows as r (r.uid)}'));
+    {
+        const t = /\{#each\s+([^}]*?)\s+as\s+[^}(]*\(\s*([A-Za-z0-9_$.]+)\s*\)\s*\}/.exec('{#each shownRows as r (r.uid)}');
+        eq('lint self-test: it extracts the key expression', t && t[2], 'r.uid');
+        falsy('lint self-test: an unkeyed each is not matched',
+            /\{#each\s+([^}]*?)\s+as\s+[^}(]*\(\s*([A-Za-z0-9_$.]+)\s*\)\s*\}/.test('{#each shownRows as r}'));
+    }
 }
 
 // ---- CareerDossier: no reader may fall through to snapshot() ---------------

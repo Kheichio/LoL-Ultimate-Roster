@@ -19,20 +19,23 @@
     //  run under SSR, which is why every loading / empty / offline / error
     //  state below is written in the MARKUP rather than assembled in script.
     //
-    //  The four harness props (initialView / initialSort / previewRows /
-    //  previewDossier) exist for tools/careerRender.mjs and nothing else. They
-    //  are the Shop `initialTab` precedent: `view` is component-local, so
-    //  without them the SSR harness could only ever compile the loading branch
-    //  and the whole table would ship untested.
+    //  The five harness props (initialView / initialSort / previewRows /
+    //  previewDossier / initialConfirmHide) exist for tools/careerRender.mjs
+    //  and nothing else. They are the Shop `initialTab` precedent: `view` and
+    //  `confirmHide` are component-local, so without them the SSR harness could
+    //  only ever compile the loading branch and the whole table -- and the hide
+    //  confirmation, the one destructive action on this screen -- would ship
+    //  untested. `--dump` and grep is the only way to tell a state that exists
+    //  from markup that renders; this prop is what puts that branch in reach.
 
     import { onMount } from 'svelte';
 
     import CareerDossier from './CareerDossier.svelte';
 
     import {
-        boardRows, boardState, myBoardRow,
-        loadBoardPage, loadMyBoardRow, openDossier,
-        publishCareerSlot, unpublishCareer, isSlotPublished,
+        boardRows, boardState, myBoardEntries, myBoardHidden, boardSync,
+        loadBoardPage, loadMyEntries, openDossier, autoSyncBoard,
+        hideCareerSlot, showCareerSlot, isSlotPublished,
     } from '../../stores/careerBoard.js';
     import {
         BOARD_SORTS, BOARD_LIMIT, sanitizeRow, remoteFiguresFrom,
@@ -50,6 +53,7 @@
     export let initialSort = 'earnedScore';
     export let previewRows = null;
     export let previewDossier = null;
+    export let initialConfirmHide = 0;
 
     // Built from code points so this file stays pure ASCII -- the card
     // database has been corrupted by an editor re-encoding emoji before.
@@ -107,9 +111,10 @@
      *  idempotent; the fast path exists only to preserve `isMe`, so it has to
      *  be earned by every field the markup will actually read. */
     function normRow(raw, i) {
-        const id = (raw && typeof raw === 'object' && raw.uid) || ('row-' + (i + 1));
+        const id = (raw && typeof raw === 'object' && (raw.entryId || raw.uid)) || ('row-' + (i + 1));
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return sanitizeRow(id, raw);
         if (typeof raw.handle !== 'string' || typeof raw.teamName !== 'string') return sanitizeRow(id, raw);
+        if (typeof raw.entryId !== 'string' || typeof raw.uid !== 'string') return sanitizeRow(id, raw);
         for (const k of ROW_NUMS) if (!Number.isFinite(raw[k])) return sanitizeRow(id, raw);
         return raw;
     }
@@ -121,9 +126,13 @@
         const seen = Object.create(null);
         return (Array.isArray(list) ? list : []).map((raw, i) => {
             const r = normRow(raw, i);
-            let uid = r.uid || ('row-' + (i + 1));
-            if (seen[uid]) uid = uid + '-' + (i + 1);
-            seen[uid] = true;
+            // KEYED ON THE ENTRY ID, not the account. One player can hold three
+            // rows on this board now -- one per save slot -- and keying an each
+            // block on the uid would collapse them into one and drop two
+            // careers off the table with nothing to say so.
+            let entryId = r.entryId || r.uid || ('row-' + (i + 1));
+            if (seen[entryId]) entryId = entryId + '-' + (i + 1);
+            seen[entryId] = true;
 
             const rl = ROLE_BY_ID[r.role] || ROLE_BY_ID.MID;
             const rg = REGION_BY_ID[r.region] || REGION_BY_ID.LEC;
@@ -131,7 +140,7 @@
             const lt = legacyTier(r.earnedScore);
             return {
                 ...r,
-                uid,
+                entryId,
                 rank: i + 1,
                 medal: MEDALS[i + 1] || '',
                 roleShort: rl.short,
@@ -231,32 +240,76 @@
     }
 
     $: slots = readSlots(slotTick);
-    $: publishedRow = $myBoardRow ? decorate([$myBoardRow], meUid)[0] : null;
-    $: publishedId = publishedRow ? publishedRow.careerId : '';
-    $: publishedSlot = publishedRow ? publishedRow.slot : 0;
-    // "Which slot is on the board" is asked of isSlotPublished(), which compares
-    // the published row's careerId against the fingerprint of the save on disk.
-    // $myBoardRow is named here to make the whole map re-run when the row does;
-    // the helper itself reads storage rather than any store.
-    $: slotCards = slots.map(s => ({
-        ...s,
-        published: !!$myBoardRow && !!s.summary && (
-            isSlotPublished(s.n)
-            // A row carrying no careerId at all cannot be fingerprint-matched;
-            // the slot it was published from is the only handle left.
-            || (!publishedId && s.n === publishedSlot)
-        ),
-    }));
     $: signedIn = !!$currentUser;
 
-    let busySlot = 0;
-    let busyRemove = false;
-    let confirmSlot = 0;
-    let removeArmed = false;
-    let notice = '';          // the last denial / failure, verbatim
-    let noticeOk = false;
+    /**
+     * One card per SAVE SLOT, each with its own independent board entry.
+     *
+     * There is no "the published one" any more. Every slot that holds a career
+     * goes up on its own and stays there, so this maps three slots to three
+     * states rather than picking a winner: `entry` is the row the server holds
+     * for that slot, `hidden` is the player's own decision to take it down, and
+     * `live` is the pair of them agreeing that the career on this device is the
+     * career on the board.
+     *
+     * $myBoardEntries / $myBoardHidden are named so the whole map re-runs when
+     * either moves; isSlotPublished() itself reads storage, not a store.
+     */
+    $: slotCards = slots.map(s => {
+        const entry = $myBoardEntries[s.n] || null;
+        const hidden = $myBoardHidden[s.n] === true;
+        return {
+            ...s,
+            entry,
+            hidden,
+            live: !!entry && !!s.summary && isSlotPublished(s.n),
+            // On the board but showing a DIFFERENT career from the one in this
+            // slot today -- the slot was deleted and started over, and the old
+            // career's entry is still up. Worth naming rather than hiding: the
+            // uploader replaces it on the next sweep, and until it does the two
+            // genuinely disagree.
+            stale: !!entry && !!s.summary && !isSlotPublished(s.n),
+            // ON THE BOARD WITH NO LOCAL SAVE AT ALL. The player wiped the slot
+            // from the main menu, or is signed in on a device that never held
+            // that career. The row is public and the uploader will not touch it
+            // -- syncSlot bails on a slot with no save, which is right, because
+            // "there is no career here" must never be read as "delete their
+            // career". So this card has to render off `entry` and keep its Hide
+            // button, or that career is on the global board for ever with
+            // nothing in the app able to take it down.
+            orphan: !!entry && !s.summary,
+            // The name to print. The summary is the truth when there is one;
+            // otherwise the entry is, and the entry always has a handle because
+            // sanitizeRow floors it at 'Unknown'.
+            name: s.summary ? s.summary.handle : (entry ? entry.handle : ''),
+            legacy: legacyTier(entry ? entry.earnedScore : 0),
+            rank: (entry && entry.entryId) ? (myRanks[entry.entryId] || 0) : 0,
+        };
+    });
+    $: anyLive = slotCards.some(s => s.live);
+    // A slot that is hidden AND has a local save is one the player can put
+    // back. A hidden slot with no save is just an empty slot with a memory.
+    $: hiddenCount = slotCards.filter(s => s.hidden && s.summary).length;
+    $: pendingCount = slotCards.filter(s => s.summary && !s.hidden && !s.live).length;
 
-    $: busy = busySlot !== 0 || busyRemove;
+    // ---- the automatic uploader, made visible -------------------------
+    //  A background write has no press behind it, so it cannot toast. This is
+    //  the only place a denied auto-upload is ever reported, which is exactly
+    //  why the roster leaderboard has looked healthy while failing for years.
+    let busySlot = 0;
+    let confirmHide = SLOT_IDS.includes(Math.round(Number(initialConfirmHide))) ? Math.round(Number(initialConfirmHide)) : 0;
+    let notice = '';
+
+    $: sync = $boardSync || {};
+    $: syncing = sync.status === 'syncing' || busySlot !== 0;
+    $: syncError = sync.status === 'error' && typeof sync.error === 'string' ? sync.error : '';
+    $: syncedAt = Number(sync.at) || 0;
+    // BUSY IS THE PRESS, NOT THE SWEEP. Gating the buttons on the background
+    // uploader would let a hung request disable Hide indefinitely -- the compat
+    // SDK's get() can wait a long time on a flaky connection, and 'syncing' is
+    // only cleared when the sweep resolves. A player must always be able to take
+    // a career down, whatever the uploader is doing behind them.
+    $: busy = busySlot !== 0;
 
     function messageOf(res, fallback) {
         if (typeof res === 'string') return res;
@@ -269,76 +322,60 @@
         return fallback;
     }
 
-    async function doPublish(n) {
-        confirmSlot = 0;
-        removeArmed = false;
+    async function doHide(n) {
+        playSound('click');
+        confirmHide = 0;
         busySlot = n;
         notice = '';
         let res = null;
         try {
-            // silent:false -- the store owns the success toast, this panel owns
-            // the failure, which needs a recovery button a toast cannot carry.
-            res = await publishCareerSlot(n, { silent: false });
+            res = await hideCareerSlot(n, { silent: false });
         } catch (e) {
-            res = { ok: false, msg: messageOf(e, 'The board refused the upload.') };
+            res = { ok: false, msg: messageOf(e, 'That career could not be hidden.') };
         }
         busySlot = 0;
-        slotTick += 1;
-        const failed = res && typeof res === 'object' && res.ok === false;
-        if (failed) {
-            noticeOk = false;
-            notice = messageOf(res, 'The board refused the upload and nothing was published.');
-        } else {
-            noticeOk = true;
-            notice = '';
-        }
-        refreshMine();
-    }
-
-    function askPublish(n) {
-        playSound('click');
-        notice = '';
-        // Replacing somebody takes two clicks and names who is being replaced.
-        if (publishedRow && !slotCards.some(s => s.n === n && s.published)) {
-            confirmSlot = n;
-            return;
-        }
-        doPublish(n);
-    }
-
-    async function doRemove() {
-        playSound('click');
-        removeArmed = false;
-        confirmSlot = 0;
-        busyRemove = true;
-        notice = '';
-        let res = null;
-        try {
-            res = await unpublishCareer();
-        } catch (e) {
-            res = { ok: false, msg: messageOf(e, 'The entry could not be removed.') };
-        }
-        busyRemove = false;
         slotTick += 1;
         if (res && typeof res === 'object' && res.ok === false) {
-            noticeOk = false;
-            notice = messageOf(res, 'The entry could not be removed. Your save is untouched either way.');
+            notice = messageOf(res, 'That career could not be hidden. Your save is untouched either way.');
         }
-        refreshMine();
     }
 
-    /** The recovery offered after a denial: clear whatever is on the board
-     *  under this account, then upload the slot again from scratch. */
-    async function removeAndRepublish(n) {
+    async function doShow(n) {
         playSound('click');
+        confirmHide = 0;
         busySlot = n;
-        try { await unpublishCareer(); } catch (e) { /* the publish reports */ }
+        notice = '';
+        let res = null;
+        try {
+            res = await showCareerSlot(n, { silent: false });
+        } catch (e) {
+            res = { ok: false, msg: messageOf(e, 'That career could not be put back on the board.') };
+        }
         busySlot = 0;
-        await doPublish(n);
+        slotTick += 1;
+        if (res && typeof res === 'object' && res.ok === false) {
+            notice = messageOf(res, 'That career could not be put back on the board.');
+        }
+    }
+
+    function askHide(n) {
+        playSound('click');
+        notice = '';
+        confirmHide = n;
+    }
+
+    /** Force a full sweep. The uploader runs on its own; this is the button for
+     *  "it looks wrong and I want to know now", and for retrying after a denial
+     *  without waiting out the floor. */
+    async function syncNow() {
+        playSound('click');
+        notice = '';
+        try { await autoSyncBoard({ force: true }); } catch (e) { /* the store owns its errors */ }
+        slotTick += 1;
     }
 
     function refreshMine() {
-        try { loadMyBoardRow(); } catch (e) { /* the store owns its errors */ }
+        try { loadMyEntries(); } catch (e) { /* the store owns its errors */ }
     }
 
     // ---- loading ------------------------------------------------------
@@ -364,13 +401,32 @@
         slotTick += 1;
     }
 
+    /** Every one of the viewer's own rows that is actually in the loaded page,
+     *  so the panel can say where each career placed rather than only whether
+     *  it is up. A career outside the top fifty simply has no rank here, which
+     *  is the truth and not an omission.
+     *
+     *  KEYED ON THE ENTRY ID, not the slot number. A pre-per-slot document is
+     *  keyed by the bare uid, parses to slot 0, and then falls through to
+     *  `bounded('slot', ...)` whose minimum is 1 — so every legacy row claims
+     *  slot 1, and keying this map on the slot would let it overwrite the real
+     *  slot-1 career's rank with a rank belonging to a different career. */
+    $: myRanks = rows.reduce((m, r) => {
+        if (r.mine && r.entryId) m[r.entryId] = r.rank;
+        return m;
+    }, {});
+
     onMount(() => {
         noDb = !(typeof window !== 'undefined' && window.fbDb);
         // The harness drives this component through props and must not fire a
         // query; a real mount always does.
         if (Array.isArray(previewRows)) return;
         loadPage(activeSort, false);
-        refreshMine();
+        // A sweep rather than a bare read: this is the screen where a player
+        // comes to check that their careers are up, so it is the worst place to
+        // show them a stale row and wait out a timer. autoSyncBoard() loads the
+        // entries as its first step, so this covers refreshMine() too.
+        try { autoSyncBoard(); } catch (e) { refreshMine(); }
     });
 
     // ---- dossier ------------------------------------------------------
@@ -401,7 +457,9 @@
 
         let res = null;
         try {
-            res = await openDossier(r.uid);
+            // The ENTRY id, not the account: one account can hold three of
+            // these and they are three different careers.
+            res = await openDossier(r.entryId);
         } catch (e) {
             res = { ok: false, msg: messageOf(e, '') };
         }
@@ -524,11 +582,12 @@
         <div class="hd-txt">
             <h2 class="hd-h">Global Careers</h2>
             <p class="hd-p">
-                Every entry on this board was published by the player who ran the career. The numbers are
-                bounded and re-checked on the way in &#8212; they cannot be arbitrary &#8212; but they are not
-                verified against a replay of the save, so read the board as a noticeboard rather than a
-                record book. Ranking is on legacy <em>earned</em>: the monument ladder is purchasable and
-                is shown beside the score, never counted into it.
+                Every career slot anyone is playing appears here on its own &#8212; one entry per save, so a
+                player with three careers has three of them &#8212; and each one keeps itself up to date as
+                that career is played. The numbers are bounded and re-checked on the way in, so they cannot
+                be arbitrary, but they are not verified against a replay of the save: read the board as a
+                noticeboard rather than a record book. Ranking is on legacy <em>earned</em>: the monument
+                ladder is purchasable and is shown beside the score, never counted into it.
             </p>
         </div>
         <div class="hd-act">
@@ -541,164 +600,207 @@
         </div>
     </header>
 
-    <!-- ══════════════════════ YOUR ENTRY ══════════════════════
-         Rendered in every state, including signed out. A player who cannot
-         publish still deserves to know why the board is asking nothing of
-         them. -->
+    <!-- ══════════════════════ YOUR CAREERS ══════════════════════
+         One card per SAVE SLOT, all three visible at once and none of them
+         replacing another. Rendered in every state, including signed out: a
+         player who cannot be listed still deserves to know why the board is
+         asking nothing of them. -->
     <div class="panel pad mine">
         <div class="slab-row">
-            <div class="slab">Your entry</div>
-            {#if publishedRow}
-                <span class="slab-ct">Published from slot {publishedRow.slot}</span>
+            <div class="slab">Your careers</div>
+            {#if signedIn}
+                <!-- FOUR CASES, not two. "Uploading automatically" as a bare
+                     {:else} asserted that an upload was in progress in exactly
+                     the two states where nothing is being uploaded and nothing
+                     ever will be: every career hidden, and no career at all. -->
+                <span class="slab-ct">
+                    {#if anyLive}
+                        {slotCards.filter(s => s.live).length} of your slots
+                        {slotCards.filter(s => s.live).length === 1 ? 'is' : 'are'} listed
+                        {#if syncedAt > 0}&#183; synced {relTime(syncedAt)}{/if}
+                    {:else if pendingCount > 0}
+                        Uploading automatically
+                    {:else if hiddenCount > 0}
+                        {hiddenCount === 1 ? 'Your career is hidden' : 'All of your careers are hidden'}
+                    {:else}
+                        No career to list yet
+                    {/if}
+                </span>
             {/if}
         </div>
 
         {#if !signedIn}
             <p class="note">
                 You are browsing signed out, which is the whole board: every career listed here is public
-                and none of it needs an account to read. Publishing does &#8212; the board stores one career
-                per account, so it needs to know whose it is. Sign in from the main menu and this panel
-                turns into a list of your three career slots.
+                and none of it needs an account to read. Being listed does &#8212; an entry has to belong to
+                somebody. Sign in from the main menu and every career slot you have started goes up on its
+                own, and keeps itself up to date as you play.
             </p>
         {:else}
-            {#if publishedRow}
-                <div class="pub" style="--k:{publishedRow.tierColor}">
-                    <div class="pub-id">
-                        <span class="pub-flag" aria-hidden="true">{publishedRow.flag}</span>
-                        <span class="pub-h">{publishedRow.handle}</span>
-                        <span class="chip-role" style="--k:{publishedRow.roleAccent}">{publishedRow.roleShort}</span>
-                        {#if publishedRow.retired}
-                            <span class="chip" style="--k:#ef4444">Retired</span>
-                        {:else}
-                            <span class="chip" style="--k:#22c55e">Active</span>
-                        {/if}
-                    </div>
-                    <p class="pub-line">
-                        {publishedRow.teamName} &#183; age {publishedRow.age} &#183;
-                        {publishedRow.years} {publishedRow.years === 1 ? 'year' : 'years'} pro &#183;
-                        peak {publishedRow.peakOVR} &#183; {publishedRow.record} &#183;
-                        {publishedRow.earnedScore.toLocaleString()} legacy earned
-                        {#if publishedRow.boughtScore > 0}
-                            (+{publishedRow.boughtScore.toLocaleString()} endowed, not ranked)
-                        {/if}
-                    </p>
-                    <p class="pub-sub">Last uploaded {relTime(publishedRow.updatedAt)}.</p>
-                    <div class="pub-acts">
-                        <button
-                            class="b b-go"
-                            on:click={() => doPublish(publishedRow.slot)}
-                            disabled={busy}
-                        >{busySlot === publishedRow.slot ? 'Uploading' + ELL : 'Republish from slot ' + publishedRow.slot}</button>
-                        {#if removeArmed}
-                            <span class="conf-q">Take it off the board?</span>
-                            <button class="b b-danger" on:click={doRemove} disabled={busy}>Yes, remove it</button>
-                            <button class="b b-ghost" on:click={() => (removeArmed = false)}>Keep it listed</button>
-                        {:else}
-                            <button
-                                class="b b-warn"
-                                on:click={() => { playSound('click'); removeArmed = true; }}
-                                disabled={busy}
-                            >Remove from the board</button>
-                        {/if}
-                    </div>
-                    <p class="pub-note">
-                        Republishing overwrites the entry with whatever that slot holds today. Removing it
-                        deletes the public copy only &#8212; your save is never read for anything but a copy,
-                        and nothing on this screen can write to it.
-                    </p>
-                </div>
-            {:else}
-                <p class="note">
-                    Nothing of yours is on the board yet. Pick a slot below and it is uploaded as a copy:
-                    a ranking entry and one document holding the career itself. One career per account, so
-                    publishing a second slot replaces the first.
-                </p>
-            {/if}
+            <p class="note">
+                Every career slot you have started is on this board automatically and updates itself as you
+                play &#8212; there is nothing to press. Each slot is its own entry, so all three of your
+                careers are listed side by side and none of them replaces another. If you would rather one
+                of them were not public, hide it: it comes off the board and stays off, on this device and
+                every other one you sign in on, until you put it back.
+            </p>
 
-            {#if notice && !noticeOk}
+            {#if notice}
                 <div class="deny">
-                    <p class="deny-h">The board would not take that career</p>
+                    <p class="deny-h">That did not go through</p>
                     <p class="deny-p">{notice}</p>
                     <p class="deny-p deny-sub">
-                        Nothing was written to your save and nothing was removed from the board. A rejected
-                        upload most often means a stale entry is already sitting under this account: clearing
-                        it and uploading again from scratch fixes that.
+                        Nothing was written to your save either way &#8212; this screen only ever reads it.
                     </p>
                     <div class="pub-acts">
-                        {#each slotCards.filter(s => !!s.summary) as s (s.n)}
-                            <button
-                                class="b b-warn"
-                                on:click={() => removeAndRepublish(s.n)}
-                                disabled={busy}
-                            >Remove my entry and republish slot {s.n}</button>
-                        {/each}
+                        <button class="b b-ghost" on:click={syncNow} disabled={busy}>
+                            {syncing ? 'Syncing' + ELL : 'Try the upload again'}
+                        </button>
                         <button class="b b-ghost" on:click={() => (notice = '')}>Dismiss</button>
+                    </div>
+                </div>
+            {:else if syncError}
+                <div class="deny">
+                    <p class="deny-h">The automatic upload was refused</p>
+                    <p class="deny-p">{syncError}</p>
+                    <p class="deny-p deny-sub">
+                        Your careers are still saved on this device and nothing local has changed. The
+                        uploader retries on its own; this is here because a background write has nothing to
+                        interrupt you with, and a board that fails silently looks exactly like one that is
+                        working.
+                    </p>
+                    <div class="pub-acts">
+                        <button class="b b-ghost" on:click={syncNow} disabled={busy}>
+                            {syncing ? 'Syncing' + ELL : 'Try again now'}
+                        </button>
                     </div>
                 </div>
             {/if}
 
             <div class="slots">
                 {#each slotCards as s (s.n)}
-                    <div class="slot" class:slot-on={s.published}>
+                    <div class="slot" class:slot-on={s.live} class:slot-off={s.hidden}>
                         <div class="slot-top">
                             <span class="slot-n">Slot {s.n}</span>
-                            {#if s.published}<span class="chip" style="--k:#a78bfa">On the board</span>{/if}
+                            {#if busySlot === s.n}
+                                <span class="chip" style="--k:#64748b">Working{ELL}</span>
+                            {:else if s.hidden}
+                                <span class="chip" style="--k:#f59e0b">Hidden</span>
+                            {:else if s.live || s.orphan}
+                                <span class="chip" style="--k:#a78bfa">
+                                    {s.rank ? '#' + s.rank + ' on the board' : 'On the board'}
+                                </span>
+                            {:else if s.summary}
+                                <span class="chip" style="--k:#64748b">Uploading{ELL}</span>
+                            {/if}
                         </div>
 
-                        {#if s.summary}
-                            <span class="slot-h">{s.summary.handle}</span>
-                            <span class="slot-m">
-                                <span aria-hidden="true">{s.flag}</span>
-                                <span class="chip-role" style="--k:{s.roleAccent}">{s.roleShort}</span>
-                                {s.summary.team} &#183; age {s.summary.age} &#183; {s.summary.ovr} OVR
-                            </span>
-                            <span class="slot-m2">
-                                {s.summary.year} season, week {s.summary.week}
-                                &#183; {s.summary.trophies} {s.summary.trophies === 1 ? 'trophy' : 'trophies'}
-                                {#if s.summary.retired}&#183; retired{/if}
-                            </span>
+                        <!-- THE CARD RENDERS OFF THE ENTRY WHEN THERE IS NO
+                             SAVE. A slot can hold a public board entry and no
+                             local career -- the player wiped the slot from the
+                             main menu, or signed in on a device that never had
+                             it. The uploader will not touch that row (syncSlot
+                             bails on a slot with no save, which is right: "no
+                             career here" must never mean "delete theirs"), so
+                             if this branch showed the empty-slot copy, that
+                             career would sit on the global board for ever with
+                             nothing in the app able to take it down. -->
+                        {#if s.summary || s.orphan}
+                            <span class="slot-h">{s.name}</span>
 
-                            {#if confirmSlot === s.n && publishedRow}
+                            {#if s.summary}
+                                <span class="slot-m">
+                                    <span aria-hidden="true">{s.flag}</span>
+                                    <span class="chip-role" style="--k:{s.roleAccent}">{s.roleShort}</span>
+                                    {s.summary.team} &#183; age {s.summary.age} &#183; {s.summary.ovr} OVR
+                                </span>
+                                <span class="slot-m2">
+                                    {s.summary.year} season, week {s.summary.week}
+                                    &#183; {s.summary.trophies} {s.summary.trophies === 1 ? 'trophy' : 'trophies'}
+                                    {#if s.summary.retired}&#183; retired{/if}
+                                </span>
+                            {:else}
+                                <span class="slot-m">
+                                    {s.entry.teamName} &#183; age {s.entry.age} &#183; peak {s.entry.peakOVR}
+                                </span>
+                                <p class="slot-none slot-none-sub">
+                                    This career is on the board but there is no save for it on this device.
+                                    It stays listed exactly as it was and stops updating &#8212; nothing here
+                                    can bring the career back, but you can still take the entry down.
+                                </p>
+                            {/if}
+
+                            {#if s.entry && !s.hidden}
+                                <span class="slot-m2 slot-live" style="--k:{s.legacy.color}">
+                                    {s.entry.earnedScore.toLocaleString()} legacy earned &#183; {s.legacy.name}
+                                    &#183; uploaded {relTime(s.entry.updatedAt)}
+                                </span>
+                            {/if}
+
+                            {#if s.stale}
+                                <p class="slot-none slot-none-sub">
+                                    The entry up there is a different career from the one in this slot now.
+                                    The uploader replaces it on its next pass.
+                                </p>
+                            {/if}
+
+                            {#if confirmHide === s.n}
                                 <div class="conf">
                                     <p class="conf-p">
-                                        Only one career per account can be on the board. Publishing
-                                        {s.summary.handle} takes {publishedRow.handle} off it, and the public
-                                        copy of that career is deleted for good. Your slot {publishedRow.slot}
-                                        save is not touched by any of this.
+                                        Hide {s.name} from the global board? The public entry and its full
+                                        record are deleted, and this career stops being uploaded until you
+                                        put it back &#8212; on every device you sign in on, not just this
+                                        one. Your slot {s.n} save is not touched by any of this.
                                     </p>
                                     <div class="conf-acts">
-                                        <button class="b b-danger" on:click={() => doPublish(s.n)} disabled={busy}>
-                                            Replace {publishedRow.handle}
+                                        <button class="b b-danger" on:click={() => doHide(s.n)} disabled={busy}>
+                                            Hide this career
                                         </button>
-                                        <button class="b b-ghost" on:click={() => (confirmSlot = 0)}>
-                                            Keep {publishedRow.handle}
+                                        <button class="b b-ghost" on:click={() => (confirmHide = 0)}>
+                                            Keep it listed
                                         </button>
                                     </div>
                                 </div>
+                            {:else if s.hidden}
+                                <!-- An orphan cannot be re-listed: there is no
+                                     save to build a document out of. Offering
+                                     the button would be a press that silently
+                                     does nothing. -->
+                                {#if s.summary}
+                                    <button
+                                        class="b b-go slot-b"
+                                        on:click={() => doShow(s.n)}
+                                        disabled={busy}
+                                    >{busySlot === s.n ? 'Uploading' + ELL : 'Show on the board'}</button>
+                                {/if}
                             {:else}
                                 <button
-                                    class="b b-go slot-b"
-                                    on:click={() => askPublish(s.n)}
+                                    class="b b-warn slot-b"
+                                    on:click={() => askHide(s.n)}
                                     disabled={busy}
-                                >
-                                    {#if busySlot === s.n}
-                                        Uploading{ELL}
-                                    {:else if s.published}
-                                        Republish this slot
-                                    {:else}
-                                        Publish this career
-                                    {/if}
-                                </button>
+                                >Hide from the board</button>
                             {/if}
                         {:else}
                             <p class="slot-none">No career in this slot.</p>
                             <p class="slot-none slot-none-sub">
-                                Start one from the main menu and it can be published here the moment it has
-                                a name.
+                                Start one from the main menu and it appears here on its own, with nothing to
+                                press.
                             </p>
                         {/if}
                     </div>
                 {/each}
+            </div>
+
+            <div class="pub-acts">
+                <button class="b b-ghost" on:click={syncNow} disabled={busy}>
+                    {syncing ? 'Syncing' + ELL : 'Sync now'}
+                </button>
+                {#if hiddenCount > 0}
+                    <span class="conf-q">
+                        {hiddenCount} hidden. A hidden career is deleted from the board, not merely
+                        filtered out of it.
+                    </span>
+                {/if}
             </div>
         {/if}
     </div>
@@ -787,7 +889,18 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {#each shownRows as r (r.uid)}
+                            <!-- KEYED ON entryId, NOT uid. One account holds up
+                                 to three rows now, and sanitizeRow gives all
+                                 three the same uid, so keying on the account is
+                                 a duplicate key in a keyed each: a thrown
+                                 validate_each_keys in dev, and in a production
+                                 build one shared block mounted twice, which
+                                 silently drops a career out of the table.
+                                 decorate() de-duplicates entryId for exactly
+                                 this, and boardCheck lints for it -- careerRender
+                                 cannot, because Svelte's SSR generator discards
+                                 each-block keys entirely. -->
+                            {#each shownRows as r (r.entryId)}
                                 <tr
                                     class="rw"
                                     class:rw-me={r.mine}
@@ -930,10 +1043,10 @@
         {:else}
             <div class="empty">
                 <span class="empty-ico" aria-hidden="true">&#x1F3DC;</span>
-                <p class="empty-t">Nobody has published a career yet</p>
+                <p class="empty-t">Nobody has a career here yet</p>
                 <p class="empty-p">
-                    The board answered and it is empty: not one career has been uploaded under this sort.
-                    Publish one of yours from the panel above and it becomes the first entry every other
+                    The board answered and it is empty: not one career is listed under this sort. Sign in
+                    and start one and it goes up on its own within a minute, as the first entry every other
                     player sees when they open this screen. A career does not have to be finished to be
                     listed &#8212; retired ones simply also appear under Completed.
                 </p>
@@ -996,21 +1109,9 @@
     .hd-act { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
     .hd-sync { font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px; color: #3f5069; }
 
-    /* ---------- your entry ---------- */
+    /* ---------- your careers ---------- */
     .mine { border-color: rgba(139,92,246,0.22); }
-    .pub {
-        display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 14px;
-        margin-bottom: 14px;
-        background: color-mix(in srgb, var(--k, #a78bfa) 7%, rgba(15,23,42,0.5));
-        border: 1px solid color-mix(in srgb, var(--k, #a78bfa) 26%, transparent);
-    }
-    .pub-id { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-    .pub-flag { font-size: 15px; line-height: 1; }
-    .pub-h { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 17px; font-weight: 700; color: #e8eefb; }
-    .pub-line { font-size: 11.5px; line-height: 1.6; color: #8ea0be; margin: 0; }
-    .pub-sub { font-size: 10px; font-weight: 700; color: #475569; margin: 0; }
-    .pub-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-    .pub-note { font-size: 10.5px; line-height: 1.6; color: #475569; margin: 8px 0 0; max-width: 720px; }
+    .pub-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
     .deny {
         padding: 13px 15px; border-radius: 12px; margin-bottom: 14px;
@@ -1026,6 +1127,10 @@
         background: rgba(15,23,42,0.5); border: 1px solid rgba(51,65,85,0.28); min-width: 0;
     }
     .slot-on { background: rgba(139,92,246,0.08); border-color: rgba(139,92,246,0.34); }
+    /* Hidden reads as DIMMED, never as an error: it is a choice the player made
+       on purpose, and a red card would say something went wrong. */
+    .slot-off { background: rgba(15,23,42,0.28); border-style: dashed; border-color: rgba(245,158,11,0.28); }
+    .slot-live { color: var(--k, #46587a); font-weight: 700; }
     .slot-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .slot-n { font-size: 8.5px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: #3f5069; }
     .slot-h {

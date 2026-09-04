@@ -1379,30 +1379,148 @@ const BOARD_FIXTURES = [];
     }
     CBS.boardState.set({ ...BOARD_DEFAULT });
 
-    // The signed-in half of "Your entry": three slot cards, a published row, and
-    // the denial panel. currentUser and myBoardRow are plain writables, so the
-    // whole panel is reachable without a network stub. Both are put back.
+    // The signed-in half of "Your careers": three slot cards, each with its own
+    // independent entry, the hidden state, and the refusal panel. currentUser,
+    // myBoardEntries, myBoardHidden and boardSync are all plain writables, so
+    // the whole panel is reachable without a network stub. Every one is put
+    // back at the end.
+    //
+    // THE STATES THAT MATTER ARE THE ONES NO ORDINARY FIXTURE OWNS. Publication
+    // is automatic now, so "unpublished" is a transient and "hidden" is the only
+    // state a player can actually choose -- and neither the hidden card, the
+    // stale-entry card nor the refused-upload panel is reachable from any
+    // driven career. They are hand-built here for the same reason the signature
+    // slot's cd-sig-* shapes are: a perk whose only proof is the model layer is
+    // a perk nobody can spend.
     const AUTH = await load('/src/lib/stores/auth.js');
-    const MY_ROW = ALL_ROWS.length ? { ...ALL_ROWS[0], uid: 'me', isMe: true } : null;
+    const ME = { uid: 'me', displayName: 'Tester', email: 'x@y.z' };
+
+    // SEED SLOTS 2 AND 3, or two thirds of this panel is untestable.
+    //
+    // applyState() writes only CAREER_KEY, which storage.js resolves to slot 1,
+    // so careerSlotSummary(2) and careerSlotSummary(3) return null in every
+    // other render in this file -- and every control on a slot card lives
+    // behind `{#if s.summary || s.orphan}`. Without this, the three-slot states
+    // below rendered ONE card with a body and two "No career in this slot", the
+    // plural copy in the panel header had zero occurrences in --dump, and the
+    // board-confirm-hide-2/-3 renders contained no confirmation markup at all
+    // while being named as if they covered it. Written through storage.js so
+    // the slot suffix is resolved by the code that owns it rather than by a
+    // literal here; cleared at the end of the block so nothing downstream
+    // inherits them.
+    const STO = await load('/src/lib/utils/storage.js');
+    for (const n of [2, 3]) {
+        const alt = clone(S_MID.snap);
+        alt.player.handle = 'Slot' + n;   // distinguishable in --dump
+        try { STO.saveToSlot(CAREER_KEY, alt, n); } catch (e) { /* reported by the empty render */ }
+    }
+    const rowFor = (slot, patch) => (ALL_ROWS.length
+        ? { ...ALL_ROWS[Math.min(slot - 1, ALL_ROWS.length - 1)], entryId: 'me__' + slot, uid: 'me', slot, isMe: true, ...(patch || {}) }
+        : null);
+    const NO_ENTRIES = { 1: null, 2: null, 3: null };
+    const NO_HIDDEN = { 1: false, 2: false, 3: false };
+    const SYNC_IDLE = { status: 'idle', error: '', at: 0, slot: 0 };
+
     const MINE = [
-        ['signed-out', null, null],
-        ['signed-in-unpublished', { uid: 'me', displayName: 'Tester', email: 'x@y.z' }, null],
-        ['signed-in-published', { uid: 'me', displayName: 'Tester', email: 'x@y.z' }, MY_ROW],
-        // A published row that resolves to no slot and no careerId -- the shape
-        // an entry written by an older client leaves behind.
-        ['signed-in-row-has-no-slot', { uid: 'me', displayName: 'Tester', email: 'x@y.z' },
-            MY_ROW ? { ...MY_ROW, slot: 0, careerId: '' } : null],
-        ['signed-in-user-is-junk', { nope: true }, MY_ROW],
+        ['signed-out', null, NO_ENTRIES, NO_HIDDEN, SYNC_IDLE],
+        ['signed-in-nothing-up-yet', ME, NO_ENTRIES, NO_HIDDEN, { status: 'syncing', error: '', at: 0, slot: 0 }],
+        ['signed-in-one-slot-up', ME, { ...NO_ENTRIES, 1: rowFor(1) }, NO_HIDDEN,
+            { status: 'ok', error: '', at: Date.now() - 30000, slot: 0 }],
+        ['signed-in-all-three-up', ME, { 1: rowFor(1), 2: rowFor(2), 3: rowFor(3) }, NO_HIDDEN,
+            { status: 'ok', error: '', at: Date.now() - 30000, slot: 0 }],
+        ['signed-in-one-hidden', ME, { ...NO_ENTRIES, 1: rowFor(1) }, { ...NO_HIDDEN, 2: true }, SYNC_IDLE],
+        ['signed-in-all-hidden', ME, NO_ENTRIES, { 1: true, 2: true, 3: true }, SYNC_IDLE],
+        // An entry for a slot the player has since deleted and started over in:
+        // a row is up, but its careerId does not fingerprint-match the save.
+        ['signed-in-stale-entry', ME, { ...NO_ENTRIES, 1: rowFor(1, { careerId: 'cNOTMINE' }) }, NO_HIDDEN, SYNC_IDLE],
+        // The refused auto-upload. It has no press behind it and therefore no
+        // toast, so this panel is the only place it is ever visible.
+        ['signed-in-sync-denied', ME, NO_ENTRIES, NO_HIDDEN,
+            { status: 'error', error: 'The server refused the publish.', at: Date.now(), slot: 2 }],
+        // A future store revision, from here: a status nobody has heard of and
+        // an error that is not a string.
+        ['signed-in-sync-junk', ME, NO_ENTRIES, NO_HIDDEN, { status: 'weird', error: 7, at: 'soon', slot: null }],
+        // A row that resolves to no slot and no careerId -- the shape an entry
+        // written before per-slot ids leaves behind.
+        ['signed-in-row-has-no-slot', ME, { ...NO_ENTRIES, 1: rowFor(1, { slot: 0, careerId: '', entryId: 'me' }) },
+            NO_HIDDEN, SYNC_IDLE],
+        ['signed-in-user-is-junk', { nope: true }, { ...NO_ENTRIES, 1: rowFor(1) }, NO_HIDDEN, SYNC_IDLE],
+        // Rot: the stores themselves malformed. Every reader indexes these by
+        // slot number and none of them may throw on a missing key.
+        ['entries-are-junk', ME, {}, {}, SYNC_IDLE],
     ];
-    for (const [label, user, row] of MINE) {
+    for (const [label, user, entries, hidden, syncState] of MINE) {
         AUTH.currentUser.set(user);
-        CBS.myBoardRow.set(row);
+        CBS.myBoardEntries.set(entries);
+        CBS.myBoardHidden.set(hidden);
+        CBS.boardSync.set(syncState);
         applyState(S_MID.snap);
         await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: ALL_ROWS },
             'board-mine-' + label, { minText: 120 });
     }
+
+    // THE HIDE CONFIRMATION. `confirmHide` is component-local and set only
+    // inside a click handler, which SSR never runs -- the same position
+    // MatchDay's copy of the scoreboard is in, and its markup had zero
+    // occurrences in --dump while this harness reported green. It is the one
+    // destructive action on this screen, so it gets a prop rather than a note.
+    for (const n of [1, 2, 3]) {
+        AUTH.currentUser.set(ME);
+        CBS.myBoardEntries.set({ 1: rowFor(1), 2: rowFor(2), 3: rowFor(3) });
+        CBS.myBoardHidden.set(NO_HIDDEN);
+        CBS.boardSync.set(SYNC_IDLE);
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB,
+            { initialView: 'list', previewRows: ALL_ROWS, initialConfirmHide: n },
+            'board-confirm-hide-' + n, { minText: 120 });
+    }
+    // ...and a slot number that is not a slot, which must confirm nothing.
+    for (const junk of [0, 4, -1, 'x', null]) {
+        AUTH.currentUser.set(ME);
+        CBS.myBoardEntries.set({ 1: rowFor(1), 2: rowFor(2), 3: rowFor(3) });
+        CBS.myBoardHidden.set(NO_HIDDEN);
+        CBS.boardSync.set(SYNC_IDLE);
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB,
+            { initialView: 'list', previewRows: ALL_ROWS, initialConfirmHide: junk },
+            'board-confirm-hide-junk-' + String(junk), { minText: 120 });
+    }
+    // AN ENTRY WITH NO LOCAL SAVE. The player wiped the slot from the main
+    // menu, or signed in somewhere that never held that career: the row is
+    // public, the uploader will not touch it, and the card has to keep its Hide
+    // button or that career is on the board for ever. No driven fixture owns
+    // this state -- every one of them writes the save it renders.
+    for (const [label, hidden] of [['orphan', NO_HIDDEN], ['orphan-hidden', { ...NO_HIDDEN, 2: true }]]) {
+        try { STO.clearSlot('career', 2); } catch (e) { /* nothing to clear */ }
+        AUTH.currentUser.set(ME);
+        CBS.myBoardEntries.set({ 1: rowFor(1), 2: rowFor(2), 3: rowFor(3) });
+        CBS.myBoardHidden.set(hidden);
+        CBS.boardSync.set(SYNC_IDLE);
+        applyState(S_MID.snap);
+        await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: ALL_ROWS },
+            'board-mine-' + label, { minText: 120 });
+    }
+
+    // SIGNED IN WITH NOTHING TO LIST. The panel header's fourth arm, and the
+    // only one that cannot be reached while any slot holds a save -- which
+    // every other state in this file arranges. It is what a new account sees
+    // before it starts a career, so it is also the first thing a real player
+    // reads on this screen.
+    for (const n of [1, 2, 3]) {
+        try { STO.clearSlot('career', n); } catch (e) { /* already gone */ }
+    }
+    AUTH.currentUser.set(ME);
+    CBS.myBoardEntries.set(NO_ENTRIES);
+    CBS.myBoardHidden.set(NO_HIDDEN);
+    CBS.boardSync.set(SYNC_IDLE);
+    ST.career.set(clone(S_MID.snap));   // the store, deliberately WITHOUT the saves
+    await render('CareerBoard(list)', CB, { initialView: 'list', previewRows: ALL_ROWS },
+        'board-mine-signed-in-no-careers', { minText: 120 });
+
     AUTH.currentUser.set(null);
-    CBS.myBoardRow.set(null);
+    CBS.myBoardEntries.set(NO_ENTRIES);
+    CBS.myBoardHidden.set(NO_HIDDEN);
+    CBS.boardSync.set(SYNC_IDLE);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,10 +6,25 @@
 //  stores/careerBoard.js. Keeping the two apart is what lets tools/boardCheck.mjs
 //  lint this file for write identifiers by call site and be believed.
 //
-//  Two shapes travel over the wire:
+//  Two shapes travel over the wire, and both are keyed by an ENTRY ID:
 //
-//    careerBoard/{uid}          the 25-field RANKING ROW (~650 B)
-//    careerBoardProfiles/{uid}  the DOSSIER: { v, careerId, blob, updatedAt }
+//    careerBoard/{uid}__{slot}          the 25-field RANKING ROW (~650 B)
+//    careerBoardProfiles/{uid}__{slot}  the DOSSIER: { v, careerId, blob,
+//                                       hidden, updatedAt }
+//
+//  ONE DOCUMENT PER SAVE SLOT, not one per account. Every slot a player has
+//  started is on the board at the same time and none of them replaces another;
+//  the ranking is over careers, not over accounts, and a player with three of
+//  them has three entries. The doc id is `uid + '__' + slot`, so the rules
+//  still prove ownership from the PATH -- `entryId == request.auth.uid + '__1'`
+//  and its two siblings -- rather than trusting a field inside the payload.
+//  That is a membership test against three literal strings, not a parse: there
+//  is no split(), no regex and nothing to mis-tokenise. Adding a fourth save
+//  slot therefore means re-publishing the rules by hand FIRST, exactly like
+//  adding a row field already did.
+//
+//  parseEntryId() accepts a BARE uid as slot-less, because every document
+//  written before this change is keyed that way and must keep rendering.
 //
 //  The dossier payload is a JSON STRING, not a structured document, because
 //  Firestore rules cannot ITERATE a variable-length list — `d.hi is list &&
@@ -68,6 +83,65 @@ export const BOARD_SORTS = [
     { key: 'wins',          label: 'Wins',     hint: 'Total professional wins.' },
     { key: 'finishedScore', label: 'Completed',hint: 'Retired careers first, ranked by earned legacy. Active careers follow.' },
 ];
+
+/**
+ * The published ROW field set, in a fixed order.
+ *
+ * Exported because it is the basis of the change signature the auto-publisher
+ * compares before spending a write: hashing these keys, in this order, gives
+ * the SAME digest for a row just built by buildBoardDocs() and for the same row
+ * read back through sanitizeRow(). Hashing the objects wholesale would not —
+ * sanitizeRow adds entryId / uid / isMe / team / teamName — so a naive
+ * signature would differ on every comparison and re-upload three documents a
+ * minute for ever.
+ *
+ * `updatedAt` is deliberately absent: it is Date.now() on every build, so
+ * including it would make every rebuild look like a change, which is the same
+ * bug from the other direction.
+ */
+export const BOARD_ROW_FIELDS = [
+    'v', 'careerId', 'slot', 'handle', 'displayName', 'role', 'region', 'teamId',
+    'retired', 'hallOfLegends', 'age', 'years', 'ovr', 'peakOVR', 'peakMMR',
+    'games', 'wins', 'losses', 'earnedScore', 'boughtScore', 'finishedScore',
+    'titles', 'worlds', 'trophies',
+];
+
+/** The separator in an entry id. Two underscores, because a Firebase uid is
+ *  [A-Za-z0-9_-]{28} and a single one really can occur inside it — splitting on
+ *  a character the id may legally contain is how a doc-id parse becomes a
+ *  security bug. Nothing parses this anyway (see parseEntryId), but the rules
+ *  build the same three literals and they have to agree. */
+export const ENTRY_SEP = '__';
+
+/** The document id for one player's one save slot. The ONLY place this string
+ *  is assembled in the client; firestore.rules assembles the same three. */
+export function entryIdFor(uid, slot) {
+    const n = clampInt(slot, CAREER_BOUNDS.slot.min, CAREER_BOUNDS.slot.max, CAREER_BOUNDS.slot.min);
+    return String(uid || '') + ENTRY_SEP + n;
+}
+
+/**
+ * Split an entry id back into its account and its slot.
+ *
+ * NOT a security check — the rules already proved ownership from the path, and
+ * this runs on documents that are only ever DISPLAYED. It exists so a row knows
+ * which account it belongs to (for the "(You)" marker, which must now match
+ * three rows rather than one) and which slot it came from.
+ *
+ * A BARE uid with no separator is slot 0 and is not an error: every document
+ * published before per-slot entries existed is keyed that way, and they must go
+ * on rendering. Their slot is then read off the row FIELD, as it always was.
+ */
+export function parseEntryId(id) {
+    const s = cleanText(id, 160);
+    const cut = s.lastIndexOf(ENTRY_SEP);
+    if (cut <= 0) return { entryId: s, uid: s, slot: 0 };
+    const tail = s.slice(cut + ENTRY_SEP.length);
+    if (!/^[0-9]{1,2}$/.test(tail)) return { entryId: s, uid: s, slot: 0 };
+    const n = Number(tail);
+    if (n < CAREER_BOUNDS.slot.min || n > CAREER_BOUNDS.slot.max) return { entryId: s, uid: s, slot: 0 };
+    return { entryId: s, uid: s.slice(0, cut), slot: n };
+}
 
 const SPLITS = ['spring', 'summer'];
 const HISTORY_MAX = 60;
@@ -255,10 +329,52 @@ export function buildBoardDocs(raw, { uid, displayName, slot } = {}) {
             v: BOARD_VERSION,
             careerId: row.careerId,
             blob,
+            // ALWAYS PRESENT, and false here by construction: buildBoardDocs is
+            // only ever called to put a career ON the board. The rules read
+            // `d.hidden is bool`, and a rule that dereferences a key the client
+            // omits denies every publish — silently and for ever.
+            hidden: false,
             updatedAt: row.updatedAt,
         },
+        entryId: entryIdFor(uid, row.slot),
         uid: uid || '',
     };
+}
+
+/**
+ * The dossier document that marks one slot HIDDEN.
+ *
+ * Hiding deletes the ranking row — that is what takes the career off the board
+ * — and rewrites the dossier to this. The flag has to survive somewhere the
+ * next device can read it, because auto-publish would otherwise put the career
+ * straight back up on the next machine the player signs in on, and a Hide
+ * button that a second browser silently undoes is worse than no button.
+ *
+ * It CANNOT live in the save: board code is read-side machinery that never
+ * writes storage, and this project has already destroyed real player saves by
+ * persisting from a screen that had no business writing. It cannot live on the
+ * row either, because the row is deleted — and a row kept for its flag would
+ * still occupy one of the fifty places the board actually returns.
+ *
+ * The blob goes to empty rather than being kept: a hidden career should not
+ * leave a readable copy of itself at a guessable public path. sanitizeDossier()
+ * already returns null for an empty blob, so a stale link opens nothing.
+ */
+export function hiddenProfileFor(careerId) {
+    return {
+        v: BOARD_VERSION,
+        careerId: cleanText(careerId, CAREER_STR_MAX.careerId),
+        blob: '',
+        hidden: true,
+        updatedAt: Date.now(),
+    };
+}
+
+/** Whether a dossier document says its slot is hidden. Hostile input: anything
+ *  that is not literally `true` means visible, so a corrupt document can never
+ *  hide a career its owner never hid. */
+export function dossierHidden(data) {
+    return obj(data).hidden === true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -464,13 +580,21 @@ export function sanitizeRow(id, data) {
     const earned = bounded('earnedScore', d.earnedScore);
     const teamId = cleanText(d.teamId, CAREER_STR_MAX.teamId);
     const team = teamId ? (teamById(teamId) || null) : null;
+    // THE PATH IS THE AUTHORITY FOR BOTH. `uid` decides whose row this is and
+    // therefore which rows get the "(You)" marker — three of them now, not one
+    // — and the rules proved that half of the id. The slot on the path wins
+    // over the slot in the payload for the same reason: a client is free to
+    // write slot: 3 into the document it stores at ...__1, and if the two
+    // disagreed the board would show two rows both claiming to be slot 3.
+    const at = parseEntryId(id);
 
     return {
-        uid: cleanText(id, 128),
+        entryId: at.entryId,
+        uid: at.uid,
         isMe: false,
         v: bounded('v', d.v),
         careerId: cleanText(d.careerId, CAREER_STR_MAX.careerId),
-        slot: bounded('slot', d.slot),
+        slot: at.slot > 0 ? at.slot : bounded('slot', d.slot),
         handle: cleanText(d.handle, CAREER_STR_MAX.handle) || 'Unknown',
         displayName: cleanText(d.displayName, CAREER_STR_MAX.displayName),
         role: normRole(d.role),

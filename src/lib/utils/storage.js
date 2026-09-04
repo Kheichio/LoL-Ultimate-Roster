@@ -26,6 +26,11 @@ const META_ROSTER_SLOT = 'lurmeta_roster_slot';
 const META_CAREER_SLOT = 'lurmeta_career_slot';
 const META_KEY_INDEX   = 'lurmeta_key_index';
 
+// A FOURTH SLOT IS A TWO-STAGE DEPLOY. firestore.rules proves ownership of a
+// career-board entry by rebuilding `uid + '__1'`, `'__2'` and `'__3'` literally
+// (ownsCareerSlot), and those rules are pasted into the Firebase console by
+// hand. Ship a slot the published rules do not name and every publish from it is
+// denied, silently and for ever. Re-publish the rules FIRST.
 export const SLOT_IDS = [1, 2, 3];
 export const SLOT_COUNT = SLOT_IDS.length;
 

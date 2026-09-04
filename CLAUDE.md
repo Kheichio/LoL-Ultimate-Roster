@@ -852,12 +852,47 @@ from the App root. It renders no momentum or club-strength delta for a foreign c
 A global board of other people's careers: browse, then open a full dossier — their player card,
 their club roster cards, their season-by-season team history and their performance stats.
 
-- **Two public collections**, `careerBoard/{uid}` (a 25-field ranking row, ~440 B) and
-  `careerBoardProfiles/{uid}` (`{ v, careerId, blob, updatedAt }`). ONE DOC PER UID, never per
-  uid+slot: the path IS the ownership proof, so no rule ever parses a doc id, and one row per
-  account bounds the collection at the number of registered users. **The published slot is a
-  FIELD.** Two TOP-LEVEL collections rather than a parent + subcollection, because deleting a
-  parent document does NOT delete its subcollection and Unpublish would orphan the dossier.
+- **Two public collections**, `careerBoard/{uid}__{slot}` (a 25-field ranking row, ~440 B) and
+  `careerBoardProfiles/{uid}__{slot}` (`{ v, careerId, blob, hidden, updatedAt }`). **ONE DOC PER
+  SAVE SLOT**, so a player with three careers has three entries and none of them replaces another —
+  the board ranks careers, not accounts. **The path is still the ownership proof and no rule parses
+  a doc id**: `ownsCareerSlot()` rebuilds `uid + '__1'`, `'__2'`, `'__3'` from `request.auth.uid`
+  and compares, which is a membership test against three literals with no `split()`, no regex and
+  nothing to mis-tokenise. The separator is TWO underscores because a Firebase uid legally contains
+  one. `entryIdFor()` / `parseEntryId()` in `career/board.js` are the only places the client builds
+  or splits it, and a bare uid parses as slot 0 so every pre-slot document still renders.
+  **A fourth save slot is a two-stage deploy** — publish the rules by hand first — exactly like
+  adding a row field. Two TOP-LEVEL collections rather than a parent + subcollection, because
+  deleting a parent document does NOT delete its subcollection and removal would orphan the dossier.
+- **Publishing is AUTOMATIC and there is no Publish button.** Every slot holding a created career
+  goes up on its own and stays current; the only decision left to the player is the opposite one,
+  **Hide**. `autoSyncBoard()` is the single entry point, called from CareerShell's 60s autosave
+  tick, from a `$currentUser` change (Firebase reports the account *after* mount, so an onMount-only
+  sweep misses every reload) and from the board screen's own mount. `maybeAutoPublish(c, slot)` kept
+  its name and signature but no longer requires an existing row — publication is not an opt-in any
+  more, so "nothing is up there yet" is a reason to write, not a reason to stop.
+- **Two gates, and both are needed.** A per-slot 60s floor bounds how often the question is asked;
+  `rowSignature()` decides the answer. That signature enumerates `BOARD_ROW_FIELDS` in a fixed order
+  rather than hashing the object, because it must read the SAME for a row built by `buildBoardDocs`
+  and for the same row read back through `sanitizeRow` — which adds `entryId`, `uid`, `isMe`, `team`
+  and `teamName`. A wholesale hash never matches itself and re-uploads three documents a minute for
+  ever; including `updatedAt` is the same bug from the other side. The blob half is a `*` wildcard
+  when a row came off the server without its dossier, so a read-only session is silent. **`force`
+  skips the two RATE LIMITS and nothing else** — never the hidden check, never the signature.
+- **`hidden` is the only durable board state, and it lives in the DOSSIER.** Hiding deletes the
+  ranking row (that is what takes the career off the board) and REWRITES the dossier to
+  `hiddenProfileFor()` — `hidden: true`, blob emptied so no readable copy is left at a public path.
+  It cannot live in the save (board code never writes storage, and `boardCheck` lints for that by
+  call site) and it cannot live on the row (the row is gone). Deleting both documents instead would
+  put the career back within a minute, from this device or the next one the account signs into.
+  `validCareerDossier` therefore no longer requires `blob.size() > 0`, and `CAREER_DOSSIER_KEYS` is
+  5. **"Not hidden" must be KNOWN, never assumed**: `syncSlot()` refuses a slot whose dossier has
+  not been read, which is what stops a cold start re-listing a career hidden elsewhere.
+- The pre-slot `careerBoard/{uid}` document is a duplicate ranked row nothing in the new UI
+  addresses. `loadMyEntries()` looks for it ONCE per account per session and `purgeLegacyEntry()`
+  deletes it only if that read found one — a blind delete-just-in-case would spend two writes a
+  session on every account that never published, and would make boardCheck's "nothing was deleted"
+  untestable. Nothing may WRITE that path any more; the rules allow only `delete` there.
 - **Rank on `earnedLegacyScore`, never `legacyScore`.** The monument ladder is 4,350 renewable
   legacy points for +2,600 score, and careers retire holding 618-6,531 LP unspent — ranking on the
   total would put the top of the board up for sale. The field is NAMED `earnedScore` so no future
@@ -916,6 +951,51 @@ asserts those rails and enums stay GONE, so the complexity cannot creep back in.
 Consequences worth knowing: **adding a role or a region is now a client-only change** (no enum to
 mirror), but **adding a row FIELD is still a TWO-STAGE deploy** — `keys().size() <= 25` and the
 per-field type checks mean a new field is denied until the rules are re-published by hand first.
+So is **adding a save slot**: `ownsCareerSlot()` names slots 1-3 literally, and a fourth would be
+denied by the published rules until they are re-pasted.
+
+`boardCheck` covers the per-slot rewrite at both ends — that `entryIdFor()` builds the id
+`ownsCareerSlot()` proves, that publishing two slots writes two documents and deletes nothing, that
+Hide deletes exactly the row and rewrites exactly the dossier with `hidden: true` and an empty blob,
+that the uploader refuses a hidden slot and DOES publish an unpublished one (the old contract was
+the exact opposite, and is asserted in its new form so the change reads as deliberate rather than as
+a regression), and that a `force`d sweep still writes nothing when the content has not moved —
+which is the only way to tell the signature gate from the timer. `parseEntryId` carries a table
+including a uid with a single underscore in it, the shapes that must NOT parse as a slot, and the
+bare pre-slot id. careerRender drives fifteen `board-mine-*` states plus the hide confirmation,
+which needed a fifth harness prop (`initialConfirmHide`) because `confirmHide` is component-local
+and set only in a click handler — the destructive action on the screen, and otherwise in exactly the
+position MatchDay's unreachable scoreboard copy is in.
+
+**`makeDbStub` REMEMBERS WHAT WAS WRITTEN.** It used to record only the call log, and that hid the
+thing most worth checking: the uploader decides whether to write by comparing a signature of what it
+is about to send against what the server already holds, so a `get()` that always answers "no such
+document" makes every sweep look like a first publish and the entire skip-if-unchanged path goes
+untested while reporting green. The same amnesia hides the cross-device case, where a row
+DISAPPEARING between two reads is the whole signal — a hide on another device — and is told apart
+from a lost write only by whether the dossier says `hidden`. Both directions are asserted.
+
+**`{#each shownRows as r (r.entryId)}` is linted, and no other harness can see it.** Svelte's SSR
+generator discards each-block keys entirely, so careerRender compiles that file with zero
+`validate_each_keys` and its clean renders prove nothing; svelteCheck compiles in SSR mode too, and
+a duplicate key is a RUNTIME error. Keying on the account throws in dev and, in a production build,
+mounts one shared block twice and silently drops a career out of the table — and one account now
+legitimately owns three rows carrying the same `uid`. This shipped once and was caught by review,
+not by a harness, which is why the lint exists.
+
+**A slot can hold a board entry and NO local save** — the player wiped the slot from the main menu,
+or signed in on a device that never had that career. `syncSlot` correctly refuses it ("there is no
+career here" must never be read as "delete theirs"), so the card renders off `entry` instead of
+`summary` and keeps its Hide button; without that the career is on the global board for ever with
+nothing in the app able to take it down. `Show on the board` is withheld in that state, because
+there is no save to build a document out of and the press would silently do nothing.
+
+**Flush before publishing, on both trigger paths.** `saveCareer()` only SCHEDULES a write 120ms out,
+and the uploader publishes what `careerSlotRaw()` finds on disk — never the store object it was
+handed. `CareerShell` therefore calls `flushCareer()` before both `maybeAutoPublish` and the
+interval's `autoSyncBoard`. Self-correcting inside a one-minute timer, but on the event path it
+published the state from before the split close that triggered it: a row one whole split behind, at
+exactly the two moments the ranked fields move furthest.
 
 **Verifying career changes** — `npm run build` passing proves very little here:
 - `node tools/svelteCheck.mjs [file...]` — compiles every `.svelte` (or just the named ones) with

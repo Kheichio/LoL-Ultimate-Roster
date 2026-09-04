@@ -15,10 +15,23 @@ service cloud.firestore {
     }
 
     // ---- Career leaderboard (Ultimate Career) ----
-    // ONE DOC PER UID, never one per uid plus slot: the path IS the ownership
-    // proof, so no rule ever parses a doc id, and one row per account bounds
-    // this collection at the number of registered users. The published save
-    // slot is a FIELD.
+    // ONE DOC PER SAVE SLOT, keyed `{uid}__{slot}`. A player with three careers
+    // has three entries and none of them replaces another: the board ranks
+    // careers, not accounts. That bounds this collection at three documents per
+    // registered user, which is what the field-count and string caps below are
+    // sized against.
+    //
+    // THE PATH IS STILL THE OWNERSHIP PROOF, and no rule parses anything.
+    // ownsCareerEntry() rebuilds the three ids this account is allowed to write
+    // from request.auth.uid and compares — a membership test against three
+    // literal strings, with no split(), no regex and nothing to mis-tokenise.
+    // A fourth save slot therefore means re-publishing these rules by hand
+    // BEFORE shipping the client, exactly as adding a row field already does.
+    //
+    // The bare `{uid}` path from before slots is intentionally no longer
+    // writable. Those documents are read-only history now; the client deletes
+    // its own on the first per-slot publish, and delete is still allowed for
+    // them by the same helper's first clause.
     //
     // Two TOP-LEVEL collections, not a parent plus subcollection: deleting a
     // parent document does NOT delete its subcollection in Firestore, so
@@ -28,14 +41,15 @@ service cloud.firestore {
     // on a delete request.resource is null, so calling a validator on it errors
     // and the rule denies. That is the bug the leaderboard block has today,
     // where nobody can take their own entry off the board.
-    match /careerBoard/{userId} {
+    match /careerBoard/{entryId} {
       allow read: if true;
 
       allow create, update: if request.auth != null
-        && request.auth.uid == userId
+        && ownsCareerSlot(entryId, request.auth.uid)
         && validCareerRow(request.resource.data);
 
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null
+        && ownsCareerEntry(entryId, request.auth.uid);
     }
 
     // ---- Career dossier ----
@@ -43,14 +57,20 @@ service cloud.firestore {
     // a JSON string because rules cannot iterate a variable-length list: a list
     // bound caps the row COUNT while letting each row carry a huge string. The
     // size of a string is the only hard BYTE bound this language can express.
-    match /careerBoardProfiles/{userId} {
+    //
+    // It also carries the HIDDEN flag, which is the only durable board state
+    // the client keeps. Hiding a career deletes its ranking row and rewrites
+    // this document with hidden:true and an empty blob, so the decision travels
+    // between the player's devices without a byte being written to their save.
+    match /careerBoardProfiles/{entryId} {
       allow read: if true;
 
       allow create, update: if request.auth != null
-        && request.auth.uid == userId
+        && ownsCareerSlot(entryId, request.auth.uid)
         && validCareerDossier(request.resource.data);
 
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null
+        && ownsCareerEntry(entryId, request.auth.uid);
     }
 
     // ---- Cloud saves ----
@@ -98,6 +118,29 @@ service cloud.firestore {
       && d.updatedAt <= request.time.toMillis()
       && d.displayName is string && d.displayName.size() <= 64
       && d.teamName is string && d.teamName.size() <= 64;
+  }
+
+  // ---- Career board ownership ----
+  // Three literal comparisons, built from the caller's own uid. This is NOT a
+  // doc-id parse: nothing is split, nothing is matched against a pattern, and
+  // no substring of an attacker-supplied id is ever trusted. It is the same
+  // guarantee `request.auth.uid == userId` gave before slots existed, restated
+  // for the three ids one account may now write.
+  //
+  // SLOT_IDS in the client is [1, 2, 3]. If that ever grows, this list has to
+  // grow FIRST and be published by hand, or every publish from the new slot is
+  // denied silently.
+  function ownsCareerSlot(entryId, uid) {
+    return entryId == uid + '__1'
+      || entryId == uid + '__2'
+      || entryId == uid + '__3';
+  }
+
+  // Delete additionally covers the pre-slot document at the bare uid, so the
+  // client can clean up its own legacy entry. Nothing may WRITE that path any
+  // more, which is what stops a duplicate row reappearing there.
+  function ownsCareerEntry(entryId, uid) {
+    return entryId == uid || ownsCareerSlot(entryId, uid);
   }
 
   // ---- Career board validation ----
@@ -153,11 +196,20 @@ service cloud.firestore {
 
   // A 24-year career compacts to about 8kb. The client re-parses and re-clamps
   // the blob on read regardless, so this bounds its SIZE and never its contents.
+  //
+  // THE BLOB MAY BE EMPTY, and the old `size() > 0` is gone deliberately. A
+  // hidden career's dossier is rewritten to hidden:true with no blob at all —
+  // that is what stops a career the player took off the board leaving a
+  // readable copy of itself at a public path — and a minimum length here would
+  // deny that write, leaving Hide broken with nothing on screen to say why.
+  // The client's sanitizeDossier() already returns null for an empty blob, so
+  // an empty one opens nothing rather than rendering a blank career.
   function validCareerDossier(d) {
-    return d.keys().size() <= 4
+    return d.keys().size() <= 5
       && d.v is int
       && d.updatedAt is int
+      && d.hidden is bool
       && d.careerId is string && d.careerId.size() <= 16
-      && d.blob is string && d.blob.size() > 0 && d.blob.size() <= 24000;
+      && d.blob is string && d.blob.size() <= 24000;
   }
 }
