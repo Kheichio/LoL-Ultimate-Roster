@@ -126,6 +126,10 @@
     .clickable { cursor: pointer; }
     .card:focus-visible { outline: 3px solid #60a5fa; outline-offset: 3px; }
     .card-unowned { filter: grayscale(1) brightness(0.5); opacity: 0.6; }
+    /* A greyed-out card's glow is invisible anyway, and the Archive shows hundreds of them —
+       every one of those animations was a repaint per frame through a filter. */
+    .card-unowned, .card-unowned::before, .card-unowned::after,
+    .card-unowned .card-header, .card-unowned .card-body { animation: none !important; }
 
     /* Signature font overrides */
     .card-signature { font-family: 'Marck Script', cursive; }

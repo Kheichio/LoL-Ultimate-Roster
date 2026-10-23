@@ -61,8 +61,9 @@ export const milestoneCards = writable([]);
 // 5 role slots (separate from the main squad) + sentAt epoch (0 = idle, >0 = farming since that time).
 export const academy = writable({ TOP: null, JNG: null, MID: null, ADC: null, SUP: null, sentAt: 0 });
 
-// Roster Building Challenges — which challenges have been completed on the current day.
-export const rbcState = writable({ day: '', claimed: {} });
+// Roster Building Challenges — which challenges have been completed on the current day, and
+// `seen`: the day key the tab was last opened on, which is what turns the nav badge off.
+export const rbcState = writable({ day: '', claimed: {}, seen: '' });
 
 // Free packs earned from RBCs — { [storePackId]: count }. Opened for free in the Store.
 export const freePacks = writable({});
@@ -559,6 +560,7 @@ export function initGame() {
         rbcState.set({
             day: typeof rawRbc.day === 'string' ? rawRbc.day : '',
             claimed: (rawRbc.claimed && typeof rawRbc.claimed === 'object') ? rawRbc.claimed : {},
+            seen: typeof rawRbc.seen === 'string' ? rawRbc.seen : '',
         });
     }
 

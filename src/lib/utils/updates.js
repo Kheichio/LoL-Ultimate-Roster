@@ -1,14 +1,47 @@
-// Shared source for the changelog surfaces.
+// Shared source for the changelog.
 //
-// The Home page shows a short preview (the newest few, `summary` only) and the main menu's
-// Update Log screen shows the full list with every `details` bullet — both read from here,
-// so a release is described in one place instead of being copy-pasted into the Home island.
-// (The Guide tab keeps its own FAQ-style "Update Log" section.) Newest first.
+// The main menu's Update Log screen shows the full list with every `details` bullet. It used
+// to be previewed on the Home page too; that island was removed in 1.7.6, so the main menu is
+// the one place a release is read. (The Guide tab keeps its own FAQ-style "Update Log"
+// section.) Newest first.
 //
 // UPDATES[0] is also the version the main menu prints on its Update Log link, so the top
 // entry and the two "Public Build" badges in App.svelte / MainMenu.svelte move together.
 
 export const UPDATES = [
+    {
+        ver: 'Beta 1.7.6',
+        title: 'Ultimate Roster — New Store, Top Bar, Home, Quests & Rewards',
+        summary: 'Five of the most-used screens rebuilt. Packs look like real foil booster packs and tear open in your hands, the top bar is grouped and readable at a glance, Home tells you what is waiting for you, Quests has a Claim All, and Rewards puts the daily login and the Battle Pass side by side on one page.',
+        details: [
+            'NEW — the Store. Every pack is drawn as a foil booster pack with crimped seals, and the packs sit on three shelves — Core, Tournament and Legacy — with the top of each drop table printed right next to the pack instead of a click away. The live event gets a spotlight at the top with its price, its headline odds, a pity bar and the time left.',
+            'NEW — opening a pack. The pack shakes, the top seal tears off and then the cards turn over one at a time. Click to skip, or press Reveal All during a big bulk open.',
+            'NEW — the top bar. Every page has an icon and a label, grouped the way the game is played: your club on the left of PLAY, competing and progress on the right, and the pages you visit now and then (Ranking, Friends, Trade, Guide, Welcome) under More. On a phone the menu lists the same pages in labelled sections.',
+            'NEW — Home. A header with your team, your level and one "Next up" button; a To-do list of everything waiting for you (daily reward, Battle Pass tiers, quests, skill points, upgrades, academy runs, new Archive cards); your squad as six role tiles; and a trophy cabinet. The update log is no longer on Home — it lives on the main menu.',
+            'NEW — Quests. A completion ring, a Claim All button that claims every ready milestone, contract and achievement at once, filters for Ready / In progress / Claimed, and long categories folded down to their first few rows. Achievements are now medals that turn gold when earned.',
+            'NEW — Rewards. The daily login and the Battle Pass sit side by side at the top, each with its own claim button, so you never have to switch tabs to collect. The daily calendar is laid out by week, and the Battle Pass is a track you can scroll through, with buttons that jump to your tier, to the first unclaimed reward, or to any ten-tier block.',
+            'BATTLE PASS — tiers 5, 35 and 65 now give free packs (Premium, Elite, 2× Elite) instead of a small amount of BE, and tier 100 adds a free Champion pack on top of its team colour. Already-claimed tiers are untouched.',
+            'CHANGED — the Rewards notification now counts Battle Pass rewards waiting to be claimed. It used to light only when XP went over 1,000, which the pass levels automatically, so it almost never showed.',
+            'FIXED — after your first 28 logins the daily calendar marked every single day as claimed. It now follows the current 28-day cycle.',
+            'FIXED — Battle Pass XP from daily login days and from completing an Archive team was added without levelling the pass, so it could sit over 1,000 XP until something else gave XP. It levels straight away now.',
+            'FIXED — the Store preview window showed the full price on its buy button during an event while charging the discounted one.',
+        ],
+    },
+    {
+        ver: 'Beta 1.7.5',
+        title: 'Ultimate Roster — Worlds 2026, a New Play Menu & Softer Sound',
+        summary: 'The Worlds 2026 event is live in the Store, with a new code to go with it. The Play menu has been rebuilt as the road it always was — Season, then the five-stage circuit, then the Golden Road — every sound effect has been redone to be easier on the ears, and the Archive no longer stalls when you open it.',
+        details: [
+            'NEW — Worlds 2026 Event, live until 16 November (the weekend after the final at Barclays Center, Brooklyn). The Champion pack drops from 6,000 to 4,500 BE, Worlds Champion odds go from 0.5% to 2%, Finalist from 1% to 3%, and you are guaranteed a Champion card within 90 pulls.',
+            'NEW — code WORLDS2026: a Signature Worlds Champion card plus a free Champion pack. Redeem it in the account panel; it lands in the Store\'s Free Packs row.',
+            'NEW — the Play menu is rebuilt. Season Splits sits at the top as your main climb, the five tournaments are drawn as one road in the order you unlock them (with what each one needs to open spelled out on the card), the stage you have opened but never won is marked Up Next, and the Golden Road and the side modes each get their own section. Your squad power is on the page, one click from the squad screen.',
+            'CHANGED — every sound effect has been redone. The old ones were raw square and sawtooth waves started at full volume, which is what made them harsh. They are now soft bell and pad tones that fade in, run through a gentle filter and a limiter, and the losing sound is a falling phrase rather than a buzzer.',
+            'CHANGED — Roster Building Challenges now unlock after your first World Championship (from the Worlds mode or the Golden Road), the same as the Academy. The tab tells you exactly what it needs while locked.',
+            'FIXED — the RBC notification was lit every single day, whether or not you could do anything about it. It now stays dark until RBCs are unlocked, lights once a day when the new challenges arrive, and goes out as soon as you open the tab.',
+            'FIXED — the Archive was slow to open. It mounted every card in the category at once — 813 of them for LCK alone, each with its own animated glow. Cards now load in as you scroll towards them, greyed-out cards no longer animate, and team panels you have scrolled past stop drawing.',
+            'FIXED — during a Store event the pack card and the Preview window still showed the pack\'s normal drop rates, while the pack was actually rolling the boosted ones. Both now show the odds you are really getting.',
+        ],
+    },
     {
         ver: 'Beta 1.7.4.3',
         title: 'Ultimate Career — The Scoreboard, Where You Actually Are',
@@ -416,8 +449,3 @@ export const UPDATES = [
         ],
     },
 ];
-
-// The newest N updates, for the Home page preview island.
-export function recentUpdates(n = 3) {
-    return UPDATES.slice(0, n);
-}

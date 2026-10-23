@@ -5,7 +5,7 @@
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal, switchTab } from '../../stores/ui.js';
     import { getEffectiveRating, getEra, TIER_ORDER, ALL_SPECIAL } from '../../utils/cards.js';
-    import { CHALLENGES, REWARD_PACKS, todayKey, msUntilReset, claimedToday, requirementChips, validateSubmission } from '../../utils/rbc.js';
+    import { CHALLENGES, REWARD_PACKS, todayKey, msUntilReset, claimedToday, requirementChips, validateSubmission, rbcUnlocked } from '../../utils/rbc.js';
     import { playSound } from '../../utils/sound.js';
 
     let nowTs = Date.now();
@@ -14,6 +14,14 @@
 
     $: today = todayKey(nowTs);
     $: claimed = claimedToday($rbcState, today);
+    $: unlocked = rbcUnlocked($trackStats);
+
+    // Opening the tab is what turns the nav badge off for the day. Written only when it
+    // actually changes, so the 1s ticker above can't cause a save every second.
+    $: if (unlocked && $rbcState.seen !== today) {
+        rbcState.update(s => ({ ...s, seen: today }));
+        saveGame();
+    }
     $: resetLabel = fmtCountdown(msUntilReset(nowTs));
 
     function fmtCountdown(ms) {
@@ -96,7 +104,7 @@
     $: validation = active ? validateSubmission(active, slots) : null;
 
     function startChallenge(ch) {
-        if (claimed[ch.id]) return;
+        if (!unlocked || claimed[ch.id]) return;
         active = ch;
         slots = Array(ch.req.count).fill(null);
         pickerIdx = -1;
@@ -125,7 +133,7 @@
     }
 
     function doComplete() {
-        if (!active || !validation || !validation.valid || claimed[active.id]) return;
+        if (!unlocked || !active || !validation || !validation.valid || claimed[active.id]) return;
 
         const ch = active;
         const pack = REWARD_PACKS[ch.reward.pack];
@@ -138,7 +146,7 @@
         freePacks.update(fp => ({ ...fp, [ch.reward.pack]: (fp[ch.reward.pack] || 0) + ch.reward.count }));
         rbcState.update(s => {
             const base = s && s.day === today ? (s.claimed || {}) : {};
-            return { day: today, claimed: { ...base, [ch.id]: true } };
+            return { ...s, day: today, claimed: { ...base, [ch.id]: true } };
         });
         trackStats.update(s => ({ ...s, rbcCompleted: (s.rbcCompleted || 0) + 1 }));
         grantXP(60);
@@ -165,12 +173,25 @@
             <h2 class="rbc-title">Roster Building Challenges</h2>
             <p class="rbc-sub">Trade a themed five for a guaranteed reward pack — resets daily.</p>
         </div>
+        {#if unlocked}
         <div class="rbc-reset">
             <span class="rr-label">Resets in</span>
             <span class="rr-time">{resetLabel}</span>
         </div>
+        {/if}
     </div>
 
+    {#if !unlocked}
+    <div class="rbc-locked">
+        <div class="rl-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4" fill="currentColor"/></svg>
+        </div>
+        <div class="rl-title">Unlocks after your first World Championship</div>
+        <p class="rl-sub">Roster Building Challenges are an endgame trade: five strong players in, five premium packs out. Lift the Summoner's Cup once — in the World Championship or at the end of the Golden Road — and they open for good.</p>
+        <div class="rl-progress"><span class="rl-dot"></span> Worlds titles: <b>{$trackStats.worldsWon || 0}</b> / 1</div>
+        <button class="rl-btn" on:click={() => switchTab('tournament')}>Go to Play →</button>
+    </div>
+    {:else}
     <!-- How it works -->
     <div class="rbc-info">
         <div class="ri-title">How it works</div>
@@ -222,6 +243,7 @@
             </div>
         {/each}
     </div>
+    {/if}
 </section>
 
 <!-- Submission Modal -->
@@ -356,6 +378,17 @@
     .rbc-reset { display: flex; flex-direction: column; align-items: center; padding: 8px 18px; border-radius: 12px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.2); }
     .rr-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #a16207; }
     .rr-time { font-size: 16px; font-weight: 900; color: #fbbf24; font-family: monospace; }
+
+    /* Locked */
+    .rbc-locked { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 44px 28px; border-radius: 20px; background: radial-gradient(120% 90% at 50% 0%, rgba(251,191,36,0.10), rgba(12,16,28,0.55) 60%); border: 1px solid rgba(251,191,36,0.16); }
+    .rl-icon { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fbbf24; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25); box-shadow: 0 0 30px rgba(251,191,36,0.12); }
+    .rl-title { font-size: 18px; font-weight: 900; color: #f1f5f9; margin-top: 4px; }
+    .rl-sub { max-width: 520px; font-size: 13px; line-height: 1.6; color: #94a3b8; }
+    .rl-progress { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #cbd5e1; padding: 6px 14px; border-radius: 100px; background: rgba(15,23,42,0.6); border: 1px solid rgba(71,85,105,0.3); }
+    .rl-progress b { color: #fbbf24; }
+    .rl-dot { width: 7px; height: 7px; border-radius: 50%; background: #64748b; }
+    .rl-btn { margin-top: 6px; padding: 11px 26px; border-radius: 12px; border: none; cursor: pointer; font-size: 13px; font-weight: 900; color: #1c1408; background: linear-gradient(135deg, #f59e0b, #fbbf24); transition: transform 0.12s, box-shadow 0.12s; }
+    .rl-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(245,158,11,0.3); }
 
     /* Info panel */
     .rbc-info { background: linear-gradient(135deg, rgba(251,191,36,0.06), rgba(12,16,28,0.5) 60%); border: 1px solid rgba(251,191,36,0.14); border-radius: 16px; padding: 18px 22px; margin-bottom: 22px; }

@@ -1,5 +1,7 @@
 <script>
     import Card from '../card/Card.svelte';
+    import Icon from '../ui/Icon.svelte';
+    import { pressFx } from '../../utils/fx.js';
     import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, pendingChallenge } from '../../stores/ui.js';
@@ -389,6 +391,36 @@
     $: canWorlds = ($unlocks.msi || (ts.regionalSplitWon || 0) >= 1);
     $: canGoldenRoad = canRegional;
 
+    // ── The Play menu ──
+    // The five standalone tournaments, in the order a club actually climbs them. The menu
+    // draws them as one road, so this order IS the layout. Lock hints restate the can*
+    // rules above in words — change one, change the other.
+    $: circuit = [
+        { id: 'cafe',       icon: 'coffee', name: 'Gaming Cafe',        detail: '3 rounds · CPU capped at Gold', unlocked: true,          hint: '',                                                     wins: ts.cafeWins || 0 },
+        { id: 'regional',   icon: 'flag',   name: 'Regional Trophy',    detail: '5 rounds · Mixed tiers',        unlocked: canRegional,   hint: 'Finish one Season split',                              wins: ts.regionalSplitWon || 0 },
+        { id: 'firststand', icon: 'flame',  name: 'First Stand',        detail: '5 rounds · Tough opponents',    unlocked: canFirstStand, hint: 'Win a Regional title — the Trophy or a 6-win split',  wins: ts.firstStandWon || 0 },
+        { id: 'msi',        icon: 'waves',  name: 'MSI',                detail: '7 rounds · Elite competition',  unlocked: canMSI,        hint: 'Reach the Regional final, or win a Regional title',   wins: ts.msiWon || 0 },
+        { id: 'worlds',     icon: 'trophy', name: 'World Championship', detail: '7 rounds · The ultimate test',  unlocked: canWorlds,     hint: 'Reach the First Stand final, or win a Regional title', wins: ts.worldsWon || 0 },
+    ].map((s, i) => ({ ...s, step: i + 1, mode: MODES[s.id] }));
+    // How far along the road the club is, for the progress line: the last unlocked stage.
+    $: circuitReach = circuit.reduce((n, s, i) => s.unlocked ? i : n, 0);
+    // The stage worth pointing at: the furthest one that is open but never won.
+    $: recommendedId = ([...circuit].reverse().find(s => s.unlocked && !s.wins) || {}).id || null;
+
+    const GR_PATH = [
+        { icon: 'flag', label: 'Regional' }, { icon: 'flame', label: 'First Stand' }, { icon: 'flag', label: 'Regional' },
+        { icon: 'waves', label: 'MSI' }, { icon: 'flag', label: 'Regional' }, { icon: 'trophy', label: 'Worlds' },
+    ];
+
+    $: salaryReady = $club.filter(c => c.role !== 'COACH').length >= 5;
+
+    function enterStage(s) {
+        if (!s.unlocked) return;
+        if (!squadReady) { showToast('Fill all 5 starting positions first.', 'error'); switchTab('squad'); return; }
+        playSound('click');
+        startTournament(s.id);
+    }
+
     const MODES = {
         cafe: { name: 'Gaming Cafe', icon: '☕', rounds: 3, minRating: 55, maxRating: 78, pool: 'regular', cpuBonus: 0, reward: 300, second: 150, color: '#10b981' },
         regional: { name: 'Regional Trophy', icon: '🏟️', rounds: 5, minRating: 70, maxRating: 90, pool: 'all', cpuBonus: 3, reward: 1500, second: 500, color: '#3b82f6', statKey: 'regionalSplitWon' },
@@ -619,158 +651,159 @@
 
 <section class="trn">
     {#if phase === 'lobby'}
-        <div class="trn-head">
-            <h2 class="trn-title">Competitive Arenas</h2>
-            <p class="trn-desc">Test your roster against CPU opponents. Win tournaments to unlock higher tiers.</p>
-        </div>
-
-        <!-- Season Banner -->
-        <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="season-banner" on:click={() => switchTab('season')}>
-            <div class="sb-glow"></div>
-            <div class="sb-content">
-                <div class="sb-badge">Season Splits</div>
-                <div class="sb-title">Play Season Matches</div>
-                <div class="sb-sub">10 opponents per split · Earn regional trophies</div>
-            </div>
-            <button class="mode-enter-btn" style="background: linear-gradient(135deg, #3b82f6, #6366f1);">Open Season →</button>
-        </div>
-
-        <!-- Mode Cards -->
-        <div class="modes-list">
-            <!-- Gaming Cafe -->
-            <div class="mode-row" style="border-color: {MODES.cafe.color}20;">
-                <span class="mode-icon">☕</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: {MODES.cafe.color};">Gaming Cafe Tournament</h3>
-                    <p class="mode-sub">3 rounds · CPU capped at Gold · Free Entry</p>
-                    <div class="mode-prizes"><span class="mp-w">Win: {MODES.cafe.reward} BE</span><span class="mp-l">2nd: {MODES.cafe.second} BE</span></div>
+        <!-- ═══ PLAY MENU ═══
+             Read top to bottom it is the shape of the game: the Season you grind, the five-stage
+             circuit it opens (drawn as one road, in unlock order), the Golden Road that runs the
+             whole circuit without a loss, and the side modes that sit outside the climb. -->
+        <div class="pl">
+            <header class="pl-hero">
+                <div class="pl-hero-text">
+                    <span class="pl-eyebrow"><Icon name="play" size={12} stroke={2.4} /> Play</span>
+                    <h2 class="pl-title">Choose your stage</h2>
+                    <p class="pl-sub">Every title opens the next one. Climb from a café bracket to the Summoner's Cup — or try the side modes for something different.</p>
                 </div>
-                {#if squadReady}
-                    <button class="mode-enter-btn" style="background: {MODES.cafe.color};" on:click={() => startTournament('cafe')}>Enter</button>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
+                <button class="pl-power" class:pl-power-off={!squadReady} on:click={() => switchTab('squad')} use:pressFx={{ color: 'rgba(96,165,250,0.35)' }}>
+                    <span class="pp-ring" style="--pct: {squadReady ? Math.min(100, Math.round((totalPower / 130) * 100)) : 0}%;">
+                        <span class="pp-val">{squadReady ? totalPower : '—'}</span>
+                    </span>
+                    <span class="pp-text">
+                        <span class="pp-label">Squad power</span>
+                        <span class="pp-state">{squadReady ? `${avgRating} avg · +${chemBonus} chemistry` : `${starters.length}/5 starters set`}</span>
+                        <span class="pp-cta">{squadReady ? 'Manage squad' : 'Finish your squad'} <Icon name="arrow" size={13} /></span>
+                    </span>
+                </button>
+            </header>
 
-            <!-- Regional -->
-            <div class="mode-row" class:mode-locked={!canRegional} style="border-color: {MODES.regional.color}20;">
-                <span class="mode-icon">🏟️</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canRegional ? MODES.regional.color : '#334155'};">Regional Trophy</h3>
-                    <p class="mode-sub">{canRegional ? '5 rounds · Mixed tiers' : 'Complete 1 Season Split to unlock'}</p>
-                    {#if canRegional}<div class="mode-prizes"><span class="mp-w">Win: {MODES.regional.reward} BE</span><span class="mp-l">2nd: {MODES.regional.second} BE</span></div>{/if}
-                </div>
-                {#if canRegional && squadReady}
-                    <button class="mode-enter-btn" style="background: {MODES.regional.color};" on:click={() => startTournament('regional')}>Enter</button>
-                {:else if !canRegional}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
+            <!-- Season — the main loop, so it gets the widest surface on the page -->
+            <button class="pl-season" on:click={() => { playSound('click'); switchTab('season'); }} use:pressFx={{ color: 'rgba(129,140,248,0.35)' }}>
+                <span class="ps-art" aria-hidden="true">
+                    <span class="ps-orbit"></span>
+                    <span class="ps-emblem"><Icon name="calendar" size={30} /></span>
+                </span>
+                <span class="ps-body">
+                    <span class="ps-kicker">Your main climb</span>
+                    <span class="ps-title">Season Splits</span>
+                    <span class="ps-sub">10 opponents a split · {ts.splitsCompleted || 0} split{(ts.splitsCompleted || 0) === 1 ? '' : 's'} played · {ts.regionalSplitWon || 0} regional title{(ts.regionalSplitWon || 0) === 1 ? '' : 's'}</span>
+                </span>
+                <span class="ps-go">Open Season <Icon name="arrow" size={15} /></span>
+            </button>
 
-            <!-- First Stand -->
-            <div class="mode-row" class:mode-locked={!canFirstStand} style="border-color: {MODES.firststand.color}20;">
-                <span class="mode-icon">🟠</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canFirstStand ? MODES.firststand.color : '#334155'};">First Stand</h3>
-                    <p class="mode-sub">{canFirstStand ? '5 rounds · Tough opponents' : 'Win/2nd Regional to unlock'}</p>
-                    {#if canFirstStand}<div class="mode-prizes"><span class="mp-w">Win: {MODES.firststand.reward} BE</span><span class="mp-l">2nd: {MODES.firststand.second} BE</span></div>{/if}
+            <!-- The circuit -->
+            <section class="pl-section">
+                <div class="pl-sec-head">
+                    <h3 class="pl-sec-title">The Circuit</h3>
+                    <span class="pl-sec-note">{circuit.filter(s => s.unlocked).length}/5 stages open</span>
                 </div>
-                {#if canFirstStand && squadReady}
-                    <button class="mode-enter-btn" style="background: {MODES.firststand.color};" on:click={() => startTournament('firststand')}>Enter</button>
-                {:else if !canFirstStand}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
-
-            <!-- MSI -->
-            <div class="mode-row" class:mode-locked={!canMSI} style="border-color: {MODES.msi.color}20;">
-                <span class="mode-icon">🌊</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canMSI ? MODES.msi.color : '#334155'};">MSI</h3>
-                    <p class="mode-sub">{canMSI ? '7 rounds · Elite competition' : 'Win Regional 1st or First Stand to unlock'}</p>
-                    {#if canMSI}<div class="mode-prizes"><span class="mp-w">Win: {MODES.msi.reward} BE</span><span class="mp-l">2nd: {MODES.msi.second} BE</span></div>{/if}
+                <div class="circuit" style="--reach: {circuitReach / (circuit.length - 1)};">
+                    <div class="cr-track" aria-hidden="true"><div class="cr-track-fill"></div></div>
+                    {#each circuit as s (s.id)}
+                        <button
+                            class="stage"
+                            class:stage-locked={!s.unlocked}
+                            class:stage-won={s.wins > 0}
+                            class:stage-rec={recommendedId === s.id}
+                            style="--c: {s.mode.color};"
+                            aria-disabled={!s.unlocked}
+                            on:click={() => enterStage(s)}
+                            use:pressFx={{ color: `${s.mode.color}55` }}
+                        >
+                            <span class="st-glow" aria-hidden="true"></span>
+                            {#if recommendedId === s.id && squadReady}<span class="st-ribbon">Up next</span>{/if}
+                            <span class="st-emblem">
+                                <Icon name={s.unlocked ? s.icon : 'lock'} size={26} />
+                                <span class="st-step">{String(s.step).padStart(2, '0')}</span>
+                            </span>
+                            <span class="st-name">{s.name}</span>
+                            <span class="st-detail">{s.unlocked ? s.detail : s.hint}</span>
+                            {#if s.unlocked}
+                                <span class="st-prizes">
+                                    <span class="st-prize st-prize-w"><Icon name="gem" size={11} /> {s.mode.reward.toLocaleString()}</span>
+                                    <span class="st-prize">2nd {s.mode.second.toLocaleString()}</span>
+                                </span>
+                            {/if}
+                            <span class="st-foot">
+                                <span class="st-diff" title="Opponent strength">
+                                    {#each Array(5) as _, i}<span class="st-pip" class:st-pip-on={i < s.step}></span>{/each}
+                                </span>
+                                {#if s.wins > 0}<span class="st-wins"><Icon name="trophy" size={12} /> ×{s.wins}</span>{/if}
+                            </span>
+                            <span class="st-cta">
+                                {#if !s.unlocked}<Icon name="lock" size={13} /> Locked
+                                {:else if !squadReady}Set your squad
+                                {:else}Enter <Icon name="chevron" size={14} stroke={2.4} />{/if}
+                            </span>
+                        </button>
+                    {/each}
                 </div>
-                {#if canMSI && squadReady}
-                    <button class="mode-enter-btn" style="background: {MODES.msi.color};" on:click={() => startTournament('msi')}>Enter</button>
-                {:else if !canMSI}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
-
-            <!-- Worlds -->
-            <div class="mode-row" class:mode-locked={!canWorlds} style="border-color: {MODES.worlds.color}20;">
-                <span class="mode-icon">🏆</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canWorlds ? MODES.worlds.color : '#334155'};">World Championship</h3>
-                    <p class="mode-sub">{canWorlds ? '7 rounds · The ultimate challenge' : 'Win Regional or MSI/2nd to unlock'}</p>
-                    {#if canWorlds}<div class="mode-prizes"><span class="mp-w">Win: {MODES.worlds.reward} BE</span><span class="mp-l">2nd: {MODES.worlds.second} BE</span></div>{/if}
-                </div>
-                {#if canWorlds && squadReady}
-                    <button class="mode-enter-btn" style="background: {MODES.worlds.color};" on:click={() => startTournament('worlds')}>Enter</button>
-                {:else if !canWorlds}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
+            </section>
 
             <!-- Golden Road -->
-            <div class="mode-row mode-golden" class:mode-locked={!canGoldenRoad} style="border-color: #fbbf2440;">
-                <span class="mode-icon">👑</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canGoldenRoad ? '#fbbf24' : '#334155'};">Golden Road</h3>
-                    <p class="mode-sub">{canGoldenRoad ? '3 Regional → 3 First Stand → 3 Regional → 3 MSI → 3 Regional → 4 Worlds (19 games)' : 'Complete 1 Split to unlock'}</p>
-                    {#if canGoldenRoad}<div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">Win: 25,000 BE + Glory</span></div>{/if}
+            <section class="gold" class:gold-locked={!canGoldenRoad}>
+                <div class="gold-sheen" aria-hidden="true"></div>
+                <div class="gold-main">
+                    <span class="gold-crown"><Icon name="crown" size={34} /></span>
+                    <div class="gold-text">
+                        <span class="gold-kicker">The gauntlet{#if (ts.goldenRoads || 0) > 0} · completed ×{ts.goldenRoads}{/if}</span>
+                        <h3 class="gold-title">Golden Road</h3>
+                        <p class="gold-sub">{canGoldenRoad ? 'The whole circuit back to back — 19 games, and a single loss ends the run.' : 'Finish one Season split to open the road.'}</p>
+                    </div>
+                    <div class="gold-act">
+                        {#if canGoldenRoad}<span class="gold-prize">25,000 BE + Glory</span>{/if}
+                        {#if grOnCooldown}
+                            <span class="mode-cooldown">{grCooldownDisplay}</span>
+                        {:else if !canGoldenRoad}
+                            <span class="gold-lock"><Icon name="lock" size={14} /> Locked</span>
+                        {:else if !squadReady}
+                            <span class="mode-need">Need squad</span>
+                        {:else}
+                            <button class="gold-btn" on:click={() => { playSound('click'); startGoldenRoad(); }} use:pressFx={{ color: 'rgba(255,255,255,0.45)' }}>Begin the road</button>
+                        {/if}
+                    </div>
                 </div>
-                {#if grOnCooldown}
-                    <span class="mode-cooldown">{grCooldownDisplay}</span>
-                {:else if canGoldenRoad && squadReady}
-                    <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={startGoldenRoad}>Begin</button>
-                {:else if !canGoldenRoad}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
+                <ol class="gold-path">
+                    {#each GR_PATH as g, i}
+                        <li class="gp-node" class:gp-final={i === GR_PATH.length - 1}>
+                            <span class="gp-dot"><Icon name={g.icon} size={15} /></span>
+                            <span class="gp-label">{g.label}</span>
+                            <span class="gp-games">{i === GR_PATH.length - 1 ? 4 : 3} games</span>
+                        </li>
+                    {/each}
+                </ol>
+            </section>
 
-            <!-- Infinity Tower -->
-            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div class="mode-row" style="border-color: rgba(239,68,68,0.2);" on:click={() => switchTab('tower')}>
-                <span class="mode-icon">🗼</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: #f87171;">Infinity Tower</h3>
-                    <p class="mode-sub">Endless floors · Upgrades after each fight · How high can you go?</p>
-                    <div class="mode-prizes"><span class="mp-w">BE every 10 floors</span></div>
+            <!-- Side modes -->
+            <section class="pl-section">
+                <div class="pl-sec-head">
+                    <h3 class="pl-sec-title">Challenge Modes</h3>
+                    <span class="pl-sec-note">Outside the climb — play any time</span>
                 </div>
-                <button class="mode-enter-btn" style="background: linear-gradient(135deg, #dc2626, #ef4444);" on:click|stopPropagation={() => switchTab('tower')}>Enter</button>
-            </div>
-
-            <!-- Draft Mode -->
-            <!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div class="mode-row" style="border-color: rgba(168,85,247,0.2);" on:click={() => switchTab('draft')}>
-                <span class="mode-icon">🎯</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: #c084fc;">Draft Mode</h3>
-                    <p class="mode-sub">15 random cards, 5 bans each, build a squad and battle. Off-role cards get -10 penalty.</p>
-                    <div class="mode-prizes"><span class="mp-w">Win: 2,000 BE</span><span class="mp-l">Loss: 500 BE</span></div>
+                <div class="tiles">
+                    <button class="tile" style="--c: #f87171;" on:click={() => { playSound('click'); switchTab('tower'); }} use:pressFx={{ color: 'rgba(248,113,113,0.4)' }}>
+                        <span class="tl-art" aria-hidden="true"><Icon name="tower" size={40} stroke={1.5} /></span>
+                        <span class="tl-name">Infinity Tower</span>
+                        <span class="tl-sub">Endless floors, an upgrade after every fight. How high can you go?</span>
+                        <span class="tl-meta">{#if (ts.towerHighestFloor || 0) > 0}Best: floor {ts.towerHighestFloor}{:else}BE every 10 floors{/if}</span>
+                    </button>
+                    <button class="tile" style="--c: #c084fc;" on:click={() => { playSound('click'); switchTab('draft'); }} use:pressFx={{ color: 'rgba(192,132,252,0.4)' }}>
+                        <span class="tl-art" aria-hidden="true"><Icon name="cards" size={40} stroke={1.5} /></span>
+                        <span class="tl-name">Draft Mode</span>
+                        <span class="tl-sub">15 random cards, 5 bans each — build a five on the spot. Off-role picks take −10.</span>
+                        <span class="tl-meta">Win 2,000 · Loss 500</span>
+                    </button>
+                    <button class="tile" class:tile-off={!salaryReady} style="--c: #34d399;" aria-disabled={!salaryReady} on:click={() => { if (!salaryReady) { showToast('You need at least 5 non-coach cards in your club.', 'error'); return; } playSound('click'); startSalaryCap(); }} use:pressFx={{ color: 'rgba(52,211,153,0.4)' }}>
+                        <span class="tl-art" aria-hidden="true"><Icon name="coins" size={40} stroke={1.5} /></span>
+                        <span class="tl-name">Salary Cap</span>
+                        <span class="tl-sub">Build a five inside an 85,000 CAP budget, priced by rating. No coach.</span>
+                        <span class="tl-meta">{salaryReady ? 'Win 8,000 · 2nd 3,000' : 'Needs 5+ cards'}</span>
+                    </button>
+                    <button class="tile" class:tile-off={!squadReady} style="--c: #f59e0b;" aria-disabled={!squadReady} on:click={() => { if (!squadReady) { showToast('Fill all 5 starting positions first.', 'error'); return; } playSound('click'); phase = 'rival_lobby'; loadRivals(); }} use:pressFx={{ color: 'rgba(245,158,11,0.4)' }}>
+                        <span class="tl-art" aria-hidden="true"><Icon name="swords" size={40} stroke={1.5} /></span>
+                        <span class="tl-name">Rival Challenge</span>
+                        <span class="tl-sub">Take on another manager's saved squad from the leaderboard. First to three.</span>
+                        <span class="tl-meta">{squadReady ? 'Win 3,000 · 2nd 1,000' : 'Needs a full squad'}</span>
+                    </button>
                 </div>
-                <button class="mode-enter-btn" style="background: linear-gradient(135deg, #7c3aed, #a855f7);" on:click|stopPropagation={() => switchTab('draft')}>Enter</button>
-            </div>
-            <!-- Salary Cap Mode -->
-            <div class="mode-row" style="border-color: rgba(52,211,153,0.2);">
-                <span class="mode-icon">💰</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: #34d399;">Salary Cap Mode</h3>
-                    <p class="mode-sub">Build a squad within an 85,000 CAP budget. Prices are banded by rating (4,000 – 32,000). No coach. 5 rounds, elite opponents.</p>
-                    <div class="mode-prizes"><span class="mp-w">Win: 8,000 BE</span><span class="mp-l">2nd: 3,000 BE</span></div>
-                </div>
-                {#if $club.filter(c => c.role !== 'COACH').length >= 5}
-                    <button class="mode-enter-btn" style="background: #34d399; color: #052e16;" on:click={startSalaryCap}>Enter</button>
-                {:else}<span class="mode-need">Need 5+ cards</span>{/if}
-            </div>
-
-            <!-- Rival Challenge -->
-            <div class="mode-row" style="border-color: rgba(245,158,11,0.2);">
-                <span class="mode-icon">⚔️</span>
-                <div class="mode-info">
-                    <h3 class="mode-name" style="color: #f59e0b;">Rival Challenge</h3>
-                    <p class="mode-sub">Fight another player's saved squad from the leaderboard. 3-match challenge.</p>
-                    <div class="mode-prizes"><span class="mp-w">Win: 3,000 BE</span><span class="mp-l">2nd: 1,000 BE</span></div>
-                </div>
-                {#if squadReady}
-                    <button class="mode-enter-btn" style="background: #d97706;" on:click={() => { phase = 'rival_lobby'; loadRivals(); }}>Browse</button>
-                {:else}<span class="mode-need">Need squad</span>{/if}
-            </div>
+            </section>
         </div>
 
     {:else if phase === 'salary_lobby'}
@@ -1041,44 +1074,205 @@
     .trn-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
     .trn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
 
-    .season-banner { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 24px 28px; border-radius: 16px; margin-bottom: 20px; cursor: pointer; background: linear-gradient(135deg, rgba(30,58,138,0.25), rgba(15,23,42,0.6)); border: 1px solid rgba(59,130,246,0.12); overflow: hidden; transition: border-color 0.15s; }
-    .season-banner:hover { border-color: rgba(59,130,246,0.25); }
-    .sb-glow { position: absolute; inset: 0; background: radial-gradient(ellipse at 20% 50%, rgba(59,130,246,0.06), transparent 60%); pointer-events: none; }
-    .sb-content { position: relative; }
-    .sb-badge { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #3b82f6; margin-bottom: 4px; }
-    .sb-title { font-size: 20px; font-weight: 900; color: #93c5fd; }
-    .sb-sub { font-size: 11px; color: #64748b; margin-top: 4px; }
+    /* ═══ PLAY MENU ═══ */
+    .pl { display: flex; flex-direction: column; gap: 22px; }
 
-    /* Mode list */
-    .modes-list { display: flex; flex-direction: column; gap: 8px; }
-    .mode-row {
-        display: flex; align-items: center; gap: 16px; padding: 18px 22px;
-        border-radius: 14px; background: rgba(12,16,28,0.5); border: 1px solid;
-        transition: all 0.12s;
+    /* Hero */
+    .pl-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+    .pl-hero-text { max-width: 640px; }
+    .pl-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; color: #818cf8; padding: 4px 10px; border-radius: 100px; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.22); }
+    .pl-title { font-size: clamp(26px, 3.2vw, 38px); font-weight: 900; color: #f1f5f9; letter-spacing: -0.5px; margin-top: 10px; line-height: 1.05; }
+    .pl-sub { font-size: 13px; color: #7c8aa0; margin-top: 8px; line-height: 1.55; }
+
+    .pl-power {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 14px;
+        padding: 12px 20px 12px 12px; border-radius: 18px; cursor: pointer; text-align: left;
+        background: linear-gradient(140deg, rgba(30,58,138,0.32), rgba(12,16,28,0.75));
+        border: 1px solid rgba(96,165,250,0.22);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25);
     }
-    .mode-row:hover:not(.mode-locked) { background: rgba(15,20,35,0.6); }
-    .mode-locked { opacity: 0.35; }
-    .mode-golden { border-color: rgba(251,191,36,0.15) !important; background: rgba(251,191,36,0.03); }
-    .mode-icon { font-size: 28px; flex-shrink: 0; }
-    .mode-info { flex: 1; min-width: 0; }
-    .mode-name { font-size: 15px; font-weight: 900; }
-    .mode-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
-    .mode-prizes { display: flex; gap: 12px; margin-top: 6px; font-size: 10px; font-weight: 800; }
-    .mp-w { color: #34d399; } .mp-l { color: #94a3b8; }
+    .pl-power:hover { border-color: rgba(96,165,250,0.45); transform: translateY(-2px); }
+    .pl-power-off { background: linear-gradient(140deg, rgba(127,29,29,0.25), rgba(12,16,28,0.75)); border-color: rgba(248,113,113,0.25); }
+    .pp-ring {
+        position: relative; z-index: 1; width: 66px; height: 66px; border-radius: 50%; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: conic-gradient(#60a5fa var(--pct), rgba(51,65,85,0.45) 0);
+    }
+    .pp-ring::after { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: #0b1020; }
+    .pp-val { position: relative; z-index: 1; font-size: 20px; font-weight: 900; color: #e0f2fe; }
+    .pp-text { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 2px; }
+    .pp-label { font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: #60a5fa; }
+    .pl-power-off .pp-label { color: #f87171; }
+    .pp-state { font-size: 13px; font-weight: 800; color: #e2e8f0; }
+    .pp-cta { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: #93c5fd; }
+
+    /* Season */
+    .pl-season {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 22px;
+        width: 100%; padding: 22px 26px; border-radius: 22px; cursor: pointer; text-align: left;
+        background:
+            radial-gradient(500px 220px at var(--mx, 15%) var(--my, 50%), rgba(129,140,248,0.18), transparent 70%),
+            linear-gradient(120deg, #18185a 0%, #10163a 45%, #0b1020 100%);
+        border: 1px solid rgba(129,140,248,0.28);
+        box-shadow: 0 16px 40px rgba(30,27,75,0.35);
+    }
+    .pl-season:hover { transform: translateY(-2px); border-color: rgba(165,180,252,0.5); box-shadow: 0 20px 50px rgba(67,56,202,0.3); }
+    .ps-art { position: relative; z-index: 1; width: 76px; height: 76px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .ps-orbit { position: absolute; inset: 0; border-radius: 50%; border: 1.5px dashed rgba(165,180,252,0.45); animation: plSpin 18s linear infinite; }
+    .ps-emblem { width: 58px; height: 58px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #e0e7ff; background: linear-gradient(140deg, #6366f1, #4338ca); box-shadow: 0 0 26px rgba(99,102,241,0.55); }
+    .ps-body { position: relative; z-index: 1; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .ps-kicker { font-size: 9px; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; color: #a5b4fc; }
+    .ps-title { font-size: 24px; font-weight: 900; color: #fff; letter-spacing: -0.3px; }
+    .ps-sub { font-size: 12px; color: #a5b4fc; opacity: 0.85; }
+    .ps-go { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 14px; font-size: 13px; font-weight: 900; color: #1e1b4b; background: linear-gradient(135deg, #e0e7ff, #a5b4fc); flex-shrink: 0; box-shadow: 0 6px 18px rgba(99,102,241,0.35); }
+    .pl-season:hover .ps-go { box-shadow: 0 8px 26px rgba(129,140,248,0.55); }
+    @keyframes plSpin { to { transform: rotate(360deg); } }
+
+    /* Section heads */
+    .pl-section { display: flex; flex-direction: column; gap: 12px; }
+    .pl-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .pl-sec-title { font-size: 13px; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; color: #cbd5e1; }
+    .pl-sec-note { font-size: 11px; font-weight: 700; color: #56637a; }
+
+    /* The circuit — one road, five stops */
+    .circuit { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+    .cr-track { position: absolute; left: 10%; right: 10%; top: 47px; height: 3px; border-radius: 3px; background: rgba(51,65,85,0.5); z-index: 0; }
+    .cr-track-fill { height: 100%; width: calc(var(--reach) * 100%); border-radius: 3px; background: linear-gradient(90deg, #10b981, #3b82f6, #f97316, #06b6d4, #f59e0b); box-shadow: 0 0 12px rgba(245,158,11,0.35); transition: width 0.6s ease; }
+    .stage {
+        position: relative; overflow: hidden; z-index: 1;
+        display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
+        padding: 18px 14px 14px; border-radius: 20px; cursor: pointer;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--c) 11%, #0c1120) 0%, #0a0e1a 70%);
+        border: 1px solid color-mix(in srgb, var(--c) 28%, transparent);
+        transition: transform 0.18s cubic-bezier(.2,.8,.3,1.2), box-shadow 0.18s, border-color 0.18s;
+    }
+    .stage:hover:not(.stage-locked) { transform: translateY(-5px); border-color: color-mix(in srgb, var(--c) 65%, transparent); box-shadow: 0 16px 34px color-mix(in srgb, var(--c) 22%, transparent); }
+    .stage:active:not(.stage-locked) { transform: translateY(-1px) scale(0.98); }
+    .st-glow { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.2s; background: radial-gradient(180px 140px at var(--mx, 50%) var(--my, 30%), color-mix(in srgb, var(--c) 28%, transparent), transparent 70%); }
+    .stage:hover .st-glow { opacity: 1; }
+    .st-ribbon { position: absolute; top: 10px; right: -28px; transform: rotate(35deg); padding: 3px 30px; font-size: 8px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #0b1020; background: var(--c); z-index: 2; }
+    .st-emblem {
+        position: relative; z-index: 1; width: 58px; height: 58px; border-radius: 18px; transform: rotate(45deg);
+        display: flex; align-items: center; justify-content: center; color: #fff;
+        background: linear-gradient(140deg, var(--c), color-mix(in srgb, var(--c) 55%, #000));
+        box-shadow: 0 0 0 4px #0a0e1a, 0 0 22px color-mix(in srgb, var(--c) 55%, transparent);
+        /* Rotated 45°, the square's corners stick out ~12px past its box — and the step badge
+           hangs off the bottom one — so the gap below has to cover both. */
+        margin: 6px 0 20px;
+    }
+    .st-emblem > :global(svg) { transform: rotate(-45deg); }
+    .st-step { position: absolute; bottom: -6px; right: -6px; transform: rotate(-45deg); font-size: 9px; font-weight: 900; color: var(--c); background: #0a0e1a; border: 1px solid color-mix(in srgb, var(--c) 50%, transparent); border-radius: 7px; padding: 1px 4px; }
+    .st-name { position: relative; z-index: 1; font-size: 15px; font-weight: 900; color: #f1f5f9; line-height: 1.15; }
+    .st-detail { position: relative; z-index: 1; font-size: 11px; color: #7c8aa0; line-height: 1.4; min-height: 30px; }
+    .st-prizes { position: relative; z-index: 1; display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+    .st-prize { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; color: #94a3b8; padding: 2px 8px; border-radius: 100px; background: rgba(15,23,42,0.7); border: 1px solid rgba(71,85,105,0.3); }
+    .st-prize-w { color: #6ee7b7; border-color: rgba(52,211,153,0.3); }
+    .st-foot { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; margin-top: 2px; min-height: 16px; }
+    .st-diff { display: inline-flex; gap: 3px; }
+    .st-pip { width: 6px; height: 6px; border-radius: 2px; background: rgba(71,85,105,0.5); transform: rotate(45deg); }
+    .st-pip-on { background: var(--c); }
+    .st-wins { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 900; color: #fbbf24; }
+    .st-cta {
+        position: relative; z-index: 1; margin-top: auto; width: 100%;
+        display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+        padding: 9px 10px; border-radius: 12px; font-size: 12px; font-weight: 900; letter-spacing: 0.5px;
+        color: #0b1020; background: var(--c);
+        box-shadow: 0 4px 14px color-mix(in srgb, var(--c) 35%, transparent);
+    }
+    .stage-won .st-emblem { box-shadow: 0 0 0 4px #0a0e1a, 0 0 0 6px color-mix(in srgb, #fbbf24 60%, transparent), 0 0 24px color-mix(in srgb, var(--c) 55%, transparent); }
+    .stage-rec { border-color: color-mix(in srgb, var(--c) 70%, transparent); animation: stRec 2.6s ease-in-out infinite; }
+    @keyframes stRec { 0%,100% { box-shadow: 0 0 0 color-mix(in srgb, var(--c) 0%, transparent); } 50% { box-shadow: 0 0 26px color-mix(in srgb, var(--c) 35%, transparent); } }
+    .stage-locked { cursor: not-allowed; background: #0a0d17; border-color: rgba(51,65,85,0.3); }
+    .stage-locked .st-emblem { background: #141a2a; color: #475569; box-shadow: 0 0 0 4px #0a0e1a; }
+    .stage-locked .st-step { color: #475569; border-color: rgba(71,85,105,0.4); }
+    .stage-locked .st-name { color: #64748b; }
+    .stage-locked .st-detail { color: #94a3b8; font-weight: 600; }
+    .stage-locked .st-pip-on { background: #334155; }
+    .stage-locked .st-cta { background: rgba(30,41,59,0.6); color: #64748b; box-shadow: none; }
+
+    /* Golden Road */
+    .gold {
+        position: relative; overflow: hidden; border-radius: 22px; padding: 22px 26px;
+        background: linear-gradient(120deg, #2a1d05 0%, #1a1306 45%, #0d0b07 100%);
+        border: 1px solid rgba(251,191,36,0.32);
+        box-shadow: 0 16px 40px rgba(120,80,10,0.18), inset 0 1px 0 rgba(255,230,160,0.12);
+    }
+    .gold-sheen { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 35%, rgba(255,226,140,0.10) 48%, rgba(255,240,190,0.16) 50%, rgba(255,226,140,0.10) 52%, transparent 65%); background-size: 250% 100%; animation: goldSheen 6s ease-in-out infinite; }
+    @keyframes goldSheen { 0% { background-position: 150% 0; } 60%, 100% { background-position: -100% 0; } }
+    .gold-main { position: relative; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .gold-crown { width: 64px; height: 64px; border-radius: 20px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #1c1405; background: linear-gradient(140deg, #fde68a, #f59e0b 55%, #b45309); box-shadow: 0 0 30px rgba(251,191,36,0.45); }
+    .gold-text { flex: 1; min-width: 220px; }
+    .gold-kicker { font-size: 9px; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; color: #d4a54a; }
+    .gold-title { font-size: 26px; font-weight: 900; letter-spacing: -0.3px; background: linear-gradient(135deg, #fef3c7, #fbbf24 50%, #f59e0b); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .gold-sub { font-size: 12px; color: #c8a96a; margin-top: 2px; }
+    .gold-act { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .gold-prize { font-size: 12px; font-weight: 900; color: #fde68a; padding: 6px 12px; border-radius: 100px; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); }
+    .gold-btn { position: relative; overflow: hidden; padding: 12px 26px; border-radius: 14px; border: none; cursor: pointer; font-size: 13px; font-weight: 900; letter-spacing: 0.5px; color: #1c1405; background: linear-gradient(135deg, #fde68a, #fbbf24 45%, #f59e0b); box-shadow: 0 6px 22px rgba(245,158,11,0.4); }
+    .gold-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(245,158,11,0.55); }
+    .gold-lock { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; color: #8a7448; }
+    .gold-path { position: relative; list-style: none; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 20px; }
+    .gold-path::before { content: ''; position: absolute; left: 8.33%; right: 8.33%; top: 16px; height: 2px; background: linear-gradient(90deg, rgba(251,191,36,0.25), rgba(251,191,36,0.75)); }
+    .gp-node { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+    .gp-dot { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fbbf24; background: #1a1306; border: 1.5px solid rgba(251,191,36,0.55); }
+    .gp-final .gp-dot { color: #1c1405; background: linear-gradient(140deg, #fde68a, #f59e0b); box-shadow: 0 0 18px rgba(251,191,36,0.55); }
+    .gp-label { font-size: 11px; font-weight: 800; color: #e7cf94; }
+    .gp-games { font-size: 9px; font-weight: 700; color: #8a7448; }
+    .gold-locked { filter: saturate(0.35); opacity: 0.7; }
+    .gold-locked .gold-sheen { animation: none; }
+
+    /* Side-mode tiles */
+    .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .tile {
+        position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 6px; text-align: left;
+        min-height: 190px; padding: 18px; border-radius: 20px; cursor: pointer;
+        background:
+            radial-gradient(220px 160px at var(--mx, 85%) var(--my, 10%), color-mix(in srgb, var(--c) 20%, transparent), transparent 70%),
+            linear-gradient(160deg, color-mix(in srgb, var(--c) 9%, #0c1120), #0a0e1a 75%);
+        border: 1px solid color-mix(in srgb, var(--c) 24%, transparent);
+        transition: transform 0.18s cubic-bezier(.2,.8,.3,1.2), border-color 0.18s, box-shadow 0.18s;
+    }
+    .tile:hover { transform: translateY(-4px) rotate(-0.4deg); border-color: color-mix(in srgb, var(--c) 60%, transparent); box-shadow: 0 16px 34px color-mix(in srgb, var(--c) 18%, transparent); }
+    .tl-art { position: relative; z-index: 1; width: 62px; height: 62px; border-radius: 18px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); margin-bottom: 6px; transition: transform 0.25s cubic-bezier(.2,.8,.3,1.4); }
+    .tile:hover .tl-art { transform: scale(1.08) rotate(-6deg); }
+    .tl-name { position: relative; z-index: 1; font-size: 16px; font-weight: 900; color: #f1f5f9; }
+    .tl-sub { position: relative; z-index: 1; font-size: 11px; color: #7c8aa0; line-height: 1.5; }
+    .tl-meta { position: relative; z-index: 1; margin-top: auto; font-size: 11px; font-weight: 900; color: var(--c); }
+    .tile-off { opacity: 0.55; }
+    .tile-off:hover { transform: none; box-shadow: none; }
+
+    @media (max-width: 1250px) {
+        .circuit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .cr-track { display: none; }
+        .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 700px) {
+        .circuit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .pl-season { flex-wrap: wrap; padding: 18px; }
+        .ps-go { width: 100%; justify-content: center; }
+        .gold { padding: 18px; }
+        .gold-path { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 14px; }
+        .gold-path::before { display: none; }
+        .pl-power { width: 100%; }
+    }
+    @media (max-width: 440px) {
+        .circuit, .tiles { grid-template-columns: 1fr; }
+        /* One column of five tall cards is a long scroll on a phone — lay each stop on its
+           side instead: emblem on the left, the details beside it, the button underneath. */
+        .stage { display: grid; grid-template-columns: 64px 1fr; column-gap: 12px; row-gap: 3px; align-items: center; justify-items: start; text-align: left; padding: 14px; }
+        .st-emblem { grid-row: 1 / span 4; justify-self: center; width: 44px; height: 44px; border-radius: 13px; margin: 0; }
+        .st-step { bottom: -7px; right: -7px; }
+        .st-detail { min-height: 0; }
+        .st-prizes { justify-content: flex-start; }
+        .st-cta { grid-column: 1 / -1; margin-top: 8px; }
+        .tile { min-height: 0; }
+    }
+
     .mode-enter-btn {
         padding: 10px 24px; border-radius: 10px; color: white; font-weight: 900;
         font-size: 12px; border: none; cursor: pointer; flex-shrink: 0;
         transition: all 0.15s; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     }
     .mode-enter-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
-    .mode-coming-soon { cursor: default; pointer-events: none; }
-    .mode-soon-tag {
-        padding: 6px 14px; border-radius: 8px; font-size: 9px; font-weight: 900;
-        text-transform: uppercase; letter-spacing: 1px; white-space: nowrap;
-        background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.2);
-        color: #c084fc;
-    }
-    .mode-lock-badge { font-size: 18px; flex-shrink: 0; opacity: 0.5; }
     .mode-need { font-size: 10px; color: #f87171; font-weight: 700; flex-shrink: 0; }
     .mode-cooldown {
         padding: 8px 16px; border-radius: 10px; font-size: 14px; font-weight: 900;

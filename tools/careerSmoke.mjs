@@ -164,7 +164,8 @@ globalThis.localStorage = storage;
 globalThis.sessionStorage = win.sessionStorage;
 globalThis.window = win;
 globalThis.document = doc;
-globalThis.navigator = globalThis.navigator || win.navigator;
+// Node 21+ ships a read-only global navigator; assigning over it throws. Only fill a gap.
+if (!globalThis.navigator) globalThis.navigator = win.navigator;
 globalThis.matchMedia = win.matchMedia;
 globalThis.AudioContext = FakeAudioContext;
 globalThis.requestAnimationFrame = win.requestAnimationFrame;

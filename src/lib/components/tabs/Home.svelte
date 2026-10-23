@@ -1,16 +1,15 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, skillPoints, seasonData, battlePass, hasBoughtStarter, weightedTrophies, prestige, milestoneCards, matchHistory, saveGame } from '../../stores/game.js';
+    import Icon from '../ui/Icon.svelte';
+    import { pressFx } from '../../utils/fx.js';
+    import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, seasonData, battlePass, hasBoughtStarter, weightedTrophies, prestige, milestoneCards, matchHistory, saveGame } from '../../stores/game.js';
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
-    import { TIER_ORDER, ALL_SPECIAL, getEffectiveRating } from '../../utils/cards.js';
-    import { recentUpdates } from '../../utils/updates.js';
-    // The full log lives on the main menu now, not in a tab. openUpdates('game')
-    // remembers to come back here rather than to the title screen.
-    import { openUpdates } from '../../stores/menu.js';
-
-    const recentUpds = recentUpdates(3);
+    import { badges } from '../../stores/badges.js';
+    import { TIER_ORDER, ALL_SPECIAL, TIER_COLORS, getEffectiveRating } from '../../utils/cards.js';
+    import { XP_PER_TIER, MAX_TIER } from '../../utils/battlepass.js';
+    // The update log is deliberately NOT on this page any more — it lives on the main menu.
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: avgRating = starters.length > 0 ? Math.round(starters.reduce((s, c) => s + getEffectiveRating(c), 0) / starters.length) : 0;
@@ -20,13 +19,13 @@
         $club.forEach(c => { counts[c.quality] = (counts[c.quality] || 0) + 1; });
         return TIER_ORDER.map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0).reverse();
     })();
-    $: recentCards = [...$club].slice(-5).reverse();
+    $: recentCards = [...$club].slice(-6).reverse();
 
     $: recentMatches = ($matchHistory || []).slice(0, 6);
     const MODE_LABELS = { season: 'Season', goldenroad: 'Golden Road', cafe: 'Gaming Cafe', regional: 'Regional', firststand: 'First Stand', msi: 'MSI', worlds: 'Worlds', salarycap: 'Salary Cap', rival: 'Rival', tower: 'Tower', draft: 'Draft' };
-    const MODE_ICONS = { season: '📅', goldenroad: '🌟', cafe: '☕', regional: '🏆', firststand: '🥇', msi: '🌍', worlds: '👑', salarycap: '💰', rival: '⚔️', tower: '🗼', draft: '📋' };
+    const MODE_ICONS = { season: 'calendar', goldenroad: 'crown', cafe: 'coffee', regional: 'flag', firststand: 'flame', msi: 'waves', worlds: 'trophy', salarycap: 'coins', rival: 'swords', tower: 'tower', draft: 'cards' };
     function modeLabel(m) { return MODE_LABELS[m] || m; }
-    function modeIcon(m) { return MODE_ICONS[m] || '🎮'; }
+    function modeIcon(m) { return MODE_ICONS[m] || 'play'; }
     function relTime(ts) {
         if (!ts) return '';
         const s = Math.floor((Date.now() - ts) / 1000);
@@ -63,12 +62,43 @@
     $: nextTitleThreshold = [10,30,75,150,250,400,600,1000].find(t => t > $weightedTrophies) || null;
 
     function hexToRgb(hex) {
-        const h = hex.replace('#', '');
+        const h = (hex || '#3b82f6').replace('#', '');
         return `${parseInt(h.substring(0,2),16)}, ${parseInt(h.substring(2,4),16)}, ${parseInt(h.substring(4,6),16)}`;
     }
-    $: teamRgb = hexToRgb($teamIdentity.color || '#3b82f6');
+    $: teamColor = $teamIdentity.color || '#3b82f6';
+    $: teamRgb = hexToRgb(teamColor);
+    $: xpNeed = $managerLevel * 500;
+    $: xpPct = Math.min(100, ($managerXP / xpNeed) * 100);
 
-    const tierGradients = { Bronze:'linear-gradient(90deg, #92400e, #b45309)', Silver:'linear-gradient(90deg, #94a3b8, #64748b)', Gold:'linear-gradient(90deg, #eab308, #f59e0b)', Platinum:'linear-gradient(90deg, #10b981, #22c55e)', Diamond:'linear-gradient(90deg, #3b82f6, #6366f1)', Master:'linear-gradient(90deg, #a855f7, #8b5cf6)', Grandmaster:'linear-gradient(90deg, #ef4444, #f43f5e)', Challenger:'linear-gradient(90deg, #f59e0b, #eab308)', Champion:'linear-gradient(90deg, #d97706, #f59e0b)', MVP:'linear-gradient(90deg, #ec4899, #f43f5e)', Finalist:'linear-gradient(90deg, #94a3b8, #cbd5e1)', MSI:'linear-gradient(90deg, #14b8a6, #2dd4bf)', FirstStand:'linear-gradient(90deg, #f97316, #fb923c)', POTY:'linear-gradient(90deg, #e94560, #f87171)', ROTY:'linear-gradient(90deg, #06b6d4, #22d3ee)', TOTY:'linear-gradient(90deg, #f59e0b, #fbbf24)', GPOTY:'linear-gradient(90deg, #a855f7, #d8b4fe)', X:'linear-gradient(90deg, #f43f5e, #fb7185)', 'Hall of Legends':'linear-gradient(90deg, #0a0a0a, #ff0033 55%, #fbbf24)' };
+    // ── The one thing to do next ──
+    // A new manager is walked through the opening steps in order; after that it is always
+    // either the split in progress or the Play menu.
+    $: nextStep = !$hasBoughtStarter
+        ? { label: 'Claim your free Starter Pack', sub: 'Six cards to start your club', tab: 'store', icon: 'gift' }
+        : starters.length < 5
+        ? { label: 'Build your starting five', sub: `${starters.length}/5 roles filled`, tab: 'squad', icon: 'squad' }
+        : seasonSplitActive && nextSeasonOpp
+        ? { label: `Continue Split ${$seasonData.currentSplit}`, sub: `Match ${seasonMatchIndex + 1} vs ${nextSeasonOpp.name}`, tab: 'season', icon: 'calendar' }
+        : { label: 'Play a match', sub: 'Pick a stage on the Play menu', tab: 'tournament', icon: 'play' };
+
+    // ── To do ──
+    // Every item is something waiting for the player right now, from stores/badges.js — the
+    // same counts the nav badges show. Ordered by how much it is worth acting on.
+    $: todo = [
+        $badges.starterPack && { tab: 'store', icon: 'gift', c: '#34d399', label: 'Free Starter Pack', sub: 'Six cards, one per role' },
+        $badges.starters < 5 && $badges.starterPack === 0 && { tab: 'squad', icon: 'squad', c: '#60a5fa', label: 'Fill your starting five', sub: `${$badges.starters}/5 roles set` },
+        $badges.daily && { tab: 'rewards', icon: 'gift', c: '#f472b6', label: 'Daily reward ready', sub: 'Keep your login streak alive' },
+        $badges.battlePass && { tab: 'rewards', icon: 'star', c: '#a78bfa', label: `${$badges.battlePass} Battle Pass reward${$badges.battlePass === 1 ? '' : 's'}`, sub: 'Unlocked and waiting to be claimed' },
+        $badges.quests && { tab: 'quests', icon: 'quests', c: '#facc15', label: `${$badges.quests} quest reward${$badges.quests === 1 ? '' : 's'}`, sub: 'Milestones, contracts and achievements' },
+        $badges.academy && { tab: 'academy', icon: 'academy', c: '#34d399', label: 'Academy run finished', sub: 'Collect your Blue Essence and XP' },
+        $badges.rbc && { tab: 'rbc', icon: 'puzzle', c: '#fb923c', label: 'New Roster Challenges', sub: 'Five fresh challenges today' },
+        $badges.skills && { tab: 'skills', icon: 'skills', c: '#fde047', label: `${$badges.skills} skill point${$badges.skills === 1 ? '' : 's'} to spend`, sub: 'Upgrade your manager' },
+        $badges.upgrade && { tab: 'upgrade', icon: 'upgrade', c: '#c084fc', label: `${$badges.upgrade} upgrade${$badges.upgrade === 1 ? '' : 's'} available`, sub: 'Spare cards ready to combine' },
+        $badges.collection && { tab: 'collection', icon: 'archive', c: '#fcd34d', label: `${$badges.collection} new card${$badges.collection === 1 ? '' : 's'} in the Archive`, sub: `Claim ${($badges.collection * 25).toLocaleString()} BE for discovering them` },
+        $badges.friends && { tab: 'friends', icon: 'friends', c: '#4ade80', label: `${$badges.friends} friend request${$badges.friends === 1 ? '' : 's'}`, sub: 'Someone wants to connect' },
+    ].filter(Boolean);
+
+    // Cosmetics come from the Battle Pass; the four defaults are always available.
     const DEFAULT_ICONS = ['🛡️','⚔️','💎','🏆'];
     const DEFAULT_COLORS = ['#3b82f6','#f59e0b','#10b981','#64748b'];
 
@@ -82,7 +112,7 @@
     function startEdit() {
         editName = $teamIdentity.name;
         editLogo = $teamIdentity.logo;
-        editColor = $teamIdentity.color || '#3b82f6';
+        editColor = teamColor;
         availableIcons = [...new Set([...DEFAULT_ICONS, ...($teamIdentity.unlockedIcons || []), editLogo])];
         availableColors = [...new Set([...DEFAULT_COLORS, ...($teamIdentity.unlockedColors || []), editColor])];
         editing = true;
@@ -95,14 +125,6 @@
         showToast('Team identity updated!', 'success');
     }
     function cancelEdit() { editing = false; }
-
-    $: quickActions = [
-        { label: 'Open Packs', tab: 'store', icon: '📦', bg: 'qa-blue', show: true },
-        { label: 'Build Squad', tab: 'squad', icon: '👥', bg: 'qa-teal', show: starters.length < 5 },
-        { label: 'Play Match', tab: 'tournament', icon: '⚔️', bg: 'qa-red', show: starters.length === 5 },
-        { label: 'View Club', tab: 'club', icon: '🏟️', bg: 'qa-slate', show: $club.length > 0 },
-        { label: 'Claim Starter', tab: 'store', icon: '🎁', bg: 'qa-green', show: !$hasBoughtStarter },
-    ].filter(a => a.show);
 
     $: milestones = (() => {
         const all = [
@@ -130,625 +152,571 @@
             { label: 'Earn 500 Trophy Points', current: $weightedTrophies, target: 500 },
             { label: 'Earn 1000 Trophy Points', current: $weightedTrophies, target: 1000 },
         ];
-        const incomplete = all.filter(m => m.current < m.target);
-        const complete = all.filter(m => m.current >= m.target);
-        return [...incomplete.slice(0, 4), ...complete.slice(-1)].slice(0, 5);
+        return all.filter(m => m.current < m.target).slice(0, 4);
     })();
 
     // ALL_SPECIAL covers legacy + award + mythic, so Hall of Legends shows up here too
-    $: legacyCount = $club.filter(c => ALL_SPECIAL.includes(c.quality)).length;
     $: legacyBreakdown = (() => {
         const counts = {};
         $club.forEach(c => { if (ALL_SPECIAL.includes(c.quality)) counts[c.quality] = (counts[c.quality] || 0) + 1; });
         return ALL_SPECIAL.map(t => ({ tier: t, count: counts[t] || 0 })).filter(t => t.count > 0);
     })();
+    let collectionView = 'tiers';
+    $: collectionRows = collectionView === 'tiers' ? tierBreakdown : legacyBreakdown;
+    $: collectionMax = Math.max(1, ...collectionRows.map(t => t.count));
 
+    $: cabinet = [
+        { label: 'Worlds',       value: $trackStats.worldsWon || 0,         c: '#fbbf24', icon: 'trophy' },
+        { label: 'MSI',          value: $trackStats.msiWon || 0,            c: '#2dd4bf', icon: 'waves' },
+        { label: 'First Stand',  value: $trackStats.firstStandWon || 0,     c: '#fb923c', icon: 'flame' },
+        { label: 'Regional',     value: $trackStats.regionalSplitWon || 0,  c: '#60a5fa', icon: 'flag' },
+        { label: 'Golden Roads', value: $trackStats.goldenRoads || 0,       c: '#fde047', icon: 'crown' },
+        { label: 'Cafe',         value: $trackStats.cafeWins || 0,          c: '#4ade80', icon: 'coffee' },
+        { label: 'Splits',       value: $trackStats.splitsCompleted || 0,   c: '#a78bfa', icon: 'calendar' },
+        { label: 'Tower best',   value: $trackStats.towerHighestFloor || 0, c: '#f87171', icon: 'tower' },
+        { label: 'Packs',        value: $trackStats.packs || 0,             c: '#e879f9', icon: 'store' },
+        { label: 'Cards sold',   value: $trackStats.soldCount || 0,         c: '#94a3b8', icon: 'coins' },
+    ];
+
+    const ROLE_ICONS = { TOP: '/icons/Top_icon.png', JNG: '/icons/Jungle_icon.png', MID: '/icons/Middle_icon.png', ADC: '/icons/Bottom_icon.png', SUP: '/icons/Support_icon.png', COACH: '/icons/Specialist_icon.png' };
+    $: bpTier = $battlePass.tier || 0;
 </script>
 
-<section class="home" style="--team-rgb: {teamRgb}; --team-color: {$teamIdentity.color || '#3b82f6'};">
-    <div class="home-grid">
-
-        <!-- LEFT SIDEBAR -->
-        <div class="sidebar">
-            <!-- Team Card -->
-            <div class="panel team-card" style="border-color: {$teamIdentity.color || '#3b82f6'}15;">
-                {#if !editing}
-                    <div class="team-card-logo" style="filter: drop-shadow(0 4px 12px {$teamIdentity.color || '#3b82f6'}40);">{$teamIdentity.logo}</div>
-                    <h2 class="team-card-name">{$teamIdentity.name}</h2>
-                    <div class="team-card-level">Manager Lv {$managerLevel}</div>
-                    {#if $currentUser}
-                        <div class="team-card-user">{$currentUser.displayName || $currentUser.email}</div>
-                    {/if}
-                    <div class="team-card-bar">
-                        <div class="team-card-fill" style="width: {Math.min(100, ($managerXP / ($managerLevel * 500)) * 100)}%; background: linear-gradient(90deg, {$teamIdentity.color || '#4f46e5'}, {$teamIdentity.color || '#6366f1'}cc);"></div>
-                    </div>
-                    <button class="edit-btn" on:click={startEdit}>✏️ Edit</button>
-                {:else}
-                    <!-- Edit Mode -->
-                    <div class="edit-section">
-                        <div class="edit-label">Team Icon</div>
-                        <div class="icon-grid">
-                            {#each availableIcons as icon}
-                                <button class="icon-opt" class:icon-sel={editLogo === icon} on:click={() => editLogo = icon}>{icon}</button>
-                            {/each}
-                        </div>
-                        <div class="edit-label">Team Name</div>
-                        <input type="text" bind:value={editName} maxlength="20" class="input" style="width:100%; font-size:13px; text-align:center; margin-bottom:10px;">
-                        <div class="edit-label">Team Color</div>
-                        <div class="color-grid">
-                            {#each availableColors as c}
-                                <button class="color-opt" class:color-sel={editColor === c} style="background:{c};" on:click={() => editColor = c}></button>
-                            {/each}
-                        </div>
-                        <div class="edit-preview" style="border-color:{editColor};">
-                            <span style="font-size:28px;">{editLogo}</span>
-                            <span style="font-size:13px; font-weight:900; color:#e2e8f0;">{editName || 'My Team'}</span>
-                        </div>
-                        <div class="edit-btns">
-                            <button class="btn-primary" style="flex:1; padding:8px; font-size:11px;" on:click={saveEdit}>Save</button>
-                            <button class="btn-secondary" style="flex:1; padding:8px; font-size:11px;" on:click={cancelEdit}>Cancel</button>
-                        </div>
-                    </div>
-                {/if}
-            </div>
-
-            <!-- Your Ranking -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label amber">Your Ranking</div>
-                <div class="lb-preview">
-                    <div class="lb-title-display">{prestigeTitle}</div>
-                    <div class="lb-tp">{$weightedTrophies} Trophy Points</div>
-                    {#if nextTitleThreshold}
-                        <div class="lb-next">Next: {nextTitleThreshold - $weightedTrophies} TP to {getTitle(nextTitleThreshold)}</div>
-                        <div class="lb-bar"><div class="lb-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%"></div></div>
-                    {:else}
-                        <div class="lb-max">Max title reached!</div>
-                    {/if}
+<section class="home" style="--tc: {teamColor}; --tc-rgb: {teamRgb};">
+    <!-- ═══ HERO ═══ -->
+    <div class="hero">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="hero-id">
+            <button class="hero-logo" on:click={startEdit} title="Edit team identity">
+                <span class="hl-emoji">{$teamIdentity.logo}</span>
+                <span class="hl-edit"><Icon name="palette" size={13} /></span>
+            </button>
+            <div class="hero-text">
+                <span class="hero-kicker">
+                    <span class="hk-title">{prestigeTitle}</span>
+                    <span class="hk-dot">·</span> Manager Lv {$managerLevel}
+                    {#if $prestige > 0}<span class="hk-dot">·</span> <span class="hk-prestige"><Icon name="star" size={11} stroke={2.2} /> Prestige {$prestige}</span>{/if}
+                </span>
+                <h1 class="hero-name">{$teamIdentity.name}</h1>
+                <div class="hero-xp">
+                    <div class="hx-track"><div class="hx-fill" style="width: {xpPct}%;"></div></div>
+                    <span class="hx-text">{$managerXP.toLocaleString()} / {xpNeed.toLocaleString()} XP</span>
                 </div>
-                <button class="panel-link" on:click={() => switchTab('leaderboard')}>View Leaderboard →</button>
-            </div>
-
-            <!-- Best Card -->
-            {#if bestCard}
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label gold">Best Card</div>
-                <div style="display: flex; justify-content: center; margin-top: 8px;">
-                    <Card card={bestCard} mini={true} />
-                </div>
-            </div>
-            {/if}
-
-            <!-- Milestone Cards -->
-            {#if $milestoneCards.length > 0}
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label" style="color:#fbbf24;">Career Milestones</div>
-                <div class="cs-list">
-                    {#each $milestoneCards as mc}
-                    <div class="cs-item">
-                        <span class="cs-icon">🏅</span>
-                        <div>
-                            <div class="cs-name" style="color:#fbbf24;">{mc.name}</div>
-                            <div class="cs-desc">Earned milestone card · Rating {mc.rating}</div>
-                        </div>
-                    </div>
-                    {/each}
-                </div>
-            </div>
-            {/if}
-
-            <!-- Coming Soon -->
-            <div class="panel coming-soon" style="padding: 16px;">
-                <div class="panel-label purple">Coming Soon</div>
-                <div class="cs-list">
-                    <div class="cs-item">
-                        <span class="cs-icon">🏆</span>
-                        <div>
-                            <div class="cs-name">Retro Cup</div>
-                            <div class="cs-desc">An era- and region-locked tournament — build a themed squad from a single era or region and face rosters drawn from the same pool.</div>
-                        </div>
-                    </div>
-                    <div class="cs-item">
-                        <span class="cs-icon">🃏</span>
-                        <div>
-                            <div class="cs-name">2021–2023 Rosters</div>
-                            <div class="cs-desc">Regular-season player cards for 2021, 2022 and 2023, filling the gap between the 2020 Summer Splits and the 2024+ rosters.</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Guide -->
-            <div class="panel" style="padding: 16px;">
-                <button class="panel-label panel-label-link green" on:click={() => switchTab('guide')}>Game Guide →</button>
-                <p class="island-blurb">New here? The guide covers cards & tiers, chemistry, every game mode, packs and progression.</p>
-                <button class="panel-link" on:click={() => switchTab('guide')}>Read the guide →</button>
-            </div>
-
-            <!-- Updates -->
-            <div class="panel" style="padding: 16px;">
-                <button class="panel-label panel-label-link cyan" on:click={() => openUpdates('game')}>Latest Updates →</button>
-                <div class="update-list">
-                    {#each recentUpds as note}
-                        <button class="update-row" on:click={() => openUpdates('game')}>
-                            <span class="update-ver">{note.ver}</span>
-                            <span class="update-text"><strong class="update-headline">{note.title}</strong> — {note.summary}</span>
-                        </button>
-                    {/each}
-                </div>
-                <button class="panel-link" on:click={() => openUpdates('game')}>View all updates →</button>
+                {#if $currentUser}<span class="hero-user"><Icon name="user" size={11} /> {$currentUser.displayName || $currentUser.email}</span>{/if}
             </div>
         </div>
 
-        <!-- CENTER -->
-        <div class="center">
-            <!-- Stats Strip -->
-            <div class="stats-strip">
-                {#each [
-                    { icon: '💎', value: $blueEssence.toLocaleString(), label: 'Blue Essence', color: 'color-blue' },
-                    { icon: '🏟️', value: $club.length, label: 'Cards', color: 'color-slate' },
-                    { icon: '⚔️', value: starters.length === 5 ? avgRating : '—', label: 'Squad Power', color: 'color-green' },
-                    { icon: '🏆', value: $weightedTrophies, label: 'Trophies', color: 'color-amber' },
-                    { icon: '⭐', value: $skillPoints, label: 'Skill Points', color: 'color-yellow' },
-                ] as stat}
-                    <div class="stat-tile">
-                        <span class="stat-icon">{stat.icon}</span>
-                        <span class="stat-val {stat.color}">{stat.value}</span>
-                        <span class="stat-lbl">{stat.label}</span>
-                    </div>
-                {/each}
-            </div>
+        <div class="hero-stats">
+            <div class="hs"><span class="hs-ico hs-be"><Icon name="gem" size={16} /></span><span class="hs-val">{$blueEssence.toLocaleString()}</span><span class="hs-lbl">Blue Essence</span></div>
+            <div class="hs"><span class="hs-ico hs-cards"><Icon name="cards" size={16} /></span><span class="hs-val">{$club.length}</span><span class="hs-lbl">Cards</span></div>
+            <div class="hs"><span class="hs-ico hs-power"><Icon name="bolt" size={16} /></span><span class="hs-val">{starters.length === 5 ? avgRating : '—'}</span><span class="hs-lbl">Squad avg</span></div>
+            <div class="hs"><span class="hs-ico hs-tro"><Icon name="trophy" size={16} /></span><span class="hs-val">{$weightedTrophies}</span><span class="hs-lbl">Trophy pts</span></div>
+        </div>
 
-            <!-- Quick Actions -->
-            <div class="actions-grid">
-                {#each quickActions as action}
-                    <button class="action-card {action.bg}" on:click={() => switchTab(action.tab)}>
-                        <span class="action-icon">{action.icon}</span>
-                        <span class="action-label">{action.label}</span>
-                    </button>
-                {/each}
-            </div>
+        <button class="hero-cta" on:click={() => switchTab(nextStep.tab)} use:pressFx={{ color: 'rgba(255,255,255,0.4)' }}>
+            <span class="hc-ico"><Icon name={nextStep.icon} size={22} /></span>
+            <span class="hc-text">
+                <span class="hc-kicker">Next up</span>
+                <span class="hc-label">{nextStep.label}</span>
+                <span class="hc-sub">{nextStep.sub}</span>
+            </span>
+            <Icon name="arrow" size={18} />
+        </button>
+    </div>
 
-            <!-- Squad Preview -->
-            <div class="panel" style="padding: 20px;">
-                <div class="panel-header">
-                    <div class="panel-label">Active Squad</div>
-                    <button class="panel-link" on:click={() => switchTab('squad')}>Edit →</button>
+    <div class="cols">
+        <!-- ═══ MAIN ═══ -->
+        <div class="col-main">
+            <!-- To do -->
+            <section class="panel">
+                <div class="ph">
+                    <h2 class="ph-title"><Icon name="check" size={15} /> To do</h2>
+                    <span class="ph-note">{todo.length ? `${todo.length} thing${todo.length === 1 ? '' : 's'} waiting` : 'All caught up'}</span>
                 </div>
-                {#if starters.length === 0}
-                    <div class="empty-state">No squad built yet. Open packs and assign players!</div>
-                {:else}
-                    <div class="squad-preview">
-                        {#each ['TOP','JNG','MID','ADC','SUP'] as role}
-                            <div class="sq-slot">
-                                <div class="sq-role">{role}</div>
-                                {#if $squad[role]}
-                                    <div class="sq-card">
-                                        <div class="sq-rating">{$squad[role].rating}</div>
-                                        <div class="sq-name">{$squad[role].name}</div>
-                                    </div>
-                                {:else}
-                                    <div class="sq-empty">—</div>
-                                {/if}
-                            </div>
+                {#if todo.length}
+                    <div class="todo">
+                        {#each todo as t (t.label)}
+                            <button class="td" style="--c: {t.c};" on:click={() => switchTab(t.tab)} use:pressFx={{ color: `${t.c}44` }}>
+                                <span class="td-ico"><Icon name={t.icon} size={18} /></span>
+                                <span class="td-text">
+                                    <span class="td-label">{t.label}</span>
+                                    <span class="td-sub">{t.sub}</span>
+                                </span>
+                                <Icon name="chevron" size={16} />
+                            </button>
                         {/each}
                     </div>
-                    {#if starters.length === 5}
-                        <div class="squad-avg">Avg <span class="color-blue">{avgRating}</span></div>
-                    {/if}
-                {/if}
-            </div>
-
-            <!-- Milestones -->
-            <div class="panel" style="padding: 20px;">
-                <div class="panel-label yellow">Milestones</div>
-                <div class="milestones">
-                    {#each milestones as m}
-                        {@const done = m.current >= m.target}
-                        <div class="milestone">
-                            <div class="ms-check" class:ms-done={done}>{done ? '✓' : ''}</div>
-                            <div class="ms-body">
-                                <div class="ms-label" class:ms-label-done={done}>{m.label}</div>
-                                <div class="ms-bar"><div class="ms-fill" class:ms-fill-done={done} style="width: {Math.min(100, (m.current/m.target)*100)}%"></div></div>
-                            </div>
-                            <div class="ms-count" class:color-green={done}>{m.current}/{m.target}</div>
+                {:else}
+                    <div class="caught-up">
+                        <span class="cu-ico"><Icon name="check" size={22} stroke={2.4} /></span>
+                        <div>
+                            <div class="cu-title">Nothing waiting on you</div>
+                            <div class="cu-sub">Every reward is claimed. Go and win something.</div>
                         </div>
+                        <button class="btn-soft" on:click={() => switchTab('tournament')}>Open Play <Icon name="arrow" size={14} /></button>
+                    </div>
+                {/if}
+            </section>
+
+            <!-- Squad -->
+            <section class="panel">
+                <div class="ph">
+                    <h2 class="ph-title"><Icon name="squad" size={15} /> Active squad</h2>
+                    <button class="ph-link" on:click={() => switchTab('squad')}>Edit squad <Icon name="chevron" size={13} /></button>
+                </div>
+                <div class="squad">
+                    {#each ['TOP','JNG','MID','ADC','SUP','COACH'] as role}
+                        {@const c = $squad[role]}
+                        <button class="sq" class:sq-empty={!c} class:sq-coach={role === 'COACH'} style="--q: {c ? (TIER_COLORS[c.quality] || '#64748b') : '#334155'};" on:click={() => switchTab('squad')}>
+                            <span class="sq-role"><img src={ROLE_ICONS[role]} alt="" class="sq-role-img"> {role}</span>
+                            {#if c}
+                                <span class="sq-rating">{getEffectiveRating(c)}</span>
+                                <span class="sq-name">{c.name}</span>
+                                <span class="sq-meta">{c.team} · {c.year}</span>
+                            {:else}
+                                <span class="sq-plus">+</span>
+                                <span class="sq-meta">Empty</span>
+                            {/if}
+                        </button>
                     {/each}
                 </div>
+            </section>
+
+            <div class="two">
+                <!-- Milestones -->
+                <section class="panel">
+                    <div class="ph"><h2 class="ph-title"><Icon name="target" size={15} /> Next goals</h2></div>
+                    {#if milestones.length === 0}
+                        <div class="empty">Every milestone on the list is done.</div>
+                    {:else}
+                        <div class="goals">
+                            {#each milestones as m}
+                                <div class="goal">
+                                    <div class="goal-top"><span class="goal-label">{m.label}</span><span class="goal-count">{m.current}/{m.target}</span></div>
+                                    <div class="bar"><div class="bar-fill" style="width: {Math.min(100, (m.current / m.target) * 100)}%;"></div></div>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                </section>
+
+                <!-- Recent matches -->
+                <section class="panel">
+                    <div class="ph"><h2 class="ph-title"><Icon name="swords" size={15} /> Recent matches</h2></div>
+                    {#if recentMatches.length === 0}
+                        <div class="empty">No matches played yet.</div>
+                    {:else}
+                        <div class="rm-list">
+                            {#each recentMatches as mt}
+                                <div class="rm-row">
+                                    <span class="rm-result rm-{mt.result}">{resultLabel(mt.result)}</span>
+                                    <span class="rm-icon"><Icon name={modeIcon(mt.mode)} size={15} /></span>
+                                    <div class="rm-info">
+                                        <span class="rm-mode">{modeLabel(mt.mode)}{mt.floor ? ` · Floor ${mt.floor}` : ''}</span>
+                                        <span class="rm-opp">vs {mt.opponent || '—'}</span>
+                                    </div>
+                                    <div class="rm-rewards">
+                                        {#if mt.be > 0}<span class="rm-be">+{mt.be.toLocaleString()} BE</span>{/if}
+                                        <span class="rm-time">{relTime(mt.ts)}</span>
+                                    </div>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                </section>
             </div>
 
-            <!-- Recent Cards -->
+            <!-- Recently acquired -->
             {#if recentCards.length > 0}
-            <div class="panel" style="padding: 20px;">
-                <div class="panel-label">Recently Acquired</div>
+            <section class="panel">
+                <div class="ph">
+                    <h2 class="ph-title"><Icon name="cards" size={15} /> Recently acquired</h2>
+                    <button class="ph-link" on:click={() => switchTab('club')}>Open club <Icon name="chevron" size={13} /></button>
+                </div>
                 <div class="recent-cards">
                     {#each recentCards as card (card.uniqueId)}
                         <Card {card} mini={true} />
                     {/each}
                 </div>
-            </div>
+            </section>
             {/if}
 
-            <!-- Recent Matches -->
-            {#if recentMatches.length > 0}
-            <div class="panel" style="padding: 20px;">
-                <div class="panel-label">Recent Matches</div>
-                <div class="rm-list">
-                    {#each recentMatches as mt}
-                        <div class="rm-row">
-                            <span class="rm-result rm-{mt.result}">{resultLabel(mt.result)}</span>
-                            <span class="rm-icon">{modeIcon(mt.mode)}</span>
-                            <div class="rm-info">
-                                <span class="rm-mode">{modeLabel(mt.mode)}{mt.floor ? ` · Floor ${mt.floor}` : ''}</span>
-                                <span class="rm-opp">vs {mt.opponent || '—'}</span>
-                            </div>
-                            <div class="rm-rewards">
-                                {#if mt.be > 0}<span class="rm-be">+{mt.be.toLocaleString()} BE</span>{/if}
-                                <span class="rm-time">{relTime(mt.ts)}</span>
-                            </div>
+            <div class="two">
+                <!-- Collection -->
+                <section class="panel">
+                    <div class="ph">
+                        <h2 class="ph-title"><Icon name="archive" size={15} /> Collection</h2>
+                        <div class="seg">
+                            <button class:seg-on={collectionView === 'tiers'} on:click={() => collectionView = 'tiers'}>Tiers</button>
+                            <button class:seg-on={collectionView === 'legacy'} on:click={() => collectionView = 'legacy'}>Legacy</button>
                         </div>
-                    {/each}
-                </div>
+                    </div>
+                    {#if collectionRows.length === 0}
+                        <div class="empty">{collectionView === 'tiers' ? 'No cards yet' : 'No legacy cards yet — win tournaments to earn them.'}</div>
+                    {:else}
+                        <div class="tiers">
+                            {#each collectionRows as { tier, count }}
+                                <div class="tier-row" style="--q: {TIER_COLORS[tier] || '#64748b'};">
+                                    <span class="tier-name">{tier}</span>
+                                    <div class="tier-track"><div class="tier-fill" style="width: {(count / collectionMax) * 100}%;"></div></div>
+                                    <span class="tier-count">{count}</span>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                    <div class="coll-foot">{holoCount} holographic · {sigCount} signature</div>
+                </section>
+
+                <!-- Trophy cabinet -->
+                <section class="panel">
+                    <div class="ph"><h2 class="ph-title"><Icon name="trophy" size={15} /> Trophy cabinet</h2></div>
+                    <div class="cabinet">
+                        {#each cabinet as s}
+                            <div class="cab" class:cab-zero={!s.value} style="--c: {s.c};">
+                                <span class="cab-ico"><Icon name={s.icon} size={14} /></span>
+                                <span class="cab-val">{s.value}</span>
+                                <span class="cab-lbl">{s.label}</span>
+                            </div>
+                        {/each}
+                    </div>
+                </section>
             </div>
-            {/if}
         </div>
 
-        <!-- RIGHT SIDEBAR -->
-        <div class="sidebar">
-            <!-- Collection -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label">Collection</div>
-                {#if tierBreakdown.length === 0}
-                    <div class="empty-state">No cards yet</div>
-                {:else}
-                    <div class="tier-bars">
-                        {#each tierBreakdown as { tier, count }}
-                            <div class="tier-row">
-                                <span class="tier-name">{tier}</span>
-                                <div class="tier-track"><div class="tier-fill" style="width: {Math.min(100, (count / Math.max(...tierBreakdown.map(t => t.count))) * 100)}%; background: {tierGradients[tier] || 'linear-gradient(90deg, #64748b, #475569)'}"></div></div>
-                                <span class="tier-count">{count}</span>
-                            </div>
-                        {/each}
-                    </div>
-                    <div class="collection-footer">{holoCount} Holo · {sigCount} Sig</div>
-                {/if}
-            </div>
-
-            <!-- Legacy Collection -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label gold">Legacy & Award Cards</div>
-                {#if legacyBreakdown.length === 0}
-                    <div class="empty-state">No legacy cards yet. Win tournaments to earn them!</div>
-                {:else}
-                    <div class="tier-bars">
-                        {#each legacyBreakdown as { tier, count }}
-                            <div class="tier-row">
-                                <span class="tier-name">{tier}</span>
-                                <div class="tier-track"><div class="tier-fill" style="width: {Math.min(100, (count / Math.max(...legacyBreakdown.map(t => t.count), 1)) * 100)}%; background: {tierGradients[tier] || 'linear-gradient(90deg, #64748b, #475569)'}"></div></div>
-                                <span class="tier-count">{count}</span>
-                            </div>
-                        {/each}
-                    </div>
-                    <div class="collection-footer">{legacyCount} total legacy cards</div>
-                {/if}
-            </div>
-
-            <!-- Season + Next Game -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label blue">Season Split {$seasonData.currentSplit}</div>
-                <div class="season-record">{$seasonData.splitWins || 0}W - {$seasonData.splitLosses || 0}L</div>
+        <!-- ═══ SIDE ═══ -->
+        <aside class="col-side">
+            <!-- Season -->
+            <button class="panel side-card sc-season" on:click={() => switchTab('season')}>
+                <div class="ph"><h2 class="ph-title"><Icon name="calendar" size={15} /> Season · Split {$seasonData.currentSplit}</h2><span class="ph-note">{$seasonData.splitWins || 0}W – {$seasonData.splitLosses || 0}L</span></div>
                 {#if nextSeasonOpp && seasonSplitActive}
-                    <div class="next-game">
-                        <div class="ng-label">Next Match</div>
-                        <div class="ng-row">
-                            <span class="ng-num">#{seasonMatchIndex + 1}</span>
-                            <span class="ng-name">{nextSeasonOpp.name}</span>
-                            <span class="ng-pwr">{nextSeasonOpp.avgRating}</span>
-                        </div>
+                    <div class="ng">
+                        <span class="ng-num">#{seasonMatchIndex + 1}</span>
+                        <span class="ng-name">{nextSeasonOpp.name}</span>
+                        <span class="ng-pwr">{nextSeasonOpp.avgRating}</span>
                     </div>
-                {:else if !seasonSplitActive && seasonOpponents.length === 0}
-                    <div class="season-idle">No split in progress</div>
+                    <span class="side-link">Continue split <Icon name="chevron" size={13} /></span>
                 {:else}
-                    <div class="season-idle">Split complete!</div>
+                    <div class="side-idle">{seasonOpponents.length === 0 ? 'No split in progress' : 'Split complete!'}</div>
+                    <span class="side-link">Go to Season <Icon name="chevron" size={13} /></span>
                 {/if}
-                <button class="panel-link" on:click={() => switchTab('season')}>{seasonSplitActive ? 'Continue Split →' : 'Go to Season →'}</button>
-            </div>
+            </button>
 
-            <!-- Battle Pass -->
-            <div class="panel bp-panel" style="padding: 16px;">
-                <div class="panel-label amber">Battle Pass</div>
-                <div class="bp-row">
-                    <span class="bp-season">S{$battlePass.season}</span>
-                    <span class="bp-tier">Tier {$battlePass.tier}/100</span>
-                </div>
-                <div class="bp-bar"><div class="bp-fill" style="width: {Math.min(100, ($battlePass.tier/100)*100)}%"></div></div>
-                <button class="panel-link" on:click={() => switchTab('rewards')}>View Rewards →</button>
-            </div>
+            <!-- Ranking -->
+            <button class="panel side-card sc-rank" on:click={() => switchTab('leaderboard')}>
+                <div class="ph"><h2 class="ph-title"><Icon name="ranking" size={15} /> Your ranking</h2></div>
+                <div class="rank-title">{prestigeTitle}</div>
+                <div class="rank-tp">{$weightedTrophies} trophy points</div>
+                {#if nextTitleThreshold}
+                    <div class="bar bar-gold"><div class="bar-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%;"></div></div>
+                    <div class="rank-next">{nextTitleThreshold - $weightedTrophies} TP to <b>{getTitle(nextTitleThreshold)}</b></div>
+                {:else}
+                    <div class="rank-next">Top title reached</div>
+                {/if}
+            </button>
 
-            <!-- Career -->
-            <div class="panel" style="padding: 16px;">
-                <div class="panel-label">Career Stats</div>
-                <div class="career-list">
-                    {#each [
-                        { label: 'Golden Roads',  value: $trackStats.goldenRoads || 0,       color: '#fde047', icon: '🌟' },
-                        { label: 'Worlds Wins',   value: $trackStats.worldsWon || 0,          color: '#fbbf24', icon: '👑' },
-                        { label: 'MSI Wins',      value: $trackStats.msiWon || 0,             color: '#2dd4bf', icon: '🌍' },
-                        { label: 'First Stand',   value: $trackStats.firstStandWon || 0,      color: '#fb923c', icon: '🥇' },
-                        { label: 'Regional Wins', value: $trackStats.regionalSplitWon || 0,   color: '#60a5fa', icon: '🏆' },
-                        { label: 'Splits Done',   value: $trackStats.splitsCompleted || 0,    color: '#a78bfa', icon: '📅' },
-                        { label: 'Cafe Wins',     value: $trackStats.cafeWins || 0,           color: '#4ade80', icon: '☕' },
-                        { label: 'Tower Best',    value: $trackStats.towerHighestFloor || 0,  color: '#f87171', icon: '🗼' },
-                        { label: 'Packs Opened',  value: $trackStats.packs || 0,              color: '#e879f9', icon: '📦' },
-                        { label: 'Cards Sold',    value: $trackStats.soldCount || 0,          color: '#94a3b8', icon: '💰' },
-                    ] as stat}
-                        <div class="career-row" style="border-left-color: {stat.color}; background: linear-gradient(90deg, rgba({hexToRgb(stat.color)}, 0.14), transparent 72%);">
-                            <span class="career-icon">{stat.icon}</span>
-                            <span class="career-label">{stat.label}</span>
-                            <span class="career-val" style="color: {stat.color};">{stat.value}</span>
-                        </div>
+            <!-- Battle pass -->
+            <button class="panel side-card sc-bp" on:click={() => switchTab('rewards')}>
+                <div class="ph"><h2 class="ph-title"><Icon name="star" size={15} /> Battle Pass</h2><span class="ph-note">Season {$battlePass.season}</span></div>
+                <div class="bp-row"><span class="bp-tier">Tier {bpTier}</span><span class="bp-of">/ {MAX_TIER}</span></div>
+                <div class="bar bar-bp"><div class="bar-fill" style="width: {Math.min(100, (($battlePass.xp || 0) / XP_PER_TIER) * 100)}%;"></div></div>
+                <span class="side-link">{$badges.battlePass ? `${$badges.battlePass} reward${$badges.battlePass === 1 ? '' : 's'} to claim` : 'View rewards'} <Icon name="chevron" size={13} /></span>
+            </button>
+
+            <!-- Best card -->
+            {#if bestCard}
+            <section class="panel side-card">
+                <div class="ph"><h2 class="ph-title"><Icon name="sparkle" size={15} /> Best card</h2></div>
+                <div class="best"><Card card={bestCard} mini={true} /></div>
+            </section>
+            {/if}
+
+            {#if $milestoneCards.length > 0}
+            <section class="panel side-card">
+                <div class="ph"><h2 class="ph-title"><Icon name="sparkle" size={15} /> Milestone cards</h2></div>
+                <div class="mc-list">
+                    {#each $milestoneCards as mc}
+                        <div class="mc"><Icon name="star" size={14} /> <span class="mc-name">{mc.name}</span><span class="mc-r">{mc.rating}</span></div>
                     {/each}
                 </div>
-            </div>
-        </div>
+            </section>
+            {/if}
+
+            <!-- Coming soon -->
+            <section class="panel side-card sc-soon">
+                <div class="ph"><h2 class="ph-title"><Icon name="clock" size={15} /> Coming soon</h2></div>
+                <div class="soon"><b>Retro Cup</b> — an era- and region-locked tournament: build a themed squad and face rosters from the same pool.</div>
+                <div class="soon"><b>2021–2023 Rosters</b> — regular-season cards filling the gap between 2020 and the 2024+ rosters.</div>
+                <button class="ph-link" on:click={() => switchTab('guide')}>New here? Read the guide <Icon name="chevron" size={13} /></button>
+            </section>
+        </aside>
     </div>
-
-
 </section>
 
+<!-- Identity editor -->
+{#if editing}
+<!-- svelte-ignore a11y-click-events-have-key-events --><!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="ov" on:click={cancelEdit}>
+    <div class="ed" on:click|stopPropagation style="--tc: {editColor};">
+        <button class="ed-close" on:click={cancelEdit} aria-label="Close">✕</button>
+        <h3 class="ed-title">Team identity</h3>
+        <div class="ed-preview">
+            <span class="ed-logo">{editLogo}</span>
+            <span class="ed-name">{editName || 'My Team'}</span>
+        </div>
+        <label class="ed-label" for="ed-name">Name</label>
+        <input id="ed-name" type="text" bind:value={editName} maxlength="20" class="input ed-input">
+        <div class="ed-label">Crest</div>
+        <div class="icon-grid">
+            {#each availableIcons as icon}
+                <button class="icon-opt" class:icon-sel={editLogo === icon} on:click={() => editLogo = icon}>{icon}</button>
+            {/each}
+        </div>
+        <div class="ed-label">Colour</div>
+        <div class="color-grid">
+            {#each availableColors as c}
+                <button class="color-opt" class:color-sel={editColor === c} style="background: {c};" on:click={() => editColor = c} aria-label="Colour {c}"></button>
+            {/each}
+        </div>
+        <p class="ed-hint">More crests and colours unlock on the Battle Pass.</p>
+        <div class="ed-btns">
+            <button class="btn-primary" on:click={saveEdit}>Save</button>
+            <button class="btn-secondary" on:click={cancelEdit}>Cancel</button>
+        </div>
+    </div>
+</div>
+{/if}
+
 <style>
-    .home { padding-bottom: 40px; }
-    .home-grid { display: grid; grid-template-columns: 260px 1fr 260px; gap: 20px; }
-    @media (max-width: 1100px) { .home-grid { grid-template-columns: 1fr; } }
-    @media (min-width: 1101px) and (max-width: 1400px) { .home-grid { grid-template-columns: 220px 1fr 220px; gap: 14px; } }
-    .sidebar { display: flex; flex-direction: column; gap: 14px; }
-    .center { display: flex; flex-direction: column; gap: 16px; }
+    .home { padding-bottom: 40px; display: flex; flex-direction: column; gap: 20px; }
 
-    /* Panel base */
+    /* ═══ HERO ═══ */
+    .hero {
+        position: relative; overflow: hidden;
+        display: grid; grid-template-columns: minmax(0, 1.3fr) auto minmax(260px, 0.8fr); align-items: center; gap: 26px;
+        padding: 26px 30px; border-radius: 26px;
+        background:
+            radial-gradient(70% 140% at 0% 0%, rgba(var(--tc-rgb), 0.32), transparent 60%),
+            linear-gradient(120deg, #0f1428 0%, #0b0f1d 60%, #0a0d18 100%);
+        border: 1px solid rgba(var(--tc-rgb), 0.3);
+        box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+    }
+    .hero-glow { position: absolute; right: -10%; top: -60%; width: 50%; height: 220%; background: radial-gradient(circle, rgba(var(--tc-rgb), 0.12), transparent 60%); pointer-events: none; }
+    .hero-id { position: relative; display: flex; align-items: center; gap: 20px; min-width: 0; }
+    .hero-logo {
+        position: relative; flex-shrink: 0; width: 92px; height: 92px; border-radius: 28px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(circle at 35% 30%, rgba(var(--tc-rgb), 0.55), rgba(var(--tc-rgb), 0.12) 70%), #0b1020;
+        border: 2px solid rgba(var(--tc-rgb), 0.6);
+        box-shadow: 0 0 0 6px rgba(var(--tc-rgb), 0.08), 0 10px 30px rgba(var(--tc-rgb), 0.3);
+    }
+    .hero-logo:hover { transform: translateY(-2px) rotate(-3deg); }
+    .hl-emoji { font-size: 48px; line-height: 1; }
+    .hl-edit { position: absolute; right: -6px; bottom: -6px; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; background: var(--tc); border: 3px solid #0b0f1d; }
+    .hero-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .hero-kicker { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .hk-title { color: #fbbf24; }
+    .hk-dot { color: #475569; }
+    .hk-prestige { display: inline-flex; align-items: center; gap: 3px; color: #fde68a; }
+    .hero-name { font-size: clamp(26px, 3vw, 38px); font-weight: 900; color: #fff; letter-spacing: -0.5px; line-height: 1.05; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hero-xp { display: flex; align-items: center; gap: 10px; margin-top: 4px; max-width: 420px; }
+    .hx-track { flex: 1; height: 8px; border-radius: 8px; background: rgba(15,23,42,0.85); overflow: hidden; border: 1px solid rgba(255,255,255,0.06); }
+    .hx-fill { height: 100%; border-radius: 8px; background: linear-gradient(90deg, rgba(var(--tc-rgb), 0.7), var(--tc)); box-shadow: 0 0 10px rgba(var(--tc-rgb), 0.6); transition: width 0.5s; }
+    .hx-text { font-size: 11px; font-weight: 800; color: #94a3b8; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .hero-user { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; color: #818cf8; }
+
+    .hero-stats { position: relative; display: grid; grid-template-columns: repeat(2, minmax(110px, 1fr)); gap: 8px; }
+    .hs { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 9px; align-items: center; padding: 9px 12px; border-radius: 14px; background: rgba(2,6,23,0.45); border: 1px solid rgba(148,163,184,0.12); }
+    .hs-ico { grid-row: 1 / span 2; width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+    .hs-be { color: #7dd3fc; background: rgba(56,189,248,0.12); }
+    .hs-cards { color: #c4b5fd; background: rgba(167,139,250,0.12); }
+    .hs-power { color: #6ee7b7; background: rgba(52,211,153,0.12); }
+    .hs-tro { color: #fcd34d; background: rgba(251,191,36,0.12); }
+    .hs-val { font-size: 17px; font-weight: 900; color: #f1f5f9; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .hs-lbl { font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
+
+    .hero-cta {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 14px; text-align: left; cursor: pointer;
+        padding: 18px 20px; border-radius: 20px; color: #fff;
+        background: radial-gradient(160px 120px at var(--mx, 20%) var(--my, 30%), rgba(255,255,255,0.18), transparent 70%), linear-gradient(135deg, #4f46e5, #6d28d9);
+        border: 1px solid rgba(196,181,253,0.4);
+        box-shadow: 0 12px 30px rgba(79,70,229,0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .hero-cta:hover { transform: translateY(-2px); box-shadow: 0 16px 38px rgba(79,70,229,0.5), inset 0 1px 0 rgba(255,255,255,0.25); }
+    .hc-ico { position: relative; z-index: 1; width: 46px; height: 46px; flex-shrink: 0; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.16); }
+    .hc-text { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .hc-kicker { font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: #c7d2fe; }
+    .hc-label { font-size: 16px; font-weight: 900; }
+    .hc-sub { font-size: 11px; color: #ddd6fe; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* ═══ COLUMNS ═══ */
+    .cols { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+    .col-main, .col-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+
     .panel {
-        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.16) 0%, rgba(12, 16, 28, 0.62) 46%);
-        border: 1px solid rgba(var(--team-rgb), 0.2);
-        border-radius: 16px;
-        backdrop-filter: blur(6px);
+        padding: 18px; border-radius: 20px; text-align: left;
+        background: linear-gradient(160deg, rgba(var(--tc-rgb), 0.07), rgba(11,15,28,0.75) 45%);
+        border: 1px solid rgba(100,116,139,0.2);
     }
-    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-    .panel-label {
-        font-size: 10px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; color: #475569; margin-bottom: 10px;
-    }
-    .panel-label.gold { color: #f59e0b; }
-    .panel-label.cyan { color: #06b6d4; }
-    .panel-label.blue { color: #3b82f6; }
-    .panel-label.yellow { color: #eab308; }
-    .panel-label.amber { color: #f59e0b; }
-    .panel-link {
-        font-size: 10px; font-weight: 700; color: #3b82f6; background: none; border: none;
-        cursor: pointer; transition: color 0.1s;
-    }
-    .panel-link:hover { color: #60a5fa; }
-    .empty-state { color: #334155; font-size: 12px; text-align: center; padding: 20px 0; font-style: italic; }
+    .ph { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    .ph-title { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 900; letter-spacing: 1.8px; text-transform: uppercase; color: #cbd5e1; }
+    .ph-title :global(svg) { color: var(--tc); }
+    .ph-note { font-size: 11px; font-weight: 700; color: #64748b; }
+    .ph-link { display: inline-flex; align-items: center; gap: 3px; background: none; border: none; cursor: pointer; font-size: 11px; font-weight: 800; color: #93c5fd; }
+    .ph-link:hover { color: #dbeafe; }
+    .empty { font-size: 12px; color: #475569; font-style: italic; padding: 10px 0; }
 
-    /* Colors */
-    .color-blue { color: #60a5fa; }
-    .color-green { color: #34d399; }
-    .color-amber { color: #fbbf24; }
-    .color-yellow { color: #eab308; }
-    .color-slate { color: #94a3b8; }
-    .color-red { color: #f87171; }
+    /* To do */
+    .todo { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+    .td {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+        padding: 11px 12px; border-radius: 14px; color: #64748b;
+        background: color-mix(in srgb, var(--c) 7%, rgba(15,23,42,0.6));
+        border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
+    }
+    .td:hover { border-color: color-mix(in srgb, var(--c) 55%, transparent); color: var(--c); transform: translateY(-1px); }
+    .td-ico { position: relative; z-index: 1; width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+    .td-text { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .td-label { font-size: 13px; font-weight: 800; color: #f1f5f9; }
+    .td-sub { font-size: 11px; color: #7c8aa0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .caught-up { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 6px 2px; }
+    .cu-ico { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #34d399; background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.3); }
+    .cu-title { font-size: 14px; font-weight: 900; color: #e2e8f0; }
+    .cu-sub { font-size: 12px; color: #64748b; }
+    .btn-soft { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 12px; cursor: pointer; font-size: 12px; font-weight: 900; color: #e0e7ff; background: rgba(99,102,241,0.18); border: 1px solid rgba(129,140,248,0.35); }
+    .btn-soft:hover { background: rgba(99,102,241,0.3); }
 
-    /* Team Card */
-    .team-card { padding: 24px 16px; text-align: center; border-color: rgba(79,70,229,0.12); }
-    .team-card-logo { font-size: 40px; margin-bottom: 8px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3)); }
-    .team-card-name { font-size: 16px; font-weight: 900; color: #e2e8f0; }
-    .team-card-level { font-size: 11px; color: #64748b; margin-top: 2px; }
-    .team-card-user { font-size: 10px; color: #4338ca; margin-top: 4px; }
-    .team-card-bar { width: 100%; height: 4px; background: #1e293b; border-radius: 4px; margin-top: 12px; overflow: hidden; }
-    .team-card-fill { height: 100%; background: linear-gradient(90deg, #4f46e5, #6366f1); border-radius: 4px; transition: width 0.5s; }
+    /* Squad */
+    .squad { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+    .sq {
+        position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer;
+        padding: 10px 6px 10px; border-radius: 14px; text-align: center;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--q) 22%, #0d1222), #0b0f1c 80%);
+        border: 1px solid color-mix(in srgb, var(--q) 40%, transparent);
+    }
+    .sq::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--q); }
+    .sq:hover { transform: translateY(-2px); border-color: var(--q); }
+    .sq-role { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 900; letter-spacing: 1px; color: #94a3b8; }
+    .sq-role-img { width: 12px; height: 12px; opacity: 0.85; }
+    .sq-rating { font-size: 24px; font-weight: 900; color: #fff; line-height: 1.1; margin-top: 2px; }
+    .sq-name { font-size: 12px; font-weight: 800; color: #e2e8f0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-meta { font-size: 9.5px; color: #64748b; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-empty { border-style: dashed; background: rgba(15,23,42,0.4); }
+    .sq-plus { font-size: 24px; font-weight: 900; color: #334155; line-height: 1.1; margin-top: 2px; }
+    .sq-coach { opacity: 0.92; }
 
-    /* Stats Strip */
-    .stats-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
-    @media (max-width: 768px) { .stats-strip { grid-template-columns: repeat(3, 1fr); } }
-    .stat-tile {
-        background: linear-gradient(160deg, rgba(var(--team-rgb), 0.2) 0%, rgba(12,16,28,0.62) 58%);
-        border: 1px solid rgba(var(--team-rgb), 0.22);
-        border-radius: 14px; padding: 14px 8px; text-align: center;
-        display: flex; flex-direction: column; align-items: center; gap: 2px;
-    }
-    .stat-icon { font-size: 18px; }
-    .stat-val { font-size: 20px; font-weight: 900; }
-    .stat-lbl { font-size: 8px; color: #475569; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+    /* Goals */
+    .goals { display: flex; flex-direction: column; gap: 12px; }
+    .goal-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .goal-label { font-size: 12px; font-weight: 700; color: #cbd5e1; }
+    .goal-count { font-size: 11px; font-weight: 800; color: #64748b; font-variant-numeric: tabular-nums; }
+    .bar { height: 6px; border-radius: 6px; background: rgba(30,41,59,0.9); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, rgba(var(--tc-rgb), 0.6), var(--tc)); transition: width 0.5s; }
+    .bar-gold .bar-fill { background: linear-gradient(90deg, #d97706, #fbbf24); }
+    .bar-bp .bar-fill { background: linear-gradient(90deg, #7c3aed, #c084fc); }
 
-    /* Edit Panel */
-    .edit-btn {
-        margin-top: 12px; padding: 5px 16px; border-radius: 8px;
-        font-size: 10px; font-weight: 700; color: #64748b;
-        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.2);
-        cursor: pointer; transition: all 0.12s;
-    }
-    .edit-btn:hover { color: #94a3b8; background: rgba(51,65,85,0.4); }
-    .edit-section { width: 100%; }
-    .edit-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #475569; margin-bottom: 6px; margin-top: 10px; }
-    .icon-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px; }
-    .icon-opt {
-        width: 100%; aspect-ratio: 1; border-radius: 8px; font-size: 18px;
-        background: rgba(15,23,42,0.3); border: 2px solid transparent;
-        cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.1s;
-    }
-    .icon-opt:hover { background: rgba(30,41,59,0.5); }
-    .icon-sel { border-color: #3b82f6 !important; background: rgba(59,130,246,0.1) !important; }
-    .color-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-bottom: 10px; }
-    .color-opt {
-        width: 100%; aspect-ratio: 1; border-radius: 6px;
-        border: 2px solid transparent; cursor: pointer; transition: all 0.1s;
-    }
-    .color-opt:hover { transform: scale(1.1); }
-    .color-sel { border-color: white !important; transform: scale(1.15); box-shadow: 0 0 10px rgba(255,255,255,0.15); }
-    .edit-preview {
-        display: flex; align-items: center; gap: 8px; justify-content: center;
-        padding: 10px; border-radius: 10px; border: 2px solid;
-        background: rgba(15,23,42,0.3); margin-bottom: 10px;
-    }
-    .edit-btns { display: flex; gap: 6px; }
-
-    /* Quick Actions */
-    .actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-    .action-card {
-        padding: 18px 12px; border-radius: 14px; text-align: center;
-        cursor: pointer; border: 1px solid rgba(255,255,255,0.06);
-        transition: transform 0.12s, box-shadow 0.12s;
-        display: flex; flex-direction: column; align-items: center; gap: 6px;
-    }
-    .action-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
-    .qa-blue { background: linear-gradient(135deg, #1e3a8a, #1e40af); }
-    .qa-teal { background: linear-gradient(135deg, #065f46, #047857); }
-    .qa-red { background: linear-gradient(135deg, #7f1d1d, #991b1b); }
-    .qa-slate { background: linear-gradient(135deg, #1e293b, #334155); }
-    .qa-green { background: linear-gradient(135deg, #14532d, #166534); }
-    .action-icon { font-size: 24px; }
-    .action-label { font-size: 11px; font-weight: 900; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.5px; }
-
-    /* Squad Preview */
-    .squad-preview { display: flex; gap: 10px; justify-content: center; }
-    .sq-slot { text-align: center; flex: 1; }
-    .sq-role { font-size: 8px; font-weight: 900; color: #475569; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 1px; }
-    .sq-card {
-        background: linear-gradient(135deg, rgba(var(--team-rgb), 0.22) 0%, rgba(30,41,59,0.4) 66%);
-        border: 1px solid rgba(var(--team-rgb), 0.26);
-        border-radius: 10px; padding: 10px 6px;
-    }
-    .sq-rating { font-size: 20px; font-weight: 900; color: #e2e8f0; }
-    .sq-name { font-size: 9px; color: #64748b; font-weight: 700; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .sq-empty {
-        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.3);
-        border-radius: 10px; padding: 14px 6px; color: #1e293b; font-size: 16px;
-    }
-    .squad-avg { text-align: center; margin-top: 10px; font-size: 12px; font-weight: 700; color: #475569; }
-
-    /* Milestones */
-    .milestones { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
-    .milestone { display: flex; align-items: center; gap: 10px; }
-    .ms-check {
-        width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-        background: #1e293b; display: flex; align-items: center; justify-content: center;
-        font-size: 10px; font-weight: 900; color: transparent;
-    }
-    .ms-done { background: #059669; color: white; }
-    .ms-body { flex: 1; min-width: 0; }
-    .ms-label { font-size: 12px; font-weight: 700; color: #94a3b8; }
-    .ms-label-done { color: #475569; text-decoration: line-through; }
-    .ms-bar { width: 100%; height: 4px; background: #1e293b; border-radius: 4px; margin-top: 4px; overflow: hidden; }
-    .ms-fill { height: 100%; background: #3b82f6; border-radius: 4px; transition: width 0.5s; }
-    .ms-fill-done { background: #059669; }
-    .ms-count { font-size: 10px; font-weight: 700; color: #475569; flex-shrink: 0; width: 40px; text-align: right; }
-
-    /* Recent Cards */
-    .recent-cards { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; margin-top: 4px; }
-
-    /* Recent Matches */
-    .rm-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-    .rm-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.3); }
-    .rm-result { flex: 0 0 auto; min-width: 32px; text-align: center; font-size: 11px; font-weight: 900; padding: 3px 6px; border-radius: 6px; }
+    /* Recent matches */
+    .rm-list { display: flex; flex-direction: column; gap: 6px; }
+    .rm-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(15,23,42,0.45); }
+    .rm-result { flex: 0 0 auto; min-width: 32px; text-align: center; font-size: 11px; font-weight: 900; padding: 3px 6px; border-radius: 7px; }
     .rm-win { background: rgba(52,211,153,0.15); color: #34d399; }
     .rm-loss { background: rgba(248,113,113,0.12); color: #f87171; }
     .rm-finalist { background: rgba(251,191,36,0.15); color: #fbbf24; }
-    .rm-icon { font-size: 16px; flex: 0 0 auto; }
+    .rm-icon { color: #94a3b8; display: flex; }
     .rm-info { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
     .rm-mode { font-size: 12px; font-weight: 800; color: #cbd5e1; }
-    .rm-opp { font-size: 10px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+    .rm-opp { font-size: 10.5px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .rm-rewards { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
-    .rm-be { font-size: 10px; font-weight: 800; color: #34d399; }
-    .rm-time { font-size: 9px; color: #475569; }
+    .rm-be { font-size: 10.5px; font-weight: 800; color: #34d399; }
+    .rm-time { font-size: 9.5px; color: #475569; }
 
-    /* Tier bars */
-    .tier-bars { display: flex; flex-direction: column; gap: 6px; }
-    .tier-row { display: flex; align-items: center; gap: 6px; }
-    .tier-name { font-size: 9px; font-weight: 800; color: #64748b; width: 70px; text-align: right; }
-    .tier-track { flex: 1; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
-    .tier-fill { height: 100%; border-radius: 4px; transition: width 0.5s; min-width: 2px; }
-    .tier-count { font-size: 9px; font-weight: 700; color: #475569; width: 20px; }
-    .collection-footer { text-align: center; font-size: 9px; color: #334155; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(51,65,85,0.15); }
+    .recent-cards { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+    /* Scroll sideways rather than squash: a flex child shrinks by default. */
+    .recent-cards > :global(.card) { flex-shrink: 0; }
 
-    /* Season */
-    .season-record { font-size: 12px; color: #64748b; margin-bottom: 10px; font-weight: 700; }
-    .season-idle { font-size: 11px; color: #334155; font-style: italic; margin-bottom: 8px; }
-
-    /* Next Game */
-    .next-game {
-        background: rgba(30,58,138,0.12); border: 1px solid rgba(59,130,246,0.12);
-        border-radius: 10px; padding: 10px; margin-bottom: 10px;
-    }
-    .ng-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #3b82f6; margin-bottom: 6px; }
-    .ng-row { display: flex; align-items: center; gap: 8px; }
+    /* Side */
+    .side-card { width: 100%; }
+    button.side-card { cursor: pointer; display: block; transition: border-color 0.15s, transform 0.15s; }
+    button.side-card:hover { border-color: rgba(var(--tc-rgb), 0.5); transform: translateY(-1px); }
+    button.side-card:active { transform: scale(0.99); }
+    .side-link { display: inline-flex; align-items: center; gap: 3px; margin-top: 10px; font-size: 11px; font-weight: 800; color: #93c5fd; }
+    .side-idle { font-size: 12px; color: #64748b; font-style: italic; }
+    .ng { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(30,58,138,0.18); border: 1px solid rgba(59,130,246,0.2); }
     .ng-num { font-size: 11px; font-weight: 900; color: #60a5fa; }
-    .ng-name { flex: 1; font-size: 12px; font-weight: 800; color: #e2e8f0; }
-    .ng-pwr { font-size: 12px; font-weight: 900; color: #f87171; }
+    .ng-name { flex: 1; font-size: 13px; font-weight: 800; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ng-pwr { font-size: 13px; font-weight: 900; color: #f87171; }
+    .rank-title { font-size: 24px; font-weight: 900; color: #fbbf24; line-height: 1.1; }
+    .rank-tp { font-size: 12px; color: #94a3b8; margin: 2px 0 10px; }
+    .rank-next { font-size: 11px; color: #64748b; margin-top: 6px; }
+    .rank-next b { color: #fcd34d; }
+    .bp-row { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px; }
+    .bp-tier { font-size: 24px; font-weight: 900; color: #e9d5ff; }
+    .bp-of { font-size: 12px; font-weight: 800; color: #64748b; }
+    .best { display: flex; justify-content: center; }
 
-    /* Leaderboard Preview */
-    .lb-preview { text-align: center; margin-bottom: 10px; }
-    .lb-title-display { font-size: 18px; font-weight: 900; color: #fbbf24; margin-bottom: 2px; }
-    .lb-tp { font-size: 11px; color: #64748b; margin-bottom: 8px; }
-    .lb-next { font-size: 9px; color: #475569; margin-bottom: 6px; }
-    .lb-bar { width: 100%; height: 4px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 6px; }
-    .lb-fill { height: 100%; background: linear-gradient(90deg, #d97706, #fbbf24); border-radius: 4px; transition: width 0.5s; }
-    .lb-max { font-size: 9px; color: #fbbf24; font-weight: 800; }
+    .seg { display: inline-flex; padding: 2px; border-radius: 9px; background: rgba(15,23,42,0.8); border: 1px solid rgba(71,85,105,0.3); }
+    .seg button { padding: 4px 10px; border-radius: 7px; border: none; background: none; cursor: pointer; font-size: 10px; font-weight: 900; color: #64748b; }
+    .seg .seg-on { background: rgba(var(--tc-rgb), 0.22); color: #f1f5f9; }
+    .tiers { display: flex; flex-direction: column; gap: 6px; }
+    .tier-row { display: grid; grid-template-columns: 86px 1fr 30px; align-items: center; gap: 8px; }
+    .tier-name { font-size: 11px; font-weight: 800; color: var(--q); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tier-track { height: 7px; border-radius: 7px; background: rgba(30,41,59,0.9); overflow: hidden; }
+    .tier-fill { height: 100%; border-radius: 7px; background: var(--q); min-width: 3px; transition: width 0.5s; }
+    .tier-count { font-size: 11px; font-weight: 800; color: #94a3b8; text-align: right; }
+    .coll-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(71,85,105,0.2); font-size: 11px; color: #64748b; text-align: center; }
 
-    /* Battle Pass */
-    .bp-panel { border-color: rgba(245,158,11,0.1); }
-    .bp-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px; }
-    .bp-season { font-weight: 800; color: #f59e0b; }
-    .bp-tier { color: #475569; font-weight: 600; }
-    .bp-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
-    .bp-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); border-radius: 4px; transition: width 0.5s; }
+    .cabinet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .cab { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--c) 8%, rgba(15,23,42,0.6)); border: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
+    .cab-ico { grid-row: 1 / span 2; color: var(--c); display: flex; }
+    .cab-val { font-size: 16px; font-weight: 900; color: #f1f5f9; line-height: 1.1; }
+    .cab-lbl { font-size: 9.5px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+    .cab-zero { opacity: 0.55; }
 
-    /* Clickable panel heading (acts as a link to a full page) */
-    .panel-label-link {
-        background: none; border: none; cursor: pointer;
-        display: inline-flex; align-items: center; text-align: left;
-        padding: 0; transition: opacity 0.12s, filter 0.12s;
+    .mc-list { display: flex; flex-direction: column; gap: 6px; }
+    .mc { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; background: rgba(251,191,36,0.07); color: #fbbf24; }
+    .mc-name { flex: 1; font-size: 12px; font-weight: 800; }
+    .mc-r { font-size: 12px; font-weight: 900; }
+    .sc-soon .ph-link { margin-top: 6px; }
+    .soon { font-size: 11.5px; color: #7c8aa0; line-height: 1.5; margin-bottom: 8px; }
+    .soon b { color: #c4b5fd; }
+
+    /* Identity editor */
+    .ov { position: fixed; inset: 0; z-index: 85; background: rgba(2,4,12,0.8); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .ed { position: relative; width: 100%; max-width: 420px; max-height: 92vh; overflow-y: auto; padding: 24px; border-radius: 22px; background: linear-gradient(170deg, #0f1428, #0a0e1a); border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent); box-shadow: 0 30px 80px rgba(0,0,0,0.6); }
+    .ed-close { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border-radius: 10px; background: rgba(51,65,85,0.35); border: 1px solid rgba(71,85,105,0.25); color: #94a3b8; cursor: pointer; }
+    .ed-title { font-size: 18px; font-weight: 900; color: #f1f5f9; margin-bottom: 14px; }
+    .ed-preview { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; margin-bottom: 14px; background: radial-gradient(circle at 0% 50%, color-mix(in srgb, var(--tc) 35%, transparent), transparent 70%), rgba(15,23,42,0.6); border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent); }
+    .ed-logo { font-size: 36px; }
+    .ed-name { font-size: 18px; font-weight: 900; color: #fff; }
+    .ed-label { display: block; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #64748b; margin: 12px 0 7px; }
+    .ed-input { width: 100%; }
+    .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; }
+    .icon-opt { aspect-ratio: 1; border-radius: 12px; font-size: 22px; background: rgba(15,23,42,0.5); border: 2px solid transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .icon-opt:hover { background: rgba(30,41,59,0.7); }
+    .icon-sel { border-color: var(--tc) !important; background: color-mix(in srgb, var(--tc) 18%, transparent) !important; }
+    .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 6px; }
+    .color-opt { aspect-ratio: 1; border-radius: 10px; border: 2px solid transparent; cursor: pointer; }
+    .color-opt:hover { transform: scale(1.08); }
+    .color-sel { border-color: #fff !important; box-shadow: 0 0 12px rgba(255,255,255,0.25); }
+    .ed-hint { font-size: 11px; color: #64748b; margin-top: 12px; }
+    .ed-btns { display: flex; gap: 8px; margin-top: 16px; }
+    .ed-btns button { flex: 1; }
+
+    @media (max-width: 1300px) {
+        .hero { grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr); }
+        .hero-stats { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-row: 2; }
+        .cols { grid-template-columns: minmax(0, 1fr) 300px; }
     }
-    .panel-label-link:hover { filter: brightness(1.25); }
-    .panel-label.green { color: #34d399; }
-
-    .island-blurb { font-size: 11px; color: #64748b; line-height: 1.5; margin-bottom: 10px; }
-
-    /* Updates */
-    .update-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-    .update-row {
-        display: flex; align-items: baseline; gap: 8px; font-size: 11px;
-        width: 100%; text-align: left; background: none; border: none;
-        padding: 4px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer;
-        transition: background 0.12s;
+    @media (max-width: 1020px) {
+        .cols { grid-template-columns: 1fr; }
+        .col-side { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+        .squad { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
-    .update-row:hover { background: rgba(6, 182, 212, 0.06); }
-    .update-ver {
-        flex-shrink: 0; font-size: 9px; font-weight: 900; color: #06b6d4;
-        background: rgba(6, 182, 212, 0.08); padding: 2px 8px; border-radius: 6px;
-        border: 1px solid rgba(6, 182, 212, 0.1);
+    @media (max-width: 760px) {
+        .hero { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
+        .hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-row: auto; }
+        .hero-logo { width: 72px; height: 72px; border-radius: 22px; }
+        .hl-emoji { font-size: 38px; }
+        .two { grid-template-columns: 1fr; }
     }
-    .update-text { color: #475569; line-height: 1.4; }
-    .update-headline { color: #94a3b8; font-weight: 800; }
-    .update-row:hover .update-text { color: #64748b; }
-    .update-row:hover .update-headline { color: #cbd5e1; }
-
-    /* Career */
-    .career-list { display: flex; flex-direction: column; gap: 5px; }
-    .career-row {
-        display: flex; align-items: center; gap: 8px; font-size: 11px;
-        padding: 6px 9px; border-radius: 8px;
-        border-left: 3px solid #475569; transition: transform 0.1s;
-    }
-    .career-row:hover { transform: translateX(2px); }
-    .career-icon { font-size: 13px; flex-shrink: 0; line-height: 1; }
-    .career-label { color: #cbd5e1; flex: 1; font-weight: 700; }
-    .career-val { font-weight: 900; font-size: 14px; flex-shrink: 0; }
-
-    /* Extra colors */
-    .panel-label.gold { color: #fbbf24; }
-    .panel-label.purple { color: #c084fc; }
-
-    /* Coming Soon */
-    .coming-soon { border-color: rgba(168,85,247,0.15) !important; }
-    .cs-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
-    .cs-item { display: flex; gap: 10px; align-items: start; padding: 8px 10px; border-radius: 10px; background: rgba(15,23,42,0.3); }
-    .cs-icon { font-size: 18px; flex-shrink: 0; margin-top: 2px; }
-    .cs-name { font-size: 11px; font-weight: 900; color: #c084fc; }
-    .cs-desc { font-size: 9px; color: #475569; margin-top: 2px; line-height: 1.4; }
 </style>

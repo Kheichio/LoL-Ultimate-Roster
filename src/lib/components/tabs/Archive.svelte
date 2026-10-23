@@ -1,9 +1,12 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { collectionRegistry, archiveRewards, blueEssence, battlePass, saveGame, grantXP } from '../../stores/game.js';
+    import LazyCardGrid from '../card/LazyCardGrid.svelte';
+    import { collectionRegistry, archiveRewards, blueEssence, grantBPXP, saveGame, grantXP } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
     import { getDB, getEra, TIER_ORDER, LEGACY_TIERS, AWARD_TIERS, ALL_SPECIAL, HALL_OF_LEGENDS, TIER_COLORS } from '../../utils/cards.js';
+
+    const roleOrder = { TOP: 1, JNG: 2, MID: 3, ADC: 4, SUP: 5, COACH: 6 };
 
     let activeCategory = 'regular';
     let activeRegion = 'LCK';
@@ -154,7 +157,8 @@
         if (claimedTeams[key]) return;
         const reward = getTeamReward(group.cards.length);
         blueEssence.update(v => v + reward);
-        battlePass.update(bp => ({ ...bp, xp: (bp.xp || 0) + 100 }));
+        // grantBPXP, not a raw xp write, so crossing 1,000 actually levels the pass.
+        grantBPXP(100);
         archiveRewards.update(ar => ({
             ...ar,
             claimedTeams: { ...ar.claimedTeams, [key]: true }
@@ -262,6 +266,9 @@
             if ($collectionRegistry[c.id]) groups[key].owned++;
         });
         let arr = Object.values(groups);
+        // Sorted once here rather than inside the template, where it re-sorted (in place)
+        // every group on every render.
+        for (const g of arr) g.cards.sort((a, b) => b.year !== a.year ? b.year - a.year : (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99));
         if (sortBy === 'team') arr.sort((a, b) => a.team.localeCompare(b.team));
         else if (sortBy === 'completion') {
             arr.sort((a, b) => {
@@ -296,33 +303,19 @@
     $: ownedCards = cards.filter(c => $collectionRegistry[c.id]).length;
     $: completionPct = totalCards > 0 ? Math.round((ownedCards / totalCards) * 100) : 0;
 
+    // Team completion is measured against the whole category, not the filtered view, so a
+    // search can't make a half-collected team read as complete. categoryPool is exactly that.
     $: fullTeamSizes = (() => {
         const sizes = {};
-        let pool;
-        if (activeCategory === 'regular') {
-            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
-        } else {
-            const qual = catToQuality[activeCategory];
-            pool = qual ? db.filter(c => c.quality === qual) : [];
-        }
-        pool.forEach(c => { sizes[c.team] = (sizes[c.team] || 0) + 1; });
+        categoryPool.forEach(c => { sizes[c.team] = (sizes[c.team] || 0) + 1; });
         return sizes;
     })();
 
     $: fullTeamOwned = (() => {
         const owned = {};
-        let pool;
-        if (activeCategory === 'regular') {
-            pool = db.filter(c => !ALL_SPECIAL.includes(c.quality) && c.region === activeRegion);
-        } else {
-            const qual = catToQuality[activeCategory];
-            pool = qual ? db.filter(c => c.quality === qual) : [];
-        }
-        pool.forEach(c => { if ($collectionRegistry[c.id]) owned[c.team] = (owned[c.team] || 0) + 1; });
+        categoryPool.forEach(c => { if ($collectionRegistry[c.id]) owned[c.team] = (owned[c.team] || 0) + 1; });
         return owned;
     })();
-
-    const roleOrder = { TOP: 1, JNG: 2, MID: 3, ADC: 4, SUP: 5, COACH: 6 };
 </script>
 
 <section class="archive">
@@ -387,18 +380,16 @@
             </div>
         {:else if globalResults && globalResults.length > 0}
             <div class="gs-results">
-                {#each globalResults as grp (grp.type)}
+                {#each globalResults as grp, gi (grp.type)}
                     <div class="gs-type-section">
                         <div class="gs-type-header" style="border-left-color: {typeColor(grp.type)};">
                             <span class="gs-type-h-icon">{typeIcon(grp.type)}</span>
                             <span class="gs-type-h-label" style="color: {typeColor(grp.type)};">{typeLabel(grp.type)}</span>
                             <span class="gs-type-h-count">{grp.owned}/{grp.cards.length} owned</span>
                         </div>
-                        <div class="card-grid">
-                            {#each grp.cards as card (card.id)}
-                                <Card {card} mini={true} showOwned={true} owned={!!$collectionRegistry[card.id]} />
-                            {/each}
-                        </div>
+                        <LazyCardGrid items={grp.cards} eager={gi === 0 ? 1 : 0} let:item={card}>
+                            <Card {card} mini={true} showOwned={true} owned={!!$collectionRegistry[card.id]} />
+                        </LazyCardGrid>
                     </div>
                 {/each}
             </div>
@@ -482,7 +473,7 @@
         </div>
     {:else}
         <div class="team-list">
-            {#each grouped as group}
+            {#each grouped as group, gi (activeCategory + '|' + activeRegion + '|' + group.team)}
                 {@const fullSize = fullTeamSizes[group.team] || group.cards.length}
                 {@const fullOwned = fullTeamOwned[group.team] || 0}
                 {@const pct = fullSize > 0 ? Math.round((fullOwned / fullSize) * 100) : 0}
@@ -505,12 +496,11 @@
                         {/if}
                     </div>
                     <!-- Cards -->
-                    <div class="card-grid">
-                        {#each group.cards.sort((a, b) => b.year !== a.year ? b.year - a.year : (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99)) as card (card.id)}
-                            {@const isOwned = !!$collectionRegistry[card.id]}
-                            <Card {card} mini={true} showOwned={true} owned={isOwned} />
-                        {/each}
-                    </div>
+                    <!-- The first two teams mount straight away so the top of the page is never
+                         blank for a frame; everything further down waits for the scroll. -->
+                    <LazyCardGrid items={group.cards} eager={gi < 2 ? 1 : 0} let:item={card}>
+                        <Card {card} mini={true} showOwned={true} owned={!!$collectionRegistry[card.id]} />
+                    </LazyCardGrid>
                 </div>
             {/each}
         </div>
@@ -740,6 +730,10 @@
         padding: 16px;
         border-radius: 12px;
         border: 1px solid rgba(51, 65, 85, 0.2);
+        /* Off-screen panels skip layout and paint entirely — including every animated tier
+           glow inside them — once they have been scrolled past. */
+        content-visibility: auto;
+        contain-intrinsic-size: auto 640px;
     }
 
     .team-complete {
@@ -779,14 +773,6 @@
 
     .team-stats-complete {
         color: #34d399;
-    }
-
-    /* ── Card grid ── */
-    .card-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-        gap: 10px;
-        justify-items: center;
     }
 
     /* ── Global Search ── */

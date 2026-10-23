@@ -6,7 +6,7 @@
     // until CareerShell mounts, so counting it would report nothing at the menu.
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute } from '../../utils/sound.js';
-    import { club, collectionRegistry, blueEssence, saveGame } from '../../stores/game.js';
+    import { club, collectionRegistry, blueEssence, freePacks, saveGame } from '../../stores/game.js';
     import { clearStorage, saveToStorage, loadFromStorage } from '../../utils/storage.js';
     import { getDB, makeUniqueId } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
@@ -29,10 +29,16 @@
     const _storedCodes = loadFromStorage('lur_redeemed_codes');
     let redeemedCodes = (_storedCodes && typeof _storedCodes === 'object' && !Array.isArray(_storedCodes)) ? _storedCodes : {};
 
+    const PACK_NAMES = { champion: 'Champion', msi: 'MSI', ewc: 'EWC', firststand: 'First Stand', elite: 'Elite', premium: 'Premium' };
+
+    // A code grants any mix of: one card (`card`), Blue Essence (`be`) and free Store packs
+    // (`packs`, keyed by Store pack id — they land in the Store's Free Packs row exactly like
+    // RBC rewards). Codes never expire; redeeming is once per save.
     const CODES = {
-        'MSISIG2024': { type: 'card', quality: 'MSI', signature: true, label: 'MSI Signature Card' },
-        'MSI2026': { type: 'card', quality: 'MSI', signature: true, label: 'MSI 2026 Signature Card' },
-        'WELCOMEBACK': { type: 'be', amount: 5000, label: '5,000 Blue Essence' },
+        'MSISIG2024': { label: 'MSI Signature Card', card: { quality: 'MSI', signature: true } },
+        'MSI2026': { label: 'MSI 2026 Signature Card', card: { quality: 'MSI', signature: true } },
+        'WELCOMEBACK': { label: '5,000 Blue Essence', be: 5000 },
+        'WORLDS2026': { label: 'Worlds 2026 bundle', card: { quality: 'Champion', signature: true }, packs: { champion: 1 } },
     };
 
     function redeemCodeFn() {
@@ -42,21 +48,38 @@
         const reward = CODES[code];
         if (!reward) { showToast('Invalid code.', 'error'); return; }
 
-        if (reward.type === 'card') {
+        // Resolve the card BEFORE granting anything, so a missing database refuses the whole
+        // code instead of paying out the BE half and burning it.
+        let card = null;
+        if (reward.card) {
             const db = getDB();
             if (!db) { showToast('Database not loaded.', 'error'); return; }
-            const pool = db.filter(c => c.quality === reward.quality && c.role !== 'COACH');
+            const pool = db.filter(c => c.quality === reward.card.quality && c.role !== 'COACH');
             if (pool.length === 0) { showToast('No cards available.', 'error'); return; }
             const base = pool[Math.floor(Math.random() * pool.length)];
-            const card = { ...base, uniqueId: makeUniqueId('code_'), signature: reward.signature || false, holographic: reward.holographic || false };
+            card = { ...base, uniqueId: makeUniqueId('code_'), signature: !!reward.card.signature, holographic: !!reward.card.holographic };
+        }
+
+        const got = [];
+        if (card) {
             club.update(c => [...c, card]);
             collectionRegistry.update(r => ({ ...r, [card.id]: true }));
-            playSound('rare');
-            showToast(`Redeemed! Got ${card.name} (${reward.label})`, 'success');
-        } else if (reward.type === 'be') {
-            blueEssence.update(v => v + reward.amount);
-            showToast(`Redeemed! +${reward.amount} BE`, 'success');
+            got.push(`${card.name}${card.signature ? ' (Signature)' : ''}`);
         }
+        if (reward.be) {
+            blueEssence.update(v => v + reward.be);
+            got.push(`+${reward.be.toLocaleString()} BE`);
+        }
+        if (reward.packs) {
+            freePacks.update(fp => {
+                const next = { ...fp };
+                for (const [id, n] of Object.entries(reward.packs)) next[id] = (next[id] || 0) + n;
+                return next;
+            });
+            for (const [id, n] of Object.entries(reward.packs)) got.push(`${n} free ${PACK_NAMES[id] || id} pack${n > 1 ? 's' : ''}`);
+        }
+        playSound(card ? 'rare' : 'claim');
+        showToast(`Redeemed ${reward.label}! ${got.join(' · ')}`, 'success');
 
         redeemedCodes[code] = true;
         saveToStorage('lur_redeemed_codes', redeemedCodes);

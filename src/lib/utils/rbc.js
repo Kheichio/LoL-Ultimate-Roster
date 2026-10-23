@@ -67,6 +67,24 @@ export function claimedToday(rbcState, today) {
     return rbcState && rbcState.day === today ? (rbcState.claimed || {}) : {};
 }
 
+// RBCs are an endgame sink — they eat Diamond+ fives — so they open after the first World
+// Championship. Read off trackStats rather than `unlocks.worlds`, which only records that a
+// Worlds was ENTERED-and-won through the standalone mode and misses a Golden Road title.
+export function rbcUnlocked(stats) {
+    return ((stats && stats.worldsWon) || 0) >= 1;
+}
+
+// The nav badge. It used to show the count of unclaimed challenges, which is five every
+// single morning whether or not the player can afford a single one — a light that is always
+// on tells nobody anything. Now it lights only for an unlocked player who has not opened the
+// tab yet today, and goes dark the moment they do (rbcState.seen is that day's key).
+export function rbcBadge(stats, rbcState, today) {
+    if (!rbcUnlocked(stats)) return 0;
+    if (rbcState && rbcState.seen === today) return 0;
+    const done = claimedToday(rbcState, today);
+    return CHALLENGES.filter(ch => !done[ch.id]).length;
+}
+
 // Human-readable requirement chips for a challenge (for the UI).
 export function requirementChips(challenge) {
     const r = challenge.req;
