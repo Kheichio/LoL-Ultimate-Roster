@@ -1,6 +1,10 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
+    import Icon from '../ui/Icon.svelte';
+    import MatchArena from '../match/MatchArena.svelte';
+    import MatchResult from '../match/MatchResult.svelte';
+    import { drawPlays } from '../match/matchMath.js';
+    import { club, squad, bench, blueEssence, trackStats, seasonData, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, splitCooldownEnd } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -151,8 +155,7 @@
     validateSeasonData();
 
     function rollRoundPlays() {
-        const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
-        roundPlays = shuffled.slice(0, 3);
+        roundPlays = drawPlays(PLAYS, 3);
     }
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
@@ -383,6 +386,8 @@
             playerScore = 0;
             cpuScore = 0;
             matchLog = [];
+            revealing = false;
+            pendingPhase = null;
             rollRoundPlays();
             phase = 'match';
         } catch (e) {
@@ -390,7 +395,37 @@
         }
     }
 
+    // The match screen reveals each game before anything moves on. The result is recorded and
+    // saved immediately (below); only the switch to the result screen waits for the reveal.
+    let revealing = false;
+    let pendingPhase = null;
+    function goPhase(p) { if (revealing) pendingPhase = p; else phase = p; }
+    function onRevealed() {
+        revealing = false;
+        if (pendingPhase) { phase = pendingPhase; pendingPhase = null; }
+    }
+
+    // What a play is actually resolved with: pickPlay folds each card's meta buff/nerf into
+    // the stat, so the odds on screen must too.
+    $: myPlayStats = squadReady ? Object.fromEntries(STAT_KEYS.map(s => [s,
+        Math.round(starters.reduce((sum, c) => sum + (getEffectiveStats(c)[s] || 0) + getMetaModifier(c), 0) / starters.length) + tacticsLevel,
+    ])) : {};
+    const lineupOf = (cards, roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH']) => roles.map(role => ({ role, card: (cards && cards[role]) || null, flex: false }));
+    // Frozen while a game is being revealed, like the Tournament screen.
+    let blueSide = null;
+    let redSide = null;
+    $: if (!revealing || !blueSide) blueSide = { name: $teamIdentity.name, logo: $teamIdentity.logo, power: totalPower, lineup: lineupOf($squad), stats: myPlayStats };
+    $: if (!revealing || !redSide) redSide = currentOpponent ? { name: currentOpponent.name, logo: currentOpponent.tag === 'BOSS' ? '💀' : '🛡️', power: currentOpponent.avgRating, lineup: lineupOf(currentOpponent.cards), stats: cpuStatAvgs } : null;
+    $: metaChips = (() => {
+        const out = [];
+        if (currentOpponent && currentOpponent.tag) out.push({ text: currentOpponent.tag === 'BOSS' ? 'Boss opponent' : 'Hard opponent', tone: 'bad' });
+        for (const [team, cards] of Object.entries(affectedSquad.buffed)) out.push({ text: `Meta buff · ${team} ×${cards.length}`, tone: 'good' });
+        for (const [team, cards] of Object.entries(affectedSquad.nerfed)) out.push({ text: `Meta nerf · ${team} ×${cards.length}`, tone: 'bad' });
+        return out;
+    })();
+
     function pickPlay(play) {
+        revealing = true;
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
         const tLvl = get(skills).tactics || 0;
         const myStatAvg = Math.round(starters.reduce((s, c) => s + (getEffectiveStats(c)[play.stat] || 0) + getMetaModifier(c), 0) / starters.length) + tLvl;
@@ -438,7 +473,7 @@
 
             logMatch({ mode: 'season', result: matchWon ? 'win' : 'loss', opponent: currentOpponent.name, be: 0, xp: matchWon ? 150 : 60 });
             saveGame();
-            phase = 'matchResult';
+            goPhase('matchResult');
         }
     }
 
@@ -697,142 +732,45 @@
             </div>
         {/if}
 
-    {:else if phase === 'match' && currentOpponent}
-        <div class="match-header">
-            <div class="match-label">Match {currentOpponent.index + 1} — vs {currentOpponent.name}</div>
-            <div class="match-score">
-                <span class="ms-blue">{playerScore}</span>
-                <span class="ms-sep">—</span>
-                <span class="ms-red">{cpuScore}</span>
-            </div>
-            <div class="match-bo5">Best of 5 — first to 3</div>
-        </div>
-
-        <div class="match-layout">
-            <!-- Left: Your team -->
-            <div class="team-block">
-                <div class="arena-label arena-label-blue">Your Squad ({totalPower})</div>
-                <div class="arena-grid-2x3">
-                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
-                        {#each pair as role}
-                            <div class="arena-cell">
-                                {#if $squad[role]}
-                                    <Card card={$squad[role]} mini={true} />
-                                {:else}
-                                    <div class="arena-empty">{role}</div>
-                                {/if}
-                            </div>
-                        {/each}
-                    {/each}
-                </div>
-            </div>
-
-            <!-- Center: Combat -->
-            <div class="arena-center">
-                <div class="power-compare">
-                    <span class="pc-side pc-blue">{totalPower}</span>
-                    <div class="pc-center">
-                        <div class="pc-label">Power</div>
-                        <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>
-                            {powerDiff > 0 ? '+' : ''}{powerDiff}
-                        </div>
-                        <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
-                    </div>
-                    <span class="pc-side pc-red">{currentOpponent.avgRating}</span>
-                </div>
-
-                <div class="stat-compare">
-                    <div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 Tactics +{tacticsLevel}</span>{/if}</div>
-                    {#each roundPlays as play}
-                        {@const myVal = myStatAvgs[play.stat] || 0}
-                        {@const cpuVal = cpuStatAvgs[play.stat] || 0}
-                        {@const diff = myVal - cpuVal}
-                        <div class="sc-row">
-                            <span class="sc-val sc-val-blue">{myVal}</span>
-                            <div class="sc-bar-wrap">
-                                <div class="sc-label">{play.icon} {play.label}</div>
-                                <div class="sc-bar">
-                                    <div class="sc-fill-blue" style="width: {Math.min(100, (myVal / Math.max(myVal, cpuVal, 1)) * 50)}%"></div>
-                                    <div class="sc-fill-red" style="width: {Math.min(100, (cpuVal / Math.max(myVal, cpuVal, 1)) * 50)}%; margin-left: auto;"></div>
-                                </div>
-                                <div class="sc-diff" class:sc-diff-pos={diff > 0} class:sc-diff-neg={diff < 0}>{diff > 0 ? '+' : ''}{diff} stat</div>
-                            </div>
-                            <span class="sc-val sc-val-red">{cpuVal}</span>
-                        </div>
-                    {/each}
-                </div>
-
-                {#if matchLog.length > 0}
-                    <div class="log-list">
-                        {#each matchLog as log, i}
-                            <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
-                                <span class="log-result">R{i + 1} {log.won ? '✓' : '✗'}</span>
-                                <div class="log-breakdown">
-                                    <div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div>
-                                    <div class="log-detail-row">
-                                        <span class="log-calc">{log.myBase}{log.statEdge >= 0 ? '+' : ''}{log.statEdge}{log.myRoll >= 0 ? '+' : ''}{log.myRoll}</span>
-                                        <span class="log-vs">vs</span>
-                                        <span class="log-calc">{log.cpuBase}{log.cpuRoll >= 0 ? '+' : ''}{log.cpuRoll}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-
-                {#if playerScore < 3 && cpuScore < 3}
-                    <div class="play-picker">
-                        <div class="play-label">Choose Your Play (3 of {PLAYS.length})</div>
-                        <div class="play-grid play-grid-3">
-                            {#each roundPlays as play}
-                                {@const myVal = myStatAvgs[play.stat] || 0}
-                                {@const cpuVal = cpuStatAvgs[play.stat] || 0}
-                                {@const edge = myVal - cpuVal}
-                                {@const net = powerDiff + edge}
-                                <button class="play-btn" on:click={() => pickPlay(play)}>
-                                    <span class="pb-icon">{play.icon}</span>
-                                    <span class="pb-name">{play.label}</span>
-                                    <span class="pb-stat" class:pb-edge-pos={edge > 0} class:pb-edge-neg={edge < 0}>Stat {edge > 0 ? '+' : ''}{edge}</span>
-                                    <span class="pb-net" class:pb-edge-pos={net > 0} class:pb-edge-neg={net < 0}>Net {net > 0 ? '+' : ''}{net}</span>
-                                </button>
-                            {/each}
-                        </div>
-                    </div>
-                {/if}
-            </div>
-
-            <!-- Right: CPU team -->
-            <div class="team-block">
-                <div class="arena-label arena-label-red">{currentOpponent.name} ({currentOpponent.avgRating})</div>
-                <div class="arena-grid-2x3">
-                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}
-                        {#each pair as role}
-                            <div class="arena-cell">
-                                {#if currentOpponent.cards[role]}
-                                    <Card card={currentOpponent.cards[role]} mini={true} />
-                                {:else if role !== 'COACH'}
-                                    <div class="arena-empty">{role}</div>
-                                {:else}
-                                    <div class="arena-empty-sm"></div>
-                                {/if}
-                            </div>
-                        {/each}
-                    {/each}
-                </div>
-            </div>
-        </div>
+    {:else if phase === 'match' && currentOpponent && blueSide && redSide}
+        <MatchArena
+            title={`${splitName} Split · Year ${splitYear}`}
+            subtitle={`Match ${currentOpponent.index + 1} of ${GAMES_PER_SPLIT}`}
+            accent="#818cf8"
+            icon="calendar"
+            blue={blueSide}
+            red={redSide}
+            plays={roundPlays}
+            allPlays={PLAYS}
+            scoreBlue={playerScore}
+            scoreRed={cpuScore}
+            winsNeeded={3}
+            log={matchLog}
+            tactics={tacticsLevel}
+            chips={metaChips}
+            on:pick={(e) => pickPlay(e.detail)}
+            on:revealed={onRevealed}
+        />
 
     {:else if phase === 'matchResult'}
         {@const matchWon = playerScore >= 3}
-        <div class="result-card" class:result-win={matchWon} class:result-lose={!matchWon}>
-            <div class="result-icon">{matchWon ? '✓' : '✗'}</div>
-            <h2 class="result-title" class:rt-win={matchWon} class:rt-lose={!matchWon}>{matchWon ? 'Match Won!' : 'Match Lost'}</h2>
-            <p class="result-score">Score: {playerScore}-{cpuScore} vs {currentOpponent?.name || 'CPU'}</p>
-            <p class="result-record">Split record: {wins}W - {losses}L ({GAMES_PER_SPLIT - matchIndex} remaining)</p>
-            <button class="sn-back-btn" on:click={backToSchedule}>
-                {matchIndex >= GAMES_PER_SPLIT ? 'View Split Results' : 'Back to Schedule'}
+        {@const left = GAMES_PER_SPLIT - matchIndex}
+        <MatchResult
+            outcome={matchWon ? 'win' : 'lose'}
+            kicker={`${splitName} Split · Match ${(currentOpponent?.index ?? 0) + 1}`}
+            title={matchWon ? 'Match won' : 'Match lost'}
+            subtitle={left > 0 ? `Split record ${wins}–${losses} · ${left} match${left === 1 ? '' : 'es'} to go` : `Split complete at ${wins}–${losses}`}
+            icon={matchWon ? 'trophy' : 'shield'}
+            blueName={$teamIdentity.name}
+            redName={currentOpponent?.name || 'CPU'}
+            scoreBlue={playerScore}
+            scoreRed={cpuScore}
+            rewards={[{ label: 'XP', value: `+${matchWon ? 150 : 60}`, tone: 'xp' }, { label: 'Battle Pass XP', value: `+${matchWon ? 75 : 25}`, tone: 'xp' }]}
+        >
+            <button class="mr-btn" on:click={backToSchedule}>
+                {matchIndex >= GAMES_PER_SPLIT ? 'View split results' : 'Back to schedule'} <Icon name="arrow" size={15} />
             </button>
-        </div>
+        </MatchResult>
 
     {:else if phase === 'splitEnd'}
         <div class="result-card" class:result-win={wins >= 6}>
@@ -990,66 +928,7 @@
         box-shadow: 0 4px 15px rgba(16,185,129,0.25);
     }
     .sn-claim-btn:hover { box-shadow: 0 6px 20px rgba(16,185,129,0.4); }
-    .sn-back-btn {
-        margin-top: 20px; padding: 12px 32px; border-radius: 12px;
-        background: rgba(51,65,85,0.5); color: #94a3b8;
-        font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-        border: 1px solid rgba(71,85,105,0.4); cursor: pointer; transition: all 0.12s;
-    }
-    .sn-back-btn:hover { background: rgba(71,85,105,0.6); color: #e2e8f0; }
-
-    /* Match */
-    .match-header { text-align: center; margin-bottom: 20px; }
-    .match-label { font-size: 11px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
-    .match-score { display: flex; justify-content: center; gap: 16px; margin-top: 12px; }
-    .ms-blue { font-size: 22px; font-weight: 900; color: #60a5fa; }
-    .ms-red { font-size: 22px; font-weight: 900; color: #f87171; }
-    .ms-sep { font-size: 22px; font-weight: 900; color: #334155; }
-    .match-bo5 { font-size: 9px; color: #475569; margin-top: 4px; }
-
-    /* Power compare */
-    .power-compare { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.15); }
-    .pc-side { font-size: 22px; font-weight: 900; min-width: 40px; text-align: center; }
-    .pc-blue { color: #60a5fa; } .pc-red { color: #f87171; }
-    .pc-center { text-align: center; }
-    .pc-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
-    .pc-diff { font-size: 18px; font-weight: 900; }
-    .pc-pos { color: #34d399; } .pc-neg { color: #f87171; } .pc-even { color: #64748b; }
-    .pc-note { font-size: 8px; color: #334155; margin-top: 2px; }
-
-    .log-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 20px; }
-    .log-row {
-        display: flex; align-items: center; gap: 10px;
-        padding: 10px 14px; border-radius: 10px; font-size: 12px;
-        background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15);
-    }
-    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; font-size: 14px; flex-shrink: 0; }
-    .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-breakdown { flex: 1; }
-    .log-main { font-size: 12px; font-weight: 700; color: #e2e8f0; }
-    .log-detail-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #475569; font-family: monospace; margin-top: 2px; }
-    .log-calc { color: #64748b; } .log-vs { color: #334155; }
-
-    /* Play picker */
-    .play-picker {
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        border-radius: 16px; padding: 24px;
-    }
-    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
-    .play-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-    .play-grid-3 { grid-template-columns: repeat(3, 1fr); }
-    @media (max-width: 600px) { .play-grid { grid-template-columns: repeat(3, 1fr); } }
-    .play-btn {
-        display: flex; flex-direction: column; align-items: center; gap: 6px;
-        padding: 16px 8px; border-radius: 12px; cursor: pointer;
-        background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3);
-        transition: all 0.12s;
-    }
-    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.04); }
-    .pb-icon { font-size: 22px; }
-    .pb-name { font-size: 10px; font-weight: 900; color: #e2e8f0; }
-
+    /* The match screen's styles live in components/match/MatchArena.svelte. */
     /* Results */
     .result-card {
         text-align: center; padding: 40px 24px;
@@ -1057,11 +936,9 @@
         border-radius: 20px;
     }
     .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }
-    .result-lose { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
     .result-icon { font-size: 40px; margin-bottom: 12px; }
     .result-title { font-size: 22px; font-weight: 900; margin-bottom: 8px; }
-    .rt-win { color: #34d399; } .rt-lose { color: #f87171; }
-    .result-score { font-size: 12px; color: #94a3b8; }
+    .rt-win { color: #34d399; }
     .result-sub { font-size: 16px; font-weight: 900; color: #e2e8f0; margin-bottom: 4px; }
     .result-record { font-size: 12px; color: #64748b; font-family: monospace; }
 
@@ -1166,51 +1043,4 @@
     .bc-team { font-size: 9px; color: #64748b; }
     .bc-quality { font-size: 9px; font-weight: 900; text-transform: uppercase; }
 
-    /* Match layout - 3 columns: cards | combat | cards */
-    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
-    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
-    .team-block { display: flex; flex-direction: column; gap: 6px; }
-    .arena-label {
-        font-size: 10px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; padding: 8px 12px;
-        border-radius: 10px; text-align: center;
-    }
-    .arena-label-blue { color: #93c5fd; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.15); }
-    .arena-label-red { color: #fca5a5; background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.15); }
-
-    .arena-grid-2x3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .arena-cell { display: flex; justify-content: center; }
-    .arena-empty {
-        width: 180px; height: 80px; border-radius: 12px;
-        background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2);
-        display: flex; align-items: center; justify-content: center;
-        font-size: 10px; font-weight: 800; color: #1e293b; text-transform: uppercase;
-    }
-    .arena-empty-sm { width: 180px; height: 40px; }
-    .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-
-    .stat-compare {
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        border-radius: 14px; padding: 16px;
-    }
-    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; }
-    .tactics-tag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 6px; background: rgba(147,51,234,0.15); border: 1px solid rgba(168,85,247,0.3); color: #c084fc; font-size: 9px; font-weight: 900; letter-spacing: 0; text-transform: none; }
-    .log-tactics { color: #c084fc; font-size: 9px; font-weight: 700; margin-left: 2px; }
-    .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; }
-    .sc-val-blue { color: #60a5fa; }
-    .sc-val-red { color: #f87171; }
-    .sc-bar-wrap { flex: 1; text-align: center; }
-    .sc-label { font-size: 10px; font-weight: 800; color: #94a3b8; margin-bottom: 4px; }
-    .sc-bar { display: flex; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
-    .sc-fill-blue { background: linear-gradient(90deg, #1e40af, #3b82f6); border-radius: 4px 0 0 4px; }
-    .sc-fill-red { background: linear-gradient(90deg, #ef4444, #991b1b); border-radius: 0 4px 4px 0; }
-    .sc-diff { font-size: 11px; font-weight: 900; color: #64748b; margin-top: 2px; }
-    .sc-diff-pos { color: #34d399; }
-    .sc-diff-neg { color: #f87171; }
-    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
-    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
-    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
-    .pb-edge-pos { color: #34d399; }
-    .pb-edge-neg { color: #f87171; }
 </style>

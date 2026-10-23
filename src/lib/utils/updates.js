@@ -10,6 +10,22 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.7',
+        title: 'Ultimate Roster — A New Match Screen, Everywhere (and Legacy Mode)',
+        summary: 'Every match in the game is played on a new broadcast-style screen: a live scoreboard, both lineups, three play cards that tell you your real chance of winning with each, a reveal when every game resolves, and your chance of taking the series. It is the same in Tournaments, the Golden Road, Salary Cap, Rival, Season, Infinity Tower and Draft. Prefer the old look? Legacy Mode keeps it.',
+        details: [
+            'NEW — the match screen. A broadcast scoreboard across the top with both teams, their power and the series score; your five (and coach) on the left and theirs on the right as player plates you can click to see the full card; and your three plays in the middle. Keys 1, 2 and 3 pick a play.',
+            'NEW — real odds on every play. The old screen showed a "Net +3" that left out the most important part: the CPU picks its own play at random, so you were never really up against the same stat. Each play now shows your exact chance of winning that game, worked out from the actual game formula, and the best one is marked. The bar under the scoreboard is your chance of winning the whole series from where you are.',
+            'NEW — every game is revealed. Both plays slide in, both scores count up, and the full sum behind each one is shown (power, stat edge and luck), then the game is called. Click to skip. The deciding game is always shown before the screen moves on.',
+            'NEW — a pre-match screen in tournaments: the whole bracket with every opponent you have beaten, the next one face to face with their lineup, and your chance of winning the match.',
+            'NEW — results screens for every mode, with the final score, what you earned, and a Play Again where it makes sense.',
+            'NEW — Legacy Mode, under Challenge Modes on the Play menu. The original arena list and the original match screen, exactly as they were — the same Gaming Cafe → World Championship circuit and Golden Road, with the same rewards and unlocks.',
+            'CHANGED — inside a match, each pick is now called a game ("Game 1", "Game won"), so it can no longer be confused with a tournament round.',
+            'FIXED — the three plays you are offered each game were not drawn fairly. The shuffle behind them favoured some plays over others: measured over 200,000 draws, Teamfight was offered 69% of the time and Composure only 50%, where a fair draw gives every play 60%. It is a fair draw now, in every mode — so a squad built around Composure is no longer quietly handicapped.',
+            'NOTE — apart from that fix, nothing about how matches are decided has changed. Results are still saved the instant a match is decided, so leaving during the reveal cannot undo a loss.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.6',
         title: 'Ultimate Roster — New Store, Top Bar, Home, Quests & Rewards',
         summary: 'Five of the most-used screens rebuilt. Packs look like real foil booster packs and tear open in your hands, the top bar is grouped and readable at a glance, Home tells you what is waiting for you, Quests has a Claim All, and Rewards puts the daily login and the Battle Pass side by side on one page.',

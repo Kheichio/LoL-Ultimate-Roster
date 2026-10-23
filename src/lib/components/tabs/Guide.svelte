@@ -63,10 +63,11 @@
             { q: 'Bench Selection (1.4.0)', a: 'Opening a bench slot shows every eligible card, with filters by role and sorting by rating or any single stat (MEC/TMF/FRM/CMP/MAP/LDR) — so you can quickly line up the exact specialist you want ready to swap in mid-split.' },
         ]},
         { id: 'combat', title: '⚔️ Combat System', content: [
-            { q: 'How combat works', a: 'Each round, 3 random plays are drawn from 5 stats (Mechanical, Teamfight, Macro, Form, Composure). Pick one — your team average in that stat is compared to the CPU\'s. The stat difference is added to your Total Power vs their rating, plus random variance (±5).' },
-            { q: 'Formula', a: 'Your Score = Total Power + (Your Stat Avg - CPU Stat Avg) + Random(±5). CPU Score = CPU Rating + Random(±5). Higher score wins the round.' },
-            { q: 'Best of 3 / Best of 5', a: 'Tournament matches are best-of-3 (first to 2 wins). Season matches are best-of-5 (first to 3 wins).' },
-            { q: 'Cards on screen', a: 'During combat, both teams\' cards are displayed on either side of the play area in a 2×3 grid (TOP+COACH, JNG+MID, ADC+SUP).' },
+            { q: 'How combat works', a: 'A match is a series of games. Each game, 3 random plays are drawn from 5 stats (Mechanical, Teamfight, Macro, Form, Composure) and you pick one. The CPU secretly picks a play of its own at random, and your team average in your play\'s stat is compared with its team average in its play\'s stat. That difference is added to your Total Power against their rating, plus luck (±5 each side).' },
+            { q: 'Formula', a: 'Your Score = Total Power + (Your Stat in your play − CPU Stat in its play) + Random(±5). CPU Score = CPU Rating + Random(±5). Higher score wins the game; a tie goes to you.' },
+            { q: 'Best of 3 / Best of 5', a: 'Tournament and Infinity Tower matches are best-of-3 (first to 2 wins). Season and Draft matches are best-of-5 (first to 3 wins). Rival Challenge matches are best-of-5 too, and the series goes to whoever takes 3 matches first.' },
+            { q: 'The match screen', a: 'Both lineups sit either side of the play area — click any player to see their full card. Every play shows your exact chance of winning the game with it, worked out from that formula, and the bar under the scoreboard shows your chance of winning the whole series from here. When a game resolves, both plays are revealed with the full sum behind each score; click the reveal to skip it. Keys 1, 2 and 3 pick a play.' },
+            { q: 'Legacy Mode', a: 'Prefer the original look? Legacy Mode, under Challenge Modes on the Play menu, has the original arena list and the original match screen. It is the same Gaming Cafe → World Championship circuit and Golden Road with the same rewards and unlocks — only the screens are the classic ones.' },
         ]},
         { id: 'tournaments', title: '🏆 Tournaments', content: [
             { q: 'Gaming Cafe (Always available)', a: '3 rounds, CPU capped at Gold tier. Free entry. Win: 300 BE, 2nd: 150 BE.' },

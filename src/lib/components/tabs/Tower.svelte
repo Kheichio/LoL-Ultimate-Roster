@@ -1,6 +1,9 @@
 <script>
-    import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
+    import Icon from '../ui/Icon.svelte';
+    import MatchArena from '../match/MatchArena.svelte';
+    import MatchResult from '../match/MatchResult.svelte';
+    import { drawPlays } from '../match/matchMath.js';
+    import { club, squad, blueEssence, trackStats, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { getDB, LEGACY_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -52,7 +55,7 @@
         { id: 'cmp', label: 'Composure', stat: 'cmp', icon: '🧊' },
     ];
     let roundPlays = [];
-    function rollRoundPlays() { roundPlays = [...PLAYS].sort(() => Math.random() - 0.5).slice(0, 3); }
+    function rollRoundPlays() { roundPlays = drawPlays(PLAYS, 3); }
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
     $: squadReady = starters.length === 5;
@@ -210,11 +213,28 @@
         floor++;
         currentEnemy = generateEnemy(floor);
         playerScore = 0; cpuScore = 0; matchLog = [];
+        revealing = false; pendingPhase = null;
         rollRoundPlays();
         phase = 'match';
     }
 
+    // The match screen reveals each game first. Floors, rewards and a lost run are recorded and
+    // saved immediately below; only the screen change waits for the reveal to finish.
+    let revealing = false;
+    let pendingPhase = null;
+    function goPhase(p) { if (revealing) pendingPhase = p; else phase = p; }
+    function onRevealed() {
+        revealing = false;
+        if (pendingPhase) { phase = pendingPhase; pendingPhase = null; }
+    }
+    const lineupOf = (cards, roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH']) => roles.map(role => ({ role, card: (cards && cards[role]) || null, flex: false }));
+    let blueSide = null;
+    let redSide = null;
+    $: if (!revealing || !blueSide) blueSide = { name: $teamIdentity.name, logo: $teamIdentity.logo, power: totalPower, lineup: lineupOf($squad), stats: myStatAvgs };
+    $: if (!revealing || !redSide) redSide = currentEnemy ? { name: currentEnemy.name, logo: '🗼', power: currentEnemy.avgRating, lineup: lineupOf(currentEnemy.cards), stats: cpuStatAvgs } : null;
+
     function pickPlay(play) {
+        revealing = true;
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
         const tLvl = get(skills).tactics || 0;
         const myVal = myStatAvgs[play.stat] || 0;
@@ -248,7 +268,7 @@
                 logMatch({ mode: 'tower', result: 'win', opponent: currentEnemy.name, be: floorBE, xp: 50 + floor * 5, floor });
                 saveTowerRun();
                 saveGame();
-                phase = 'upgrade';
+                goPhase('upgrade');
             } else {
                 grantXP(30 + floor * 3);
                 grantBPXP(10 + floor);
@@ -257,7 +277,7 @@
                 logMatch({ mode: 'tower', result: 'loss', opponent: currentEnemy.name, be: 0, xp: 30 + floor * 3, floor });
                 clearTowerRun();
                 saveGame();
-                phase = 'dead';
+                goPhase('dead');
             }
         }
     }
@@ -307,90 +327,73 @@
             <button class="tw-back" on:click={() => switchTab('tournament')}>← Back to Play</button>
         </div>
 
-    {:else if phase === 'match' && currentEnemy}
-        <div class="tw-floor-bar">
-            <span class="tw-floor">Floor {floor}</span>
-            <span class="tw-buffs">{towerBuffs.length} buffs · +{towerBuff} PWR</span>
-            <span class="tw-earned">{totalBEEarned} BE earned</span>
-        </div>
-        <div class="match-header">
-            <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>
-        </div>
-        <div class="match-layout">
-            <div class="team-block">
-                <div class="arena-label arena-label-blue">You ({totalPower})</div>
-                <div class="arena-grid-2x3">{#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if $squad[role]}<Card card={$squad[role]} mini={true} />{:else}<div class="arena-empty">{role}</div>{/if}</div>{/each}{/each}</div>
-            </div>
-            <div class="arena-center">
-                <div class="power-compare">
-                    <span class="pc-side pc-blue">{totalPower}</span>
-                    <div class="pc-center">
-                        <div class="pc-label">Base Power</div>
-                        <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>{powerDiff > 0 ? '+' : ''}{powerDiff}</div>
-                        <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
-                    </div>
-                    <span class="pc-side pc-red">{currentEnemy.avgRating}</span>
+    {:else if phase === 'match' && currentEnemy && blueSide && redSide}
+        <MatchArena
+            title="Infinity Tower"
+            subtitle={`Floor ${floor}${bestFloor > 0 ? ` · best ${bestFloor}` : ''}`}
+            accent="#f87171"
+            icon="tower"
+            blue={blueSide}
+            red={redSide}
+            plays={roundPlays}
+            allPlays={PLAYS}
+            scoreBlue={playerScore}
+            scoreRed={cpuScore}
+            winsNeeded={2}
+            log={matchLog}
+            tactics={tacticsLevel}
+            chips={[
+                { text: `${towerBuffs.length} upgrade${towerBuffs.length === 1 ? '' : 's'} · +${towerBuff} power`, tone: towerBuffs.length ? 'good' : 'info' },
+                ...(totalBEEarned > 0 ? [{ text: `${totalBEEarned.toLocaleString()} BE earned this run`, tone: 'info' }] : []),
+                ...(floor % 10 === 0 ? [{ text: 'Milestone floor — BE reward and an epic-weighted upgrade', tone: 'good' }] : []),
+            ]}
+            on:pick={(e) => pickPlay(e.detail)}
+            on:revealed={onRevealed}
+        >
+            <!-- The run's upgrades, shown under the match so you can see what you are carrying -->
+            <div slot="extra" class="buff-panel">
+                <div class="buff-header">
+                    <span class="buff-title">Run upgrades {towerBuffs.length > 0 ? `· ${towerBuffs.length}` : ''}</span>
+                    {#if buffSummary.power > 0}<span class="buff-power">Power +{buffSummary.power}</span>{/if}
                 </div>
-                <div class="stat-compare"><div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 +{tacticsLevel}</span>{/if}</div>
-                    {#each roundPlays as play}{@const myVal=myStatAvgs[play.stat]||0}{@const cpuVal=cpuStatAvgs[play.stat]||0}{@const diff=myVal-cpuVal}
-                        <div class="sc-row"><span class="sc-val sc-val-blue">{myVal}</span><div class="sc-bar-wrap"><div class="sc-label">{play.icon} {play.label}</div><div class="sc-bar"><div class="sc-fill-blue" style="width:{Math.min(100,(myVal/Math.max(myVal,cpuVal,1))*50)}%"></div><div class="sc-fill-red" style="width:{Math.min(100,(cpuVal/Math.max(myVal,cpuVal,1))*50)}%;margin-left:auto;"></div></div><div class="sc-diff" class:sc-diff-pos={diff>0} class:sc-diff-neg={diff<0}>{diff>0?'+':''}{diff} stat</div></div><span class="sc-val sc-val-red">{cpuVal}</span></div>
+                <div class="buff-chart">
+                    {#each ['mec','tmf','map','frm','cmp'] as s}
+                        {@const base = baseStatAvgs[s] || 0}
+                        {@const buffed = myStatAvgs[s] || 0}
+                        {@const bonus = buffed - base}
+                        {@const maxVal = Math.max(120, buffed + 10)}
+                        <div class="bc-row">
+                            <span class="bc-icon">{STAT_ICONS[s]}</span>
+                            <span class="bc-label">{STAT_NAMES[s]}</span>
+                            <div class="bc-bar-wrap">
+                                <div class="bc-bar-base" style="width: {(base / maxVal) * 100}%"></div>
+                                {#if bonus > 0}
+                                    <div class="bc-bar-buff" style="left: {(base / maxVal) * 100}%; width: {(bonus / maxVal) * 100}%"></div>
+                                {/if}
+                            </div>
+                            <span class="bc-val">{base}</span>
+                            {#if bonus > 0}
+                                <span class="bc-bonus">+{bonus}</span>
+                            {/if}
+                            <span class="bc-total">{buffed}</span>
+                        </div>
                     {/each}
                 </div>
-                {#if matchLog.length > 0}<div class="log-list">{#each matchLog as log}<div class="log-row" class:log-w={log.won} class:log-l={!log.won}><span class="log-result">{log.won?'✓':'✗'}</span><div class="log-breakdown"><div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div><div class="log-detail-row"><span class="log-calc">{log.myBase}{log.statEdge>=0?'+':''}{log.statEdge}{log.myRoll>=0?'+':''}{log.myRoll}</span><span class="log-vs">vs</span><span class="log-calc">{log.cpuBase}{log.cpuRoll>=0?'+':''}{log.cpuRoll}</span></div></div></div>{/each}</div>{/if}
-                {#if playerScore < 2 && cpuScore < 2}
-                    <div class="play-picker"><div class="play-label">Choose Play</div>
-                        <div class="play-grid">{#each roundPlays as play}{@const edge=(myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net=powerDiff+edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-stat" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>Stat {edge>0?'+':''}{edge}</span><span class="pb-net" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
-                    </div>
-                {/if}
-                <!-- Stat Chart with Buffs -->
-                <div class="buff-panel">
-                    <div class="buff-header">
-                        <span class="buff-title">Squad Stats {towerBuffs.length > 0 ? `· ${towerBuffs.length} buffs` : ''}</span>
-                        {#if buffSummary.power > 0}<span class="buff-power">Power +{buffSummary.power}</span>{/if}
-                    </div>
-                    <div class="buff-chart">
+                {#if towerBuffs.length > 0}
+                    <div class="buff-breakdown">
                         {#each ['mec','tmf','map','frm','cmp'] as s}
-                            {@const base = baseStatAvgs[s] || 0}
-                            {@const buffed = myStatAvgs[s] || 0}
-                            {@const bonus = buffed - base}
-                            {@const maxVal = Math.max(120, buffed + 10)}
-                            <div class="bc-row">
-                                <span class="bc-icon">{STAT_ICONS[s]}</span>
-                                <span class="bc-label">{STAT_NAMES[s]}</span>
-                                <div class="bc-bar-wrap">
-                                    <div class="bc-bar-base" style="width: {(base / maxVal) * 100}%"></div>
-                                    {#if bonus > 0}
-                                        <div class="bc-bar-buff" style="left: {(base / maxVal) * 100}%; width: {(bonus / maxVal) * 100}%"></div>
-                                    {/if}
-                                </div>
-                                <span class="bc-val">{base}</span>
-                                {#if bonus > 0}
-                                    <span class="bc-bonus">+{bonus}</span>
-                                {/if}
-                                <span class="bc-total">{buffed}</span>
-                            </div>
+                            {#if buffSummary.flat[s] > 0 || buffSummary.pct[s] > 0}
+                                <span class="bb-tag">
+                                    {STAT_ICONS[s]}
+                                    {#if buffSummary.flat[s] > 0}+{buffSummary.flat[s]}{/if}
+                                    {#if buffSummary.pct[s] > 0} ×{100 + buffSummary.pct[s]}%{/if}
+                                </span>
+                            {/if}
                         {/each}
                     </div>
-                    {#if towerBuffs.length > 0}
-                        <div class="buff-breakdown">
-                            {#each ['mec','tmf','map','frm','cmp'] as s}
-                                {#if buffSummary.flat[s] > 0 || buffSummary.pct[s] > 0}
-                                    <span class="bb-tag">
-                                        {STAT_ICONS[s]}
-                                        {#if buffSummary.flat[s] > 0}+{buffSummary.flat[s]}{/if}
-                                        {#if buffSummary.pct[s] > 0} ×{100 + buffSummary.pct[s]}%{/if}
-                                    </span>
-                                {/if}
-                            {/each}
-                        </div>
-                    {/if}
-                </div>
+                {/if}
             </div>
-            <div class="team-block">
-                <div class="arena-label arena-label-red">{currentEnemy.name} ({currentEnemy.avgRating})</div>
-                <div class="arena-grid-2x3">{#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if currentEnemy.cards[role]}<Card card={currentEnemy.cards[role]} mini={true} />{:else if role!=='COACH'}<div class="arena-empty">{role}</div>{:else}<div class="arena-empty-sm"></div>{/if}</div>{/each}{/each}</div>
-            </div>
-        </div>
+        </MatchArena>
 
     {:else if phase === 'upgrade'}
         <div class="tw-floor-bar">
@@ -413,13 +416,24 @@
         </div>
 
     {:else if phase === 'dead'}
-        <div class="result-card result-lose">
-            <div class="result-icon" style="font-size:48px;">💀</div>
-            <h2 class="result-title rt-lose">Tower Run Over</h2>
-            <p class="result-sub">Reached Floor {floor} · {towerBuffs.length} upgrades collected</p>
-            <p class="result-reward">{totalBEEarned} BE earned this run</p>
-            <button class="tw-back" style="margin-top:20px;" on:click={endRun}>Back to Lobby</button>
-        </div>
+        <MatchResult
+            outcome="lose"
+            kicker="Infinity Tower"
+            title="Run over"
+            subtitle={`Fell on floor ${floor} with ${towerBuffs.length} upgrade${towerBuffs.length === 1 ? '' : 's'} collected. Your best is floor ${bestFloor}.`}
+            icon="tower"
+            blueName={$teamIdentity.name}
+            redName={currentEnemy?.name || ''}
+            scoreBlue={playerScore}
+            scoreRed={cpuScore}
+            rewards={[
+                { label: 'floors cleared', value: Math.max(0, floor - 1), tone: 'good' },
+                { label: 'BE earned this run', value: totalBEEarned.toLocaleString(), tone: 'be' },
+            ]}
+        >
+            <button class="mr-btn" on:click={() => { endRun(); startTower(); }}>Climb again <Icon name="arrow" size={15} /></button>
+            <button class="mr-btn-ghost" on:click={endRun}>Back to lobby</button>
+        </MatchResult>
     {/if}
 </section>
 
@@ -450,62 +464,7 @@
     .tw-floor-bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-radius: 12px; background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.12); margin-bottom: 16px; }
     .tw-floor { font-size: 16px; font-weight: 900; color: #f87171; }
     .tw-buffs { font-size: 11px; color: #94a3b8; font-weight: 700; }
-    .tw-earned { font-size: 11px; color: #60a5fa; font-weight: 700; }
-
-    /* Reuse match layout styles */
-    .match-header { text-align: center; margin-bottom: 16px; }
-    .mh-score { display: flex; justify-content: center; gap: 16px; }
-    .mh-blue { font-size: 24px; font-weight: 900; color: #60a5fa; } .mh-red { font-size: 24px; font-weight: 900; color: #f87171; } .mh-sep { font-size: 24px; font-weight: 900; color: #334155; }
-    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
-    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
-    .team-block { display: flex; flex-direction: column; gap: 6px; }
-    .arena-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; padding: 8px 12px; border-radius: 10px; text-align: center; }
-    .arena-label-blue { color: #93c5fd; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.15); }
-    .arena-label-red { color: #fca5a5; background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.15); }
-    .arena-grid-2x3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .arena-cell { display: flex; justify-content: center; }
-    .arena-empty { width: 180px; height: 80px; border-radius: 12px; background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; color: #1e293b; }
-    .arena-empty-sm { width: 180px; height: 40px; }
-    .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-    .stat-compare { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 14px; padding: 16px; }
-    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; }
-    .tactics-tag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 6px; background: rgba(147,51,234,0.15); border: 1px solid rgba(168,85,247,0.3); color: #c084fc; font-size: 9px; font-weight: 900; letter-spacing: 0; text-transform: none; }
-    .log-tactics { color: #c084fc; font-size: 9px; font-weight: 700; margin-left: 2px; }
-    .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; } .sc-val-blue { color: #60a5fa; } .sc-val-red { color: #f87171; }
-    .sc-bar-wrap { flex: 1; text-align: center; } .sc-label { font-size: 10px; font-weight: 800; color: #94a3b8; margin-bottom: 4px; }
-    .sc-bar { display: flex; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
-    .sc-fill-blue { background: linear-gradient(90deg, #1e40af, #3b82f6); border-radius: 4px 0 0 4px; }
-    .sc-fill-red { background: linear-gradient(90deg, #ef4444, #991b1b); border-radius: 0 4px 4px 0; }
-    .sc-diff { font-size: 11px; font-weight: 900; color: #64748b; margin-top: 2px; } .sc-diff-pos { color: #34d399; } .sc-diff-neg { color: #f87171; }
-    /* Power compare */
-    .power-compare { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.15); }
-    .pc-side { font-size: 22px; font-weight: 900; min-width: 40px; text-align: center; }
-    .pc-blue { color: #60a5fa; } .pc-red { color: #f87171; }
-    .pc-center { text-align: center; }
-    .pc-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
-    .pc-diff { font-size: 18px; font-weight: 900; }
-    .pc-pos { color: #34d399; } .pc-neg { color: #f87171; } .pc-even { color: #64748b; }
-    .pc-note { font-size: 8px; color: #334155; margin-top: 2px; }
-
-    .log-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-    .log-row { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 10px; font-size: 12px; background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15); }
-    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; font-size: 14px; flex-shrink: 0; } .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-breakdown { flex: 1; }
-    .log-main { font-size: 12px; font-weight: 700; color: #e2e8f0; }
-    .log-detail-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #475569; font-family: monospace; margin-top: 2px; }
-    .log-calc { color: #64748b; } .log-vs { color: #334155; }
-    .play-picker { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 16px; padding: 20px; }
-    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 14px; }
-    .play-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .play-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 12px; border-radius: 14px; cursor: pointer; background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s; }
-    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
-    .pb-icon { font-size: 24px; } .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
-    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
-    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
-    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
-    .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
+    /* The match screen's styles live in components/match/MatchArena.svelte. */
 
     /* Upgrade panel */
     .upg-panel { text-align: center; padding: 40px 24px; }
@@ -532,8 +491,9 @@
 
     /* Buff chart */
     .buff-panel {
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(16,185,129,0.12);
-        border-radius: 14px; padding: 16px;
+        background: radial-gradient(100% 80% at 0% 0%, rgba(16,185,129,0.08), transparent 60%), rgba(10,14,26,0.65);
+        border: 1px solid rgba(16,185,129,0.22);
+        border-radius: 18px; padding: 14px 16px;
     }
     .buff-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .buff-title { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #34d399; }
@@ -570,11 +530,4 @@
         padding: 2px 8px; border-radius: 6px;
     }
 
-    /* Results */
-    .result-card { text-align: center; padding: 40px 24px; border-radius: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
-    .result-lose { border-color: rgba(239,68,68,0.15); background: rgba(127,29,29,0.06); }
-    .result-icon { margin-bottom: 12px; }
-    .result-title { font-size: 24px; font-weight: 900; margin-bottom: 8px; } .rt-lose { color: #f87171; }
-    .result-sub { font-size: 12px; color: #94a3b8; }
-    .result-reward { font-size: 18px; font-weight: 900; color: #60a5fa; margin-top: 8px; }
 </style>

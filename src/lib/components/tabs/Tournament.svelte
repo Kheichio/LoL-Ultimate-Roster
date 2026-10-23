@@ -1,8 +1,13 @@
 <script>
     import Card from '../card/Card.svelte';
     import Icon from '../ui/Icon.svelte';
+    import MatchArena from '../match/MatchArena.svelte';
+    import LegacyArena from '../match/LegacyArena.svelte';
+    import MatchPreview from '../match/MatchPreview.svelte';
+    import MatchResult from '../match/MatchResult.svelte';
+    import { drawPlays } from '../match/matchMath.js';
     import { pressFx } from '../../utils/fx.js';
-    import { club, squad, blueEssence, trackStats, unlocks, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, pendingChallenge } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, AWARD_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -20,6 +25,30 @@
 
     let phase = 'lobby';
     let activeMode = null;
+
+    // Legacy Mode: the same tournaments, rewards and unlocks, played on the original screens.
+    // Set when a run starts from the Legacy lobby and read by every in-run phase below.
+    let legacyRun = false;
+
+    // ── Deferring the screen change until the round has been shown ──
+    // pickPlay resolves a round and, when it decides the match, pays out and saves at once —
+    // exactly as before, so walking away mid-reveal can never dodge a recorded loss. Only the
+    // SCREEN change waits: the arena plays the round's reveal, then fires `revealed`.
+    // `p` is a phase name, or a function for a transition that also rebuilds run state (the
+    // Golden Road moving to its next stage) and must not wipe the round being shown.
+    let revealing = false;
+    let pendingPhase = null;
+    function goPhase(p) {
+        const apply = typeof p === 'function' ? p : () => { phase = p; };
+        if (revealing) pendingPhase = apply;
+        else apply();
+    }
+    function onRevealed() {
+        revealing = false;
+        const apply = pendingPhase;
+        pendingPhase = null;
+        if (apply) apply();
+    }
     let round = 0;
     let enemies = [];
     let currentEnemy = null;
@@ -241,6 +270,7 @@
         }
         squad.set(builtSquad);
         activeMode = 'salarycap';
+        legacyRun = false;
         enemies = [];
         for (let i = 0; i < MODES.salarycap.rounds; i++) enemies.push(generateSalaryCpuTeam(i));
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
@@ -294,6 +324,7 @@
         })();
         const rivalEnemy = { name: `${rival.teamLogo} ${rival.teamName}`, cards: cpuTeam, avgRating: enemyPower };
         activeMode = 'rival';
+        legacyRun = false;
         enemies = [rivalEnemy, rivalEnemy, rivalEnemy, rivalEnemy, rivalEnemy];
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
         phase = 'bracket';
@@ -357,8 +388,7 @@
     ];
     let roundPlays = [];
     function rollRoundPlays() {
-        const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
-        roundPlays = shuffled.slice(0, 3);
+        roundPlays = drawPlays(PLAYS, 3);
     }
 
     $: starters = ['TOP','JNG','MID','ADC','SUP'].map(r => $squad[r]).filter(Boolean);
@@ -488,9 +518,10 @@
         return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: totalAvg };
     }
 
-    function startTournament(mode) {
+    function startTournament(mode, legacy = false) {
         if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
         activeMode = mode;
+        legacyRun = legacy;
         const m = MODES[mode];
         enemies = [];
         for (let i = 0; i < m.rounds; i++) enemies.push(generateCpuTeam(mode, i));
@@ -501,9 +532,10 @@
         phase = 'bracket';
     }
 
-    function startGoldenRoad() {
+    function startGoldenRoad(legacy = false) {
         if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
         activeMode = 'goldenroad';
+        legacyRun = legacy;
         goldenRoadStage = 0;
         const { mode: grMode0, rounds: grRounds0 } = GOLDEN_STAGES[0];
         const m = MODES[grMode0];
@@ -521,11 +553,15 @@
         playerScore = 0;
         cpuScore = 0;
         matchLog = [];
+        revealing = false;
+        pendingPhase = null;
         rollRoundPlays();
         phase = 'match';
     }
 
     function pickPlay(play) {
+        // The arena now reveals this round; any screen change it triggers waits for that.
+        revealing = true;
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
         const tLvl = get(skills).tactics || 0;
         const myStatAvg = Math.round(starters.reduce((s, c) => s + (getEffectiveStats(c)[play.stat] || 0), 0) / starters.length) + tLvl;
@@ -551,13 +587,13 @@
                 const ml = roundResults.filter(r => !r).length;
                 if (mw >= 3) { endTournament(true); }
                 else if (ml >= 3) { endTournament(false); }
-                else { phase = 'roundEnd'; }
+                else { goPhase('roundEnd'); }
             } else if (!matchWon) {
                 endTournament(false);
             } else if (round >= enemies.length - 1) {
                 endTournament(true);
             } else {
-                phase = 'roundEnd';
+                goPhase('roundEnd');
             }
         }
     }
@@ -576,21 +612,24 @@
                 grantXP(100);
                 playSound('lose');
                 tournamentResult = { won: false, reward: 0, round: round + 1, isFinalist: false, goldenRoadFailed: true, stage: goldenRoadStage };
-                phase = 'result';
+                goPhase('result');
                 logMatch({ mode: 'goldenroad', result: 'loss', opponent: currentEnemy?.name || 'Golden Road', be: 0, xp: 100 });
                 startGRCooldown();
                 saveGame();
                 return;
             }
             if (goldenRoadStage < GOLDEN_STAGES.length - 1) {
-                goldenRoadStage++;
-                const { mode: nextMode, rounds: nextRounds } = GOLDEN_STAGES[goldenRoadStage];
-                const nm = MODES[nextMode];
-                enemies = [];
-                for (let i = 0; i < nextRounds; i++) enemies.push(generateCpuTeam(nextMode, i));
-                round = 0; roundResults = []; matchLog = [];
-                showToast(`Golden Road: Stage ${goldenRoadStage + 1}/6 — ${nm.name}!`, 'success');
-                phase = 'bracket';
+                // Nothing here is saved, so it can wait for the deciding round to be shown.
+                goPhase(() => {
+                    goldenRoadStage++;
+                    const { mode: nextMode, rounds: nextRounds } = GOLDEN_STAGES[goldenRoadStage];
+                    const nm = MODES[nextMode];
+                    enemies = [];
+                    for (let i = 0; i < nextRounds; i++) enemies.push(generateCpuTeam(nextMode, i));
+                    round = 0; roundResults = []; matchLog = [];
+                    showToast(`Golden Road: Stage ${goldenRoadStage + 1}/6 — ${nm.name}!`, 'success');
+                    phase = 'bracket';
+                });
                 return;
             }
             // Won the whole Golden Road!
@@ -599,7 +638,7 @@
             trackStats.update(s => ({ ...s, tournamentsWon: (s.tournamentsWon||0)+1, goldenRoads: (s.goldenRoads||0)+1, worldsWon: (s.worldsWon||0)+1 }));
             playSound('win');
             tournamentResult = { won: true, reward: grTotal, bonus: grBonus, goldenRoad: true };
-            phase = 'result';
+            goPhase('result');
             logMatch({ mode: 'goldenroad', result: 'win', opponent: 'Golden Road', be: grTotal, xp: 2000 });
             startGRCooldown();
             saveGame();
@@ -637,13 +676,55 @@
         logMatch({ mode, result: won ? 'win' : isFinalist ? 'finalist' : 'loss', opponent: currentEnemy?.name || m?.name || 'Tournament', be: reward, xp: won ? (xpTable[mode] || 100) : Math.round((xpTable[mode] || 100) * 0.4) });
         saveGame();
         tournamentResult = { won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist };
-        phase = 'result';
+        goPhase('result');
     }
 
     function backToLobby() {
         if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; saveGame(); }
-        phase = 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
+        phase = legacyRun ? 'legacy_lobby' : 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
     }
+
+    // Straight back into the same stage. Not offered for the Golden Road (it has a cooldown)
+    // or for Salary Cap / Rival, which both need a fresh setup screen first.
+    const REPLAYABLE = ['cafe', 'regional', 'firststand', 'msi', 'worlds'];
+    function playAgain() {
+        const m = activeMode;
+        const legacy = legacyRun;
+        backToLobby();
+        if (REPLAYABLE.includes(m)) startTournament(m, legacy);
+    }
+
+    function openLegacy() { legacyRun = true; phase = 'legacy_lobby'; window.scrollTo({ top: 0 }); }
+    function leaveLegacy() { legacyRun = false; phase = 'lobby'; }
+
+    // ── Match screen data ──
+    // Both screens (new and Legacy) take the same two "sides". They are frozen while a round
+    // is being revealed: endTournament hands Salary Cap's borrowed squad back the instant the
+    // match is decided, and the deciding round should still be shown with the five who played it.
+    const lineupOf = (cards, roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH']) =>
+        roles.map(role => ({ role, card: (cards && cards[role]) || null, flex: !!(cards && cards[role] && cards[role]._flexPick) }));
+    let blueSide = null;
+    let redSide = null;
+    $: if (!revealing || !blueSide) blueSide = {
+        name: $teamIdentity.name, logo: $teamIdentity.logo, power: totalPower,
+        lineup: lineupOf($squad), stats: myStatAvgs,
+    };
+    $: if (!revealing || !redSide) redSide = (currentEnemy || enemies[round]) ? (() => {
+        const e = currentEnemy && phase === 'match' ? currentEnemy : enemies[round];
+        const cards = Object.values(e.cards || {}).filter(c => c && c.role !== 'COACH' && c.stats);
+        const stats = {};
+        for (const s of ['mec', 'tmf', 'map', 'frm', 'cmp']) stats[s] = cards.length ? Math.round(cards.reduce((a, c) => a + (c.stats[s] || 0), 0) / cards.length) : 0;
+        return { name: e.name, logo: activeMode === 'rival' ? '⚔️' : '🛡️', power: e.avgRating, lineup: lineupOf(e.cards), stats };
+    })() : null;
+    $: stageIcon = activeMode === 'goldenroad' ? 'crown' : ({ cafe: 'coffee', regional: 'flag', firststand: 'flame', msi: 'waves', worlds: 'trophy', salarycap: 'coins', rival: 'swords' }[activeMode] || 'trophy');
+    $: roadRounds = enemies.map((e, i) => ({
+        name: e?.name || 'TBD', power: e?.avgRating || 0,
+        state: i < roundResults.length ? (roundResults[i] ? 'won' : 'lost') : i === round ? 'current' : 'next',
+    }));
+    $: grStages = activeMode === 'goldenroad' ? GOLDEN_STAGES.map((s, i) => ({
+        icon: { regional: 'flag', firststand: 'flame', msi: 'waves', worlds: 'trophy' }[s.mode] || 'flag',
+        label: MODES[s.mode].name, state: i < goldenRoadStage ? 'won' : i === goldenRoadStage ? 'current' : 'next',
+    })) : [];
 
     $: currentModeName = activeMode === 'goldenroad' ? `Golden Road — ${MODES[GOLDEN_STAGES[goldenRoadStage]?.mode]?.name || ''}` : (MODES[activeMode]?.name || '');
     $: currentModeColor = activeMode === 'goldenroad' ? '#fbbf24' : (MODES[activeMode]?.color || '#10b981');
@@ -802,6 +883,12 @@
                         <span class="tl-sub">Take on another manager's saved squad from the leaderboard. First to three.</span>
                         <span class="tl-meta">{squadReady ? 'Win 3,000 · 2nd 1,000' : 'Needs a full squad'}</span>
                     </button>
+                    <button class="tile tile-legacy" style="--c: #a8a29e;" on:click={() => { playSound('click'); openLegacy(); }} use:pressFx={{ color: 'rgba(214,211,209,0.35)' }}>
+                        <span class="tl-art" aria-hidden="true"><Icon name="clock" size={40} stroke={1.5} /></span>
+                        <span class="tl-name">Legacy Mode</span>
+                        <span class="tl-sub">The original arenas and the classic match screen, exactly as they used to look.</span>
+                        <span class="tl-meta">Same tournaments, rewards & unlocks</span>
+                    </button>
                 </div>
             </section>
         </div>
@@ -939,132 +1026,272 @@
             <button class="sn-back-btn" style="margin-top:16px;" on:click={() => phase = 'lobby'}>← Back</button>
         {/if}
 
+    {:else if phase === 'legacy_lobby'}
+        <!-- ═══ LEGACY MODE ═══
+             The original Competitive Arenas list and, inside a run, the original match screen.
+             Same tournaments, same rewards, same unlocks — only the look is the old one. -->
+        <div class="trn-head">
+            <button class="legacy-back" on:click={leaveLegacy}>← Back to Play</button>
+            <h2 class="trn-title">Competitive Arenas <span class="legacy-tag">Legacy Mode</span></h2>
+            <p class="trn-desc">Test your roster against CPU opponents. Win tournaments to unlock higher tiers.</p>
+        </div>
+
+        <div class="modes-list">
+            <!-- Gaming Cafe -->
+            <div class="mode-row" style="border-color: {MODES.cafe.color}20;">
+                <span class="mode-icon">☕</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {MODES.cafe.color};">Gaming Cafe Tournament</h3>
+                    <p class="mode-sub">3 rounds · CPU capped at Gold · Free Entry</p>
+                    <div class="mode-prizes"><span class="mp-w">Win: {MODES.cafe.reward} BE</span><span class="mp-l">2nd: {MODES.cafe.second} BE</span></div>
+                </div>
+                {#if squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.cafe.color};" on:click={() => startTournament('cafe', true)}>Enter</button>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Regional -->
+            <div class="mode-row" class:mode-locked={!canRegional} style="border-color: {MODES.regional.color}20;">
+                <span class="mode-icon">🏟️</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canRegional ? MODES.regional.color : '#334155'};">Regional Trophy</h3>
+                    <p class="mode-sub">{canRegional ? '5 rounds · Mixed tiers' : 'Complete 1 Season Split to unlock'}</p>
+                    {#if canRegional}<div class="mode-prizes"><span class="mp-w">Win: {MODES.regional.reward} BE</span><span class="mp-l">2nd: {MODES.regional.second} BE</span></div>{/if}
+                </div>
+                {#if canRegional && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.regional.color};" on:click={() => startTournament('regional', true)}>Enter</button>
+                {:else if !canRegional}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- First Stand -->
+            <div class="mode-row" class:mode-locked={!canFirstStand} style="border-color: {MODES.firststand.color}20;">
+                <span class="mode-icon">🟠</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canFirstStand ? MODES.firststand.color : '#334155'};">First Stand</h3>
+                    <p class="mode-sub">{canFirstStand ? '5 rounds · Tough opponents' : 'Win/2nd Regional to unlock'}</p>
+                    {#if canFirstStand}<div class="mode-prizes"><span class="mp-w">Win: {MODES.firststand.reward} BE</span><span class="mp-l">2nd: {MODES.firststand.second} BE</span></div>{/if}
+                </div>
+                {#if canFirstStand && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.firststand.color};" on:click={() => startTournament('firststand', true)}>Enter</button>
+                {:else if !canFirstStand}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- MSI -->
+            <div class="mode-row" class:mode-locked={!canMSI} style="border-color: {MODES.msi.color}20;">
+                <span class="mode-icon">🌊</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canMSI ? MODES.msi.color : '#334155'};">MSI</h3>
+                    <p class="mode-sub">{canMSI ? '7 rounds · Elite competition' : 'Win Regional 1st or First Stand to unlock'}</p>
+                    {#if canMSI}<div class="mode-prizes"><span class="mp-w">Win: {MODES.msi.reward} BE</span><span class="mp-l">2nd: {MODES.msi.second} BE</span></div>{/if}
+                </div>
+                {#if canMSI && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.msi.color};" on:click={() => startTournament('msi', true)}>Enter</button>
+                {:else if !canMSI}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Worlds -->
+            <div class="mode-row" class:mode-locked={!canWorlds} style="border-color: {MODES.worlds.color}20;">
+                <span class="mode-icon">🏆</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canWorlds ? MODES.worlds.color : '#334155'};">World Championship</h3>
+                    <p class="mode-sub">{canWorlds ? '7 rounds · The ultimate challenge' : 'Win Regional or MSI/2nd to unlock'}</p>
+                    {#if canWorlds}<div class="mode-prizes"><span class="mp-w">Win: {MODES.worlds.reward} BE</span><span class="mp-l">2nd: {MODES.worlds.second} BE</span></div>{/if}
+                </div>
+                {#if canWorlds && squadReady}
+                    <button class="mode-enter-btn" style="background: {MODES.worlds.color};" on:click={() => startTournament('worlds', true)}>Enter</button>
+                {:else if !canWorlds}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+
+            <!-- Golden Road -->
+            <div class="mode-row mode-golden" class:mode-locked={!canGoldenRoad} style="border-color: #fbbf2440;">
+                <span class="mode-icon">👑</span>
+                <div class="mode-info">
+                    <h3 class="mode-name" style="color: {canGoldenRoad ? '#fbbf24' : '#334155'};">Golden Road</h3>
+                    <p class="mode-sub">{canGoldenRoad ? '3 Regional → 3 First Stand → 3 Regional → 3 MSI → 3 Regional → 4 Worlds (19 games)' : 'Complete 1 Split to unlock'}</p>
+                    {#if canGoldenRoad}<div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">Win: 25,000 BE + Glory</span></div>{/if}
+                </div>
+                {#if grOnCooldown}
+                    <span class="mode-cooldown">{grCooldownDisplay}</span>
+                {:else if canGoldenRoad && squadReady}
+                    <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={() => startGoldenRoad(true)}>Begin</button>
+                {:else if !canGoldenRoad}<span class="mode-lock-badge">🔒</span>
+                {:else}<span class="mode-need">Need squad</span>{/if}
+            </div>
+        </div>
+
     {:else if phase === 'bracket'}
-        <div class="phase-center">
-            <h2 class="phase-title" style="color: {currentModeColor};">{currentModeName} — Round {round + 1}/{enemies.length}</h2>
-            {#if activeMode === 'goldenroad'}
-                <div class="gr-stages">
-                    {#each GOLDEN_STAGES as stg, si}
-                        <span class="gr-stage" class:gr-done={si < goldenRoadStage} class:gr-active={si === goldenRoadStage} class:gr-future={si > goldenRoadStage}>{MODES[stg.mode].icon}</span>
-                    {/each}
-                </div>
-            {/if}
-            <div class="bracket-dots">
-                {#each Array(enemies.length) as _, r}
-                    <div class="bdot" class:bdot-w={r < roundResults.length && roundResults[r]} class:bdot-l={r < roundResults.length && !roundResults[r]} class:bdot-active={r === round && r >= roundResults.length} class:bdot-future={r > round || (r >= roundResults.length && r !== round)}>
-                        {r < roundResults.length ? (roundResults[r] ? 'W' : 'L') : r + 1}
-                    </div>
-                {/each}
-            </div>
-        </div>
-        <div class="vs-card">
-            <div class="vs-side"><span class="vs-rating vs-blue">{totalPower}</span><span class="vs-label">Your Squad</span></div>
-            <span class="vs-x">VS</span>
-            <div class="vs-side"><span class="vs-rating vs-red">{enemies[round]?.avgRating || '?'}</span><span class="vs-label">{enemies[round]?.name || 'CPU'}</span></div>
-        </div>
-        <div class="phase-center"><button class="mode-enter-btn" style="background: {currentModeColor};" on:click={startMatch}>Start Match</button></div>
-
-    {:else if phase === 'match' && currentEnemy}
-        <div class="match-header">
-            <div class="mh-label">{currentModeName} — Round {round + 1}</div>
-            <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>
-        </div>
-        <div class="match-layout">
-            <div class="team-block">
-                <div class="arena-label arena-label-blue">Your Squad ({totalPower})</div>
-                <div class="arena-grid-2x3">
-                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if $squad[role]}<Card card={$squad[role]} mini={true} />{:else}<div class="arena-empty">{role}</div>{/if}</div>{/each}{/each}
-                </div>
-            </div>
-            <div class="arena-center">
-                <div class="power-compare">
-                    <span class="pc-side pc-blue">{totalPower}</span>
-                    <div class="pc-center">
-                        <div class="pc-label">Base Power</div>
-                        <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>
-                            {powerDiff > 0 ? '+' : ''}{powerDiff}
-                        </div>
-                        <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
-                    </div>
-                    <span class="pc-side pc-red">{currentEnemy.avgRating}</span>
-                </div>
-
-                <div class="stat-compare">
-                    <div class="sc-title">Available Plays {#if tacticsLevel > 0}<span class="tactics-tag">🧠 Tactics +{tacticsLevel}</span>{/if}</div>
-                    {#each roundPlays as play}{@const myVal = myStatAvgs[play.stat]||0}{@const cpuVal = cpuStatAvgs[play.stat]||0}{@const diff = myVal - cpuVal}{@const net = powerDiff + diff}
-                        <div class="sc-row"><span class="sc-val sc-val-blue">{myVal}</span><div class="sc-bar-wrap"><div class="sc-label">{play.icon} {play.label}</div><div class="sc-bar"><div class="sc-fill-blue" style="width:{Math.min(100,(myVal/Math.max(myVal,cpuVal,1))*50)}%"></div><div class="sc-fill-red" style="width:{Math.min(100,(cpuVal/Math.max(myVal,cpuVal,1))*50)}%;margin-left:auto;"></div></div><div class="sc-diff" class:sc-diff-pos={diff>0} class:sc-diff-neg={diff<0}>{diff>0?'+':''}{diff} stat</div></div><span class="sc-val sc-val-red">{cpuVal}</span></div>
-                    {/each}
-                </div>
-                {#if matchLog.length > 0}
-                    <div class="log-list">
-                        {#each matchLog as log}
-                            <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
-                                <span class="log-result">{log.won?'✓':'✗'}</span>
-                                <div class="log-breakdown">
-                                    <div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div>
-                                    <div class="log-detail-row">
-                                        <span class="log-calc">{log.myBase}{log.statEdge >= 0 ? '+' : ''}{log.statEdge}{log.myRoll >= 0 ? '+' : ''}{log.myRoll}</span>
-                                        <span class="log-vs">vs</span>
-                                        <span class="log-calc">{log.cpuBase}{log.cpuRoll >= 0 ? '+' : ''}{log.cpuRoll}</span>
-                                    </div>
-                                </div>
-                            </div>
+        {#if legacyRun}
+            <div class="phase-center">
+                <h2 class="phase-title" style="color: {currentModeColor};">{currentModeName} — Round {round + 1}/{enemies.length}</h2>
+                {#if activeMode === 'goldenroad'}
+                    <div class="gr-stages">
+                        {#each GOLDEN_STAGES as stg, si}
+                            <span class="gr-stage" class:gr-done={si < goldenRoadStage} class:gr-active={si === goldenRoadStage} class:gr-future={si > goldenRoadStage}>{MODES[stg.mode].icon}</span>
                         {/each}
                     </div>
                 {/if}
-                {#if playerScore < matchWinsNeeded && cpuScore < matchWinsNeeded}
-                    <div class="play-picker"><div class="play-label">Choose Your Play (3 of 5)</div>
-                        <div class="play-grid">{#each roundPlays as play}{@const edge = (myStatAvgs[play.stat]||0)-(cpuStatAvgs[play.stat]||0)}{@const net = powerDiff + edge}<button class="play-btn" on:click={() => pickPlay(play)}><span class="pb-icon">{play.icon}</span><span class="pb-name">{play.label}</span><span class="pb-stat" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>Stat {edge>0?'+':''}{edge}</span><span class="pb-net" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span></button>{/each}</div>
-                    </div>
-                {/if}
-            </div>
-            <div class="team-block">
-                <div class="arena-label arena-label-red">{currentEnemy.name} ({currentEnemy.avgRating})</div>
-                <div class="arena-grid-2x3">
-                    {#each [['TOP','COACH'],['JNG','MID'],['ADC','SUP']] as pair}{#each pair as role}<div class="arena-cell">{#if currentEnemy.cards[role]}<Card card={currentEnemy.cards[role]} mini={true} />{:else if role!=='COACH'}<div class="arena-empty">{role}</div>{:else}<div class="arena-empty-sm"></div>{/if}</div>{/each}{/each}
+                <div class="bracket-dots">
+                    {#each Array(enemies.length) as _, r}
+                        <div class="bdot" class:bdot-w={r < roundResults.length && roundResults[r]} class:bdot-l={r < roundResults.length && !roundResults[r]} class:bdot-active={r === round && r >= roundResults.length} class:bdot-future={r > round || (r >= roundResults.length && r !== round)}>
+                            {r < roundResults.length ? (roundResults[r] ? 'W' : 'L') : r + 1}
+                        </div>
+                    {/each}
                 </div>
             </div>
-        </div>
+            <div class="vs-card">
+                <div class="vs-side"><span class="vs-rating vs-blue">{totalPower}</span><span class="vs-label">Your Squad</span></div>
+                <span class="vs-x">VS</span>
+                <div class="vs-side"><span class="vs-rating vs-red">{enemies[round]?.avgRating || '?'}</span><span class="vs-label">{enemies[round]?.name || 'CPU'}</span></div>
+            </div>
+            <div class="phase-center"><button class="mode-enter-btn" style="background: {currentModeColor};" on:click={startMatch}>Start Match</button></div>
+        {:else if blueSide && redSide}
+            <MatchPreview
+                title={currentModeName}
+                subtitle={activeMode === 'rival' ? `Match ${round + 1} · first to 3 matches` : `Round ${round + 1} of ${enemies.length}`}
+                accent={currentModeColor}
+                icon={stageIcon}
+                rounds={activeMode === 'rival' ? [] : roadRounds}
+                stages={grStages}
+                blue={blueSide}
+                red={redSide}
+                allPlays={PLAYS}
+                winsNeeded={matchWinsNeeded}
+                startLabel={round === enemies.length - 1 && activeMode !== 'rival' ? 'Play the final' : 'Start match'}
+                on:start={startMatch}
+            />
+        {/if}
+
+    {:else if phase === 'match' && currentEnemy && blueSide && redSide}
+        {#if legacyRun}
+            <LegacyArena
+                title={currentModeName}
+                subtitle={`Round ${round + 1}`}
+                blue={{ ...blueSide, name: 'Your Squad' }}
+                red={redSide}
+                plays={roundPlays}
+                allPlays={PLAYS}
+                scoreBlue={playerScore}
+                scoreRed={cpuScore}
+                winsNeeded={matchWinsNeeded}
+                log={matchLog}
+                tactics={tacticsLevel}
+                on:pick={(e) => pickPlay(e.detail)}
+                on:revealed={onRevealed}
+            />
+        {:else}
+            <MatchArena
+                title={currentModeName}
+                subtitle={activeMode === 'rival' ? `Match ${round + 1} · series ${roundResults.filter(Boolean).length}–${roundResults.filter(r => !r).length}` : `Round ${round + 1} of ${enemies.length}`}
+                accent={currentModeColor}
+                icon={stageIcon}
+                blue={blueSide}
+                red={redSide}
+                plays={roundPlays}
+                allPlays={PLAYS}
+                scoreBlue={playerScore}
+                scoreRed={cpuScore}
+                winsNeeded={matchWinsNeeded}
+                log={matchLog}
+                tactics={tacticsLevel}
+                chips={activeMode === 'salarycap' ? [{ text: 'Flex picks play at −10% stats', tone: 'info' }] : []}
+                on:pick={(e) => pickPlay(e.detail)}
+                on:revealed={onRevealed}
+            />
+        {/if}
 
     {:else if phase === 'roundEnd'}
-        {#if activeMode === 'rival'}
-            {@const seriesW = roundResults.filter(Boolean).length}
-            {@const seriesL = roundResults.filter(r => !r).length}
-            {@const lastWon = roundResults[roundResults.length - 1]}
-            <div class="result-card" class:result-win={lastWon} class:result-lose={!lastWon}>
-                <div class="result-icon" style="font-size:48px;">{lastWon ? '⚔️' : '💢'}</div>
-                <h2 class="result-title" class:rt-win={lastWon} class:rt-lose={!lastWon}>Match {round + 1} {lastWon ? 'Won!' : 'Lost'}</h2>
-                <p class="result-sub">Series: <strong style="color:#34d399;">{seriesW}</strong> — <strong style="color:#f87171;">{seriesL}</strong> · First to 3 wins</p>
-                <button class="mode-enter-btn" style="background:#f59e0b; margin-top:20px;" on:click={nextRound}>Next Match →</button>
-            </div>
-        {:else}
+        {@const seriesW = roundResults.filter(Boolean).length}
+        {@const seriesL = roundResults.filter(r => !r).length}
+        {@const lastWon = roundResults[roundResults.length - 1]}
+        {#if legacyRun}
             <div class="result-card result-win">
                 <div class="result-icon">✓</div>
                 <h2 class="result-title rt-win">Round {round + 1} Won!</h2>
                 <p class="result-sub">Score: {playerScore}-{cpuScore}. Next opponent is tougher.</p>
                 <button class="mode-enter-btn" style="background: {currentModeColor}; margin-top:20px;" on:click={nextRound}>Next Round →</button>
             </div>
+        {:else if activeMode === 'rival'}
+            <MatchResult
+                outcome={lastWon ? 'win' : 'lose'}
+                kicker="Rival Challenge"
+                title={`Match ${round + 1} ${lastWon ? 'won' : 'lost'}`}
+                subtitle={`Series ${seriesW}–${seriesL} · first to 3 matches takes it`}
+                icon={lastWon ? 'swords' : 'shield'}
+                blueName={$teamIdentity.name}
+                redName={currentEnemy?.name || ''}
+                scoreBlue={playerScore}
+                scoreRed={cpuScore}
+            >
+                <button class="mr-btn" on:click={nextRound}>Next match <Icon name="arrow" size={15} /></button>
+            </MatchResult>
+        {:else}
+            {@const left = enemies.length - round - 1}
+            <MatchResult
+                outcome="win"
+                kicker={currentModeName}
+                title={`Round ${round + 1} won`}
+                subtitle={left === 1 ? 'One more win and the title is yours.' : `${left} rounds to go — and the next opponent is tougher.`}
+                icon="check"
+                blueName={$teamIdentity.name}
+                redName={currentEnemy?.name || ''}
+                scoreBlue={playerScore}
+                scoreRed={cpuScore}
+            >
+                <button class="mr-btn" on:click={nextRound}>{left === 1 ? 'On to the final' : 'Next round'} <Icon name="arrow" size={15} /></button>
+            </MatchResult>
         {/if}
 
     {:else if phase === 'result'}
-        <div class="result-card" class:result-win={tournamentResult?.won} class:result-lose={!tournamentResult?.won}>
-            <div class="result-icon" style="font-size:48px;">
-                {#if tournamentResult?.goldenRoad}👑
-                {:else if tournamentResult?.won}🏆
-                {:else if tournamentResult?.goldenRoadFailed}💀
-                {:else if tournamentResult?.isFinalist}🥈
-                {:else}💀{/if}
+        {#if legacyRun}
+            <div class="result-card" class:result-win={tournamentResult?.won} class:result-lose={!tournamentResult?.won}>
+                <div class="result-icon" style="font-size:48px;">
+                    {#if tournamentResult?.goldenRoad}👑
+                    {:else if tournamentResult?.won}🏆
+                    {:else if tournamentResult?.goldenRoadFailed}💀
+                    {:else if tournamentResult?.isFinalist}🥈
+                    {:else}💀{/if}
+                </div>
+                <h2 class="result-title" class:rt-win={tournamentResult?.won} class:rt-lose={!tournamentResult?.won}>
+                    {#if tournamentResult?.goldenRoad}Golden Road Complete!
+                    {:else if tournamentResult?.goldenRoadFailed}Golden Road Failed — Stage {(tournamentResult?.stage||0)+1}/6
+                    {:else if tournamentResult?.won}Champion!
+                    {:else if tournamentResult?.isFinalist}Runner Up
+                    {:else}Eliminated{/if}
+                </h2>
+                {#if tournamentResult?.reward > 0}<div class="result-reward">+{tournamentResult.reward.toLocaleString()} BE{#if tournamentResult.bonus > 0} <span class="wealth-bonus">(+{tournamentResult.bonus.toLocaleString()} Wealth)</span>{/if}</div>{/if}
+                <button class="sn-back-btn" style="margin-top:20px;" on:click={backToLobby}>Back to Lobby</button>
             </div>
-            <h2 class="result-title" class:rt-win={tournamentResult?.won} class:rt-lose={!tournamentResult?.won}>
-                {#if tournamentResult?.goldenRoad}Golden Road Complete!
-                {:else if tournamentResult?.goldenRoadFailed}Golden Road Failed — Stage {(tournamentResult?.stage||0)+1}/6
-                {:else if tournamentResult?.won}Champion!
-                {:else if tournamentResult?.isFinalist}Runner Up
-                {:else}Eliminated{/if}
-            </h2>
-            {#if tournamentResult?.reward > 0}<div class="result-reward">+{tournamentResult.reward.toLocaleString()} BE{#if tournamentResult.bonus > 0} <span class="wealth-bonus">(+{tournamentResult.bonus.toLocaleString()} Wealth)</span>{/if}</div>{/if}
-            <button class="sn-back-btn" style="margin-top:20px;" on:click={backToLobby}>Back to Lobby</button>
-        </div>
+        {:else}
+            {@const r = tournamentResult || {}}
+            <MatchResult
+                outcome={r.goldenRoad ? 'gold' : r.won ? 'win' : r.isFinalist ? 'neutral' : 'lose'}
+                kicker={activeMode === 'goldenroad' ? 'Golden Road' : currentModeName}
+                title={r.goldenRoad ? 'Golden Road complete' : r.goldenRoadFailed ? 'The road ends here' : r.won ? 'Champions!' : r.isFinalist ? 'Runner-up' : 'Eliminated'}
+                subtitle={r.goldenRoad ? 'Nineteen games without a single loss. The Summoner\'s Cup is yours.'
+                    : r.goldenRoadFailed ? `Knocked out at stage ${(r.stage || 0) + 1} of 6. The road reopens in 30 minutes.`
+                    : r.won ? `You lifted the ${currentModeName} trophy.`
+                    : r.isFinalist ? 'Beaten in the final — so close.'
+                    : `Knocked out in round ${r.round || 1}.`}
+                icon={r.goldenRoad ? 'crown' : r.won ? 'trophy' : r.isFinalist ? 'medal' : 'skull'}
+                blueName={$teamIdentity.name}
+                redName={currentEnemy?.name || ''}
+                scoreBlue={playerScore}
+                scoreRed={cpuScore}
+                rewards={r.reward > 0 ? [
+                    { label: 'Blue Essence', value: `+${r.reward.toLocaleString()}`, tone: 'be' },
+                    ...(r.bonus > 0 ? [{ label: 'of it from Wealth', value: `+${r.bonus.toLocaleString()}`, tone: 'good' }] : []),
+                ] : []}
+            >
+                {#if REPLAYABLE.includes(activeMode) && squadReady}
+                    <button class="mr-btn" on:click={playAgain}>Play again <Icon name="arrow" size={15} /></button>
+                {/if}
+                <button class="mr-btn-ghost" on:click={backToLobby}>Back to Play</button>
+            </MatchResult>
+        {/if}
     {/if}
 </section>
 
@@ -1221,7 +1448,7 @@
     .gold-locked .gold-sheen { animation: none; }
 
     /* Side-mode tiles */
-    .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
     .tile {
         position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 6px; text-align: left;
         min-height: 190px; padding: 18px; border-radius: 20px; cursor: pointer;
@@ -1239,14 +1466,39 @@
     .tl-meta { position: relative; z-index: 1; margin-top: auto; font-size: 11px; font-weight: 900; color: var(--c); }
     .tile-off { opacity: 0.55; }
     .tile-off:hover { transform: none; box-shadow: none; }
+    /* Legacy Mode reads as an old print: desaturated, with a faint scanline wash. */
+    .tile-legacy { background: repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 4px), linear-gradient(160deg, #1c1a19, #0c0b0a 80%); }
+    .tile-legacy .tl-name { font-family: 'Courier New', monospace; letter-spacing: 0.5px; }
+
+    /* ═══ LEGACY MODE ═══ — the original Competitive Arenas list, restored as it was. */
+    .legacy-back { margin-bottom: 10px; padding: 7px 14px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 800; color: #cbd5e1; background: rgba(51,65,85,0.4); border: 1px solid rgba(71,85,105,0.4); }
+    .legacy-back:hover { background: rgba(71,85,105,0.55); color: #fff; }
+    .legacy-tag { margin-left: 8px; vertical-align: middle; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #d6d3d1; padding: 3px 9px; border-radius: 6px; background: rgba(168,162,158,0.15); border: 1px solid rgba(168,162,158,0.35); }
+    .modes-list { display: flex; flex-direction: column; gap: 8px; }
+    .mode-row {
+        display: flex; align-items: center; gap: 16px; padding: 18px 22px;
+        border-radius: 14px; background: rgba(12,16,28,0.5); border: 1px solid;
+        transition: all 0.12s;
+    }
+    .mode-row:hover:not(.mode-locked) { background: rgba(15,20,35,0.6); }
+    .mode-locked { opacity: 0.35; }
+    .mode-golden { border-color: rgba(251,191,36,0.15) !important; background: rgba(251,191,36,0.03); }
+    .mode-icon { font-size: 28px; flex-shrink: 0; }
+    .mode-info { flex: 1; min-width: 0; }
+    .mode-name { font-size: 15px; font-weight: 900; }
+    .mode-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .mode-prizes { display: flex; gap: 12px; margin-top: 6px; font-size: 10px; font-weight: 800; }
+    .mp-w { color: #34d399; } .mp-l { color: #94a3b8; }
+    .mode-lock-badge { font-size: 18px; flex-shrink: 0; opacity: 0.5; }
 
     @media (max-width: 1250px) {
         .circuit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         .cr-track { display: none; }
-        .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (max-width: 700px) {
         .circuit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .pl-season { flex-wrap: wrap; padding: 18px; }
         .ps-go { width: 100%; justify-content: center; }
         .gold { padding: 18px; }
@@ -1304,68 +1556,7 @@
     .vs-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
     .vs-x { font-size: 18px; font-weight: 900; color: #334155; }
 
-    .match-header { text-align: center; margin-bottom: 20px; }
-    .mh-label { font-size: 12px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
-    .mh-score { display: flex; justify-content: center; gap: 16px; margin-top: 8px; }
-    .mh-blue { font-size: 24px; font-weight: 900; color: #60a5fa; }
-    .mh-red { font-size: 24px; font-weight: 900; color: #f87171; }
-    .mh-sep { font-size: 24px; font-weight: 900; color: #334155; }
-
-    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
-    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
-    .team-block { display: flex; flex-direction: column; gap: 6px; }
-    .arena-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; padding: 8px 12px; border-radius: 10px; text-align: center; }
-    .arena-label-blue { color: #93c5fd; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.15); }
-    .arena-label-red { color: #fca5a5; background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.15); }
-    .arena-grid-2x3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .arena-cell { display: flex; justify-content: center; }
-    .arena-empty { width: 180px; height: 80px; border-radius: 12px; background: rgba(15,23,42,0.3); border: 1px dashed rgba(51,65,85,0.2); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; color: #1e293b; }
-    .arena-empty-sm { width: 180px; height: 40px; }
-    .arena-center { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-
-    .stat-compare { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 14px; padding: 16px; }
-    .sc-title { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; }
-    .tactics-tag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px; border-radius: 6px; background: rgba(147,51,234,0.15); border: 1px solid rgba(168,85,247,0.3); color: #c084fc; font-size: 9px; font-weight: 900; letter-spacing: 0; text-transform: none; }
-    .log-tactics { color: #c084fc; font-size: 9px; font-weight: 700; margin-left: 2px; }
-    .sc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .sc-val { font-size: 14px; font-weight: 900; width: 32px; text-align: center; } .sc-val-blue { color: #60a5fa; } .sc-val-red { color: #f87171; }
-    .sc-bar-wrap { flex: 1; text-align: center; }
-    .sc-label { font-size: 10px; font-weight: 800; color: #94a3b8; margin-bottom: 4px; }
-    .sc-bar { display: flex; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; }
-    .sc-fill-blue { background: linear-gradient(90deg, #1e40af, #3b82f6); border-radius: 4px 0 0 4px; }
-    .sc-fill-red { background: linear-gradient(90deg, #ef4444, #991b1b); border-radius: 0 4px 4px 0; }
-    .sc-diff { font-size: 11px; font-weight: 900; color: #64748b; margin-top: 2px; } .sc-diff-pos { color: #34d399; } .sc-diff-neg { color: #f87171; }
-
-    /* Power compare */
-    .power-compare { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.15); }
-    .pc-side { font-size: 22px; font-weight: 900; min-width: 40px; text-align: center; }
-    .pc-blue { color: #60a5fa; } .pc-red { color: #f87171; }
-    .pc-center { text-align: center; }
-    .pc-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
-    .pc-diff { font-size: 18px; font-weight: 900; }
-    .pc-pos { color: #34d399; } .pc-neg { color: #f87171; } .pc-even { color: #64748b; }
-    .pc-note { font-size: 8px; color: #334155; margin-top: 2px; }
-
-    .log-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-    .log-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; font-size: 12px; background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15); }
-    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; font-size: 14px; flex-shrink: 0; } .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-breakdown { flex: 1; }
-    .log-main { font-size: 12px; font-weight: 700; color: #e2e8f0; }
-    .log-detail-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #475569; font-family: monospace; margin-top: 2px; }
-    .log-calc { color: #64748b; }
-    .log-vs { color: #334155; }
-
-    .play-picker { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 16px; padding: 24px; }
-    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
-    .play-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .play-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 12px; border-radius: 14px; cursor: pointer; background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s; }
-    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(59,130,246,0.2); transform: scale(1.03); }
-    .pb-icon { font-size: 26px; } .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
-    .pb-edge { font-size: 11px; font-weight: 900; color: #64748b; }
-    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
-    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
-    .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
+    /* The in-match styles live in components/match/ now: MatchArena for the current screen, LegacyArena for Legacy Mode. */
 
     .result-card { text-align: center; padding: 40px 24px; border-radius: 20px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); }
     .result-win { border-color: rgba(16,185,129,0.15); background: rgba(6,78,59,0.08); }

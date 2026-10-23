@@ -1,6 +1,10 @@
 <script>
     import Card from '../card/Card.svelte';
-    import { club, squad, blueEssence, trackStats, skills, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
+    import Icon from '../ui/Icon.svelte';
+    import MatchArena from '../match/MatchArena.svelte';
+    import MatchResult from '../match/MatchResult.svelte';
+    import { drawPlays } from '../match/matchMath.js';
+    import { club, squad, blueEssence, trackStats, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -233,13 +237,31 @@
         playerScore = 0;
         cpuScore = 0;
         matchLog = [];
+        revealing = false;
+        pendingPhase = null;
         rollRoundPlays();
         phase = 'match';
     }
 
+    // The match screen reveals each game first; endDraft pays out and saves immediately, and
+    // only the switch to the result screen waits for the reveal.
+    let revealing = false;
+    let pendingPhase = null;
+    function goPhase(p) { if (revealing) pendingPhase = p; else phase = p; }
+    function onRevealed() {
+        revealing = false;
+        if (pendingPhase) { phase = pendingPhase; pendingPhase = null; }
+    }
+    const isFlex = (card, role) => !!card && card.role !== role && !LEGACY_TIERS.includes(card.quality);
+    $: tacticsLvl = $skills.tactics || 0;
+    // Exactly what pickPlay resolves with: per-seat stats after the flex penalty, plus Tactics on our side.
+    $: myDraftStats = Object.fromEntries(['mec', 'tmf', 'map', 'frm', 'cmp'].map(s => [s, getSquadStatAvg(myStarters, mySquad, s) + tacticsLvl]));
+    $: cpuDraftStats = Object.fromEntries(['mec', 'tmf', 'map', 'frm', 'cmp'].map(s => [s, getSquadStatAvg(cpuStarters, cpuSquad, s)]));
+    $: blueSide = { name: $teamIdentity.name, logo: $teamIdentity.logo, power: myPower, stats: myDraftStats, lineup: ROLES.map(role => ({ role, card: mySquad[role], flex: isFlex(mySquad[role], role) })) };
+    $: redSide = { name: 'CPU Draft', logo: '🤖', power: cpuPower, stats: cpuDraftStats, lineup: ROLES.map(role => ({ role, card: cpuSquad[role] || null, flex: isFlex(cpuSquad[role], role) })) };
+
     function rollRoundPlays() {
-        const shuffled = [...PLAYS].sort(() => Math.random() - 0.5);
-        roundPlays = shuffled.slice(0, 3);
+        roundPlays = drawPlays(PLAYS, 3);
     }
 
     $: myStarters = ROLES.map(r => mySquad[r]).filter(Boolean);
@@ -265,6 +287,7 @@
     $: powerDiff = myPower - cpuPower;
 
     function pickPlay(play) {
+        revealing = true;
         const cpuPlay = PLAYS[Math.floor(Math.random() * PLAYS.length)];
         const tLvl = get(skills).tactics || 0;
         const myStat = getSquadStatAvg(myStarters, mySquad, play.stat) + tLvl;
@@ -296,7 +319,7 @@
         }));
         if (won) playSound('win'); else playSound('lose');
         draftResult = { won, reward: total, bonus };
-        phase = 'result';
+        goPhase('result');
         logMatch({ mode: 'draft', result: won ? 'win' : 'loss', opponent: 'CPU Draft', be: total, xp: won ? 300 : 100 });
         saveGame();
     }
@@ -442,112 +465,44 @@
         </div>
 
     {:else if phase === 'match'}
-        <div class="match-phase">
-            <div class="match-header">
-                <div class="mh-label">Draft Mode — Best of 5</div>
-                <div class="mh-score"><span class="mh-blue">{playerScore}</span><span class="mh-sep">—</span><span class="mh-red">{cpuScore}</span></div>
-            </div>
-
-            <div class="match-layout">
-                <div class="team-block">
-                    <div class="arena-label arena-label-blue">Your Squad ({myPower})</div>
-                    <div class="arena-grid-2x3">
-                        {#each [['TOP','JNG'],['MID','ADC'],['SUP']] as row}
-                            {#each row as role}
-                                <div class="arena-cell">
-                                    {#if mySquad[role]}
-                                        <Card card={mySquad[role]} mini={true} onclick={() => {}} />
-                                        {#if mySquad[role].role !== role && !LEGACY_TIERS.includes(mySquad[role].quality)}
-                                            <div class="flex-tag-sm">FLEX</div>
-                                        {/if}
-                                    {/if}
-                                </div>
-                            {/each}
-                        {/each}
-                    </div>
-                </div>
-
-                <div class="arena-center">
-
-            <div class="power-compare">
-                <span class="pc-side pc-blue">{myPower}</span>
-                <div class="pc-center">
-                    <div class="pc-label">Power</div>
-                    <div class="pc-diff" class:pc-pos={powerDiff > 0} class:pc-neg={powerDiff < 0} class:pc-even={powerDiff === 0}>{powerDiff > 0 ? '+' : ''}{powerDiff}</div>
-                    <div class="pc-note">Net = Power + Stat · Luck ±5 each</div>
-                </div>
-                <span class="pc-side pc-red">{cpuPower}</span>
-            </div>
-
-            {#if matchLog.length > 0}
-                <div class="log-list">
-                    {#each matchLog as log, i}
-                        <div class="log-row" class:log-w={log.won} class:log-l={!log.won}>
-                            <span class="log-result">R{i+1} {log.won ? '✓' : '✗'}</span>
-                            <div class="log-breakdown">
-                                <div class="log-main">{log.myPlay.icon} <strong>{log.myVal}</strong> vs {log.cpuPlay.icon} <strong>{log.cpuVal}</strong></div>
-                                <div class="log-detail-row">
-                                    <span class="log-calc">{log.myBase}{log.statEdge>=0?'+':''}{log.statEdge}{log.myRoll>=0?'+':''}{log.myRoll}</span>
-                                    <span class="log-vs">vs</span>
-                                    <span class="log-calc">{log.cpuBase}{log.cpuRoll>=0?'+':''}{log.cpuRoll}</span>
-                                </div>
-                            </div>
-                        </div>
-                    {/each}
-                </div>
-            {/if}
-
-            {#if playerScore < 3 && cpuScore < 3}
-                <div class="play-picker">
-                    <div class="play-label">Choose Your Play</div>
-                    <div class="play-grid">
-                        {#each roundPlays as play}
-                            {@const myStat = getSquadStatAvg(myStarters, mySquad, play.stat) + (get(skills).tactics || 0)}
-                            {@const cpuStat = getSquadStatAvg(cpuStarters, cpuSquad, PLAYS[0].stat)}
-                            {@const edge = myStat - cpuStat}
-                            {@const net = powerDiff + edge}
-                            <button class="play-btn" on:click={() => pickPlay(play)}>
-                                <span class="pb-icon">{play.icon}</span>
-                                <span class="pb-name">{play.label}</span>
-                                <span class="pb-desc">{play.desc}</span>
-                                <span class="pb-stat" class:pb-edge-pos={edge>0} class:pb-edge-neg={edge<0}>Stat {edge>0?'+':''}{edge}</span>
-                                <span class="pb-net" class:pb-edge-pos={net>0} class:pb-edge-neg={net<0}>Net {net>0?'+':''}{net}</span>
-                            </button>
-                        {/each}
-                    </div>
-                </div>
-            {/if}
-
-                </div><!-- end arena-center -->
-
-                <div class="team-block">
-                    <div class="arena-label arena-label-red">CPU Squad ({cpuPower})</div>
-                    <div class="arena-grid-2x3">
-                        {#each [['TOP','JNG'],['MID','ADC'],['SUP']] as row}
-                            {#each row as role}
-                                <div class="arena-cell">
-                                    {#if cpuSquad[role]}
-                                        <Card card={cpuSquad[role]} mini={true} onclick={() => {}} />
-                                    {/if}
-                                </div>
-                            {/each}
-                        {/each}
-                    </div>
-                </div>
-            </div><!-- end match-layout -->
-        </div>
+        <MatchArena
+            title="Draft Mode"
+            subtitle="Drafted fives, no coaches"
+            accent="#c084fc"
+            icon="cards"
+            blue={blueSide}
+            red={redSide}
+            plays={roundPlays}
+            allPlays={PLAYS}
+            scoreBlue={playerScore}
+            scoreRed={cpuScore}
+            winsNeeded={3}
+            log={matchLog}
+            tactics={tacticsLvl}
+            chips={[{ text: `Off-role picks play at −${FLEX_PENALTY} to every stat`, tone: 'info' }]}
+            on:pick={(e) => pickPlay(e.detail)}
+            on:revealed={onRevealed}
+        />
 
     {:else if phase === 'result'}
-        <div class="result-phase">
-            <div class="result-icon">{draftResult.won ? '🏆' : '💀'}</div>
-            <h2 class="result-title">{draftResult.won ? 'Draft Won!' : 'Draft Lost'}</h2>
-            <div class="result-score">{playerScore} — {cpuScore}</div>
-            <div class="result-reward">+{draftResult.reward} BE{#if draftResult.bonus > 0} <span class="wealth-bonus">(+{draftResult.bonus} Wealth)</span>{/if}</div>
-            <div class="result-btns">
-                <button class="draft-start" on:click={startDraft}>Play Again</button>
-                <button class="draft-back" on:click={backToLobby}>Back to Lobby</button>
-            </div>
-        </div>
+        <MatchResult
+            outcome={draftResult.won ? 'win' : 'lose'}
+            kicker="Draft Mode"
+            title={draftResult.won ? 'Draft won' : 'Draft lost'}
+            subtitle={draftResult.won ? 'Your drafted five took the series.' : 'The CPU\'s five had your number this time.'}
+            icon={draftResult.won ? 'trophy' : 'cards'}
+            blueName={$teamIdentity.name}
+            redName="CPU Draft"
+            scoreBlue={playerScore}
+            scoreRed={cpuScore}
+            rewards={[
+                { label: 'Blue Essence', value: `+${draftResult.reward.toLocaleString()}`, tone: 'be' },
+                ...(draftResult.bonus > 0 ? [{ label: 'of it from Wealth', value: `+${draftResult.bonus.toLocaleString()}`, tone: 'good' }] : []),
+            ]}
+        >
+            <button class="mr-btn" on:click={startDraft}>Draft again <Icon name="arrow" size={15} /></button>
+            <button class="mr-btn-ghost" on:click={backToLobby}>Back to lobby</button>
+        </MatchResult>
     {/if}
 </section>
 
@@ -567,7 +522,7 @@
     .draft-warn { color: #f87171; font-size: 12px; margin-bottom: 16px; }
 
     /* Ban Phase */
-    .ban-phase, .reveal-phase, .build-phase, .match-phase { padding: 8px 0; }
+    .ban-phase, .reveal-phase, .build-phase { padding: 8px 0; }
     .phase-title { font-size: 20px; font-weight: 900; margin-bottom: 6px; }
     .ban-title { color: #f87171; }
     .reveal-title { color: #c084fc; }
@@ -614,55 +569,5 @@
     .pick-flex { border-color: rgba(239,68,68,0.15); }
     .pick-penalty { position: absolute; top: 4px; right: 4px; z-index: 5; font-size: 8px; font-weight: 900; color: #f87171; background: rgba(127,29,29,0.8); padding: 2px 6px; border-radius: 4px; }
 
-    /* Match Layout */
-    .match-layout { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
-    @media (max-width: 1400px) { .match-layout { grid-template-columns: 1fr; } .team-block { display: none; } }
-    .team-block { display: flex; flex-direction: column; gap: 6px; }
-    .arena-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; text-align: center; padding: 6px 10px; border-radius: 8px; }
-    .arena-label-blue { color: #60a5fa; background: rgba(59,130,246,0.08); }
-    .arena-label-red { color: #f87171; background: rgba(239,68,68,0.08); }
-    .arena-grid-2x3 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-    .arena-cell { display: flex; justify-content: center; position: relative; }
-    .flex-tag-sm { position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%); font-size: 7px; font-weight: 900; color: #f87171; background: rgba(127,29,29,0.8); padding: 1px 6px; border-radius: 3px; }
-    .arena-center { min-width: 0; }
-
-    .match-header { text-align: center; margin-bottom: 16px; }
-    .mh-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; }
-    .mh-score { font-size: 28px; font-weight: 900; }
-    .mh-blue { color: #60a5fa; } .mh-red { color: #f87171; } .mh-sep { color: #334155; margin: 0 8px; }
-    .power-compare { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.15); }
-    .pc-side { font-size: 22px; font-weight: 900; min-width: 40px; text-align: center; }
-    .pc-blue { color: #60a5fa; } .pc-red { color: #f87171; }
-    .pc-center { text-align: center; }
-    .pc-label { font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
-    .pc-diff { font-size: 18px; font-weight: 900; }
-    .pc-pos { color: #34d399; } .pc-neg { color: #f87171; } .pc-even { color: #64748b; }
-    .pc-note { font-size: 8px; color: #334155; margin-top: 2px; }
-    .log-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-    .log-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; font-size: 12px; background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15); }
-    .log-w { border-color: rgba(16,185,129,0.15); } .log-l { border-color: rgba(239,68,68,0.15); }
-    .log-result { font-weight: 900; font-size: 14px; flex-shrink: 0; } .log-w .log-result { color: #34d399; } .log-l .log-result { color: #f87171; }
-    .log-breakdown { flex: 1; }
-    .log-main { font-size: 12px; font-weight: 700; color: #e2e8f0; }
-    .log-detail-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: #475569; font-family: monospace; margin-top: 2px; }
-    .log-calc { color: #64748b; } .log-vs { color: #334155; }
-    .play-picker { background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 16px; padding: 24px; }
-    .play-label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #475569; text-align: center; margin-bottom: 16px; }
-    .play-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .play-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 12px; border-radius: 14px; cursor: pointer; background: rgba(30,41,59,0.4); border: 1px solid rgba(51,65,85,0.3); transition: all 0.12s; }
-    .play-btn:hover { background: rgba(51,65,85,0.5); border-color: rgba(168,85,247,0.3); transform: scale(1.03); }
-    .pb-icon { font-size: 24px; } .pb-name { font-size: 12px; font-weight: 900; color: #e2e8f0; }
-    .pb-desc { font-size: 8px; color: #475569; text-align: center; }
-    .pb-stat { font-size: 10px; font-weight: 700; color: #64748b; }
-    .pb-net { font-size: 12px; font-weight: 900; color: #64748b; margin-top: 2px; }
-    .pb-edge-pos { color: #34d399; } .pb-edge-neg { color: #f87171; }
-
-    /* Result */
-    .result-phase { text-align: center; padding: 60px 0; }
-    .result-icon { font-size: 64px; margin-bottom: 16px; }
-    .result-title { font-size: 28px; font-weight: 900; color: #e2e8f0; margin-bottom: 8px; }
-    .result-score { font-size: 18px; font-weight: 900; color: #64748b; margin-bottom: 8px; }
-    .result-reward { font-size: 16px; font-weight: 900; color: #34d399; margin-bottom: 24px; }
-    .wealth-bonus { font-size: 12px; color: #38bdf8; font-weight: 700; }
-    .result-btns { display: flex; gap: 12px; justify-content: center; }
+    /* The match and result screens' styles live in components/match/ (MatchArena, MatchResult). */
 </style>
