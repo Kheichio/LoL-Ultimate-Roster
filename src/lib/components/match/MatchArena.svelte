@@ -14,9 +14,11 @@
     import { tweened } from 'svelte/motion';
     import { cubicOut } from 'svelte/easing';
     import Icon from '../ui/Icon.svelte';
-    import PlayerPlate from './PlayerPlate.svelte';
+    import Lineup from './Lineup.svelte';
+    import CardViewToggle from './CardViewToggle.svelte';
     import { pressFx } from '../../utils/fx.js';
     import { playSound } from '../../utils/sound.js';
+    import { matchCardView } from '../../stores/ui.js';
     import { roundWinChance, seriesWinChance, STAT_META, STAT_ORDER } from './matchMath.js';
 
     export let title = 'Match';
@@ -160,13 +162,11 @@
         <span class="wp-cap">Win probability</span>
     </div>
 
-    <div class="grid">
+    <div class="grid" class:grid-cards={$matchCardView}>
         <!-- ═══ BLUE LINEUP ═══ -->
         <aside class="lineup lu-blue">
-            <div class="lu-head"><span class="lu-dot"></span> {blue.name}</div>
-            {#each blue.lineup as p, i (p.role)}
-                <PlayerPlate role={p.role} card={p.card} flex={p.flex} side="blue" delay={i * 50} />
-            {/each}
+            <div class="lu-head"><span class="lu-dot"></span> <span class="lu-name">{blue.name}</span> <CardViewToggle /></div>
+            <Lineup lineup={blue.lineup} side="blue" />
         </aside>
 
         <!-- ═══ STAGE ═══ -->
@@ -285,10 +285,8 @@
 
         <!-- ═══ RED LINEUP ═══ -->
         <aside class="lineup lu-red">
-            <div class="lu-head lu-head-r">{red.name} <span class="lu-dot lu-dot-r"></span></div>
-            {#each red.lineup as p, i (p.role)}
-                <PlayerPlate role={p.role} card={p.card} flex={p.flex} side="red" delay={i * 50} />
-            {/each}
+            <div class="lu-head lu-head-r"><span class="lu-name">{red.name}</span> <span class="lu-dot lu-dot-r"></span></div>
+            <Lineup lineup={red.lineup} side="red" />
         </aside>
     </div>
 </div>
@@ -337,11 +335,15 @@
 
     /* ═══ Grid ═══ */
     .grid { display: grid; grid-template-columns: 260px minmax(0, 1fr) 260px; gap: 16px; align-items: start; }
+    /* Two columns of 80%-size mini cards (144px each) need a little more room than the rows. */
+    .grid-cards { grid-template-columns: 300px minmax(0, 1fr) 300px; }
 
     /* Lineups */
     .lineup { display: flex; flex-direction: column; gap: 6px; }
-    .lu-head { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 900; letter-spacing: 1.8px; text-transform: uppercase; color: #93c5fd; padding: 0 4px 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    .lu-head-r { justify-content: flex-end; color: #fca5a5; }
+    .lu-head { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 900; letter-spacing: 1.8px; text-transform: uppercase; color: #93c5fd; padding: 0 4px 4px; }
+    .lu-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .lu-head-r { color: #fca5a5; }
+    .lu-head-r .lu-name { text-align: right; }
     .lu-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue); flex-shrink: 0; }
     .lu-dot-r { background: var(--red); box-shadow: 0 0 8px var(--red); }
     @keyframes plateIn { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }

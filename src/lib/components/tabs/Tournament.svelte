@@ -681,7 +681,7 @@
 
     function backToLobby() {
         if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; saveGame(); }
-        phase = legacyRun ? 'legacy_lobby' : 'lobby'; activeMode = null; tournamentResult = null; enemies = []; matchLog = [];
+        phase = legacyRun ? 'legacy_lobby' : 'lobby'; activeMode = null; tournamentResult = null; enemies = []; currentEnemy = null; matchLog = [];
     }
 
     // Straight back into the same stage. Not offered for the Golden Road (it has a cooldown)
@@ -709,13 +709,17 @@
         name: $teamIdentity.name, logo: $teamIdentity.logo, power: totalPower,
         lineup: lineupOf($squad), stats: myStatAvgs,
     };
-    $: if (!revealing || !redSide) redSide = (currentEnemy || enemies[round]) ? (() => {
+    // Guard on the enemy actually read, not on "some enemy exists": backToLobby empties
+    // `enemies` but leaves `currentEnemy` set, and a throw here kills Svelte's update loop —
+    // every button on the page, the header included, goes dead until a reload.
+    $: if (!revealing || !redSide) redSide = (() => {
         const e = currentEnemy && phase === 'match' ? currentEnemy : enemies[round];
+        if (!e) return null;
         const cards = Object.values(e.cards || {}).filter(c => c && c.role !== 'COACH' && c.stats);
         const stats = {};
         for (const s of ['mec', 'tmf', 'map', 'frm', 'cmp']) stats[s] = cards.length ? Math.round(cards.reduce((a, c) => a + (c.stats[s] || 0), 0) / cards.length) : 0;
         return { name: e.name, logo: activeMode === 'rival' ? '⚔️' : '🛡️', power: e.avgRating, lineup: lineupOf(e.cards), stats };
-    })() : null;
+    })();
     $: stageIcon = activeMode === 'goldenroad' ? 'crown' : ({ cafe: 'coffee', regional: 'flag', firststand: 'flame', msi: 'waves', worlds: 'trophy', salarycap: 'coins', rival: 'swords' }[activeMode] || 'trophy');
     $: roadRounds = enemies.map((e, i) => ({
         name: e?.name || 'TBD', power: e?.avgRating || 0,

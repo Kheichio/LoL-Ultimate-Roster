@@ -348,7 +348,7 @@
         border: 1px solid color-mix(in srgb, var(--rc) 28%, transparent);
     }
     .cs-gap {
-        width: 180px; height: 252px;
+        width: 180px; height: 266px;
         border-radius: 14px;
         border: 2px dashed rgba(51, 65, 85, 0.28);
         background: rgba(12, 16, 28, 0.35);

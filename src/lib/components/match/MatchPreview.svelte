@@ -3,7 +3,8 @@
     // is next, both lineups face to face and your real chance of taking the match.
     import { createEventDispatcher } from 'svelte';
     import Icon from '../ui/Icon.svelte';
-    import PlayerPlate from './PlayerPlate.svelte';
+    import Lineup from './Lineup.svelte';
+    import CardViewToggle from './CardViewToggle.svelte';
     import { pressFx } from '../../utils/fx.js';
     import { seriesWinChance } from './matchMath.js';
 
@@ -66,8 +67,9 @@
             <div class="side-head">
                 <span class="sh-logo">{blue.logo || '🛡️'}</span>
                 <span class="sh-tt"><span class="sh-name">{blue.name}</span><span class="sh-pw"><Icon name="bolt" size={11} stroke={2.4} /> {blue.power} power</span></span>
+                <span class="sh-toggle"><CardViewToggle /></span>
             </div>
-            {#each blue.lineup as p, i (p.role)}<PlayerPlate role={p.role} card={p.card} flex={p.flex} side="blue" delay={i * 50} />{/each}
+            <Lineup lineup={blue.lineup} side="blue" />
         </section>
 
         <div class="mid">
@@ -92,7 +94,7 @@
                 <span class="sh-tt sh-tt-r"><span class="sh-name">{red.name}</span><span class="sh-pw">{red.power} power <Icon name="bolt" size={11} stroke={2.4} /></span></span>
                 <span class="sh-logo sh-logo-r">{red.logo || '⚔️'}</span>
             </div>
-            {#each red.lineup as p, i (p.role)}<PlayerPlate role={p.role} card={p.card} flex={p.flex} side="red" delay={i * 50} />{/each}
+            <Lineup lineup={red.lineup} side="red" />
         </section>
     </div>
 </div>
@@ -130,7 +132,9 @@
 
     /* Face-off */
     .vs { display: grid; grid-template-columns: minmax(0, 1fr) 230px minmax(0, 1fr); gap: 16px; align-items: start; }
-    .side { display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 22px; background: linear-gradient(180deg, rgba(30,64,175,0.14), rgba(10,14,26,0.6) 40%); border: 1px solid rgba(96,165,250,0.25); }
+    .side { --lineup-cols: 3; display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 22px; background: linear-gradient(180deg, rgba(30,64,175,0.14), rgba(10,14,26,0.6) 40%); border: 1px solid rgba(96,165,250,0.25); }
+    .sh-toggle { margin-left: auto; }
+    @media (max-width: 1180px) { .side { --lineup-cols: 2; } }
     .side-r { background: linear-gradient(180deg, rgba(153,27,27,0.14), rgba(10,14,26,0.6) 40%); border-color: rgba(248,113,113,0.25); }
     .side-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
     .side-head-r { justify-content: flex-end; }

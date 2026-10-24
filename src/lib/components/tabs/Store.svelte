@@ -8,6 +8,7 @@
     import { getDB, rollPackTier, makeUniqueId, getSellValue, AWARD_TIERS, MYTHIC_TIERS, TIER_COLORS } from '../../utils/cards.js';
     import { playSound } from '../../utils/sound.js';
     import { saveToStorage, loadFromStorage } from '../../utils/storage.js';
+    import { applyScouting, SCOUT_STEP } from '../../utils/skillEffects.js';
     import { get } from 'svelte/store';
 
     import { onDestroy } from 'svelte';
@@ -20,7 +21,7 @@
     let previewPack = null;
 
     $: scoutLevel = $skills.scouting || 0;
-    $: scoutBonus = scoutLevel * 0.25;
+    $: scoutBonus = Math.round(scoutLevel * SCOUT_STEP * 100);   // % better odds above the floor
 
     // --- Limited-time Store events (boosted pack + discount + pity guarantee) ---
     const MSI_EVENT_END = new Date('2026-07-12T23:59:59Z').getTime();
@@ -211,9 +212,11 @@
     // pack.drops unconditionally, so during an event they advertised the normal odds of a
     // pack that was in fact rolling the boosted table. `_live` is only there so a template
     // call re-runs when the ticker moves the live event.
+    // Scouting Network is folded in here AND in buyPack, so every odds figure on screen is
+    // the table the roll actually uses.
     function dropsFor(pack, _live) {
         const ev = EVENTS[pack.id];
-        return isLive(ev) ? ev.drops() : pack.drops;
+        return applyScouting(isLive(ev) ? ev.drops() : pack.drops, scoutLevel);
     }
 
     function getPackCost(pack) {
@@ -250,7 +253,7 @@
         const holoChance = 0.01;
         const sigChance = 0.001;
         const ev = free ? null : (isLive(EVENTS[pack.id]) ? EVENTS[pack.id] : null);
-        const drops = ev ? ev.drops() : pack.drops;
+        const drops = applyScouting(ev ? ev.drops() : pack.drops, get(skills).scouting || 0);
         let pity = ev ? readPity(ev.pityKey) : 0;
 
         for (let p = 0; p < packs; p++) {
@@ -624,8 +627,8 @@
             </div>
 
             {#if scoutLevel > 0}
-                <div class="pv-section">Scouting Bonus (Lv {scoutLevel})</div>
-                <div class="pv-scout">+{scoutBonus.toFixed(2)}% bonus to all drop rolls</div>
+                <div class="pv-section">Scouting Network (Lv {scoutLevel})</div>
+                <div class="pv-scout">+{scoutBonus}% odds on every tier above {dropsFor(previewPack, liveId)[dropsFor(previewPack, liveId).length - 1].tier} — already included in the rates above.</div>
             {/if}
 
             <button class="buy-btn pv-buy" on:click={() => { buyPack(previewPack, false, previewQty); previewPack = null; }}>

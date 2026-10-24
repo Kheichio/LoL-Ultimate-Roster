@@ -1,8 +1,11 @@
 <script>
+    import Icon from '../ui/Icon.svelte';
+    import { pressFx } from '../../utils/fx.js';
     import { skills, skillPoints, managerXP, managerLevel, weightedTrophies, prestige, prestigeManager, checkMilestoneCards, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
+    import { openConfirmModal } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
-    import { get } from 'svelte/store';
+    import { SCOUT_STEP, tradeMastery } from '../../utils/skillEffects.js';
 
     const TITLES = [
         { tp: 0, title: 'Scout', color: '#64748b' },
@@ -24,73 +27,82 @@
     })();
     $: currentTitle = TITLES[currentTitleIdx];
     $: nextTitle = TITLES[currentTitleIdx + 1] || null;
+    $: titlePct = nextTitle ? Math.min(100, (($weightedTrophies - currentTitle.tp) / (nextTitle.tp - currentTitle.tp)) * 100) : 100;
 
+    // `effect(level)` is what the skill does AT that level, read from the code that applies it
+    // (stores/game.js, utils/cards.js, utils/combat.js, utils/skillEffects.js, Season.svelte).
+    // A skill with no `effect` shows its `perLevel` text instead.
+    const GROUPS = [
+        { id: 'match', label: 'Matches', icon: 'swords', c: '#a78bfa', note: 'Win more of them' },
+        { id: 'reward', label: 'Rewards', icon: 'gem', c: '#38bdf8', note: 'Get more out of every win' },
+        { id: 'collect', label: 'Collection', icon: 'cards', c: '#34d399', note: 'Packs and room for your cards' },
+    ];
     const skillDefs = [
-        { id: 'scouting', name: 'Scouting Network', icon: '🔍', maxLevel: 5,
-          desc: 'Improves card quality odds from packs.',
-          perLevel: '+0.25% bonus to pack roll RNG per level',
-          textColor: 'text-blue-400', barFill: 'bg-blue-500',
-          btnActive: 'bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border-blue-500/40' },
-        { id: 'tactics', name: 'Tactical Mastery', icon: '🧠', maxLevel: 5,
-          desc: 'Boosts stat checks in tournament matches.',
-          perLevel: '+1 to all stat comparisons per level',
-          textColor: 'text-purple-400', barFill: 'bg-purple-500',
-          btnActive: 'bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border-purple-500/40' },
-        { id: 'transfer', name: 'Transfer Network', icon: '🤝', maxLevel: 5,
-          desc: 'Better trade offers and sell prices.',
-          perLevel: '+5% sell value per level',
-          textColor: 'text-orange-400', barFill: 'bg-orange-500',
-          btnActive: 'bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 border-orange-500/40' },
-        { id: 'conditioning', name: 'Conditioning', icon: '💪', maxLevel: 5,
-          desc: 'Boosts squad chemistry bonuses.',
-          perLevel: '+1 max chemistry bonus per level',
-          textColor: 'text-emerald-400', barFill: 'bg-emerald-500',
-          btnActive: 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border-emerald-500/40' },
-        { id: 'stamina', name: 'Stamina', icon: '⏱️', maxLevel: 5,
-          desc: 'Reduces cooldown between season split matches.',
-          perLevel: '-10s cooldown per level (60s base → 10s min)',
-          textColor: 'text-yellow-400', barFill: 'bg-yellow-500',
-          btnActive: 'bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-300 border-yellow-500/40' },
-        { id: 'mentorship', name: 'Mentorship', icon: '📚', maxLevel: 5,
-          desc: 'Increases XP gained from all sources.',
-          perLevel: '+10% XP gain per level',
-          textColor: 'text-amber-400', barFill: 'bg-amber-500',
-          btnActive: 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border-amber-500/40' },
-        { id: 'trading', name: 'Trade Mastery', icon: '🔄', maxLevel: 5,
-          desc: 'More trade slots, lower card costs, cheaper refreshes.',
-          perLevel: 'Lv1-2: +1 slot each · Lv2+: -1 card cost · Lv2/4: refresh discount',
-          textColor: 'text-rose-400', barFill: 'bg-rose-500',
-          btnActive: 'bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border-rose-500/40' },
-        { id: 'bench', name: 'Bench Management', icon: '🪑', maxLevel: 3,
-          desc: 'Unlocks bench slots in your squad for mid-split swaps.',
-          perLevel: '+1 bench slot per level (max 3)',
-          textColor: 'text-teal-400', barFill: 'bg-teal-500',
-          btnActive: 'bg-teal-600/20 hover:bg-teal-600/40 text-teal-300 border-teal-500/40' },
-        { id: 'wealth', name: 'Wealth Management', icon: '💎', maxLevel: 5,
-          desc: 'Earn more BE from tournament wins, season splits, and quest rewards.',
-          perLevel: '+10% bonus BE from all rewards per level',
-          textColor: 'text-sky-400', barFill: 'bg-sky-500',
-          btnActive: 'bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border-sky-500/40' },
-        { id: 'bulk', name: 'Bulk Opening', icon: '📦', maxLevel: 4,
-          desc: 'Open several packs of the same type in a single click from the Store.',
-          perLevel: '+1 pack per bulk open (1 → 5 at max)',
-          textColor: 'text-indigo-400', barFill: 'bg-indigo-500',
-          btnActive: 'bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border-indigo-500/40' },
-        { id: 'clubhouse', name: 'Club Capacity', icon: '🏟️', maxLevel: 20,
-          desc: 'Increases maximum cards in your club.',
-          perLevel: '+50 card capacity per level',
-          textColor: 'text-cyan-400', barFill: 'bg-cyan-500',
-          btnActive: 'bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-300 border-cyan-500/40' },
+        { id: 'tactics', group: 'match', name: 'Tactical Mastery', icon: 'target', c: '#a855f7', maxLevel: 5,
+          desc: 'Sharper calls in every match.',
+          effect: lv => `+${lv} to every play's stat` },
+        { id: 'conditioning', group: 'match', name: 'Conditioning', icon: 'bolt', c: '#34d399', maxLevel: 5,
+          desc: 'Fitter players — flat Power in every match.',
+          effect: lv => `+${lv} squad Power` },
+        { id: 'stamina', group: 'match', name: 'Stamina', icon: 'clock', c: '#facc15', maxLevel: 5,
+          desc: 'Less waiting between season split matches.',
+          effect: lv => `${Math.max(10, 60 - lv * 10)}s between split matches` },
+        { id: 'bench', group: 'match', name: 'Bench Management', icon: 'squad', c: '#2dd4bf', maxLevel: 3,
+          desc: 'Substitutes you can swap in during a split.',
+          effect: lv => lv === 0 ? 'No bench slots' : `${lv} bench slot${lv === 1 ? '' : 's'}` },
+        { id: 'wealth', group: 'reward', name: 'Wealth Management', icon: 'gem', c: '#38bdf8', maxLevel: 5,
+          desc: 'More BE from tournament wins, season splits and quests.',
+          effect: lv => `+${lv * 10}% BE from rewards` },
+        { id: 'mentorship', group: 'reward', name: 'Mentorship', icon: 'academy', c: '#fbbf24', maxLevel: 5,
+          desc: 'More XP from every source.',
+          effect: lv => `+${lv * 10}% XP` },
+        { id: 'transfer', group: 'reward', name: 'Transfer Network', icon: 'coins', c: '#fb923c', maxLevel: 5,
+          desc: 'Better prices when you sell cards.',
+          effect: lv => `+${lv * 5}% card sell value` },
+        { id: 'trading', group: 'reward', name: 'Trade Mastery', icon: 'trade', c: '#fb7185', maxLevel: 5,
+          desc: 'More listings on the Transfer Market, and cheaper signings.',
+          effect: lv => {
+              const t = tradeMastery(lv);
+              return `${6 + t.extraListings} listings${t.cardDiscount ? ` · −${t.cardDiscount} card${t.cardDiscount === 1 ? '' : 's'}` : ''} · −${Math.round(t.beDiscount * 100)}% BE`;
+          } },
+        { id: 'scouting', group: 'collect', name: 'Scouting Network', icon: 'search', c: '#60a5fa', maxLevel: 5,
+          desc: 'Rarer cards from every pack.',
+          effect: lv => `+${Math.round(lv * SCOUT_STEP * 100)}% odds on every tier above a pack's lowest` },
+        { id: 'bulk', group: 'collect', name: 'Bulk Opening', icon: 'store', c: '#818cf8', maxLevel: 4,
+          desc: 'Open several packs of one type in a single click.',
+          effect: lv => lv === 0 ? 'One pack at a time' : `Up to ${1 + lv} packs at once` },
+        { id: 'clubhouse', group: 'collect', name: 'Club Capacity', icon: 'club', c: '#22d3ee', maxLevel: 20,
+          desc: 'Room for more cards in your Club Vault.',
+          effect: lv => `${100 + lv * 50} card capacity` },
+    ];
+
+    // Where XP actually comes from — every grantXP() call in the roster shell.
+    const XP_SOURCES = [
+        { icon: 'store', label: 'Opening packs', value: '+50 a pack' },
+        { icon: 'trophy', label: 'Tournament runs', value: '+100 Cafe → +800 Worlds', note: '40% if you go out' },
+        { icon: 'crown', label: 'Golden Road', value: '+2,000' },
+        { icon: 'calendar', label: 'Season matches', value: '+150 a win · +60 a loss' },
+        { icon: 'puzzle', label: 'Draft', value: '+300 a win · +100 a loss' },
+        { icon: 'tower', label: 'Infinity Tower', value: '+50 + 5 per floor cleared' },
+        { icon: 'academy', label: 'Academy runs', value: '+4 per rating point' },
+        { icon: 'archive', label: 'Archive', value: '+10 a new card · +50 a full team' },
     ];
 
     $: xpForNext = $managerLevel * 500;
     $: xpProgress = Math.min(100, ($managerXP / xpForNext) * 100);
+    $: mentorLevel = $skills.mentorship || 0;
 
     function getSkillCost(skillId) {
         if (skillId === 'clubhouse') return 1;
         const current = $skills[skillId] || 0;
         return current + 1;
     }
+    // SP a skill has absorbed so far: 1 + 2 + … + level (Club Capacity is a flat 1 per level).
+    const spentOn = (def, lv) => (def.id === 'clubhouse' ? lv : (lv * (lv + 1)) / 2);
+    $: spInvested = skillDefs.reduce((s, d) => s + spentOn(d, $skills[d.id] || 0), 0);
+    $: spTotal = skillDefs.reduce((s, d) => s + spentOn(d, d.maxLevel), 0);
+    $: maxedCount = skillDefs.filter(d => ($skills[d.id] || 0) >= d.maxLevel).length;
+    $: affordable = skillDefs.filter(d => ($skills[d.id] || 0) < d.maxLevel && $skillPoints >= getSkillCost(d.id)).length;
 
     function upgradeSkill(skillId) {
         const def = skillDefs.find(s => s.id === skillId);
@@ -107,507 +119,315 @@
         saveGame();
     }
 
-    const colorMap = {
-        'text-blue-400': '#60a5fa', 'text-purple-400': '#a855f7', 'text-orange-400': '#fb923c',
-        'text-emerald-400': '#34d399', 'text-amber-400': '#fbbf24', 'text-cyan-400': '#22d3ee',
-        'text-rose-400': '#fb7185', 'text-yellow-400': '#facc15', 'text-teal-400': '#2dd4bf', 'text-sky-400': '#38bdf8',
-        'text-indigo-400': '#818cf8',
-        'bg-blue-500': '#3b82f6', 'bg-purple-500': '#a855f7', 'bg-orange-500': '#f97316',
-        'bg-emerald-500': '#10b981', 'bg-amber-500': '#f59e0b', 'bg-cyan-500': '#06b6d4',
-        'bg-rose-500': '#f43f5e', 'bg-yellow-500': '#eab308', 'bg-teal-500': '#14b8a6', 'bg-sky-500': '#0ea5e9',
-        'bg-indigo-500': '#6366f1'
-    };
-
-    const btnColorMap = {
-        'text-blue-400': { bg: 'rgba(37,99,235,0.2)', bgHover: 'rgba(37,99,235,0.4)', text: '#93c5fd', border: 'rgba(59,130,246,0.4)' },
-        'text-purple-400': { bg: 'rgba(147,51,234,0.2)', bgHover: 'rgba(147,51,234,0.4)', text: '#d8b4fe', border: 'rgba(168,85,247,0.4)' },
-        'text-orange-400': { bg: 'rgba(234,88,12,0.2)', bgHover: 'rgba(234,88,12,0.4)', text: '#fdba74', border: 'rgba(249,115,22,0.4)' },
-        'text-emerald-400': { bg: 'rgba(5,150,105,0.2)', bgHover: 'rgba(5,150,105,0.4)', text: '#6ee7b7', border: 'rgba(16,185,129,0.4)' },
-        'text-amber-400': { bg: 'rgba(217,119,6,0.2)', bgHover: 'rgba(217,119,6,0.4)', text: '#fcd34d', border: 'rgba(245,158,11,0.4)' },
-        'text-cyan-400': { bg: 'rgba(8,145,178,0.2)', bgHover: 'rgba(8,145,178,0.4)', text: '#67e8f9', border: 'rgba(6,182,212,0.4)' },
-        'text-rose-400': { bg: 'rgba(244,63,94,0.2)', bgHover: 'rgba(244,63,94,0.4)', text: '#fda4af', border: 'rgba(244,63,94,0.4)' },
-        'text-yellow-400': { bg: 'rgba(234,179,8,0.2)', bgHover: 'rgba(234,179,8,0.4)', text: '#fde047', border: 'rgba(234,179,8,0.4)' },
-        'text-teal-400': { bg: 'rgba(20,184,166,0.2)', bgHover: 'rgba(20,184,166,0.4)', text: '#5eead4', border: 'rgba(20,184,166,0.4)' },
-        'text-sky-400': { bg: 'rgba(14,165,233,0.2)', bgHover: 'rgba(14,165,233,0.4)', text: '#7dd3fc', border: 'rgba(14,165,233,0.4)' },
-        'text-indigo-400': { bg: 'rgba(79,70,229,0.2)', bgHover: 'rgba(79,70,229,0.4)', text: '#a5b4fc', border: 'rgba(99,102,241,0.4)' }
-    };
+    function doPrestige() {
+        openConfirmModal(
+            `Prestige ${$prestige + 1}? This resets your Level, XP and every skill to 0. You keep all cards, BE and trophies.`,
+            () => {
+                if (prestigeManager()) {
+                    checkMilestoneCards();
+                    saveGame();
+                    showToast(`Prestige ${$prestige}! Skills reset. You keep everything else.`, 'success');
+                }
+            }
+        );
+    }
 </script>
 
-<section class="skills-page">
-    <!-- Header -->
-    <div class="skills-header">
-        <div>
-            <h2 class="skills-title">Skills & Progression</h2>
-            <p class="skills-subtitle">Invest Skill Points to power up your management abilities.</p>
+<section class="sk">
+    <!-- ═══ Hero ═══ -->
+    <header class="skh">
+        <div class="skh-glow" aria-hidden="true"></div>
+        <div class="skh-ring">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="ring-bg" cx="60" cy="60" r="52" />
+                <circle class="ring-fg" cx="60" cy="60" r="52" style="stroke-dasharray: {xpProgress * 3.267} 999;" />
+            </svg>
+            <span class="lv-l">Level</span>
+            <span class="lv-n">{$managerLevel}</span>
         </div>
-        <div class="sp-counter">
-            <div class="sp-value">{$skillPoints}</div>
-            <div class="sp-label">SP Available</div>
-        </div>
-    </div>
-
-    <!-- Level / XP Bar -->
-    <div class="xp-panel">
-        <div class="xp-top">
-            <div class="xp-left">
-                <div class="level-badge">{$managerLevel}</div>
-                <div>
-                    <div class="level-title">Manager Level {$managerLevel}</div>
-                    <div class="level-hint">Each level grants 1 Skill Point</div>
-                </div>
+        <div class="skh-text">
+            <span class="skh-eyebrow"><Icon name="skills" size={12} stroke={2.2} /> Progression
+                {#if $prestige > 0}<span class="pr-tag"><Icon name="star" size={11} stroke={2.4} /> Prestige {$prestige}</span>{/if}
+            </span>
+            <h2 class="skh-title">Skills & Progression</h2>
+            <p class="skh-sub">Every manager level gives you a Skill Point. Spend them on permanent upgrades for your club.</p>
+            <div class="xp">
+                <div class="xp-bar"><div class="xp-fill" style="width: {xpProgress}%;"></div></div>
+                <div class="xp-meta"><span><b>{$managerXP.toLocaleString()}</b> / {xpForNext.toLocaleString()} XP</span><span>{(xpForNext - $managerXP).toLocaleString()} XP to level {$managerLevel + 1}</span></div>
             </div>
-            <div class="xp-numbers">{$managerXP} / {xpForNext} XP</div>
         </div>
-        <div class="xp-track">
-            <div class="xp-fill" style="width: {xpProgress}%"></div>
+        <div class="skh-sp" class:skh-sp-on={affordable > 0}>
+            <span class="sp-n">{$skillPoints}</span>
+            <span class="sp-l">Skill point{$skillPoints === 1 ? '' : 's'}</span>
+            <span class="sp-note">{affordable > 0 ? `${affordable} upgrade${affordable === 1 ? '' : 's'} ready` : maxedCount === skillDefs.length ? 'Every skill maxed' : 'Level up to earn more'}</span>
         </div>
-        <div class="xp-footer">
-            <span>Earn XP: Packs (+50), Wins (+200), Trades (+25)</span>
-            <span>Lv {$managerLevel + 1} → +1 SP</span>
-        </div>
-    </div>
+    </header>
 
-    <!-- Manager Title Progress -->
-    <div class="title-panel">
-        <div class="title-header">
-            <div>
-                <div class="title-label">Manager Title</div>
-                <div class="title-current" style="color: {currentTitle.color};">{currentTitle.title}</div>
+    <div class="row">
+        <!-- Manager title -->
+        <section class="panel title-p">
+            <div class="p-head">
+                <span class="p-ico" style="--c: {currentTitle.color};"><Icon name="medal" size={15} /></span>
+                <span class="p-title">Manager title</span>
+                <span class="p-note">{$weightedTrophies} trophy points</span>
             </div>
-            <div class="title-tp">{$weightedTrophies} TP</div>
-        </div>
-        {#if nextTitle}
-            <div class="title-next">Next: <span style="color: {nextTitle.color};">{nextTitle.title}</span> — {nextTitle.tp - $weightedTrophies} TP needed</div>
-            <div class="title-bar"><div class="title-fill" style="width: {Math.min(100, (($weightedTrophies - currentTitle.tp) / (nextTitle.tp - currentTitle.tp)) * 100)}%; background: {currentTitle.color};"></div></div>
-        {:else}
-            <div class="title-max">Maximum title reached!</div>
-        {/if}
-        <div class="title-list">
-            {#each TITLES as t, i}
-                {@const achieved = $weightedTrophies >= t.tp}
-                {@const isCurrent = i === currentTitleIdx}
-                <div class="title-row" class:title-row-done={achieved} class:title-row-current={isCurrent}>
-                    <span class="tr-dot" style="background: {achieved ? t.color : '#1e293b'};"></span>
-                    <span class="tr-title" style="color: {achieved ? t.color : '#334155'};">{t.title}</span>
-                    <span class="tr-req">{t.tp} TP</span>
-                    {#if isCurrent}<span class="tr-you">← You</span>{/if}
-                </div>
-            {/each}
-        </div>
-        <div class="title-hint">Earn Trophy Points from: Worlds (×6), MSI (×4), First Stand (×2), Regional (×1), Golden Road (×10)</div>
+            <div class="tt-now">
+                <span class="tt-name" style="color: {currentTitle.color};">{currentTitle.title}</span>
+                {#if nextTitle}
+                    <span class="tt-next">{nextTitle.tp - $weightedTrophies} TP to <b style="color: {nextTitle.color};">{nextTitle.title}</b></span>
+                {:else}
+                    <span class="tt-next">The highest title there is.</span>
+                {/if}
+            </div>
+            <div class="tt-bar"><div class="tt-fill" style="width: {titlePct}%; background: {currentTitle.color};"></div></div>
+            <div class="ladder">
+                {#each TITLES as t, i}
+                    <div class="lr" class:lr-done={i < currentTitleIdx} class:lr-now={i === currentTitleIdx} style="--c: {t.color};" title="{t.title} · {t.tp} TP">
+                        <span class="lr-dot"></span>
+                        <span class="lr-name">{t.title}</span>
+                        <span class="lr-tp">{t.tp}</span>
+                    </div>
+                {/each}
+            </div>
+            <p class="p-foot">Trophy points: Worlds ×6 · MSI ×4 · First Stand ×2 · Regional ×1 · Golden Road ×10.</p>
+        </section>
+
+        <!-- How to earn XP -->
+        <section class="panel">
+            <div class="p-head">
+                <span class="p-ico" style="--c: #818cf8;"><Icon name="trend" size={15} /></span>
+                <span class="p-title">Earning XP</span>
+                {#if mentorLevel > 0}<span class="p-note p-note-on">+{mentorLevel * 10}% from Mentorship</span>{/if}
+            </div>
+            <div class="src">
+                {#each XP_SOURCES as s}
+                    <div class="src-row">
+                        <span class="src-ico"><Icon name={s.icon} size={14} /></span>
+                        <span class="src-label">{s.label}{#if s.note}<span class="src-note">{s.note}</span>{/if}</span>
+                        <span class="src-val">{s.value}</span>
+                    </div>
+                {/each}
+            </div>
+            <p class="p-foot">Every match game also gives a little XP. Level N needs N × 500 XP.</p>
+        </section>
     </div>
 
-    <!-- Skills Grid -->
-    <div class="skills-grid">
-        {#each skillDefs as def}
-            {@const current = $skills[def.id] || 0}
-            {@const cost = getSkillCost(def.id)}
-            {@const maxed = current >= def.maxLevel}
-            {@const canAfford = $skillPoints >= cost}
-            {@const accentColor = colorMap[def.textColor] || '#e2e8f0'}
-            {@const barColor = colorMap[def.barFill] || '#334155'}
-            {@const btn = btnColorMap[def.textColor] || { bg: 'rgba(51,65,85,0.5)', bgHover: 'rgba(51,65,85,0.7)', text: '#94a3b8', border: 'rgba(51,65,85,0.4)' }}
-            <div class="skill-card">
-                <!-- Skill header -->
-                <div class="skill-top">
-                    <div class="skill-icon">{def.icon}</div>
-                    <div class="skill-info">
-                        <div class="skill-name-row">
-                            <h3 class="skill-name">{def.name}</h3>
-                            <span class="skill-level-count" style="color: {maxed ? '#34d399' : accentColor}">{current}/{def.maxLevel}</span>
+    <!-- ═══ Skill tree ═══ -->
+    <div class="tree-head">
+        <h3 class="tree-title">Skills</h3>
+        <span class="tree-meta"><b>{spInvested}</b> / {spTotal} SP invested · {maxedCount} of {skillDefs.length} maxed</span>
+        <span class="tree-hint">Each level costs one more SP than the last · Club Capacity is always 1 SP</span>
+    </div>
+
+    {#each GROUPS as g (g.id)}
+        <section class="grp" style="--g: {g.c};">
+            <div class="grp-head"><span class="grp-ico"><Icon name={g.icon} size={14} stroke={2.2} /></span><span class="grp-label">{g.label}</span><span class="grp-note">{g.note}</span></div>
+            <div class="grid">
+                {#each skillDefs.filter(d => d.group === g.id) as def (def.id)}
+                    {@const current = $skills[def.id] || 0}
+                    {@const cost = getSkillCost(def.id)}
+                    {@const maxed = current >= def.maxLevel}
+                    {@const canAfford = $skillPoints >= cost}
+                    <article class="skc" class:skc-max={maxed} class:skc-ready={!maxed && canAfford} style="--c: {def.c};">
+                        <div class="skc-top">
+                            <span class="skc-ico"><Icon name={def.icon} size={20} stroke={2} /></span>
+                            <div class="skc-titles">
+                                <h4 class="skc-name">{def.name}</h4>
+                                <p class="skc-desc">{def.desc}</p>
+                            </div>
+                            <span class="skc-lv">{current}<span>/{def.maxLevel}</span></span>
                         </div>
-                        <p class="skill-desc">{def.desc}</p>
-                        <p class="skill-per-level" style="color: {accentColor}">{def.perLevel}</p>
-                    </div>
-                </div>
 
-                <!-- Level dots -->
-                <div class="skill-dots-wrap">
-                    <div class="skill-dots">
-                        {#each Array(def.maxLevel) as _, i}
-                            <div class="skill-dot" style="background: {i < current ? barColor : '#334155'}"></div>
-                        {/each}
-                    </div>
-                </div>
+                        <div class="pips" class:pips-many={def.maxLevel > 6}>
+                            {#each Array(def.maxLevel) as _, i}<span class="pip" class:pip-on={i < current}></span>{/each}
+                        </div>
 
-                <!-- Upgrade button -->
-                <div class="skill-btn-wrap">
-                    {#if maxed}
-                        <div class="skill-btn-maxed">✓ Maxed</div>
-                    {:else}
-                        <button
-                            class="skill-btn"
-                            style="
-                                background: {canAfford ? btn.bg : 'rgba(51,65,85,0.5)'};
-                                color: {canAfford ? btn.text : '#475569'};
-                                border-color: {canAfford ? btn.border : '#334155'};
-                                cursor: {canAfford ? 'pointer' : 'not-allowed'};
-                            "
-                            disabled={!canAfford}
-                            on:click={() => upgradeSkill(def.id)}
-                            on:mouseenter={(e) => { if (canAfford) e.currentTarget.style.background = btn.bgHover; }}
-                            on:mouseleave={(e) => { if (canAfford) e.currentTarget.style.background = btn.bg; }}
-                        >
-                            Upgrade → Lv {current + 1} ({cost} SP)
-                        </button>
-                    {/if}
-                </div>
+                        {#if def.effect}
+                            <div class="fx">
+                                <div class="fx-row"><span class="fx-k">Now</span><span class="fx-v" class:fx-v-dim={current === 0}>{current === 0 ? 'Not learned' : def.effect(current)}</span></div>
+                                {#if !maxed}<div class="fx-row fx-next"><span class="fx-k">Next</span><span class="fx-v">{def.effect(current + 1)}</span></div>{/if}
+                            </div>
+                        {:else}
+                            <div class="fx"><div class="fx-row"><span class="fx-v fx-v-plain">{def.perLevel}</span></div></div>
+                        {/if}
+
+                        {#if maxed}
+                            <div class="skc-maxed"><Icon name="check" size={14} stroke={2.8} /> Maxed</div>
+                        {:else}
+                            <button class="skc-btn" disabled={!canAfford} on:click={() => upgradeSkill(def.id)} use:pressFx={{ color: 'rgba(255,255,255,0.35)' }}>
+                                {#if canAfford}<Icon name="upgrade" size={14} stroke={2.4} /> Upgrade to Lv {current + 1} · {cost} SP
+                                {:else}<Icon name="lock" size={13} stroke={2.2} /> Needs {cost} SP{/if}
+                            </button>
+                        {/if}
+                    </article>
+                {/each}
             </div>
-        {/each}
-    </div>
+        </section>
+    {/each}
 
-    <!-- Prestige Panel -->
+    <!-- ═══ Prestige ═══ -->
     {#if $managerLevel >= 100 || $prestige > 0}
-    <div class="prestige-panel">
-        <div class="prestige-header">
-            <div>
-                <div class="prestige-badge">{'⭐'.repeat(Math.min($prestige, 5))} {$prestige > 0 ? `Prestige ${$prestige}` : ''}</div>
-                <div class="prestige-title">Manager Prestige</div>
-                <div class="prestige-desc">Reach Level 100, then reset your XP and skills for a Prestige badge. Keep all cards, BE, and trophies.</div>
+        <section class="pr">
+            <div class="pr-stars" aria-hidden="true">
+                {#each Array(Math.max(1, Math.min($prestige, 5))) as _, i}<span class="pr-star" class:pr-star-off={$prestige === 0}><Icon name="star" size={22} stroke={1.8} /></span>{/each}
+            </div>
+            <div class="pr-text">
+                <span class="pr-eyebrow">Manager Prestige{$prestige > 0 ? ` · ${$prestige} earned` : ''}</span>
+                <h3 class="pr-title">{$managerLevel >= 100 ? `Prestige ${$prestige + 1} is ready` : `Prestige ${$prestige}`}</h3>
+                <p class="pr-desc">At level 100, reset your level, XP and skills for a Prestige star and a Hall of Champions badge. Cards, BE and trophies are kept.</p>
             </div>
             {#if $managerLevel >= 100}
-                <button class="prestige-btn" on:click={() => {
-                    if (confirm(`Prestige ${$prestige + 1}? This resets Level, XP, and all Skills to 0. You keep cards, BE, and trophies.`)) {
-                        if (prestigeManager()) {
-                            checkMilestoneCards();
-                            saveGame();
-                            showToast(`Prestige ${$prestige}! Skills reset. You keep everything else.`, 'success');
-                        }
-                    }
-                }}>
-                    ⭐ Prestige {$prestige + 1}
-                </button>
+                <button class="pr-btn" on:click={doPrestige} use:pressFx={{ color: 'rgba(255,255,255,0.45)' }}><Icon name="star" size={15} stroke={2.4} /> Prestige {$prestige + 1}</button>
             {:else}
-                <div class="prestige-locked">Reach Level 100 to unlock</div>
+                <span class="pr-locked">Next at level 100 · you are {$managerLevel}</span>
             {/if}
-        </div>
-        {#if $prestige > 0}
-        <div class="prestige-perks">
-            {#each Array($prestige) as _, i}
-            <div class="prestige-perk">⭐ Prestige {i+1} — Hall of Champions badge earned</div>
-            {/each}
-        </div>
-        {/if}
-    </div>
+        </section>
     {/if}
-
-    <!-- Skills Summary -->
-    <div class="summary-panel">
-        <h3 class="summary-title">Active Bonuses</h3>
-        <div class="summary-grid">
-            {#each skillDefs as def}
-                {@const current = $skills[def.id] || 0}
-                {#if current > 0}
-                    <div class="summary-item">
-                        <span class="summary-label">{def.icon} {def.name}</span>
-                        <span class="summary-value" style="color: {colorMap[def.textColor] || '#e2e8f0'}">Lv {current}</span>
-                    </div>
-                {/if}
-            {/each}
-            {#if Object.values($skills).every(v => !v)}
-                <div class="summary-empty">No skills upgraded yet.</div>
-            {/if}
-        </div>
-    </div>
 </section>
 
 <style>
-    .skills-page {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 8px 0 40px;
-    }
+    .sk { display: flex; flex-direction: column; gap: 16px; max-width: 1200px; margin: 0 auto; padding-bottom: 40px; }
 
-    /* ---------- Header ---------- */
-    .skills-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 20px;
+    /* ── Hero ── */
+    .skh {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+        padding: 22px 26px; border-radius: 24px;
+        background: radial-gradient(60% 140% at 0% 50%, rgba(129,140,248,0.18), transparent 65%), linear-gradient(120deg, #10102a, #0b0e1a 60%);
+        border: 1px solid rgba(129,140,248,0.28);
     }
-    .skills-title {
-        font-size: 22px;
-        font-weight: 900;
-        color: #34d399;
-        letter-spacing: 0.05em;
-        margin: 0;
-    }
-    .skills-subtitle {
-        font-size: 12px;
-        color: #64748b;
-        font-family: monospace;
-        margin: 2px 0 0;
-    }
-    .sp-counter {
-        background: rgba(12, 16, 28, 0.5);
-        padding: 8px 16px;
-        border-radius: 12px;
-        border: 1px solid rgba(51, 65, 85, 0.2);
-        text-align: center;
-    }
-    .sp-value {
-        font-size: 20px;
-        font-weight: 900;
-        color: #facc15;
-    }
-    .sp-label {
-        font-size: 8px;
-        color: #64748b;
-        text-transform: uppercase;
-        font-weight: 700;
-    }
+    .skh-glow { position: absolute; right: -90px; top: -130px; width: 380px; height: 380px; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, rgba(250,204,21,0.1), transparent 65%); }
+    .skh-ring { position: relative; width: 112px; height: 112px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .skh-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+    .ring-bg { fill: none; stroke: rgba(51,65,85,0.6); stroke-width: 10; }
+    .ring-fg { fill: none; stroke: #818cf8; stroke-width: 10; stroke-linecap: round; filter: drop-shadow(0 0 6px rgba(129,140,248,0.6)); transition: stroke-dasharray 0.6s ease; }
+    .lv-l { position: relative; font-size: 9px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: #64748b; }
+    .lv-n { position: relative; font-size: 34px; font-weight: 900; color: #eef2ff; line-height: 1; font-variant-numeric: tabular-nums; }
+    .skh-text { position: relative; flex: 1; min-width: 260px; }
+    .skh-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; color: #818cf8; }
+    .pr-tag { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 2px 8px; border-radius: 100px; letter-spacing: 1px; color: #1c1404; background: #fbbf24; }
+    .skh-title { font-size: clamp(24px, 3vw, 34px); font-weight: 900; color: #fff; letter-spacing: -0.4px; margin-top: 6px; }
+    .skh-sub { font-size: 13px; color: #94a3b8; margin-top: 4px; }
+    .xp { margin-top: 12px; max-width: 520px; }
+    .xp-bar { height: 8px; border-radius: 8px; background: rgba(30,41,59,0.9); overflow: hidden; }
+    .xp-fill { height: 100%; border-radius: 8px; background: linear-gradient(90deg, #6366f1, #a5b4fc); transition: width 0.5s ease; }
+    .xp-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; font-size: 11px; color: #64748b; font-weight: 700; flex-wrap: wrap; }
+    .xp-meta b { color: #e2e8f0; }
+    .skh-sp { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 150px; padding: 14px 18px; border-radius: 20px; background: rgba(2,6,23,0.5); border: 1px solid rgba(148,163,184,0.16); }
+    .skh-sp-on { border-color: rgba(250,204,21,0.5); background: radial-gradient(circle at 50% 0%, rgba(250,204,21,0.18), transparent 70%), rgba(2,6,23,0.5); box-shadow: 0 0 30px rgba(250,204,21,0.12); }
+    .sp-n { font-size: 40px; font-weight: 900; line-height: 1; color: #fde68a; font-variant-numeric: tabular-nums; }
+    .sp-l { font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #a1a1aa; margin-top: 4px; }
+    .sp-note { font-size: 11px; color: #64748b; margin-top: 6px; font-weight: 700; }
+    .skh-sp-on .sp-note { color: #facc15; }
 
-    /* ---------- XP Panel ---------- */
-    .xp-panel {
-        background: rgba(12, 16, 28, 0.5);
-        padding: 16px;
-        border-radius: 12px;
-        border: 1px solid rgba(51, 65, 85, 0.2);
-        margin-bottom: 24px;
-    }
-    .xp-top {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 8px;
-    }
-    .xp-left {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-    .level-badge {
-        background: #4f46e5;
-        color: #fff;
-        font-weight: 900;
-        font-size: 18px;
-        width: 40px;
-        height: 40px;
-        border-radius: 8px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    }
-    .level-title {
-        font-size: 14px;
-        font-weight: 900;
-        color: #e2e8f0;
-    }
-    .level-hint {
-        font-size: 10px;
-        color: #64748b;
-    }
-    .xp-numbers {
-        font-size: 12px;
-        font-family: monospace;
-        color: #94a3b8;
-    }
-    .xp-track {
-        width: 100%;
-        background: #334155;
-        border-radius: 9999px;
-        height: 10px;
-        overflow: hidden;
-    }
-    .xp-fill {
-        height: 100%;
-        border-radius: 9999px;
-        background: linear-gradient(to right, #4f46e5, #60a5fa);
-        transition: width 0.5s ease;
-    }
-    .xp-footer {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 6px;
-        font-size: 9px;
-        color: #475569;
-    }
+    /* ── Panels ── */
+    .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+    .panel { padding: 16px; border-radius: 20px; background: rgba(12,16,28,0.6); border: 1px solid rgba(71,85,105,0.25); }
+    .p-head { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; flex-wrap: wrap; }
+    .p-ico { width: 30px; height: 30px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
+    .p-title { font-size: 13px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #e2e8f0; }
+    .p-note { margin-left: auto; font-size: 11px; font-weight: 700; color: #64748b; }
+    .p-note-on { color: #fbbf24; }
+    .p-foot { margin-top: 10px; font-size: 11px; color: #64748b; line-height: 1.5; }
 
-    /* ---------- Title Panel ---------- */
-    .title-panel {
-        background: rgba(12,16,28,0.5); border: 1px solid rgba(51,65,85,0.2);
-        border-radius: 16px; padding: 20px; margin-bottom: 20px;
-    }
-    .title-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .title-label { font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #475569; }
-    .title-current { font-size: 22px; font-weight: 900; margin-top: 2px; }
-    .title-tp { font-size: 18px; font-weight: 900; color: #fbbf24; }
-    .title-next { font-size: 11px; color: #64748b; margin-bottom: 8px; }
-    .title-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; overflow: hidden; margin-bottom: 14px; }
-    .title-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
-    .title-max { font-size: 11px; font-weight: 800; color: #fbbf24; margin-bottom: 14px; }
-    .title-list { display: flex; flex-direction: column; gap: 4px; }
-    .title-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-    .title-row-current { font-weight: 900; }
-    .tr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .tr-title { font-size: 12px; font-weight: 700; flex: 1; }
-    .tr-req { font-size: 10px; color: #475569; font-family: monospace; }
-    .tr-you { font-size: 9px; font-weight: 900; color: #60a5fa; }
-    .title-hint { font-size: 9px; color: #334155; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(51,65,85,0.15); }
+    .tt-now { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .tt-name { font-size: 26px; font-weight: 900; letter-spacing: -0.3px; }
+    .tt-next { font-size: 12px; color: #94a3b8; }
+    .tt-bar { height: 6px; border-radius: 6px; margin: 8px 0 14px; background: rgba(30,41,59,0.9); overflow: hidden; }
+    .tt-fill { height: 100%; border-radius: 6px; transition: width 0.5s; }
+    .ladder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+    .lr { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 10px; background: rgba(15,23,42,0.55); border: 1px solid rgba(51,65,85,0.3); opacity: 0.55; }
+    .lr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: rgba(71,85,105,0.6); }
+    .lr-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 800; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lr-tp { font-size: 10px; font-weight: 800; color: #475569; font-variant-numeric: tabular-nums; }
+    .lr-done { opacity: 0.85; }
+    .lr-done .lr-dot { background: var(--c); }
+    .lr-now { opacity: 1; border-color: color-mix(in srgb, var(--c) 60%, transparent); background: color-mix(in srgb, var(--c) 12%, rgba(15,23,42,0.55)); }
+    .lr-now .lr-dot { background: var(--c); box-shadow: 0 0 8px var(--c); }
+    .lr-now .lr-name, .lr-done .lr-name { color: var(--c); }
 
-    /* ---------- Skills Grid ---------- */
-    .skills-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
-    @media (max-width: 640px) {
-        .skills-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-    .skill-card {
-        background: rgba(12, 16, 28, 0.5);
-        border-radius: 12px;
-        border: 1px solid rgba(51, 65, 85, 0.2);
-        overflow: hidden;
-    }
+    .src { display: flex; flex-direction: column; gap: 5px; }
+    .src-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; background: rgba(15,23,42,0.55); border: 1px solid rgba(51,65,85,0.3); }
+    .src-ico { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #a5b4fc; background: rgba(129,140,248,0.12); }
+    .src-label { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 12px; font-weight: 800; color: #e2e8f0; }
+    .src-note { font-size: 10px; font-weight: 600; color: #64748b; }
+    .src-val { font-size: 12px; font-weight: 900; color: #c7d2fe; text-align: right; }
 
-    /* Skill top section */
-    .skill-top {
-        padding: 16px;
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-    }
-    .skill-icon {
-        font-size: 24px;
-        margin-top: 2px;
-        flex-shrink: 0;
-    }
-    .skill-info {
-        flex: 1;
-        min-width: 0;
-    }
-    .skill-name-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 4px;
-    }
-    .skill-name {
-        font-size: 14px;
-        font-weight: 900;
-        color: #e2e8f0;
-        margin: 0;
-    }
-    .skill-level-count {
-        font-size: 12px;
-        font-weight: 900;
-    }
-    .skill-desc {
-        font-size: 10px;
-        color: #64748b;
-        margin: 0 0 8px;
-    }
-    .skill-per-level {
-        font-size: 9px;
-        font-weight: 700;
-        margin: 0;
-    }
+    /* ── Skill tree ── */
+    .tree-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 6px; padding: 0 4px; }
+    .tree-title { font-size: 20px; font-weight: 900; color: #fff; }
+    .tree-meta { font-size: 12px; color: #64748b; font-weight: 700; }
+    .tree-meta b { color: #fde68a; }
+    .tree-hint { margin-left: auto; font-size: 11px; color: #475569; }
+    .grp { padding: 14px; border-radius: 20px; background: linear-gradient(170deg, color-mix(in srgb, var(--g) 7%, rgba(12,16,28,0.75)), rgba(10,13,24,0.75) 45%); border: 1px solid color-mix(in srgb, var(--g) 22%, rgba(71,85,105,0.2)); }
+    .grp-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .grp-ico { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--g); background: color-mix(in srgb, var(--g) 15%, transparent); }
+    .grp-label { font-size: 13px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: var(--g); }
+    .grp-note { font-size: 11px; color: #64748b; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 
-    /* Level dots */
-    .skill-dots-wrap {
-        padding: 0 16px 8px;
+    .skc { display: flex; flex-direction: column; gap: 11px; padding: 14px; border-radius: 16px; background: rgba(2,6,23,0.5); border: 1px solid rgba(71,85,105,0.3); transition: border-color 0.15s, transform 0.15s; }
+    .skc:hover { border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+    .skc-ready { border-color: color-mix(in srgb, var(--c) 40%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 12%, transparent), 0 8px 24px color-mix(in srgb, var(--c) 8%, transparent); }
+    .skc-max { background: linear-gradient(160deg, color-mix(in srgb, var(--c) 10%, transparent), rgba(2,6,23,0.5) 60%); border-color: color-mix(in srgb, var(--c) 35%, transparent); }
+    .skc-top { display: flex; align-items: flex-start; gap: 11px; }
+    .skc-ico { width: 42px; height: 42px; border-radius: 13px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
+    .skc-titles { flex: 1; min-width: 0; }
+    .skc-name { font-size: 14px; font-weight: 900; color: #f1f5f9; }
+    .skc-desc { font-size: 11px; color: #64748b; margin-top: 2px; line-height: 1.4; }
+    .skc-lv { font-size: 18px; font-weight: 900; color: var(--c); font-variant-numeric: tabular-nums; }
+    .skc-lv span { font-size: 11px; color: #475569; }
+    .pips { display: flex; gap: 4px; }
+    .pip { flex: 1; height: 6px; border-radius: 6px; background: rgba(51,65,85,0.6); }
+    .pips-many { gap: 2px; }
+    .pips-many .pip { height: 5px; border-radius: 3px; }
+    .pip-on { background: var(--c); box-shadow: 0 0 6px color-mix(in srgb, var(--c) 50%, transparent); }
+    .fx { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 11px; background: rgba(15,23,42,0.6); }
+    .fx-row { display: flex; align-items: baseline; gap: 8px; }
+    .fx-k { width: 34px; flex-shrink: 0; font-size: 9px; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; color: #475569; }
+    .fx-v { font-size: 12px; font-weight: 800; color: #e2e8f0; }
+    .fx-v-dim { color: #64748b; }
+    .fx-next .fx-v { color: var(--c); }
+    .fx-v-plain { font-size: 11px; font-weight: 700; color: #94a3b8; line-height: 1.4; }
+    .skc-btn {
+        position: relative; overflow: hidden; margin-top: auto; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+        width: 100%; padding: 10px; border-radius: 12px; cursor: pointer; font-size: 12px; font-weight: 900;
+        color: #0b1020; border: none; background: linear-gradient(180deg, color-mix(in srgb, var(--c) 70%, #fff), var(--c));
+        box-shadow: 0 6px 18px color-mix(in srgb, var(--c) 30%, transparent);
     }
-    .skill-dots {
-        display: flex;
-        gap: 4px;
-    }
-    .skill-dot {
-        height: 6px;
-        flex: 1;
-        border-radius: 9999px;
-    }
+    .skc-btn:hover:not(:disabled) { transform: translateY(-1px); }
+    .skc-btn:disabled { cursor: not-allowed; color: #64748b; background: rgba(30,41,59,0.6); box-shadow: none; border: 1px solid rgba(71,85,105,0.35); }
+    .skc-maxed { margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px; border-radius: 12px; font-size: 12px; font-weight: 900; color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
 
-    /* Upgrade button */
-    .skill-btn-wrap {
-        padding: 0 16px 16px;
+    /* ── Prestige ── */
+    .pr {
+        display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 20px 24px; border-radius: 22px;
+        background: radial-gradient(60% 160% at 0% 50%, rgba(251,191,36,0.16), transparent 60%), rgba(20,16,8,0.7);
+        border: 1px solid rgba(251,191,36,0.35);
     }
-    .skill-btn-maxed {
-        width: 100%;
-        padding: 8px 0;
-        border-radius: 8px;
-        text-align: center;
-        font-size: 12px;
-        font-weight: 700;
-        background: rgba(6, 78, 59, 0.3);
-        color: #34d399;
-        border: 1px solid rgba(4, 120, 87, 0.3);
-        box-sizing: border-box;
-    }
-    .skill-btn {
-        width: 100%;
-        padding: 8px 0;
-        border-radius: 8px;
-        font-size: 12px;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        border-width: 1px;
-        border-style: solid;
-        transition: background 0.15s ease;
-        box-sizing: border-box;
-    }
+    .pr-stars { display: flex; gap: 2px; color: #fbbf24; }
+    .pr-star :global(svg) { fill: currentColor; filter: drop-shadow(0 0 8px rgba(251,191,36,0.6)); }
+    .pr-star-off { color: #475569; }
+    .pr-star-off :global(svg) { fill: none; filter: none; }
+    .pr-text { flex: 1; min-width: 240px; }
+    .pr-eyebrow { font-size: 10px; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; color: #fbbf24; }
+    .pr-title { font-size: 20px; font-weight: 900; color: #fef3c7; margin-top: 4px; }
+    .pr-desc { font-size: 12px; color: #a8a29e; margin-top: 4px; max-width: 520px; }
+    .pr-btn { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 8px; padding: 13px 24px; border-radius: 14px; cursor: pointer; font-size: 14px; font-weight: 900; color: #1c1404; border: none; background: linear-gradient(135deg, #fde68a, #f59e0b); box-shadow: 0 8px 24px rgba(245,158,11,0.35); }
+    .pr-btn:hover { transform: translateY(-1px); }
+    .pr-locked { font-size: 12px; color: #78716c; font-weight: 700; }
 
-    /* ---------- Summary Panel ---------- */
-    .summary-panel {
-        margin-top: 24px;
-        background: rgba(12, 16, 28, 0.5);
-        padding: 16px;
-        border-radius: 12px;
-        border: 1px solid rgba(51, 65, 85, 0.2);
+    @media (max-width: 900px) {
+        .row { grid-template-columns: 1fr; }
+        .tree-hint { margin-left: 0; width: 100%; }
     }
-    .summary-title {
-        font-size: 10px;
-        font-weight: 900;
-        color: #64748b;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        margin: 0 0 12px;
+    @media (max-width: 600px) {
+        .skh { padding: 18px; gap: 16px; }
+        .skh-ring { width: 90px; height: 90px; }
+        .lv-n { font-size: 28px; }
+        .skh-sp { width: 100%; flex-direction: row; justify-content: center; gap: 10px; min-width: 0; }
+        .sp-n { font-size: 30px; }
+        .sp-l, .sp-note { margin-top: 0; }
+        .ladder { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid { grid-template-columns: 1fr; }
     }
-    .summary-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 8px;
-        font-size: 12px;
-        font-family: monospace;
-    }
-    @media (max-width: 640px) {
-        .summary-grid {
-            grid-template-columns: 1fr 1fr;
-        }
-    }
-    .summary-item {
-        display: flex;
-        justify-content: space-between;
-        background: rgba(12, 16, 28, 0.4);
-        padding: 8px;
-        border-radius: 8px;
-    }
-    .summary-label {
-        color: #94a3b8;
-    }
-    .summary-value {
-        font-weight: 700;
-    }
-    .summary-empty {
-        grid-column: 1 / -1;
-        text-align: center;
-        color: #475569;
-        padding: 8px 0;
-    }
-
-    /* Prestige */
-    .prestige-panel { background: linear-gradient(135deg, rgba(251,191,36,0.06), rgba(12,16,28,0.5)); border: 1px solid rgba(251,191,36,0.2); border-radius: 16px; padding: 20px 24px; margin-bottom: 20px; }
-    .prestige-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    .prestige-badge { font-size: 16px; font-weight: 900; color: #fbbf24; margin-bottom: 4px; }
-    .prestige-title { font-size: 14px; font-weight: 900; color: #fde047; }
-    .prestige-desc { font-size: 11px; color: #64748b; margin-top: 4px; max-width: 420px; }
-    .prestige-btn { padding: 12px 24px; border-radius: 12px; background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917; font-weight: 900; font-size: 13px; border: none; cursor: pointer; flex-shrink: 0; transition: all 0.15s; }
-    .prestige-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(251,191,36,0.3); }
-    .prestige-locked { font-size: 11px; color: #475569; font-style: italic; flex-shrink: 0; }
-    .prestige-perks { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
-    .prestige-perk { font-size: 11px; color: #fbbf24; background: rgba(251,191,36,0.05); border-radius: 8px; padding: 6px 10px; }
 </style>

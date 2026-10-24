@@ -19,7 +19,7 @@
     export let eager = 0;
     export let minCol = 170;
     export let gap = 10;
-    export let rowHeight = 262;
+    export let rowHeight = 266;   // a mini card's fixed height
 
     let width = 0;
     // Before the grid has been measured, guess a desktop row rather than one card per row —

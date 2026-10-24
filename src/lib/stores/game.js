@@ -461,8 +461,15 @@ export function initGame() {
         bench.set(rawBench.map(c => c ? (validateCard(c, getCardById, dbLoaded) || null) : null));
     }
 
+    // The showcase is a list of club uniqueIds, not cards — it used to go through
+    // sanitiseCards, which drops every non-object, so it was wiped on every load. A card
+    // object from an older save is reduced to its id; the Club tab resolves ids against the
+    // club and ignores any that no longer exist.
     const sc = loadFromStorage('lur_showcase');
-    if (sc) showcasePicks.set(sanitiseCards(sc));
+    if (Array.isArray(sc)) {
+        const ids = sc.map(x => (x && typeof x === 'object' ? x.uniqueId : x)).filter(x => typeof x === 'string' && x);
+        showcasePicks.set([...new Set(ids)].slice(0, 3));
+    }
 
     const st = loadFromStorage('lur_starter');
     if (st !== null) hasBoughtStarter.set(st === true || st === 'true');

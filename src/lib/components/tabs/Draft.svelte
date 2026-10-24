@@ -557,7 +557,7 @@
     .build-squad { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
     .build-slot { position: relative; text-align: center; }
     .build-role { font-size: 10px; font-weight: 900; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-    .build-empty { width: 180px; height: 260px; border-radius: 14px; border: 2px dashed rgba(51,65,85,0.3); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #334155; font-weight: 700; cursor: pointer; transition: all 0.12s; }
+    .build-empty { width: 180px; height: 266px; border-radius: 14px; border: 2px dashed rgba(51,65,85,0.3); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #334155; font-weight: 700; cursor: pointer; transition: all 0.12s; }
     .build-empty:hover { border-color: rgba(168,85,247,0.4); color: #c084fc; }
     .build-picking { border-color: rgba(168,85,247,0.6) !important; color: #c084fc !important; background: rgba(168,85,247,0.05); }
     .build-remove { position: absolute; top: 20px; right: -4px; z-index: 5; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,0.7); border: 1px solid rgba(239,68,68,0.3); color: #f87171; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; }

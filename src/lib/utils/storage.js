@@ -18,7 +18,7 @@
 //  a player who switches slot should not lose their theme and get their audio
 //  unmuted.
 
-const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_light_mode', 'lur_display_scale']);
+const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards']);
 
 // Slot bookkeeping lives under its own prefix so it can never be namespaced by
 // its own resolver (`lurmeta_` matches neither `lur_` nor `lurc_`).

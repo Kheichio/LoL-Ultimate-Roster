@@ -44,7 +44,7 @@ slots exist.
 
 - **Slot 1 is the bare key.** Every save that predates slots is already slot 1; nothing was
   migrated and nothing can be lost migrating it. Slots 2 and 3 append `@2` / `@3`.
-- `lur_sound_muted`, `lur_light_mode`, `lur_display_scale` are DEVICE preferences and are never
+- `lur_sound_muted`, `lur_light_mode`, `lur_display_scale`, `lur_match_cards` are DEVICE preferences and are never
   namespaced. Namespacing them would reset the player's theme on every switch.
 - `clearStorage()` is prefix-scoped, not `localStorage.clear()`: it erases every slot in both
   gamemodes and keeps device preferences.

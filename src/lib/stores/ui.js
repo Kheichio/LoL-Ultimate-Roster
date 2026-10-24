@@ -24,6 +24,14 @@ export const soundMuted = writable(localStorage.getItem('lur_sound_muted') === '
 export const displayScale = writable(localStorage.getItem('lur_display_scale') || 'auto');
 export const lightMode = writable(localStorage.getItem('lur_light_mode') === '1');
 
+// Match screens: show each lineup as the real cards (true, the default) or as compact player
+// rows (false). A device preference like the theme — listed in storage.js DEVICE_KEYS so a
+// save-slot switch never resets it.
+export const matchCardView = writable(localStorage.getItem('lur_match_cards') !== '0');
+matchCardView.subscribe(v => {
+    try { localStorage.setItem('lur_match_cards', v ? '1' : '0'); } catch (e) { /* private mode */ }
+});
+
 export function toggleLightMode() {
     lightMode.update(v => {
         const next = !v;

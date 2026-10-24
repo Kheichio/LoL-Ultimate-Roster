@@ -1,7 +1,8 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import Card from '../card/Card.svelte';
-    import { club, squad, academy, blueEssence, trackStats, collectionRegistry, tradeMarket, saveGame } from '../../stores/game.js';
+    import { club, squad, academy, blueEssence, trackStats, collectionRegistry, tradeMarket, skills, saveGame } from '../../stores/game.js';
+    import { tradeMastery, tradePrice } from '../../utils/skillEffects.js';
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal } from '../../stores/ui.js';
     import { playSound } from '../../utils/sound.js';
@@ -14,7 +15,7 @@
     // resets every 15 minutes; each listing can be signed once per rotation. Signings are
     // never holographic or signature — those are pull-time flags only.
     const WINDOW_MS = 15 * 60 * 1000;   // rotation length
-    const OFFER_COUNT = 6;              // listings per rotation
+    const OFFER_COUNT = 6;              // listings per rotation, before Trade Mastery
 
     // What can appear on the board, weighted. Higher tiers are rarer.
     const MARKET_DROPS = [
@@ -62,12 +63,15 @@
     }
 
     // Build one rotation's worth of visible listings. No duplicate players within a rotation.
-    function buildOffers(db, windowIndex) {
+    // Trade Mastery's extra listings are simply drawn further along the same seeded sequence,
+    // so the first six are identical whatever your level — levelling mid-rotation adds
+    // listings, it never reshuffles the ones already on the board.
+    function buildOffers(db, windowIndex, count) {
         const rng = mulberry32((windowIndex * 2654435761) >>> 0);
         const offers = [];
         const usedIds = new Set();
         let guard = 0;
-        while (offers.length < OFFER_COUNT && guard < OFFER_COUNT * 60) {
+        while (offers.length < count && guard < count * 60) {
             guard++;
             const tier = rollTierSeeded(MARKET_DROPS, rng);
             const pool = poolForTier(db, tier, { includeCoach: false });
@@ -111,11 +115,20 @@
         return `${mm}:${ss}`;
     }
 
-    // Rebuild the board only when the 15-minute window changes (or once the DB loads).
+    // Trade Mastery: more listings, and a discount applied at display AND at sign-time.
+    $: tradeLevel = $skills.trading || 0;
+    $: mastery = tradeMastery(tradeLevel);
+    $: listingCount = OFFER_COUNT + mastery.extraListings;
+    $: pricedOffers = offers.map(o => ({ ...o, ...tradePrice(o.cardCost, o.beCost, tradeLevel), baseCardCost: o.cardCost, baseBeCost: o.beCost }));
+    let builtCount = 0;
+
+    // Rebuild the board only when the 15-minute window changes, the DB loads, or Trade
+    // Mastery changes how many listings there are.
     function refreshIfNeeded(db, wIdx) {
-        if (!db || builtWindow === wIdx) return;
+        if (!db || (builtWindow === wIdx && builtCount === listingCount)) return;
         builtWindow = wIdx;
-        offers = buildOffers(db, wIdx);
+        builtCount = listingCount;
+        offers = buildOffers(db, wIdx, listingCount);
         // New rotation → wipe the claim ledger. Same rotation (e.g. reload) → keep it.
         if (get(tradeMarket).window !== wIdx) {
             tradeMarket.set({ window: wIdx, claimed: {} });
@@ -212,6 +225,11 @@
         <div>
             <h2 class="trade-title">Transfer Market</h2>
             <p class="trade-desc">Rotating signings — <b>you see exactly who you're trading for</b>. Feed in your spare cards plus Blue Essence to sign a listed player. The board is randomised and refreshes every 15 minutes.</p>
+            {#if tradeLevel > 0}
+                <p class="trade-mastery">Trade Mastery Lv {tradeLevel} · {listingCount} listings{mastery.cardDiscount ? ` · −${mastery.cardDiscount} card${mastery.cardDiscount === 1 ? '' : 's'} per signing` : ''} · −{Math.round(mastery.beDiscount * 100)}% BE</p>
+            {:else}
+                <p class="trade-mastery trade-mastery-off">Trade Mastery in Skills adds listings and cuts what every signing costs.</p>
+            {/if}
         </div>
         <div class="trade-side">
             <div class="trade-timer">
@@ -229,7 +247,7 @@
         <div class="trade-empty">Loading the transfer board…</div>
     {:else}
         <div class="trade-grid">
-            {#each offers as offer (offer.key)}
+            {#each pricedOffers as offer (offer.key)}
                 {@const enoughCards = fodder.length >= offer.cardCost}
                 {@const enoughBE = $blueEssence >= offer.beCost}
                 {@const isClaimed = !!claimed[offer.key]}
@@ -244,11 +262,11 @@
                     <div class="offer-cost">
                         <div class="offer-cost-row">
                             <span class="oc-label">Trade in</span>
-                            <span class="oc-val" class:oc-short={!enoughCards}>{offer.cardCost} cards ({fodder.length} spare)</span>
+                            <span class="oc-val" class:oc-short={!enoughCards}>{#if offer.cardCost < offer.baseCardCost}<s class="oc-was">{offer.baseCardCost}</s>{/if}{offer.cardCost} cards ({fodder.length} spare)</span>
                         </div>
                         <div class="offer-cost-row">
                             <span class="oc-label">Cost</span>
-                            <span class="oc-val" class:oc-short={!enoughBE}>💎 {offer.beCost.toLocaleString()} BE</span>
+                            <span class="oc-val" class:oc-short={!enoughBE}>{#if offer.beCost < offer.baseBeCost}<s class="oc-was">{offer.baseBeCost.toLocaleString()}</s>{/if}💎 {offer.beCost.toLocaleString()} BE</span>
                         </div>
                         {#if enoughCards}
                             <div class="offer-fodder">
@@ -300,6 +318,9 @@
     .trade-title { font-size: 22px; font-weight: 900; color: #f59e0b; }
     .trade-desc { font-size: 12px; color: #64748b; margin-top: 3px; max-width: 620px; line-height: 1.5; }
     .trade-desc b { color: #fbbf24; }
+    .trade-mastery { display: inline-block; margin-top: 8px; padding: 4px 11px; border-radius: 100px; font-size: 11px; font-weight: 800; color: #fda4af; background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.3); }
+    .trade-mastery-off { color: #64748b; background: rgba(15,23,42,0.5); border-color: rgba(71,85,105,0.3); font-weight: 600; }
+    .oc-was { margin-right: 5px; color: #64748b; font-weight: 700; }
 
     .trade-side { display: flex; gap: 10px; align-items: stretch; }
     .trade-timer, .trade-bank { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px 18px; border-radius: 12px; }

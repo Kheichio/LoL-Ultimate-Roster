@@ -1205,7 +1205,7 @@
     }
     .seat-me { position: relative; }
     .seat-empty {
-        width: 180px; height: 252px;
+        width: 180px; height: 266px;
         border-radius: 14px;
         border: 2px dashed rgba(51, 65, 85, 0.28);
         background: rgba(12, 16, 28, 0.35);
