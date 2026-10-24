@@ -10,6 +10,19 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.7.7.2',
+        title: 'Ultimate Roster — A New Archive',
+        summary: 'The Archive is rebuilt. Your whole collection at a glance with one Claim All for every new discovery, a tile for every set showing how far through it you are, and a Missing filter that shows exactly which cards you still need.',
+        details: [
+            'NEW — the Archive header shows how much of the game you have collected, and one Claim All button collects every new discovery across every set at once (25 BE each), instead of one region or set at a time.',
+            'NEW — every set is a tile with its own progress bar and a count of new cards to claim, so you can see where you are at a glance and jump straight to it.',
+            'NEW — Owned / Missing filter, in every set and in All cards. Missing shows only the cards you have never pulled, so you know exactly what to hunt.',
+            'NEW — each set opens with its own progress (cards and teams complete), the six regions show their own counts, and every team shows what finishing it pays before you finish it.',
+            'NEW — "Most complete" and "Least complete" now sort by the whole team, so a search or filter never reshuffles them.',
+            'FIXED — a team\'s completion bonus was sized by the cards currently on screen, not the whole team. Claiming a finished 12-card team while a search showed three of its cards paid 200 BE instead of 2,000. It now always pays for the whole team.',
+        ],
+    },
+    {
         ver: 'Beta 1.7.7.1',
         title: 'Ultimate Roster — Scouting Network & Trade Mastery Work Now',
         summary: 'Two skills cost Skill Points and did nothing at all. Scouting Network now improves your odds on every pack, and Trade Mastery puts more players on the Transfer Market and makes every signing cheaper. If you already levelled either one, the effect is live on your save straight away.',
