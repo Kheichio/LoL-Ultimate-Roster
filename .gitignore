@@ -14,3 +14,4 @@ firestore.rules.minimal
 firestore.rules
 CLAUDE.md
 firestore.rules
+*.md
