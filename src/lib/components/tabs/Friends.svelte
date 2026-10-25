@@ -82,7 +82,7 @@
                             <span class="fr-logo">{r.teamLogo}</span>
                             <div class="fr-rowinfo">
                                 <span class="fr-name">{r.teamName}</span>
-                                <span class="fr-meta">{r.displayName} · 🏆 {r.trophies} · ⚡ {r.totalPower}</span>
+                                <span class="fr-meta">{r.displayName} · 🎖️ {r.trophies} · ⚡ {r.totalPower}</span>
                             </div>
                             {#if alreadyKnown(r.uid)}
                                 <span class="fr-tag">Added</span>

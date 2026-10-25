@@ -24,7 +24,8 @@
 //  attribute) and every number is clamped on read.
 import { writable, get } from 'svelte/store';
 import { currentUser } from './auth.js';
-import { squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks, skills } from './game.js';
+import { squad, club, blueEssence, trackStats, teamIdentity, managerLevel, weightedTrophies, showcasePicks, skills, seasonData } from './game.js';
+import { GR_STEPS } from '../utils/league.js';
 import { getEffectiveRating } from '../utils/cards.js';
 import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../utils/combat.js';
 
@@ -51,11 +52,14 @@ export function fmtNum(v) {
     return Number(v || 0).toLocaleString();
 }
 
+// `trophies` is the WEIGHTED score (stores/game.js weightedTrophies) and keeps its Firestore field
+// name — firestore.rules requires a field called `trophies` — but it is shown as "Achievement
+// Score". "Trophies" now means titles actually won, one each: the `titles` field.
 export const LB_COLUMNS = [
-    { key: 'trophies',        label: 'Trophies',     icon: 'trophy',   color: '#fbbf24', hint: 'Weighted titles: Worlds 6, MSI 4, First Stand 2, Regional 1, Golden Road 10' },
+    { key: 'trophies',        label: 'Achievement Score', icon: 'medal', color: '#fbbf24', hint: 'A weighted score of everything won: Worlds 6, MSI 4, First Stand 2, domestic title 1, Golden Road 10. It decides your manager title.' },
+    { key: 'titles',          label: 'Trophies',     icon: 'trophy',   color: '#facc15', hint: 'Titles actually won, one each: Worlds, MSI, First Stand and domestic Regional Trophies' },
     { key: 'totalPower',      label: 'Power',        icon: 'bolt',     color: '#34d399', hint: 'Squad power, the same number the Squad page shows' },
-    { key: 'goldenRoads',     label: 'Golden Roads', icon: 'crown',    color: '#eab308', hint: 'Years with all six titles won in order' },
-    { key: 'worldsWins',      label: 'Worlds',       icon: 'globe',    color: '#60a5fa', hint: 'World Championships won' },
+    { key: 'goldenRoads',     label: 'Golden Road',  icon: 'crown',    color: '#eab308', hint: 'Golden Roads completed, with each manager\'s road for the current year' },
     { key: 'splitsCompleted', label: 'Splits',       icon: 'calendar', color: '#818cf8', hint: 'Season splits completed' },
     { key: 'towerBest',       label: 'Tower',        icon: 'tower',    color: '#f472b6', hint: 'Highest Infinity Tower floor' },
     { key: 'clubSize',        label: 'Cards',        icon: 'cards',    color: '#a5b4fc', hint: 'Cards in the club' },
@@ -63,6 +67,23 @@ export const LB_COLUMNS = [
     { key: 'totalBE',         label: 'Blue Essence', icon: 'gem',      color: '#38bdf8', hint: 'Blue Essence banked', format: fmtNum },
 ];
 export const LB_SORT_KEYS = LB_COLUMNS.map(c => c.key);
+
+// The four kinds of title that make up "Trophies", in the order the breakdown shows them.
+export const TITLE_KINDS = [
+    { key: 'worldsWins',     label: 'Worlds',      icon: 'globe',  color: '#fbbf24' },
+    { key: 'msiWins',        label: 'MSI',         icon: 'waves',  color: '#2dd4bf' },
+    { key: 'firstStandWins', label: 'First Stand', icon: 'flame',  color: '#fb923c' },
+    { key: 'regionalWins',   label: 'Domestic',    icon: 'flag',   color: '#60a5fa' },
+];
+export { GR_STEPS };
+
+/** A Golden Road line for display: "3/6", "Road broken at MSI", "Complete!" — or '' with no data. */
+export function goldenRoadLine(r) {
+    if (!r || !r.grYear) return '';
+    if (r.grDone >= GR_STEPS.length) return `Year ${r.grYear} · complete`;
+    if (r.grBroken) return `Year ${r.grYear} · broken at ${GR_STEPS[r.grDone]?.label || 'the next step'}`;
+    return `Year ${r.grYear} · ${r.grDone}/${GR_STEPS.length}${r.grDone < GR_STEPS.length ? ` · next: ${GR_STEPS[r.grDone].label}` : ''}`;
+}
 
 export function prestigeTitle(tp) {
     if (tp >= 1000) return 'Immortal';
@@ -123,6 +144,7 @@ export function buildEntry(user = get(currentUser)) {
     const squadData = {};
     for (const role of [...ROLES, 'COACH']) if (sq[role]) squadData[role] = serializeCard(sq[role]);
     const n = k => clampInt(ts[k] || 0, 0, 1_000_000_000);
+    const gr = (get(seasonData) || {}).goldenRoad || {};
     return {
         displayName: str(user && user.displayName, 64, 'Manager'),
         teamName: str(ti.name, 64, 'Team'),
@@ -140,6 +162,13 @@ export function buildEntry(user = get(currentUser)) {
         splitsCompleted: n('splitsCompleted'), goldenRoads: n('goldenRoads'),
         cafeWins: n('cafeWins'), regionalWins: n('regionalSplitWon'),
         firstStandWins: n('firstStandWon'), msiWins: n('msiWon'), worldsWins: n('worldsWon'),
+        // Titles actually won, one each — what the board calls "Trophies". Additive fields: the
+        // published rules require four keys and never cap the key set, so these pass as they are.
+        titles: n('worldsWon') + n('msiWon') + n('firstStandWon') + n('regionalSplitWon'),
+        // This year's Golden Road, for the tracker.
+        grYear: clampInt(gr.year || 1, 1, 100_000),
+        grDone: clampInt(Array.isArray(gr.done) ? gr.done.length : 0, 0, GR_STEPS.length),
+        grBroken: !!gr.broken,
         losses: n('losses'), packsOpened: n('packs'), towerBest: n('towerHighestFloor'),
         favouriteTeam: str(ti.favouriteTeam, 40), favouritePlayer: str(ti.favouritePlayer, 40),
         mostPlayedMode: n('cafeWins') > n('splitsCompleted') ? 'Gaming Cafe' : 'Season Splits',
@@ -203,7 +232,7 @@ export function startLeaderboardSync() {
         if (!get(currentUser)) return;
         schedule(Math.max(FIRST_PUBLISH_MS, PUBLISH_GAP_MS - (Date.now() - lastWrite)));
     };
-    for (const s of [squad, club, blueEssence, trackStats, teamIdentity, managerLevel, showcasePicks, skills]) s.subscribe(onChange);
+    for (const s of [squad, club, blueEssence, trackStats, teamIdentity, managerLevel, showcasePicks, skills, seasonData]) s.subscribe(onChange);
     // Leaving the page: send what is pending rather than losing up to 45s of progress.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden' && timer) {
@@ -243,6 +272,11 @@ export function sanitizeRow(id, d, myUid) {
         splitsCompleted: num(d.splitsCompleted), goldenRoads: num(d.goldenRoads),
         towerBest: num(d.towerBest), cafeWins: num(d.cafeWins), regionalWins: num(d.regionalWins),
         firstStandWins: num(d.firstStandWins), msiWins: num(d.msiWins), worldsWins: num(d.worldsWins),
+        // A document published before `titles` existed still shows the right count.
+        titles: d.titles != null ? num(d.titles) : num(d.worldsWins) + num(d.msiWins) + num(d.firstStandWins) + num(d.regionalWins),
+        grYear: num(d.grYear, 100_000),
+        grDone: num(d.grDone, GR_STEPS.length),
+        grBroken: d.grBroken === true,
         losses: num(d.losses), packsOpened: num(d.packsOpened),
         favouriteTeam: str(d.favouriteTeam, 40), favouritePlayer: str(d.favouritePlayer, 40),
         mostPlayedMode: str(d.mostPlayedMode, 40),

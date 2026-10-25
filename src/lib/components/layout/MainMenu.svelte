@@ -474,7 +474,7 @@
                                 </div>
                                 <div class="slot-stats">
                                     <span><b>{s.roster.clubSize.toLocaleString()}</b>cards</span>
-                                    <span><b>{s.roster.trophies}</b>trophies</span>
+                                    <span><b>{s.roster.titles}</b>trophies</span>
                                     <span><b>{s.roster.be >= 100000 ? Math.floor(s.roster.be / 1000) + 'K' : s.roster.be.toLocaleString()}</b>BE</span>
                                 </div>
                                 <span class="slot-foot">{s.roster.season}{s.roster.seasonLive ? ' · in progress' : ''}</span>

@@ -169,12 +169,12 @@
             <div class="p-head">
                 <span class="p-ico" style="--c: {currentTitle.color};"><Icon name="medal" size={15} /></span>
                 <span class="p-title">Manager title</span>
-                <span class="p-note">{$weightedTrophies} trophy points</span>
+                <span class="p-note">Achievement Score {$weightedTrophies}</span>
             </div>
             <div class="tt-now">
                 <span class="tt-name" style="color: {currentTitle.color};">{currentTitle.title}</span>
                 {#if nextTitle}
-                    <span class="tt-next">{nextTitle.tp - $weightedTrophies} TP to <b style="color: {nextTitle.color};">{nextTitle.title}</b></span>
+                    <span class="tt-next">{nextTitle.tp - $weightedTrophies} more to <b style="color: {nextTitle.color};">{nextTitle.title}</b></span>
                 {:else}
                     <span class="tt-next">The highest title there is.</span>
                 {/if}

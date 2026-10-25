@@ -157,22 +157,22 @@
             { label: 'Complete a season split', current: $trackStats.splitsCompleted || 0, target: 1 },
             { label: 'Collect 100 cards', current: $club.length, target: 100 },
             { label: 'Win a Regional Trophy', current: $trackStats.regionalSplitWon || 0, target: 1 },
-            { label: 'Earn 50 Trophy Points', current: $weightedTrophies, target: 50 },
+            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 50 },
             { label: 'Win 10 tournaments', current: $trackStats.tournamentsWon || 0, target: 10 },
             { label: 'Complete 5 season splits', current: $trackStats.splitsCompleted || 0, target: 5 },
             { label: 'Win a First Stand', current: $trackStats.firstStandWon || 0, target: 1 },
             { label: 'Collect 200 cards', current: $club.length, target: 200 },
-            { label: 'Earn 100 Trophy Points', current: $weightedTrophies, target: 100 },
+            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 100 },
             { label: 'Win an MSI', current: $trackStats.msiWon || 0, target: 1 },
             { label: 'Reach Tower Floor 25', current: $trackStats.towerHighestFloor || 0, target: 25 },
             { label: 'Win a World Championship', current: $trackStats.worldsWon || 0, target: 1 },
             { label: 'Complete a Golden Road', current: $trackStats.goldenRoads || 0, target: 1 },
-            { label: 'Earn 250 Trophy Points', current: $weightedTrophies, target: 250 },
+            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 250 },
             { label: 'Win 50 tournaments', current: $trackStats.tournamentsWon || 0, target: 50 },
             { label: 'Reach Tower Floor 50', current: $trackStats.towerHighestFloor || 0, target: 50 },
             { label: 'Collect 500 cards', current: $club.length, target: 500 },
-            { label: 'Earn 500 Trophy Points', current: $weightedTrophies, target: 500 },
-            { label: 'Earn 1000 Trophy Points', current: $weightedTrophies, target: 1000 },
+            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 500 },
+            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 1000 },
         ];
         return all.filter(m => m.current < m.target).slice(0, 4);
     })();
@@ -232,7 +232,7 @@
             <div class="hs"><span class="hs-ico hs-be"><Icon name="gem" size={16} /></span><span class="hs-val">{$blueEssence.toLocaleString()}</span><span class="hs-lbl">Blue Essence</span></div>
             <div class="hs"><span class="hs-ico hs-cards"><Icon name="cards" size={16} /></span><span class="hs-val">{$club.length}</span><span class="hs-lbl">Cards</span></div>
             <div class="hs"><span class="hs-ico hs-power"><Icon name="bolt" size={16} /></span><span class="hs-val">{starters.length === 5 ? avgRating : '—'}</span><span class="hs-lbl">Squad avg</span></div>
-            <div class="hs"><span class="hs-ico hs-tro"><Icon name="trophy" size={16} /></span><span class="hs-val">{$weightedTrophies}</span><span class="hs-lbl">Trophy pts</span></div>
+            <div class="hs"><span class="hs-ico hs-tro"><Icon name="trophy" size={16} /></span><span class="hs-val">{$weightedTrophies}</span><span class="hs-lbl">Achievement</span></div>
         </div>
 
         <button class="hero-cta" on:click={() => switchTab(nextStep.tab)} use:pressFx={{ color: 'rgba(255,255,255,0.4)' }}>
@@ -427,10 +427,10 @@
             <button class="panel side-card sc-rank" on:click={() => switchTab('leaderboard')}>
                 <div class="ph"><h2 class="ph-title"><Icon name="ranking" size={15} /> Your ranking</h2></div>
                 <div class="rank-title">{prestigeTitle}</div>
-                <div class="rank-tp">{$weightedTrophies} trophy points</div>
+                <div class="rank-tp">Achievement Score {$weightedTrophies}</div>
                 {#if nextTitleThreshold}
                     <div class="bar bar-gold"><div class="bar-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%;"></div></div>
-                    <div class="rank-next">{nextTitleThreshold - $weightedTrophies} TP to <b>{getTitle(nextTitleThreshold)}</b></div>
+                    <div class="rank-next">{nextTitleThreshold - $weightedTrophies} more to <b>{getTitle(nextTitleThreshold)}</b></div>
                 {:else}
                     <div class="rank-next">Top title reached</div>
                 {/if}

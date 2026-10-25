@@ -1,9 +1,16 @@
 <script>
     import Card from '../card/Card.svelte';
+    import RoadPips from '../ui/RoadPips.svelte';
     import { trapFocus } from '../../utils/a11y.js';
+    import { goldenRoadLine } from '../../stores/leaderboard.js';
 
     export let player = null;
     export let onClose = () => {};
+
+    // Titles actually won. A profile loaded from a document published before `titles` existed
+    // (Friends reads raw documents) is summed from its parts.
+    $: titles = player ? (player.titles != null ? player.titles
+        : (player.worldsWins || 0) + (player.msiWins || 0) + (player.firstStandWins || 0) + (player.regionalWins || 0)) : 0;
 </script>
 
 {#if player}
@@ -28,9 +35,9 @@
             <!-- Primary Stats -->
             <div class="pm-stats-primary">
                 {#each [
-                    { label: 'Trophy Points', value: player.trophies || 0, icon: '🏆' },
+                    { label: 'Achievement Score', value: player.trophies || 0, icon: '🎖️' },
+                    { label: 'Trophies', value: titles, icon: '🏆' },
                     { label: 'Total Power', value: player.totalPower || 0, icon: '⚡' },
-                    { label: 'Raw Power', value: player.rawPower || 0, icon: '💪' },
                     { label: 'Blue Essence', value: (player.totalBE || 0).toLocaleString(), icon: '💎' },
                 ] as stat}
                     <div class="pm-stat-tile">
@@ -49,7 +56,7 @@
                     { label: 'Holographics', value: player.holographicCards || 0 },
                     { label: 'Splits', value: player.splitsCompleted || 0 },
                     { label: 'Golden Roads', value: player.goldenRoads || 0 },
-                    { label: 'Tower Best', value: player.towerBest || 0 },
+                    { label: 'Raw Power', value: player.rawPower || 0 },
                 ] as stat}
                     <div class="pm-detail-tile">
                         <span class="pdt-value">{stat.value}</span>
@@ -58,13 +65,22 @@
                 {/each}
             </div>
 
+            <!-- This year's Golden Road -->
+            {#if player.grYear}
+                <div class="pm-road">
+                    <span class="pm-road-t">Golden Road</span>
+                    <RoadPips done={player.grDone} broken={player.grBroken} size={11} />
+                    <span class="pm-road-l">{goldenRoadLine(player)}</span>
+                </div>
+            {/if}
+
             <!-- Career Record -->
             <div class="pm-section">
                 <div class="pm-section-title">Career Record</div>
                 <div class="pm-record-grid">
                     {#each [
                         { label: 'Cafe Wins', value: player.cafeWins || 0 },
-                        { label: 'Regional Wins', value: player.regionalWins || 0 },
+                        { label: 'Domestic Titles', value: player.regionalWins || 0 },
                         { label: 'First Stand', value: player.firstStandWins || 0 },
                         { label: 'MSI Wins', value: player.msiWins || 0 },
                         { label: 'Worlds Wins', value: player.worldsWins || 0 },
@@ -216,6 +232,9 @@
     .pdt-label { display: block; font-size: 7px; font-weight: 700; color: #64748b; text-transform: uppercase; }
 
     /* Sections */
+    .pm-road { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; padding: 10px 14px; border-radius: 12px; background: rgba(2,6,23,0.45); border: 1px solid rgba(234,179,8,0.25); }
+    .pm-road-t { font-size: 10px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #facc15; }
+    .pm-road-l { font-size: 12px; color: #94a3b8; }
     .pm-section { margin-bottom: 16px; }
     .pm-section-title {
         font-size: 9px; font-weight: 900; text-transform: uppercase;

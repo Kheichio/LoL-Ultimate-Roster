@@ -405,6 +405,9 @@ export function rosterSlotSummary(slot) {
     const splitNum = Math.max(1, Math.min(100000, Math.floor(Number(rawSeason && rawSeason.currentSplit)) || 1));
 
     return {
+        // Titles actually won, one each — what the game calls "Trophies". `trophies` below is the
+        // weighted Achievement Score and keeps its name for slotCheck and old readers.
+        titles:    stat('worldsWon') + stat('msiWon') + stat('firstStandWon') + stat('regionalSplitWon'),
         season:    `Year ${seasonYear(splitNum)} · ${splitInfo(splitNum).name} split`,
         seasonLive: !!(rawSeason && (rawSeason.stage === 'league' || rawSeason.stage === 'playoffs')),
         splits:    stat('splitsCompleted'),

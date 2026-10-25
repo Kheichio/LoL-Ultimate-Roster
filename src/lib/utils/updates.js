@@ -10,6 +10,19 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.8.1',
+        title: 'Ultimate Roster — Trophies, Achievement Score & a Golden Road Tracker',
+        summary: 'The leaderboard now separates what you have won from how much it is worth. "Trophies" counts the titles you actually lifted — Worlds, MSI, First Stand and domestic Regional Trophies, one each — and the old weighted number is now called Achievement Score. And the Golden Road is tracked live: see how far every manager has got through this year\'s six titles.',
+        details: [
+            'NEW — a Trophies category on the leaderboard: titles actually won, one each, from Worlds, MSI, First Stand and domestic Regional Trophies. Only a win counts. Ranked by Trophies, the board shows each manager\'s Worlds / MSI / First Stand / Domestic breakdown, and so does your own card.',
+            'NEW — Golden Road tracker. Rank the board by Golden Road to see every manager\'s road for the current year, title by title — won, still to play, or where it broke — with completed roads deciding the order. Your own road is always shown on your card, and on every manager\'s profile.',
+            'CHANGED — "Trophies" / "Trophy Points" is now "Achievement Score" everywhere: the leaderboard, profiles, Home, Skills, quests and the Guide. It is the same weighted number as before (Worlds 6, MSI 4, First Stand 2, domestic title 1, Golden Road 10) and still decides your manager title.',
+            'CHANGED — the separate Worlds column folded into Trophies, which shows Worlds wins in its breakdown.',
+            'CHANGED — save slots on the main menu now show trophies actually won, matching the leaderboard.',
+            'NOTE — a manager appears in the Trophies and Golden Road rankings once their game has published since this update, which happens on its own within a minute of them playing.',
+        ],
+    },
+    {
         ver: 'Beta 1.8.0',
         title: 'Ultimate Roster — A Real Season, a New Main Menu & a Live Leaderboard',
         summary: 'The season now runs like the real calendar. Three splits a year, each a 10-team league with a live table, ending in a Regional Trophy for the top four. First Stand, MSI and Worlds are earned by qualifying from those splits, and the Golden Road is now a checklist: win all six titles of one year, in order. Around it: a new main menu and save-slot screen, a Studio8Heads page, a leaderboard that keeps itself up to date, a Transfer Market that is finally worth using, and rebuilt Upgrade Lab, Welcome, Guide and Settings pages. Plus Team Synergy that rewards pairs instead of a full five, and real player photos on cards (switch them on in Settings).',
