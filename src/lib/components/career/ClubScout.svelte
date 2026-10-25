@@ -28,6 +28,7 @@
     //  ASCII only. Emoji and dashes are \u escapes or HTML entities.
 
     import Card from '../card/Card.svelte';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import { career } from '../../stores/career.js';
     import {
         CLUB_TIERS, REGION_BY_ID, ROLE_BY_ID, teamById,
@@ -72,8 +73,8 @@
 
     function regionInfo(id) {
         const r = REGION_BY_ID[id];
-        if (r) return { flag: r.flag, league: r.league, name: r.name };
-        return { flag: '\u{1F310}', league: 'Open Circuit', name: 'Amateur' };
+        if (r) return { id: r.id, flag: r.flag, league: r.league, name: r.name };
+        return { id: 'ALL', flag: '\u{1F310}', league: 'Open Circuit', name: 'Amateur' };
     }
 
     function close() {
@@ -142,7 +143,7 @@
             <span class="cs-lbl">Scouting report</span>
             <h3 class="cs-name">{team ? team.name : 'Unknown club'}</h3>
             <div class="cs-meta">
-                <span class="cs-flag" aria-hidden="true">{reg.flag}</span>
+                <span class="cs-flag"><RegionIcon region={reg.id} size={14} fallback={reg.flag} /></span>
                 <span>{reg.league}</span>
                 <span class="cs-dot">&#183;</span>
                 <span class="cs-chip" style="--tc:{tierInfo.accent}">{tierInfo.name}</span>
@@ -261,7 +262,7 @@
     }
     .cs-lbl-in { margin-bottom: 10px; }
     .cs-dot { color: #2c3a52; margin: 0 2px; }
-    .cs-flag { font-size: 12px; line-height: 1; }
+    .cs-flag { display: inline-flex; align-items: center; font-size: 12px; line-height: 1; color: #e2e8f0; }
 
     /* ---------- header ---------- */
     .cs-head {

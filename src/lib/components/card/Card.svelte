@@ -1,6 +1,8 @@
 <script>
     import { isDarkCard, isMidCard, getEffectiveStats, getEffectiveRating } from '../../utils/cards.js';
-    import { inspectingCard } from '../../stores/ui.js';
+    import { inspectingCard, playerPhotos } from '../../stores/ui.js';
+    import { pictureFor } from '../../data/playerPictures.js';
+    import RegionIcon from '../ui/RegionIcon.svelte';
 
     export let card;
     export let mini = false;
@@ -25,6 +27,12 @@
     $: isSig = card.signature;
     $: eStats = getEffectiveStats(card);
     $: eRating = getEffectiveRating(card);
+    // A player photo replaces the initials when one exists (tools/buildPlayerPictures.mjs) and
+    // the Player photos setting is on — it is off by default while the set is still small.
+    // If it fails to load, fall back to the initials rather than a broken-image icon.
+    $: photo = $playerPhotos ? pictureFor(card) : null;
+    let photoFailed = false;
+    $: photo, (photoFailed = false);
 
     function inspect(e) {
         if (onclick) return;
@@ -36,6 +44,7 @@
 <div
     class="card {tierClass}"
     class:card-mini={mini}
+    class:card-photo={photo && !photoFailed}
     class:card-signature={card.signature}
     class:card-holographic={card.holographic}
     class:card-unowned={showOwned && !owned}
@@ -62,17 +71,23 @@
                 {/if}
                 {card.role}
             </span>
-            <span class="card-region">{flag} {card.region}</span>
+            <!-- League logo in the card's own text colour (mono), so it reads on every tier;
+                 Legacy cards have no league and keep their trophy. -->
+            <span class="card-region"><RegionIcon region={card.region} size={mini ? 10 : 12} mono fallback={flag} />{card.region}</span>
         </div>
 
         <!-- Rating + Avatar -->
         <div class="card-identity">
             <span class="card-rating">{eRating}</span>
-            <div class="card-avatar">
-                {#if roleIcon}
-                    <img src={roleIcon} alt="" class="avatar-role-bg">
+            <div class="card-avatar" class:card-avatar-photo={photo && !photoFailed}>
+                {#if photo && !photoFailed}
+                    <img src={photo} alt="" class="avatar-photo" loading="lazy" draggable="false" on:error={() => photoFailed = true}>
+                {:else}
+                    {#if roleIcon}
+                        <img src={roleIcon} alt="" class="avatar-role-bg">
+                    {/if}
+                    <span class="avatar-initials">{initials}</span>
                 {/if}
-                <span class="avatar-initials">{initials}</span>
             </div>
         </div>
 
@@ -113,10 +128,10 @@
     .card-mini { width: 180px; font-size: 13px; }
     .card-mini .card-header { font-size: 9px; padding: 7px 10px; }
     .card-mini .card-body { padding: 10px 14px 14px; }
-    .card-mini .card-identity { margin-top: 8px; }
+    .card-mini .card-identity { margin-top: 8px; min-height: 46px; }
     .card-mini .card-rating { font-size: 2.4rem; }
-    .card-mini .card-avatar { width: 46px; height: 46px; }
-    .card-mini .avatar-initials { font-size: 14px; }
+    .card-mini .card-avatar { width: 62px; margin: -8px 0 -8px auto; }
+    .card-mini .avatar-initials { font-size: 19px; }
     .card-mini .card-name { font-size: 14px; margin-top: 6px; }
     .card-mini .card-team { font-size: 10px; }
     .card-mini .card-stats { font-size: 12px; padding-top: 8px; gap: 4px 14px; }
@@ -183,7 +198,7 @@
     }
     .role-icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; flex-shrink: 0; }
     .card-mini .role-icon { width: 12px; height: 12px; }
-    .card-region { letter-spacing: 0.5px; font-size: 10px; }
+    .card-region { display: inline-flex; align-items: center; gap: 4px; letter-spacing: 0.5px; font-size: 10px; }
 
     /* Identity */
     .card-identity {
@@ -193,6 +208,9 @@
         width: 100%;
         margin-top: 16px;
         margin-bottom: 4px;
+        /* The row is exactly as tall as the ORIGINAL 72px circle (46 on a mini card), however
+           big the icon inside it is — see .card-avatar. */
+        min-height: 72px;
     }
     .card-rating {
         font-size: 4.2rem;
@@ -200,35 +218,70 @@
         letter-spacing: -3px;
         text-shadow: 0 2px 8px rgba(0,0,0,0.3);
         line-height: 1;
+        flex-shrink: 0;
     }
     .card-mini .card-rating { font-size: 2.4rem; }
+    /* The icon (initials circle or photo tile) is bigger than the row it sits in and borrows
+       the empty gap above the rating row and the gap before the name through NEGATIVE margins,
+       so it grows without moving anything: its margin box is exactly the original 72px (46px
+       mini) circle, and the rating, name, stats and card height are where they always were.
+       The gaps are 106px (68px mini) top to bottom; each icon leaves at least 2px of them.
+       Round via aspect-ratio, so beside a three-digit rating (a 100 card with signature and
+       holo prints 103) the circle narrows and stays a circle instead of pushing the rating
+       off the card; the row's min-height keeps the card the same height when it does. */
     .card-avatar {
-        width: 72px;
-        height: 72px;
+        width: 98px;
+        height: auto;
+        aspect-ratio: 1;
+        min-width: 0;
+        margin: -13px 0 -13px auto;
         border-radius: 50%;
         border: 2px solid rgba(255,255,255,0.2);
         background: rgba(0,0,0,0.25);
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-left: auto;
         position: relative;
         overflow: hidden;
     }
-    .card-mini .card-avatar { width: 46px; height: 46px; }
+    .card-mini .card-avatar { width: 62px; margin: -8px 0 -8px auto; }
     .avatar-role-bg {
         position: absolute;
-        width: 44px; height: 44px;
+        width: 60px; height: 60px;
         opacity: 0.08;
     }
-    .card-mini .avatar-role-bg { width: 30px; height: 30px; }
+    .card-mini .avatar-role-bg { width: 40px; height: 40px; }
     .avatar-initials {
         position: relative;
         font-weight: 900;
-        font-size: 22px;
+        font-size: 30px;
         z-index: 1;
     }
-    .card-mini .avatar-initials { font-size: 14px; }
+    .card-mini .avatar-initials { font-size: 19px; }
+    /* Player photo: a portrait TILE instead of the circle, cropped to the head, and the
+       tallest the gaps allow. Same rule as the circle — the negative margins add up to
+       exactly the row, so a card with a photo is EXACTLY as tall as one without. Do not size
+       it any other way: growing the avatar is what once made photo cards longer than the rest.
+         full  72 row: 16px up, 14px down → 86 x 102
+         mini  46 row:  8px up, 10px down → 56 x 64
+       A soft light behind the cutout so a transparent photo reads on every tier colour. */
+    .card-photo .card-avatar {
+        width: 86px; height: 102px; aspect-ratio: auto; margin: -16px 0 -14px auto;
+        border-radius: 18px;
+    }
+    .card-mini.card-photo .card-avatar {
+        width: 56px; height: 64px; margin: -8px 0 -10px auto;
+        border-radius: 12px;
+    }
+    .card-avatar-photo { background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.3), rgba(0,0,0,0.3) 80%); }
+    /* The photos are head-and-shoulders shots with the head centred in the top two thirds;
+       this crop keeps hair-to-collar in the tile so the face fills it. */
+    .avatar-photo {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        object-fit: cover; object-position: 50% 0%;
+        transform: scale(1.3); transform-origin: 50% 12%;
+        pointer-events: none; user-select: none;
+    }
 
     /* Name + Team */
     .card-name {

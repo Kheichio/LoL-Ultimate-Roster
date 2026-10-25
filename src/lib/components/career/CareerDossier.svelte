@@ -24,6 +24,7 @@
     //  gated the same way.
 
     import Card from '../card/Card.svelte';
+    import RegionIcon from '../ui/RegionIcon.svelte';
 
     import { blankCareer, pushOverlay, saveCareer, setPracticeChamp } from '../../stores/career.js';
     import {
@@ -689,7 +690,7 @@
         <div class="hero-id">
             <div class="id-top">
                 <h2 class="id-name">{p.handle || 'Rookie'}</h2>
-                <span class="id-flag" aria-hidden="true">{region.flag}</span>
+                <span class="id-flag" title="From {region.name || region.league || ''}"><RegionIcon region={region.id} size={18} fallback={region.flag} /></span>
                 <span class="tag" style="--k:{role.accent}">{role.short}</span>
                 <span class="tag" style="--k:{path.accent}">{path.name}</span>
                 {#if retired}
@@ -2049,7 +2050,7 @@
         font-size: 30px; font-weight: 700; letter-spacing: -0.02em;
         color: #e8eefb; margin: 0; line-height: 1.05;
     }
-    .id-flag { font-size: 17px; line-height: 1; }
+    .id-flag { display: inline-flex; align-items: center; font-size: 17px; line-height: 1; color: #e2e8f0; }
     .tag {
         font-size: 8.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
         padding: 4px 8px; border-radius: 6px; white-space: nowrap; color: var(--k);

@@ -1221,13 +1221,15 @@ const baseDatabase = [
     // ==========================================
     // --- HALL OF LEGENDS ---
     // ==========================================
-    // Riot's real Hall of Legends — only two players have ever been inducted, so this
-    // tier holds exactly two cards: Faker (2024, the inaugural inductee) and Uzi (2025).
+    // Riot's real Hall of Legends — one inductee a year, so this tier holds exactly one card
+    // per inductee: Faker (2024, the inaugural inductee), Uzi (2025) and Caps (2026, the
+    // first Western player). Each card is the team they are remembered with.
     // Highest tier in the game: every card is a perfect 100 across all six stats. Only
     // source is the Awards Vault pack (0.001% per slot), so they must never be added to
     // any other pack, reward, trade or CPU pool.
     { id: 13000, name: "Faker",     role: "MID", team: "T1",    year: 2024, rating: 100, quality: "Hall of Legends", region: "Legacy", stats: { mec: 100, tmf: 100, frm: 100, cmp: 100, map: 100, ldr: 100 } },
     { id: 13001, name: "Uzi",       role: "ADC", team: "RNG",   year: 2025, rating: 100, quality: "Hall of Legends", region: "Legacy", stats: { mec: 100, tmf: 100, frm: 100, cmp: 100, map: 100, ldr: 100 } },
+    { id: 13002, name: "Caps",      role: "MID", team: "G2",    year: 2026, rating: 100, quality: "Hall of Legends", region: "Legacy", stats: { mec: 100, tmf: 100, frm: 100, cmp: 100, map: 100, ldr: 100 } },
 
     // === LEAGUE AWARDS 2025 ===
     // POTY — Chovy (Gen.G): dominant 2025 season, MSI winner, LCK title

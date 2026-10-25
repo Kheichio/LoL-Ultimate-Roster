@@ -26,6 +26,7 @@
         fmtGold, fmtFollowers,
     } from '../../career/ratings.js';
 
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import CreatePlayer from './CreatePlayer.svelte';
     import Hub from './Hub.svelte';
     import Training from './Training.svelte';
@@ -172,11 +173,11 @@
                     <div class="who">
                         <div class="who-top">
                             <span class="handle">{p.handle}</span>
-                            <span class="flag" aria-hidden="true">{region.flag}</span>
+                            <span class="flag" title="From {region.name}"><RegionIcon region={region.id} size={14} fallback={region.flag} /></span>
                             <span class="rolechip" style="--rc:{role.accent}">{role.short}</span>
                         </div>
                         <div class="who-sub">
-                            <span class="team" style="--t:{teamAccent}">{teamName}</span>
+                            <span class="team" style="--t:{teamAccent}">{#if $currentTeam}<RegionIcon region={$currentTeam.region} size={12} />{/if}{teamName}</span>
                             <span class="dot">·</span>
                             <span>Age {p.age}</span>
                             <span class="dot">·</span>
@@ -346,7 +347,7 @@
         color: #e8eefb;
         max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .flag { font-size: 13px; line-height: 1; }
+    .flag { display: inline-flex; align-items: center; font-size: 13px; line-height: 1; color: #e2e8f0; }
     .rolechip {
         font-size: 8.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
         padding: 3px 7px; border-radius: 5px;
@@ -358,7 +359,7 @@
         display: flex; align-items: center; gap: 7px;
         font-size: 11px; font-weight: 600; color: #56688a;
     }
-    .team { color: var(--t); font-weight: 700; }
+    .team { display: inline-flex; align-items: center; gap: 5px; color: var(--t); font-weight: 700; }
     .rank { color: var(--rk); font-weight: 700; }
     .dot { color: #2c3a52; }
 

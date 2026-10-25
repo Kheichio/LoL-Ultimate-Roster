@@ -1,5 +1,6 @@
 <script>
     import Card from '../card/Card.svelte';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import { inspectingCard } from '../../stores/ui.js';
     import { trapFocus } from '../../utils/a11y.js';
     import { club, squad, saveGame } from '../../stores/game.js';
@@ -126,7 +127,7 @@
                         </div>
                         <div class="detail-row">
                             <span class="d-label">Region</span>
-                            <span class="d-value">{card.region}</span>
+                            <span class="d-value d-region"><RegionIcon region={card.region} size={14} />{card.region}</span>
                         </div>
                         <div class="detail-row">
                             <span class="d-label">Tier</span>
@@ -281,6 +282,7 @@
     }
     .d-label { font-size: 11px; font-weight: 700; color: #475569; }
     .d-value { font-size: 12px; font-weight: 800; color: #e2e8f0; }
+    .d-region { display: inline-flex; align-items: center; gap: 6px; }
     .d-tier { text-transform: uppercase; letter-spacing: 0.5px; }
     .d-rating { color: #60a5fa; font-size: 14px; }
     .d-holo { color: #fbbf24; }

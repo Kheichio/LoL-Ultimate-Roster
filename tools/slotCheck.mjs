@@ -193,7 +193,7 @@ eq('lurc_ is career, not roster', S.familyOf('lurc_career'), 'career',
     '"lurc_" starts with "lur", so it must be tested first or career saves land in the roster family.');
 eq('lur_ is roster', S.familyOf('lur_club'), 'roster');
 
-for (const k of ['lur_sound_muted', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards']) {
+for (const k of ['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos']) {
     eq('device pref ' + k + ' has no family', S.familyOf(k), null,
         'Namespacing a device preference resets the theme and unmutes the game on every slot switch.');
     eq('device pref ' + k + ' is never namespaced', S.resolveKey(k, 3), k);

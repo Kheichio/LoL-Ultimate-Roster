@@ -15,6 +15,7 @@
     //  value is read from the store or derived by a career module.
 
     import Card from '../card/Card.svelte';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import ClubScout from './ClubScout.svelte';
     import {
         career, careerScreen, careerOVR, currentTeam, soloRank,
@@ -59,8 +60,8 @@
 
     function regionInfo(id) {
         const r = REGION_BY_ID[id];
-        if (r) return { flag: r.flag, league: r.league, name: r.name };
-        return { flag: '\u{1F310}', league: 'Open Circuit', name: 'Amateur' };
+        if (r) return { id: r.id, flag: r.flag, league: r.league, name: r.name };
+        return { id: 'ALL', flag: '\u{1F310}', league: 'Open Circuit', name: 'Amateur' };
     }
 
     function pct(v, max) {
@@ -367,7 +368,7 @@
                             <div class="brow-id">
                                 <span class="brow-name">{row.team.name}</span>
                                 <span class="brow-sub">
-                                    <span class="flag" aria-hidden="true">{r.flag}</span>
+                                    <span class="flag"><RegionIcon region={r.id} size={13} fallback={r.flag} /></span>
                                     {r.league}
                                     <span class="dot">&#183;</span>
                                     <span class="tiny-chip" style="--tc:{t.accent}">{t.name}</span>
@@ -405,7 +406,7 @@
             <span class="lbl">Your club</span>
             <h2 class="chead-name">{team.name}</h2>
             <div class="chead-meta">
-                <span class="flag" aria-hidden="true">{reg.flag}</span>
+                <span class="flag"><RegionIcon region={reg.id} size={16} fallback={reg.flag} /></span>
                 <span>{reg.league}</span>
                 <span class="dot">&#183;</span>
                 <span class="chip" style="--tc:{tierInfo.accent}">{tierInfo.name}</span>
@@ -735,7 +736,7 @@
                                 <div class="rival-name">{rival.name}</div>
                             {/if}
                             <div class="rival-sub">
-                                <span class="flag" aria-hidden="true">{rivalReg.flag}</span>
+                                <span class="flag"><RegionIcon region={rivalReg.id} size={13} fallback={rivalReg.flag} /></span>
                                 {rivalReg.league}
                                 <span class="dot">&#183;</span>
                                 strength {rivalStrength}
@@ -821,7 +822,7 @@
     }
     .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
     .dot { color: #2c3a52; margin: 0 2px; }
-    .flag { font-size: 12px; line-height: 1; }
+    .flag { display: inline-flex; align-items: center; font-size: 12px; line-height: 1; color: #e2e8f0; }
 
     .chip {
         display: inline-block;

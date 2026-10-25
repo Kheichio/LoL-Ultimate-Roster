@@ -2,6 +2,7 @@ import { writable, derived, get } from 'svelte/store';
 import { loadFromStorage, saveToStorage, loadFromSlot } from '../utils/storage.js';
 import { getDB, getCardById } from '../utils/cards.js';
 import { validateCard, clampNum, signSave, verifySave, BOUNDS } from '../utils/anticheat.js';
+import { SEASON_FORMAT, migrateSeason, grRecord, GOLDEN_ROAD_PRIZE, splitInfo, seasonYear } from '../utils/league.js';
 
 // === Core Game State ===
 // Starting Blue Essence. Deliberately tight — exactly one Standard pack (100 BE) on top of
@@ -36,7 +37,35 @@ export const trackStats = writable({
 // === Systems ===
 export const collectionRegistry = writable({});
 export const unlocks = writable({ firstStand: false, msi: false, worlds: false, draftMode: false, salaryCap: false, tower: false });
-export const seasonData = writable({ currentSplit: 1, splitWins: 0, splitLosses: 0, trophyCase: [], opponents: [], matchResults: [] });
+// The competitive year (utils/league.js). `stage` walks idle → league → playoffs → done (rewards
+// waiting) → idle; `qualified` is an international spot earned at a split's Regional Trophy and
+// spent on the Play tab; `goldenRoad` is this year's run at all six titles. A save written before
+// format 2 (ten fixed opponents a split) is converted on load by migrateSeason().
+export const seasonData = writable({
+    format: SEASON_FORMAT, currentSplit: 1, stage: 'idle', league: null, playoffs: null, summary: null,
+    qualified: null, goldenRoad: { year: 1, done: [], broken: false },
+    trophyCase: [], meta: [], lockedSquad: null, swapsUsed: 0,
+    splitWins: 0, splitLosses: 0, opponents: [], matchResults: [],
+});
+// The squad is locked while a split's league or playoffs are being played.
+export const splitInProgress = derived(seasonData, $s => $s.stage === 'league' || $s.stage === 'playoffs');
+
+/** Records one of the year's six titles for the Golden Road (won or lost) and pays out the road
+ *  when the sixth lands. `year` is the season year the title belongs to. */
+export function recordTitle(key, year, won) {
+    let completed = false;
+    seasonData.update(s => {
+        const r = grRecord(s.goldenRoad, year, key, won);
+        completed = r.completed;
+        return { ...s, goldenRoad: r.gr };
+    });
+    if (!completed) return { completed: false };
+    const { total, bonus } = grantBE(GOLDEN_ROAD_PRIZE);
+    grantXP(2000);
+    trackStats.update(s => ({ ...s, goldenRoads: (s.goldenRoads || 0) + 1 }));
+    logMatch({ mode: 'goldenroad', result: 'win', opponent: 'Golden Road', be: total, xp: 2000 });
+    return { completed: true, be: total, bonus };
+}
 export const battlePass = writable({ season: 1, tier: 0, xp: 0, claimed: [] });
 
 // === Daily Login ===
@@ -68,9 +97,11 @@ export const rbcState = writable({ day: '', claimed: {}, seen: '' });
 // Free packs earned from RBCs — { [storePackId]: count }. Opened for free in the Store.
 export const freePacks = writable({});
 
-// Transfer Market — rotating signings board. { window: <15-min index or null>, claimed: { [cardId]: true } }.
+// Transfer Market — rotating board, all per 15-minute window:
+//   claimed: { [cardId]: true } signings taken · sold: { [requestKey]: true } club requests filled
+//   rerolls: how many times the board was re-rolled this window (it is part of the board's seed).
 // Persisted alongside the club/BE so a sign and its claim record commit atomically in one save.
-export const tradeMarket = writable({ window: null, claimed: {} });
+export const tradeMarket = writable({ window: null, claimed: {}, sold: {}, rerolls: 0 });
 
 // === Match History (recent results log, newest first, capped at 50) ===
 export const matchHistory = writable([]);
@@ -369,7 +400,14 @@ export function rosterSlotSummary(slot) {
     const trophies = (stat('worldsWon') * 6) + (stat('msiWon') * 4) + (stat('firstStandWon') * 2) +
         (stat('regionalSplitWon') * 1) + (stat('goldenRoads') * 10);
 
+    // Where the save is in the competitive year. Both season formats carry currentSplit.
+    const rawSeason = loadFromSlot('lur_season', slot);
+    const splitNum = Math.max(1, Math.min(100000, Math.floor(Number(rawSeason && rawSeason.currentSplit)) || 1));
+
     return {
+        season:    `Year ${seasonYear(splitNum)} · ${splitInfo(splitNum).name} split`,
+        seasonLive: !!(rawSeason && (rawSeason.stage === 'league' || rawSeason.stage === 'playoffs')),
+        splits:    stat('splitsCompleted'),
         name:      (typeof id.name === 'string' && id.name.trim()) ? id.name.trim().slice(0, 24) : fallback.name,
         // Length-checked rather than sliced: the logo is a single glyph made of several
         // UTF-16 units, and cutting one in half renders as a broken box.
@@ -509,8 +547,10 @@ export function initGame() {
     const u = loadFromStorage('lur_unlocks');
     if (u) unlocks.set({ ...get(unlocks), ...u });
 
+    // An old save (no `format`) must reach migrateSeason as-is: merged over the format-2 defaults
+    // first, it would already claim to be format 2 and its in-progress split would be lost.
     const sd = loadFromStorage('lur_season');
-    if (sd) seasonData.set({ ...get(seasonData), ...sd });
+    if (sd) seasonData.set(migrateSeason(sd.format === SEASON_FORMAT ? { ...get(seasonData), ...sd } : sd));
 
     const bp = loadFromStorage('lur_battlepass');
     if (bp) battlePass.set({ ...get(battlePass), ...bp });
@@ -583,9 +623,12 @@ export function initGame() {
 
     const rawTM = loadFromStorage('lur_trademarket');
     if (rawTM && typeof rawTM === 'object' && !Array.isArray(rawTM)) {
+        const ledger = v => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
         tradeMarket.set({
             window: typeof rawTM.window === 'number' ? rawTM.window : null,
-            claimed: (rawTM.claimed && typeof rawTM.claimed === 'object' && !Array.isArray(rawTM.claimed)) ? rawTM.claimed : {},
+            claimed: ledger(rawTM.claimed),
+            sold: ledger(rawTM.sold),
+            rerolls: Math.max(0, Math.min(10, Math.floor(Number(rawTM.rerolls)) || 0)),
         });
     }
 }

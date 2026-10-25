@@ -29,10 +29,33 @@ export function calcEraChem(starters) {
     return s <= 1 ? 5 : s <= 2 ? 3 : s <= 3 ? 2 : 1;
 }
 
-// Same-team bonus: +2 when every non-legacy starter shares one team.
-export function calcTeamChem(starters) {
+// Team synergy: +1 for every PAIR of starters from the same team, max +2. It used to need all
+// five from one team for anything at all, which pushed every squad toward a single org; pairs
+// reward two duos from different teams just as much, and the cap is unchanged at +2, so no
+// squad can reach more Power than it could before — it is only easier to get there.
+//
+// Legacy/award cards stay wildcards: each one completes a pair with any starter left without a
+// teammate, and two leftover wildcards pair with each other. That keeps every squad that scored
+// +2 under the old rule (e.g. three from one team + two legacy cards) at +2.
+export const TEAM_SYNERGY_MAX = 2;
+
+/** Uncapped number of same-team pairs in the starting five (wildcards included). */
+export function teamPairs(starters) {
     const nl = nonLegacy(starters);
-    return (!nl.length || new Set(nl.map(c => c.team)).size === 1) ? 2 : 0;
+    let wild = starters.length - nl.length;
+    const byTeam = {};
+    for (const c of nl) byTeam[c.team] = (byTeam[c.team] || 0) + 1;
+    let pairs = 0, singles = 0;
+    for (const n of Object.values(byTeam)) { pairs += Math.floor(n / 2); singles += n % 2; }
+    const filled = Math.min(singles, wild);
+    pairs += filled;
+    wild -= filled;
+    pairs += Math.floor(wild / 2);
+    return pairs;
+}
+
+export function calcTeamChem(starters) {
+    return Math.min(TEAM_SYNERGY_MAX, teamPairs(starters));
 }
 
 // Legacy-card bonus: +1 for 2-3 legacy cards on the roster, +2 for 4 or more.

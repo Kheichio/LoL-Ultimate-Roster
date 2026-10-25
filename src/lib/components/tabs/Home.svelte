@@ -3,6 +3,7 @@
     import Icon from '../ui/Icon.svelte';
     import { pressFx } from '../../utils/fx.js';
     import { blueEssence, club, squad, trackStats, teamIdentity, managerXP, managerLevel, seasonData, battlePass, hasBoughtStarter, weightedTrophies, prestige, milestoneCards, matchHistory, saveGame } from '../../stores/game.js';
+    import { ME, MATCHDAYS, splitInfo, myPlayed, myFixture, standings, myPlayoffSeries } from '../../utils/league.js';
     import { switchTab } from '../../stores/ui.js';
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
@@ -40,11 +41,28 @@
     $: holoCount = $club.filter(c => c.holographic).length;
     $: sigCount = $club.filter(c => c.signature).length;
 
-    // Next season game
-    $: seasonOpponents = $seasonData.opponents || [];
-    $: seasonMatchIndex = ($seasonData.matchResults || []).filter(r => r !== null).length;
-    $: nextSeasonOpp = seasonOpponents[seasonMatchIndex] || null;
-    $: seasonSplitActive = seasonOpponents.length > 0 && seasonMatchIndex < 10;
+    // Next season game (utils/league.js — a league table, then the Regional Trophy)
+    $: sdh = $seasonData;
+    $: hLeague = sdh.league;
+    $: hPlayed = myPlayed(hLeague);
+    $: hSplit = splitInfo(sdh.currentSplit);
+    $: hRow = hLeague ? standings(hLeague, 0).find(r => r.id === ME) : null;
+    $: hQualified = sdh.qualified && !sdh.qualified.played ? sdh.qualified : null;
+    $: nextSeasonOpp = (() => {
+        if (sdh.stage === 'league' && hLeague && hPlayed < MATCHDAYS) {
+            const f = myFixture(hLeague, hPlayed);
+            return f ? hLeague.teams.find(t => t.id === f.opponentId) || null : null;
+        }
+        if (sdh.stage === 'playoffs' && sdh.playoffs) {
+            const s = myPlayoffSeries(sdh.playoffs);
+            if (!s) return null;
+            const id = s.match.a === ME ? s.match.b : s.match.a;
+            return (hLeague?.teams || []).find(t => t.id === id) || null;
+        }
+        return null;
+    })();
+    $: seasonSplitActive = sdh.stage === 'league' || sdh.stage === 'playoffs';
+    $: nextSeasonLabel = sdh.stage === 'playoffs' ? 'Regional Trophy' : `Matchday ${hPlayed + 1}`;
 
     // Leaderboard title
     function getTitle(tp) {
@@ -78,8 +96,12 @@
         : starters.length < 5
         ? { label: 'Build your starting five', sub: `${starters.length}/5 roles filled`, tab: 'squad', icon: 'squad' }
         : seasonSplitActive && nextSeasonOpp
-        ? { label: `Continue Split ${$seasonData.currentSplit}`, sub: `Match ${seasonMatchIndex + 1} vs ${nextSeasonOpp.name}`, tab: 'season', icon: 'calendar' }
-        : { label: 'Play a match', sub: 'Pick a stage on the Play menu', tab: 'tournament', icon: 'play' };
+        ? { label: `Continue the ${hSplit.name} split`, sub: `${nextSeasonLabel} vs ${nextSeasonOpp.name}`, tab: 'season', icon: 'calendar' }
+        : sdh.stage === 'done'
+        ? { label: 'Claim your split rewards', sub: `The ${hSplit.name} split is over`, tab: 'season', icon: 'gift' }
+        : hQualified
+        ? { label: `Play ${hQualified.eventName}`, sub: 'You qualified through the Season', tab: 'tournament', icon: 'trophy' }
+        : { label: `Start the ${hSplit.name} split`, sub: 'Ten-team league, then the Regional Trophy', tab: 'season', icon: 'calendar' };
 
     // ── To do ──
     // Every item is something waiting for the player right now, from stores/badges.js — the
@@ -387,16 +409,16 @@
         <aside class="col-side">
             <!-- Season -->
             <button class="panel side-card sc-season" on:click={() => switchTab('season')}>
-                <div class="ph"><h2 class="ph-title"><Icon name="calendar" size={15} /> Season · Split {$seasonData.currentSplit}</h2><span class="ph-note">{$seasonData.splitWins || 0}W – {$seasonData.splitLosses || 0}L</span></div>
+                <div class="ph"><h2 class="ph-title"><Icon name="calendar" size={15} /> Season · {hSplit.name} split</h2>{#if hRow}<span class="ph-note">{hRow.w}W – {hRow.l}L · {hRow.pos}{hRow.pos === 1 ? 'st' : hRow.pos === 2 ? 'nd' : hRow.pos === 3 ? 'rd' : 'th'}</span>{/if}</div>
                 {#if nextSeasonOpp && seasonSplitActive}
                     <div class="ng">
-                        <span class="ng-num">#{seasonMatchIndex + 1}</span>
+                        <span class="ng-num">{sdh.stage === 'playoffs' ? 'RT' : `#${hPlayed + 1}`}</span>
                         <span class="ng-name">{nextSeasonOpp.name}</span>
                         <span class="ng-pwr">{nextSeasonOpp.avgRating}</span>
                     </div>
                     <span class="side-link">Continue split <Icon name="chevron" size={13} /></span>
                 {:else}
-                    <div class="side-idle">{seasonOpponents.length === 0 ? 'No split in progress' : 'Split complete!'}</div>
+                    <div class="side-idle">{sdh.stage === 'done' ? 'Split over — rewards waiting' : hQualified ? `Qualified for ${hQualified.eventName}!` : 'No split in progress'}</div>
                     <span class="side-link">Go to Season <Icon name="chevron" size={13} /></span>
                 {/if}
             </button>

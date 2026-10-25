@@ -31,6 +31,7 @@
     import { onMount } from 'svelte';
 
     import CareerDossier from './CareerDossier.svelte';
+    import RegionIcon from '../ui/RegionIcon.svelte';
 
     import {
         boardRows, boardState, myBoardEntries, myBoardHidden, boardSync,
@@ -146,6 +147,7 @@
                 roleShort: rl.short,
                 roleAccent: rl.accent,
                 flag: rg.flag,
+                regionId: rg.id,
                 league: rg.league,
                 teamAccent: r.team ? r.team.accent : '#64748b',
                 peakColor: ovrTier(r.peakOVR).color,
@@ -235,6 +237,7 @@
                 roleShort: rl ? rl.short : '',
                 roleAccent: rl ? rl.accent : '#64748b',
                 flag: rg ? rg.flag : '',
+                regionId: rg ? rg.id : '',
             };
         });
     }
@@ -495,7 +498,7 @@
         <button class="b b-ghost" on:click={back}>&#8592; Back to the board</button>
         {#if dossierRow}
             <span class="dv-who">
-                <span class="dv-flag" aria-hidden="true">{dossierRow.flag}</span>
+                <span class="dv-flag"><RegionIcon region={dossierRow.regionId} size={16} fallback={dossierRow.flag} /></span>
                 <span class="dv-h">{dossierRow.handle}</span>
                 <span class="chip-role" style="--k:{dossierRow.roleAccent}">{dossierRow.roleShort}</span>
                 <span class="dv-rank">Ranked #{dossierRow.rank} by {sortDef.label}</span>
@@ -710,7 +713,7 @@
 
                             {#if s.summary}
                                 <span class="slot-m">
-                                    <span aria-hidden="true">{s.flag}</span>
+                                    <RegionIcon region={s.regionId} size={13} fallback={s.flag} />
                                     <span class="chip-role" style="--k:{s.roleAccent}">{s.roleShort}</span>
                                     {s.summary.team} &#183; age {s.summary.age} &#183; {s.summary.ovr} OVR
                                 </span>
@@ -846,7 +849,7 @@
                     class="fbtn fbtn-sm"
                     class:fbtn-on={fRegion === r.id}
                     on:click={() => setFilter('region', r.id)}
-                ><span aria-hidden="true">{r.flag}</span> {r.league}</button>
+                ><RegionIcon region={r.id} size={12} fallback={r.flag} /> {r.league}</button>
             {/each}
         </div>
         <div class="filt-row">
@@ -919,7 +922,7 @@
 
                                     <td class="td-p">
                                         <span class="p-top">
-                                            <span class="p-flag" aria-hidden="true">{r.flag}</span>
+                                            <span class="p-flag"><RegionIcon region={r.regionId} size={13} fallback={r.flag} /></span>
                                             <span class="p-h">{r.handle}</span>
                                             <span class="chip-role" style="--k:{r.roleAccent}">{r.roleShort}</span>
                                             {#if r.mine}<span class="chip chip-me" style="--k:#a78bfa">(You)</span>{/if}
@@ -1192,7 +1195,7 @@
 
     .td-p { min-width: 0; }
     .p-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-    .p-flag { font-size: 13px; line-height: 1; }
+    .p-flag { display: inline-flex; align-items: center; font-size: 13px; line-height: 1; color: #e2e8f0; }
     .p-h { font-size: 13.5px; font-weight: 800; color: #e2e8f0; }
     .p-dn {
         display: block; margin-top: 3px; font-size: 10px; font-weight: 600; color: #46587a;
@@ -1221,7 +1224,7 @@
     /* ---------- dossier view ---------- */
     .dv-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
     .dv-who { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; min-width: 0; }
-    .dv-flag { font-size: 15px; line-height: 1; }
+    .dv-flag { display: inline-flex; align-items: center; font-size: 15px; line-height: 1; color: #e2e8f0; }
     .dv-h { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 18px; font-weight: 700; color: #e8eefb; }
     .dv-rank { font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #4a5b76; }
 

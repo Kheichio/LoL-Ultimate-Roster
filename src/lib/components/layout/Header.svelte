@@ -1,6 +1,6 @@
 <script>
     import { blueEssence, teamIdentity, prestige, skills } from '../../stores/game.js';
-    import { activeTab, switchTab, showAuthPanel, splitCooldownEnd } from '../../stores/ui.js';
+    import { activeTab, switchTab, openSettings, splitCooldownEnd } from '../../stores/ui.js';
     import { openMenu } from '../../stores/menu.js';
     import { onDestroy } from 'svelte';
     import { currentUser } from '../../stores/auth.js';
@@ -198,7 +198,10 @@
                 <Icon name="home" size={17} />
                 <span class="btn-label">Menu</span>
             </button>
-            <button class="icon-btn acct" title="Account & settings" on:click={() => showAuthPanel.set(true)}>
+            <button class="icon-btn gear" title="Settings" aria-label="Settings" on:click={() => openSettings('display')}>
+                <Icon name="settings" size={17} />
+            </button>
+            <button class="icon-btn acct" title="Account" on:click={() => openSettings('account')}>
                 <Icon name="user" size={17} />
                 <span class="btn-label">{$currentUser ? $currentUser.displayName || 'Account' : 'Sign In'}</span>
             </button>
@@ -232,6 +235,12 @@
                 {/each}
             </div>
         {/each}
+        <div class="md-list md-foot">
+            <button class="md-btn" style="--c: #94a3b8;" on:click={() => { mobileOpen = false; openSettings('display'); }}>
+                <span class="md-ico"><Icon name="settings" size={18} /></span>
+                <span class="md-label">Settings</span>
+            </button>
+        </div>
     </div>
 </div>
 {/if}
@@ -353,6 +362,8 @@
     }
     .acct { color: #c7d2fe; background: rgba(67,56,202,0.14); border: 1px solid rgba(129,140,248,0.28); }
     .acct:hover { background: rgba(67,56,202,0.26); border-color: rgba(165,180,252,0.5); }
+    .gear { padding: 9px 11px; color: #cbd5e1; background: rgba(30,41,59,0.6); border: 1px solid rgba(100,116,139,0.3); }
+    .gear:hover { color: #fff; background: rgba(51,65,85,0.7); border-color: rgba(148,163,184,0.45); }
     .menu-btn { color: #f5cd7d; background: rgba(245,185,66,0.08); border: 1px solid rgba(245,185,66,0.22); }
     .menu-btn:hover { background: rgba(245,185,66,0.16); border-color: rgba(245,185,66,0.4); }
     .btn-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -414,4 +425,7 @@
     .md-btn:hover { background: rgba(51,65,85,0.35); color: #fff; }
     .md-on { background: color-mix(in srgb, var(--c) 14%, transparent); color: #fff; }
     .md-play .md-ico { color: #fff; background: linear-gradient(135deg, #4f46e5, #6366f1); }
+    .md-foot { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(51,65,85,0.3); margin-left: 10px; margin-right: 10px; padding-left: 0; padding-right: 0; }
+    /* The header has no room for a separate gear on a phone; Settings lives in the drawer. */
+    @media (max-width: 560px) { .gear { display: none; } }
 </style>

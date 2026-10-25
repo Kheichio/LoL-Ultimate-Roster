@@ -11,6 +11,7 @@ import { activeSlot } from '../utils/storage.js';
 //   'loading' → the gamemode loading screen animation
 //   'updates' → the changelog. It describes the whole product, not one gamemode,
 //               so it sits out here where it can be read without loading a save.
+//   'studio'  → the Studio8Heads page (who we are, our games, partners)
 //   'game'    → Ultimate Roster (App renders the normal Header + TabContent shell)
 //   'career'  → Ultimate Career (App renders CareerShell instead)
 export const menuScreen = writable('menu');
@@ -71,18 +72,85 @@ export const GAMEMODES = [
     },
 ];
 
-// "More games by us" — other Studio8Heads titles, linked from the main menu.
-// Add another entry here and the section grows on its own.
-export const MORE_GAMES = [
-    {
-        id: 'gacha-survivors',
-        name: 'Gacha Survivors',
-        blurb: 'An anime-inspired roguelike survivors game with gacha pulls for characters.',
-        // The deployed host has a typo in it ("suvivors"). It's the URL that actually
-        // resolves, so it stays exactly as-is — it just isn't shown anywhere in the UI.
-        href: 'https://gacha-suvivors.vercel.app',
-    },
-];
+// ─────────────────────────────────────────────────────────────────────────
+//  STUDIO8HEADS
+//  The Studio8Heads page (menuScreen 'studio') reads everything from STUDIO, and a list left
+//  empty simply hides its section. Keep it factual: this page speaks for the studio, and every
+//  line of it came from the studio. A game's `status` is one of:
+//    active  — live and maintained            beta — playable, still in development
+//    retired — still playable, no longer maintained
+// ─────────────────────────────────────────────────────────────────────────
+export const GAME_STATUS = {
+    active:  { label: 'Active', color: '#34d399' },
+    beta:    { label: 'In beta', color: '#fbbf24' },
+    retired: { label: 'No longer maintained', color: '#f87171' },
+};
+
+export const STUDIO = {
+    name: 'Studio8Heads',
+    tagline: 'The studio behind Anime Guessing Quiz, Khei\'s Archive and LoL Ultimate Roster.',
+    intro: 'We make games you can play right in your browser and games you can download. Our biggest web project is Anime Guessing Quiz, our current main game is Khei\'s Archive: Relicbound — and you are playing LoL Ultimate Roster right now.',
+    itch: 'https://studio8heads.itch.io/',
+    discord: 'https://discord.gg/ur62KfPfYT',
+    // Played in the browser. `current: true` is the game this page is inside.
+    web: [
+        {
+            id: 'agq', name: 'Anime Guessing Quiz', status: 'active', icon: 'sparkle', color: '#f472b6',
+            href: 'https://www.animeguessingquiz.com/',
+            blurb: 'Guess the anime, the character, the genres — or whatever else you can imagine, all within easy reach. Our biggest web project, with a lot of time and effort invested in it.',
+            credit: 'Made by Higoshi & Kechio',
+            extra: [{ label: 'Discord server', href: 'https://discord.gg/64hUqBpeCh', icon: 'friends' }],
+            featured: true,
+        },
+        {
+            id: 'lur', name: 'LoL Ultimate Roster', status: 'beta', icon: 'cards', color: '#3b82f6',
+            href: 'https://www.lol-ultimate-roster.xyz/',
+            blurb: 'A League of Legends esports game inspired by FIFA Ultimate Team and its career modes. Pull cards of players from all of League\'s esports history — or become the player and play alongside them.',
+            current: true,
+        },
+        {
+            // The deployed host has a typo in it ("suvivors"). It is the URL that actually
+            // resolves, so it stays exactly as-is — it just is not shown anywhere in the UI.
+            id: 'gacha-survivors', name: 'Gacha Survivors', status: 'retired', icon: 'swords', color: '#22d3ee',
+            href: 'https://gacha-suvivors.vercel.app/',
+            blurb: 'A pixel-art gacha game in the style of Vampire Survivors. A demo.',
+        },
+    ],
+    // Downloadable, on itch.io.
+    downloads: [
+        {
+            id: 'kheis-archive', name: 'Khei\'s Archive: Relicbound', status: 'active', icon: 'archive', color: '#a78bfa',
+            version: '1.0.3-BETA',
+            href: 'https://studio8heads.itch.io/kheis-archive-relicbound',
+            blurb: 'Our current main game project: a trading card game that turns existing media, such as anime and video games, into cards.',
+            featured: true,
+        },
+        {
+            id: 'lost-ryo', name: 'Lost Ryo', status: 'retired', icon: 'flag', color: '#94a3b8',
+            href: 'https://studio8heads.itch.io/lost-ryo',
+            blurb: 'A demo platformer made in 2023 as a trial project.',
+        },
+    ],
+    // { name, role, blurb }
+    team: [],
+    links: [
+        { label: 'Studio8Heads Discord', href: 'https://discord.gg/ur62KfPfYT', icon: 'friends' },
+        { label: 'All our downloadable games on itch.io', href: 'https://studio8heads.itch.io/', icon: 'archive' },
+        { label: 'Anime Guessing Quiz Discord', href: 'https://discord.gg/64hUqBpeCh', icon: 'friends' },
+    ],
+    partners: [
+        { name: 'SISL', href: 'https://sisl.pl/', blurb: 'LoL Ultimate Roster is made in collaboration with SISL.' },
+    ],
+};
+
+// "More games by us" tiles on the main menu: the studio's live flagship titles. The full list,
+// retired games included, is on the Studio8Heads page.
+export const MORE_GAMES = [...STUDIO.web, ...STUDIO.downloads].filter(g => g.featured && g.status === 'active' && !g.current);
+
+export function openStudio() {
+    menuScreen.set('studio');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+}
 
 // Shown on the Ultimate Career preview screen.
 export const CAREER_PILLARS = [

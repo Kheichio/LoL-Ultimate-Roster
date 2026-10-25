@@ -2,6 +2,7 @@
     import Card from '../card/Card.svelte';
     import LazyCardGrid from '../card/LazyCardGrid.svelte';
     import Icon from '../ui/Icon.svelte';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import { pressFx } from '../../utils/fx.js';
     import { collectionRegistry, archiveRewards, blueEssence, grantBPXP, saveGame, grantXP } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
@@ -479,6 +480,7 @@
                 {#each regions as r}
                     {@const s = regionStats[r] || { owned: 0, total: 0 }}
                     <button class="rg" class:rg-on={activeRegion === r} aria-pressed={activeRegion === r} on:click={() => { activeRegion = r; }}>
+                        <span class="rg-ico"><RegionIcon region={r} size={22} /></span>
                         <span class="rg-text"><span class="rg-name">{r}</span><span class="rg-count">{s.owned} / {s.total}</span></span>
                         {#if badgeCounts[`regular_${r}`]}<span class="cat-badge">{badgeCounts[`regular_${r}`]}</span>{/if}
                     </button>
@@ -630,6 +632,7 @@
     .rg { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border-radius: 13px; cursor: pointer; text-align: left; background: rgba(12,16,28,0.6); border: 1px solid rgba(71,85,105,0.28); }
     .rg:hover { border-color: rgba(96,165,250,0.45); }
     .rg-on { background: rgba(37,99,235,0.18); border-color: rgba(96,165,250,0.65); }
+    .rg-ico { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #e2e8f0; background: rgba(2,6,23,0.55); }
     .rg-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .rg-name { font-size: 13px; font-weight: 900; color: #cbd5e1; }
     .rg-on .rg-name { color: #fff; }

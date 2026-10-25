@@ -2,7 +2,7 @@
     import ProfileModal from '../modals/ProfileModal.svelte';
     import { currentUser } from '../../stores/auth.js';
     import { friendships, searchUsers, sendFriendRequest, acceptRequest, removeFriendship, otherUid } from '../../stores/friends.js';
-    import { pendingChallenge, switchTab, showAuthPanel } from '../../stores/ui.js';
+    import { pendingChallenge, switchTab, openSettings } from '../../stores/ui.js';
     import { showToast } from '../../stores/toasts.js';
 
     $: myUid = $currentUser?.uid;
@@ -64,7 +64,7 @@
             <div class="fr-signin-ico">🤝</div>
             <p class="fr-signin-t">Sign in to add friends</p>
             <p class="fr-signin-p">The friend system uses your cloud account. Sign in to send requests, build your friends list, and challenge friends.</p>
-            <button class="fr-btn fr-btn-primary" on:click={() => showAuthPanel.set(true)}>Sign In</button>
+            <button class="fr-btn fr-btn-primary" on:click={() => openSettings('account')}>Sign In</button>
         </div>
     {:else}
         <!-- Add Friend -->

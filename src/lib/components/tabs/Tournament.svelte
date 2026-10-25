@@ -7,7 +7,8 @@
     import MatchResult from '../match/MatchResult.svelte';
     import { drawPlays } from '../match/matchMath.js';
     import { pressFx } from '../../utils/fx.js';
-    import { club, squad, blueEssence, trackStats, unlocks, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch } from '../../stores/game.js';
+    import { club, squad, blueEssence, trackStats, unlocks, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch, seasonData, recordTitle } from '../../stores/game.js';
+    import { GR_STEPS, GOLDEN_ROAD_PRIZE, seasonYear, splitIndex, grFresh } from '../../utils/league.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, pendingChallenge } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, AWARD_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -413,24 +414,33 @@
         try { const cards = Object.values(currentEnemy.cards || {}).filter(c => c && c.stats && c.role !== 'COACH'); const r = {}; ['mec','tmf','map','frm','cmp'].forEach(s => { r[s] = cards.length > 0 ? Math.round(cards.reduce((sum, c) => sum + (c.stats[s]||0), 0) / cards.length) : 0; }); return r; } catch(e) { return {}; }
     })() : {};
 
-    // Unlock conditions
+    // ── Qualification ──
+    // Only the Gaming Cafe is free to play. The Regional Trophy is the playoff at the end of every
+    // Season split, and First Stand / MSI / Worlds are played once, when that split's Regional
+    // Trophy earns the spot (utils/league.js): Winter's champion → First Stand, Spring's and
+    // Summer's finalists → MSI and Worlds. The spot lives on seasonData.qualified until played.
     $: ts = $trackStats;
-    $: canRegional = (ts.splitsCompleted || 0) >= 1;
-    $: canFirstStand = (ts.regionalSplitWon || 0) >= 1;
-    $: canMSI = ($unlocks.firstStand || (ts.firstStandWon || 0) >= 1 || (ts.regionalSplitWon || 0) >= 1);
-    $: canWorlds = ($unlocks.msi || (ts.regionalSplitWon || 0) >= 1);
-    $: canGoldenRoad = canRegional;
+    $: qualified = $seasonData.qualified && !$seasonData.qualified.played ? $seasonData.qualified : null;
+    $: canRegional = false;
+    $: canFirstStand = qualified?.event === 'firststand';
+    $: canMSI = qualified?.event === 'msi';
+    $: canWorlds = qualified?.event === 'worlds';
+    $: canGoldenRoad = false;
+    const QUALIFY_EVENTS = ['firststand', 'msi', 'worlds'];
+    // This year's Golden Road, read the same way the Season tab reads it.
+    $: grYear = seasonYear($seasonData.currentSplit);
+    $: gr = $seasonData.goldenRoad && $seasonData.goldenRoad.year === grYear ? $seasonData.goldenRoad : grFresh(grYear, splitIndex($seasonData.currentSplit) > 0);
+    $: grSteps = GR_STEPS.map((st, i) => ({ ...st, state: i < gr.done.length ? 'done' : gr.broken ? 'broken' : i === gr.done.length ? 'next' : 'later' }));
 
     // ── The Play menu ──
-    // The five standalone tournaments, in the order a club actually climbs them. The menu
-    // draws them as one road, so this order IS the layout. Lock hints restate the can*
-    // rules above in words — change one, change the other.
+    // The five tournaments, in the order a club actually climbs them. The menu draws them as one
+    // road, so this order IS the layout. Hints restate the qualification rules above in words.
     $: circuit = [
-        { id: 'cafe',       icon: 'coffee', name: 'Gaming Cafe',        detail: '3 rounds · CPU capped at Gold', unlocked: true,          hint: '',                                                     wins: ts.cafeWins || 0 },
-        { id: 'regional',   icon: 'flag',   name: 'Regional Trophy',    detail: '5 rounds · Mixed tiers',        unlocked: canRegional,   hint: 'Finish one Season split',                              wins: ts.regionalSplitWon || 0 },
-        { id: 'firststand', icon: 'flame',  name: 'First Stand',        detail: '5 rounds · Tough opponents',    unlocked: canFirstStand, hint: 'Win a Regional title — the Trophy or a 6-win split',  wins: ts.firstStandWon || 0 },
-        { id: 'msi',        icon: 'waves',  name: 'MSI',                detail: '7 rounds · Elite competition',  unlocked: canMSI,        hint: 'Reach the Regional final, or win a Regional title',   wins: ts.msiWon || 0 },
-        { id: 'worlds',     icon: 'trophy', name: 'World Championship', detail: '7 rounds · The ultimate test',  unlocked: canWorlds,     hint: 'Reach the First Stand final, or win a Regional title', wins: ts.worldsWon || 0 },
+        { id: 'cafe',       icon: 'coffee', name: 'Gaming Cafe',        detail: '3 rounds · CPU capped at Gold · any time', unlocked: true,         hint: '',                                     wins: ts.cafeWins || 0 },
+        { id: 'regional',   icon: 'flag',   name: 'Regional Trophy',    detail: 'The playoffs of every Season split',      unlocked: true, link: true, hint: '',                          wins: ts.regionalSplitWon || 0 },
+        { id: 'firststand', icon: 'flame',  name: 'First Stand',        detail: 'Qualified · 5 rounds',                     unlocked: canFirstStand, hint: 'Win the Winter split\'s Regional Trophy', wins: ts.firstStandWon || 0 },
+        { id: 'msi',        icon: 'waves',  name: 'MSI',                detail: 'Qualified · 7 rounds',                     unlocked: canMSI,        hint: 'Reach the Spring Regional Trophy final',  wins: ts.msiWon || 0 },
+        { id: 'worlds',     icon: 'trophy', name: 'World Championship', detail: 'Qualified · 7 rounds',                     unlocked: canWorlds,     hint: 'Reach the Summer Regional Trophy final',  wins: ts.worldsWon || 0 },
     ].map((s, i) => ({ ...s, step: i + 1, mode: MODES[s.id] }));
     // How far along the road the club is, for the progress line: the last unlocked stage.
     $: circuitReach = circuit.reduce((n, s, i) => s.unlocked ? i : n, 0);
@@ -445,7 +455,8 @@
     $: salaryReady = $club.filter(c => c.role !== 'COACH').length >= 5;
 
     function enterStage(s) {
-        if (!s.unlocked) return;
+        if (s.link) { playSound('click'); switchTab('season'); return; }
+        if (!s.unlocked) { showToast(`${s.name} is qualify-only: ${s.hint.charAt(0).toLowerCase()}${s.hint.slice(1)}.`, 'info'); return; }
         if (!squadReady) { showToast('Fill all 5 starting positions first.', 'error'); switchTab('squad'); return; }
         playSound('click');
         startTournament(s.id);
@@ -520,6 +531,10 @@
 
     function startTournament(mode, legacy = false) {
         if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
+        // Qualify-only events: never started without a live spot (also covers Legacy Mode).
+        if (mode === 'regional') { switchTab('season'); return; }
+        if (QUALIFY_EVENTS.includes(mode) && get(seasonData).qualified?.event !== mode) { showToast('You have to qualify for that through the Season.', 'error'); return; }
+        if (QUALIFY_EVENTS.includes(mode) && get(seasonData).qualified?.played) { showToast('You already played that event.', 'error'); return; }
         activeMode = mode;
         legacyRun = legacy;
         const m = MODES[mode];
@@ -674,8 +689,20 @@
         }
 
         logMatch({ mode, result: won ? 'win' : isFinalist ? 'finalist' : 'loss', opponent: currentEnemy?.name || m?.name || 'Tournament', be: reward, xp: won ? (xpTable[mode] || 100) : Math.round((xpTable[mode] || 100) * 0.4) });
+        // A qualified international is spent whatever the result, and is one of the year's six
+        // Golden Road titles.
+        let road = null;
+        const q = get(seasonData).qualified;
+        if (QUALIFY_EVENTS.includes(mode) && q && q.event === mode && !q.played) {
+            seasonData.update(s => ({ ...s, qualified: { ...s.qualified, played: true, won } }));
+            road = recordTitle(mode, q.year, won);
+            if (road.completed) {
+                playSound('win');
+                showToast(`GOLDEN ROAD! All six titles of the year — +${road.be.toLocaleString()} BE`, 'success');
+            }
+        }
         saveGame();
-        tournamentResult = { won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist };
+        tournamentResult = { won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist, goldenRoadDone: !!road?.completed, roadBE: road?.be || 0 };
         goPhase('result');
     }
 
@@ -684,9 +711,9 @@
         phase = legacyRun ? 'legacy_lobby' : 'lobby'; activeMode = null; tournamentResult = null; enemies = []; currentEnemy = null; matchLog = [];
     }
 
-    // Straight back into the same stage. Not offered for the Golden Road (it has a cooldown)
-    // or for Salary Cap / Rival, which both need a fresh setup screen first.
-    const REPLAYABLE = ['cafe', 'regional', 'firststand', 'msi', 'worlds'];
+    // Straight back into the same stage. Only the Gaming Cafe: every other tournament is earned
+    // through the Season, and Salary Cap / Rival need a fresh setup screen first.
+    const REPLAYABLE = ['cafe'];
     function playAgain() {
         const m = activeMode;
         const legacy = legacyRun;
@@ -745,7 +772,7 @@
                 <div class="pl-hero-text">
                     <span class="pl-eyebrow"><Icon name="play" size={12} stroke={2.4} /> Play</span>
                     <h2 class="pl-title">Choose your stage</h2>
-                    <p class="pl-sub">Every title opens the next one. Climb from a café bracket to the Summoner's Cup — or try the side modes for something different.</p>
+                    <p class="pl-sub">The Gaming Cafe is open any time. Everything bigger is earned through the Season: win your split's Regional Trophy to reach First Stand, MSI and Worlds.</p>
                 </div>
                 <button class="pl-power" class:pl-power-off={!squadReady} on:click={() => switchTab('squad')} use:pressFx={{ color: 'rgba(96,165,250,0.35)' }}>
                     <span class="pp-ring" style="--pct: {squadReady ? Math.min(100, Math.round((totalPower / 130) * 100)) : 0}%;">
@@ -768,7 +795,7 @@
                 <span class="ps-body">
                     <span class="ps-kicker">Your main climb</span>
                     <span class="ps-title">Season Splits</span>
-                    <span class="ps-sub">10 opponents a split · {ts.splitsCompleted || 0} split{(ts.splitsCompleted || 0) === 1 ? '' : 's'} played · {ts.regionalSplitWon || 0} regional title{(ts.regionalSplitWon || 0) === 1 ? '' : 's'}</span>
+                    <span class="ps-sub">10-team league · Regional Trophy every split · {ts.splitsCompleted || 0} split{(ts.splitsCompleted || 0) === 1 ? '' : 's'} played · {ts.regionalSplitWon || 0} regional title{(ts.regionalSplitWon || 0) === 1 ? '' : 's'}</span>
                 </span>
                 <span class="ps-go">Open Season <Icon name="arrow" size={15} /></span>
             </button>
@@ -777,7 +804,7 @@
             <section class="pl-section">
                 <div class="pl-sec-head">
                     <h3 class="pl-sec-title">The Circuit</h3>
-                    <span class="pl-sec-note">{circuit.filter(s => s.unlocked).length}/5 stages open</span>
+                    <span class="pl-sec-note">{qualified ? `Qualified for ${qualified.eventName} — play it now` : 'Qualify through the Season'}</span>
                 </div>
                 <div class="circuit" style="--reach: {circuitReach / (circuit.length - 1)};">
                     <div class="cr-track" aria-hidden="true"><div class="cr-track-fill"></div></div>
@@ -813,8 +840,10 @@
                                 {#if s.wins > 0}<span class="st-wins"><Icon name="trophy" size={12} /> ×{s.wins}</span>{/if}
                             </span>
                             <span class="st-cta">
-                                {#if !s.unlocked}<Icon name="lock" size={13} /> Locked
+                                {#if s.link}Open Season <Icon name="chevron" size={14} stroke={2.4} />
+                                {:else if !s.unlocked}<Icon name="lock" size={13} /> Qualify first
                                 {:else if !squadReady}Set your squad
+                                {:else if s.id !== 'cafe'}Play — qualified <Icon name="chevron" size={14} stroke={2.4} />
                                 {:else}Enter <Icon name="chevron" size={14} stroke={2.4} />{/if}
                             </span>
                         </button>
@@ -822,35 +851,28 @@
                 </div>
             </section>
 
-            <!-- Golden Road -->
-            <section class="gold" class:gold-locked={!canGoldenRoad}>
+            <!-- Golden Road — no longer an event you enter: it is winning every title of a year,
+                 in order, and this is the year's checklist. -->
+            <section class="gold" class:gold-locked={gr.broken}>
                 <div class="gold-sheen" aria-hidden="true"></div>
                 <div class="gold-main">
                     <span class="gold-crown"><Icon name="crown" size={34} /></span>
                     <div class="gold-text">
-                        <span class="gold-kicker">The gauntlet{#if (ts.goldenRoads || 0) > 0} · completed ×{ts.goldenRoads}{/if}</span>
+                        <span class="gold-kicker">Year {grYear}{#if (ts.goldenRoads || 0) > 0} · completed ×{ts.goldenRoads}{/if}</span>
                         <h3 class="gold-title">Golden Road</h3>
-                        <p class="gold-sub">{canGoldenRoad ? 'The whole circuit back to back — 19 games, and a single loss ends the run.' : 'Finish one Season split to open the road.'}</p>
+                        <p class="gold-sub">{gr.broken ? 'Gone for this year — it reopens with next year\'s Winter split.' : gr.done.length === GR_STEPS.length ? 'Completed this year!' : 'Win all six titles of one year, in order. Every Regional Trophy and every international you qualify for counts.'}</p>
                     </div>
                     <div class="gold-act">
-                        {#if canGoldenRoad}<span class="gold-prize">25,000 BE + Glory</span>{/if}
-                        {#if grOnCooldown}
-                            <span class="mode-cooldown">{grCooldownDisplay}</span>
-                        {:else if !canGoldenRoad}
-                            <span class="gold-lock"><Icon name="lock" size={14} /> Locked</span>
-                        {:else if !squadReady}
-                            <span class="mode-need">Need squad</span>
-                        {:else}
-                            <button class="gold-btn" on:click={() => { playSound('click'); startGoldenRoad(); }} use:pressFx={{ color: 'rgba(255,255,255,0.45)' }}>Begin the road</button>
-                        {/if}
+                        <span class="gold-prize">{GOLDEN_ROAD_PRIZE.toLocaleString()} BE + Glory</span>
+                        <button class="gold-btn gold-btn-ghost" on:click={() => { playSound('click'); switchTab('season'); }} use:pressFx={{ color: 'rgba(255,255,255,0.35)' }}>Open Season</button>
                     </div>
                 </div>
                 <ol class="gold-path">
-                    {#each GR_PATH as g, i}
-                        <li class="gp-node" class:gp-final={i === GR_PATH.length - 1}>
-                            <span class="gp-dot"><Icon name={g.icon} size={15} /></span>
+                    {#each grSteps as g, i}
+                        <li class="gp-node" class:gp-done={g.state === 'done'} class:gp-broken={g.state === 'broken'} class:gp-next={g.state === 'next'} class:gp-later={g.state === 'later'} class:gp-final={i === grSteps.length - 1}>
+                            <span class="gp-dot">{#if g.state === 'done'}<Icon name="check" size={15} stroke={3} />{:else if g.state === 'broken'}<Icon name="close" size={13} stroke={3} />{:else}<Icon name={g.icon} size={15} />{/if}</span>
                             <span class="gp-label">{g.label}</span>
-                            <span class="gp-games">{i === GR_PATH.length - 1 ? 4 : 3} games</span>
+                            <span class="gp-games">{g.state === 'done' ? 'Won' : g.state === 'broken' ? 'Missed' : g.state === 'next' ? 'Up next' : '—'}</span>
                         </li>
                     {/each}
                 </ol>
@@ -891,7 +913,7 @@
                         <span class="tl-art" aria-hidden="true"><Icon name="clock" size={40} stroke={1.5} /></span>
                         <span class="tl-name">Legacy Mode</span>
                         <span class="tl-sub">The original arenas and the classic match screen, exactly as they used to look.</span>
-                        <span class="tl-meta">Same tournaments, rewards & unlocks</span>
+                        <span class="tl-meta">Classic screens · same qualification rules</span>
                     </button>
                 </div>
             </section>
@@ -1037,7 +1059,7 @@
         <div class="trn-head">
             <button class="legacy-back" on:click={leaveLegacy}>← Back to Play</button>
             <h2 class="trn-title">Competitive Arenas <span class="legacy-tag">Legacy Mode</span></h2>
-            <p class="trn-desc">Test your roster against CPU opponents. Win tournaments to unlock higher tiers.</p>
+            <p class="trn-desc">The classic screens. The Gaming Cafe is open any time; the bigger tournaments open when the Season qualifies you.</p>
         </div>
 
         <div class="modes-list">
@@ -1054,18 +1076,15 @@
                 {:else}<span class="mode-need">Need squad</span>{/if}
             </div>
 
-            <!-- Regional -->
-            <div class="mode-row" class:mode-locked={!canRegional} style="border-color: {MODES.regional.color}20;">
+            <!-- Regional — the playoffs of every Season split now -->
+            <div class="mode-row" style="border-color: {MODES.regional.color}20;">
                 <span class="mode-icon">🏟️</span>
                 <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canRegional ? MODES.regional.color : '#334155'};">Regional Trophy</h3>
-                    <p class="mode-sub">{canRegional ? '5 rounds · Mixed tiers' : 'Complete 1 Season Split to unlock'}</p>
-                    {#if canRegional}<div class="mode-prizes"><span class="mp-w">Win: {MODES.regional.reward} BE</span><span class="mp-l">2nd: {MODES.regional.second} BE</span></div>{/if}
+                    <h3 class="mode-name" style="color: {MODES.regional.color};">Regional Trophy</h3>
+                    <p class="mode-sub">The playoffs at the end of every Season split — top 4 of the league</p>
+                    <div class="mode-prizes"><span class="mp-w">Win: {MODES.regional.reward} BE</span><span class="mp-l">2nd: {MODES.regional.second} BE</span></div>
                 </div>
-                {#if canRegional && squadReady}
-                    <button class="mode-enter-btn" style="background: {MODES.regional.color};" on:click={() => startTournament('regional', true)}>Enter</button>
-                {:else if !canRegional}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
+                <button class="mode-enter-btn" style="background: {MODES.regional.color};" on:click={() => switchTab('season')}>Season</button>
             </div>
 
             <!-- First Stand -->
@@ -1073,7 +1092,7 @@
                 <span class="mode-icon">🟠</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canFirstStand ? MODES.firststand.color : '#334155'};">First Stand</h3>
-                    <p class="mode-sub">{canFirstStand ? '5 rounds · Tough opponents' : 'Win/2nd Regional to unlock'}</p>
+                    <p class="mode-sub">{canFirstStand ? 'Qualified · 5 rounds · Tough opponents' : 'Win the Winter split\'s Regional Trophy to qualify'}</p>
                     {#if canFirstStand}<div class="mode-prizes"><span class="mp-w">Win: {MODES.firststand.reward} BE</span><span class="mp-l">2nd: {MODES.firststand.second} BE</span></div>{/if}
                 </div>
                 {#if canFirstStand && squadReady}
@@ -1087,7 +1106,7 @@
                 <span class="mode-icon">🌊</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canMSI ? MODES.msi.color : '#334155'};">MSI</h3>
-                    <p class="mode-sub">{canMSI ? '7 rounds · Elite competition' : 'Win Regional 1st or First Stand to unlock'}</p>
+                    <p class="mode-sub">{canMSI ? 'Qualified · 7 rounds · Elite competition' : 'Reach the Spring Regional Trophy final to qualify'}</p>
                     {#if canMSI}<div class="mode-prizes"><span class="mp-w">Win: {MODES.msi.reward} BE</span><span class="mp-l">2nd: {MODES.msi.second} BE</span></div>{/if}
                 </div>
                 {#if canMSI && squadReady}
@@ -1101,7 +1120,7 @@
                 <span class="mode-icon">🏆</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canWorlds ? MODES.worlds.color : '#334155'};">World Championship</h3>
-                    <p class="mode-sub">{canWorlds ? '7 rounds · The ultimate challenge' : 'Win Regional or MSI/2nd to unlock'}</p>
+                    <p class="mode-sub">{canWorlds ? 'Qualified · 7 rounds · The ultimate challenge' : 'Reach the Summer Regional Trophy final to qualify'}</p>
                     {#if canWorlds}<div class="mode-prizes"><span class="mp-w">Win: {MODES.worlds.reward} BE</span><span class="mp-l">2nd: {MODES.worlds.second} BE</span></div>{/if}
                 </div>
                 {#if canWorlds && squadReady}
@@ -1110,20 +1129,15 @@
                 {:else}<span class="mode-need">Need squad</span>{/if}
             </div>
 
-            <!-- Golden Road -->
-            <div class="mode-row mode-golden" class:mode-locked={!canGoldenRoad} style="border-color: #fbbf2440;">
+            <!-- Golden Road — a season goal now, not an event -->
+            <div class="mode-row mode-golden" style="border-color: #fbbf2440;">
                 <span class="mode-icon">👑</span>
                 <div class="mode-info">
-                    <h3 class="mode-name" style="color: {canGoldenRoad ? '#fbbf24' : '#334155'};">Golden Road</h3>
-                    <p class="mode-sub">{canGoldenRoad ? '3 Regional → 3 First Stand → 3 Regional → 3 MSI → 3 Regional → 4 Worlds (19 games)' : 'Complete 1 Split to unlock'}</p>
-                    {#if canGoldenRoad}<div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">Win: 25,000 BE + Glory</span></div>{/if}
+                    <h3 class="mode-name" style="color: #fbbf24;">Golden Road</h3>
+                    <p class="mode-sub">Win all six titles of a year in order: Winter Regional → First Stand → Spring Regional → MSI → Summer Regional → Worlds · {gr.done.length}/6 this year{gr.broken ? ' (gone for this year)' : ''}</p>
+                    <div class="mode-prizes"><span class="mp-w" style="color:#fbbf24;">{GOLDEN_ROAD_PRIZE.toLocaleString()} BE + Glory</span></div>
                 </div>
-                {#if grOnCooldown}
-                    <span class="mode-cooldown">{grCooldownDisplay}</span>
-                {:else if canGoldenRoad && squadReady}
-                    <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={() => startGoldenRoad(true)}>Begin</button>
-                {:else if !canGoldenRoad}<span class="mode-lock-badge">🔒</span>
-                {:else}<span class="mode-need">Need squad</span>{/if}
+                <button class="mode-enter-btn" style="background: linear-gradient(135deg, #d97706, #fbbf24); color: #1c1917;" on:click={() => switchTab('season')}>Season</button>
             </div>
         </div>
 
@@ -1272,23 +1286,25 @@
         {:else}
             {@const r = tournamentResult || {}}
             <MatchResult
-                outcome={r.goldenRoad ? 'gold' : r.won ? 'win' : r.isFinalist ? 'neutral' : 'lose'}
+                outcome={r.goldenRoad || r.goldenRoadDone ? 'gold' : r.won ? 'win' : r.isFinalist ? 'neutral' : 'lose'}
                 kicker={activeMode === 'goldenroad' ? 'Golden Road' : currentModeName}
-                title={r.goldenRoad ? 'Golden Road complete' : r.goldenRoadFailed ? 'The road ends here' : r.won ? 'Champions!' : r.isFinalist ? 'Runner-up' : 'Eliminated'}
-                subtitle={r.goldenRoad ? 'Nineteen games without a single loss. The Summoner\'s Cup is yours.'
+                title={r.goldenRoadDone ? 'The Golden Road!' : r.goldenRoad ? 'Golden Road complete' : r.goldenRoadFailed ? 'The road ends here' : r.won ? 'Champions!' : r.isFinalist ? 'Runner-up' : 'Eliminated'}
+                subtitle={r.goldenRoadDone ? `You lifted the ${currentModeName} trophy — and every title of the year with it.`
+                    : r.goldenRoad ? 'Nineteen games without a single loss. The Summoner\'s Cup is yours.'
                     : r.goldenRoadFailed ? `Knocked out at stage ${(r.stage || 0) + 1} of 6. The road reopens in 30 minutes.`
                     : r.won ? `You lifted the ${currentModeName} trophy.`
                     : r.isFinalist ? 'Beaten in the final — so close.'
                     : `Knocked out in round ${r.round || 1}.`}
-                icon={r.goldenRoad ? 'crown' : r.won ? 'trophy' : r.isFinalist ? 'medal' : 'skull'}
+                icon={r.goldenRoad || r.goldenRoadDone ? 'crown' : r.won ? 'trophy' : r.isFinalist ? 'medal' : 'skull'}
                 blueName={$teamIdentity.name}
                 redName={currentEnemy?.name || ''}
                 scoreBlue={playerScore}
                 scoreRed={cpuScore}
-                rewards={r.reward > 0 ? [
-                    { label: 'Blue Essence', value: `+${r.reward.toLocaleString()}`, tone: 'be' },
+                rewards={[
+                    ...(r.reward > 0 ? [{ label: 'Blue Essence', value: `+${r.reward.toLocaleString()}`, tone: 'be' }] : []),
                     ...(r.bonus > 0 ? [{ label: 'of it from Wealth', value: `+${r.bonus.toLocaleString()}`, tone: 'good' }] : []),
-                ] : []}
+                    ...(r.goldenRoadDone ? [{ label: 'BE · Golden Road', value: `+${(r.roadBE || 0).toLocaleString()}`, tone: 'be' }] : []),
+                ]}
             >
                 {#if REPLAYABLE.includes(activeMode) && squadReady}
                     <button class="mr-btn" on:click={playAgain}>Play again <Icon name="arrow" size={15} /></button>
@@ -1440,7 +1456,6 @@
     .gold-prize { font-size: 12px; font-weight: 900; color: #fde68a; padding: 6px 12px; border-radius: 100px; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); }
     .gold-btn { position: relative; overflow: hidden; padding: 12px 26px; border-radius: 14px; border: none; cursor: pointer; font-size: 13px; font-weight: 900; letter-spacing: 0.5px; color: #1c1405; background: linear-gradient(135deg, #fde68a, #fbbf24 45%, #f59e0b); box-shadow: 0 6px 22px rgba(245,158,11,0.4); }
     .gold-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(245,158,11,0.55); }
-    .gold-lock { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; color: #8a7448; }
     .gold-path { position: relative; list-style: none; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 20px; }
     .gold-path::before { content: ''; position: absolute; left: 8.33%; right: 8.33%; top: 16px; height: 2px; background: linear-gradient(90deg, rgba(251,191,36,0.25), rgba(251,191,36,0.75)); }
     .gp-node { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
@@ -1448,6 +1463,15 @@
     .gp-final .gp-dot { color: #1c1405; background: linear-gradient(140deg, #fde68a, #f59e0b); box-shadow: 0 0 18px rgba(251,191,36,0.55); }
     .gp-label { font-size: 11px; font-weight: 800; color: #e7cf94; }
     .gp-games { font-size: 9px; font-weight: 700; color: #8a7448; }
+    .gold-btn-ghost { color: #fde68a; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.45); box-shadow: none; }
+    .gold-btn-ghost:hover { background: rgba(251,191,36,0.2); box-shadow: none; }
+    /* Checklist states: won, missed, the one up next, and the rest still to come. */
+    .gp-done .gp-dot, .gp-final.gp-done .gp-dot { color: #1c1405; background: linear-gradient(140deg, #fde68a, #f59e0b); box-shadow: 0 0 14px rgba(251,191,36,0.5); }
+    .gp-done .gp-games { color: #fbbf24; }
+    .gp-next .gp-dot { box-shadow: 0 0 0 4px rgba(251,191,36,0.18); border-color: #fbbf24; }
+    .gp-next .gp-games { color: #fde68a; }
+    .gp-broken .gp-dot, .gp-final.gp-broken .gp-dot { color: #f87171; background: #1a0a0a; border-color: rgba(248,113,113,0.5); box-shadow: none; }
+    .gp-later .gp-dot, .gp-final.gp-later .gp-dot { opacity: 0.6; }
     .gold-locked { filter: saturate(0.35); opacity: 0.7; }
     .gold-locked .gold-sheen { animation: none; }
 
@@ -1530,11 +1554,6 @@
     }
     .mode-enter-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
     .mode-need { font-size: 10px; color: #f87171; font-weight: 700; flex-shrink: 0; }
-    .mode-cooldown {
-        padding: 8px 16px; border-radius: 10px; font-size: 14px; font-weight: 900;
-        color: #f59e0b; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.15);
-        font-family: monospace; flex-shrink: 0;
-    }
 
     /* Golden Road stages */
     .gr-stages { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }

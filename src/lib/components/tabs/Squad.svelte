@@ -2,11 +2,11 @@
     import Card from '../card/Card.svelte';
     import Icon from '../ui/Icon.svelte';
     import { pressFx } from '../../utils/fx.js';
-    import { club, squad, bench, skills, seasonData, saveGame } from '../../stores/game.js';
+    import { club, squad, bench, skills, splitInProgress, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal } from '../../stores/ui.js';
     import { LEGACY_TIERS, getEffectiveStats, getEffectiveRating, getEra, TIER_COLORS } from '../../utils/cards.js';
-    import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
+    import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus, teamPairs, TEAM_SYNERGY_MAX } from '../../utils/combat.js';
     import { STAT_META, STAT_ORDER } from '../match/matchMath.js';
 
     const ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
@@ -15,7 +15,8 @@
     const ROLE_NAMES = { TOP: 'Top', JNG: 'Jungle', MID: 'Mid', ADC: 'Bot', SUP: 'Support', COACH: 'Coach' };
     $: benchLevel = $skills.bench || 0;
     $: safeBench = Array.isArray($bench) ? $bench : [null, null, null];
-    $: splitActive = (($seasonData.opponents || []).length > 0 && ($seasonData.matchResults || []).filter(r => r === true || r === false).length < 10);
+    // Locked from the first league match to the end of the Regional Trophy (stores/game.js).
+    $: splitActive = $splitInProgress;
     const roleIcons = { TOP:'/icons/Top_icon.png', JNG:'/icons/Jungle_icon.png', MID:'/icons/Middle_icon.png', ADC:'/icons/Bottom_icon.png', SUP:'/icons/Support_icon.png', COACH:'/icons/Specialist_icon.png' };
 
     let pickerOpen = false, pickerRole = null, pickerSearch = '', pickerEra = 'ALL';
@@ -54,8 +55,8 @@
           hint: !nonLegacy.length ? 'Legacy cards fit any region' : `${plural(regionCount, 'region')} in your five · one region = +5` },
         { label: 'Era synergy', val: eraChem, max: 5,
           hint: !nonLegacy.length ? 'Legacy cards fit any era' : `${plural(eraCount, 'era')} in your five · one era = +5` },
-        { label: 'Same team', val: teamChem, max: 2,
-          hint: teamChem ? 'Your five share a team' : 'All five from one team = +2' },
+        { label: 'Team synergy', val: teamChem, max: TEAM_SYNERGY_MAX,
+          hint: (() => { const p = teamPairs(starters); return p === 0 ? 'Pair two starters from the same team for +1' : `${plural(p, 'same-team pair')} · +1 per pair, max +${TEAM_SYNERGY_MAX}`; })() },
         { label: 'Coach', val: coachBonus, max: 5,
           hint: $squad.COACH ? `${$squad.COACH.name} · ${$squad.COACH.rating} rated (98+ = +5)` : 'No coach — a coach adds up to +5' },
         { label: 'Legacy cards', val: legacyBonus, max: 2,

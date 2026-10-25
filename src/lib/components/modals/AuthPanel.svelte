@@ -1,26 +1,105 @@
 <script>
-    import { showAuthPanel, soundMuted, lightMode, toggleLightMode, openConfirmModal } from '../../stores/ui.js';
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  SETTINGS
+    //  One panel for everything the player can set: their account and cloud backup,
+    //  how the game looks, sound, redeem codes, and their saves. It grew out of the old
+    //  account panel (hence the file name) and still owns sign-in, so every existing
+    //  `showAuthPanel.set(true)` keeps working. Open a specific page with
+    //  `openSettings(section)` from stores/ui.js.
+    //
+    //  Everything under Display and Sound is a DEVICE preference (storage.js DEVICE_KEYS):
+    //  it is never namespaced by save slot and survives Wipe All Local Data.
+    // ═══════════════════════════════════════════════════════════════════════════
+    import { showAuthPanel, settingsSection, soundMuted, lightMode, toggleLightMode, matchCardView, playerPhotos, openConfirmModal } from '../../stores/ui.js';
     import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad, resetPassword } from '../../stores/auth.js';
     import { careerSlotCount } from '../../stores/career.js';
-    // Read from storage each time the panel opens. The career store is blank
-    // until CareerShell mounts, so counting it would report nothing at the menu.
     import { showToast } from '../../stores/toasts.js';
-    import { toggleMute } from '../../utils/sound.js';
+    import { toggleMute, getVolume, setVolume, playSound } from '../../utils/sound.js';
     import { club, collectionRegistry, blueEssence, freePacks, saveGame } from '../../stores/game.js';
     import { clearStorage, saveToStorage, loadFromStorage } from '../../utils/storage.js';
     import { getDB, makeUniqueId } from '../../utils/cards.js';
-    import { playSound } from '../../utils/sound.js';
     import { trapFocus } from '../../utils/a11y.js';
+    import { PLAYER_PICTURES } from '../../data/playerPictures.js';
+    import { UPDATES } from '../../utils/updates.js';
+    import Icon from '../ui/Icon.svelte';
 
-    // Recomputed every time the panel opens, and after a cloud load changes it.
+    const VERSION = UPDATES[0]?.ver || '';
+    const PHOTO_CARDS = Object.keys(PLAYER_PICTURES).length;
+
+    // Class names here avoid global.css's `.nav-btn`, `.btn-primary` and `.btn-danger`, which
+    // would otherwise leak uppercase text, gradients and hover jumps into the panel.
+    // `short` is the phone tab label, so all five sections fit across a 390px screen.
+    const NAV = [
+        { id: 'account', label: 'Account',      short: 'Account', icon: 'user' },
+        { id: 'display', label: 'Display',      short: 'Display', icon: 'palette' },
+        { id: 'sound',   label: 'Sound',        short: 'Sound',   icon: 'volume' },
+        { id: 'codes',   label: 'Redeem code',  short: 'Codes',   icon: 'gift' },
+        { id: 'data',    label: 'Data & saves', short: 'Data',    icon: 'shield' },
+    ];
+
+    $: isSignedIn = $currentUser !== null;
+    $: section = NAV.some(n => n.id === $settingsSection) ? $settingsSection : 'display';
+    $: head = {
+        account: { title: 'Account', desc: isSignedIn ? 'Your profile and cloud backup.' : 'Sign in to back up your progress and play on any device.' },
+        display: { title: 'Display', desc: 'How the game looks on this device.' },
+        sound:   { title: 'Sound', desc: 'Sound effects and volume on this device.' },
+        codes:   { title: 'Redeem code', desc: 'Enter a code for cards, Blue Essence or packs.' },
+        data:    { title: 'Data & saves', desc: 'Where your progress is kept, and how to reset it.' },
+    }[section];
+
+    let bodyEl;
+    function go(id) {
+        settingsSection.set(id);
+        if (bodyEl) bodyEl.scrollTop = 0;
+    }
+
+    // Recomputed every time the panel opens, and after a cloud load changes it. Read from
+    // storage: the career store is blank until CareerShell mounts, so counting it would
+    // report nothing at the menu.
     $: careerSlots = ($showAuthPanel || $authLoading) ? careerSlotCount() : 0;
 
-    let view = 'signin'; // signin | register | settings
+    // ── Account ──
+    let authMode = 'signin'; // signin | register
     let email = '';
     let password = '';
     let regName = '';
     let regEmail = '';
     let regPass = '';
+    $: initial = (($currentUser && ($currentUser.displayName || $currentUser.email)) || 'M').trim().charAt(0).toUpperCase();
+
+    async function handleSignIn() {
+        if (!email || !password) { showToast('Enter email and password.', 'error'); return; }
+        const ok = await signIn(email, password);
+        if (ok) { email = ''; password = ''; }
+    }
+
+    async function handleRegister() {
+        if (!regName || !regEmail || !regPass) { showToast('Fill all fields.', 'error'); return; }
+        if (regPass.length < 6) { showToast('Password must be 6+ characters.', 'error'); return; }
+        const ok = await register(regName, regEmail, regPass);
+        if (ok) { regName = ''; regEmail = ''; regPass = ''; }
+    }
+
+    async function handleSignOut() {
+        await signOut();
+    }
+
+    // ── Display ──
+    function setTheme(light) {
+        if (light !== $lightMode) toggleLightMode();
+    }
+
+    // ── Sound ──
+    let volume = getVolume();
+    function handleMute() {
+        const muted = toggleMute();
+        soundMuted.set(muted);
+        if (!muted) playSound('claim');
+    }
+    function onVolume() { setVolume(volume); }
+    function previewVolume() { playSound('claim'); }
+
+    // ── Redeem code ──
     let redeemCode = '';
     // Per-save, not per-device: shared across slots, one slot redeeming a code would
     // lock every other slot out of it. Back-compat: this key was always written as a
@@ -28,6 +107,7 @@
     // there so a corrupt value starts empty instead of throwing at component setup.
     const _storedCodes = loadFromStorage('lur_redeemed_codes');
     let redeemedCodes = (_storedCodes && typeof _storedCodes === 'object' && !Array.isArray(_storedCodes)) ? _storedCodes : {};
+    $: redeemedList = Object.keys(redeemedCodes).filter(k => redeemedCodes[k]);
 
     const PACK_NAMES = { champion: 'Champion', msi: 'MSI', ewc: 'EWC', firststand: 'First Stand', elite: 'Elite', premium: 'Premium' };
 
@@ -87,16 +167,7 @@
         saveGame();
     }
 
-    function handleMute() {
-        const muted = toggleMute();
-        soundMuted.set(muted);
-    }
-
-    function close() {
-        showAuthPanel.set(false);
-        view = 'signin';
-    }
-
+    // ── Data ──
     function wipeAccount() {
         openConfirmModal('This will erase EVERY save slot in BOTH gamemodes — every Ultimate Roster slot (cards, squad, progress, quests) and every Ultimate Career slot. Only your device settings survive. You cannot undo this.', () => {
             clearStorage();
@@ -105,157 +176,250 @@
         });
     }
 
-    async function handleSignIn() {
-        if (!email || !password) { showToast('Enter email and password.', 'error'); return; }
-        const ok = await signIn(email, password);
-        if (ok) { email = ''; password = ''; }
+    function close() {
+        showAuthPanel.set(false);
+        authMode = 'signin';
     }
-
-    async function handleRegister() {
-        if (!regName || !regEmail || !regPass) { showToast('Fill all fields.', 'error'); return; }
-        if (regPass.length < 6) { showToast('Password must be 6+ characters.', 'error'); return; }
-        const ok = await register(regName, regEmail, regPass);
-        if (ok) { regName = ''; regEmail = ''; regPass = ''; }
-    }
-
-    async function handleSignOut() {
-        await signOut();
-    }
-
-    $: isSignedIn = $currentUser !== null;
 </script>
 
 {#if $showAuthPanel}
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="overlay" on:click|self={close}>
-    <div class="modal" use:trapFocus={{ onClose: close }} role="dialog" aria-modal="true" aria-label="Account" tabindex="-1">
-        <!-- Close button -->
-        <button class="close-btn" on:click={close}>✕</button>
+    <div class="sp" use:trapFocus={{ onClose: close }} role="dialog" aria-modal="true" aria-labelledby="sp-title" tabindex="-1">
 
-        {#if isSignedIn}
-            <!-- === SIGNED IN VIEW === -->
-            <div class="tabs">
-                <button class="tab" class:tab-on={view !== 'settings'} on:click={() => view = 'account'}>Account</button>
-                <button class="tab" class:tab-on={view === 'settings'} on:click={() => view = 'settings'}>Settings</button>
+        <!-- ── Sidebar ── -->
+        <aside class="nav">
+            <div class="brand">
+                <span class="brand-ico"><Icon name="settings" size={18} /></span>
+                <span class="brand-text">Settings</span>
             </div>
+            <div class="nav-list" role="tablist" aria-label="Settings sections">
+                {#each NAV as n (n.id)}
+                    <button class="sec-btn" class:nav-on={section === n.id} role="tab" aria-selected={section === n.id} on:click={() => go(n.id)}>
+                        <Icon name={n.icon} size={17} />
+                        <span class="nav-label">{n.label}</span>
+                        <span class="nav-short">{n.short}</span>
+                        {#if n.id === 'account'}
+                            <span class="nav-dot" class:nav-dot-on={isSignedIn} title={isSignedIn ? 'Signed in' : 'Not signed in'}></span>
+                        {/if}
+                    </button>
+                {/each}
+            </div>
+            <div class="nav-foot">{VERSION}</div>
+        </aside>
 
-            <div class="body">
-                {#if view === 'settings'}
-                    <!-- SETTINGS -->
-                    <div class="section-title">Settings</div>
-                    <div class="settings-list">
-                        <div class="setting">
-                            <div><div class="s-title">{$lightMode ? '☀️' : '🌙'} Theme</div><div class="s-desc">{$lightMode ? 'Light mode' : 'Dark mode'}</div></div>
-                            <button class="toggle {$lightMode ? 't-yellow' : 't-slate'}" on:click={toggleLightMode}>{$lightMode ? 'Light' : 'Dark'}</button>
+        <!-- ── Page ── -->
+        <section class="main">
+            <header class="head">
+                <div>
+                    <h2 class="head-title" id="sp-title">{head.title}</h2>
+                    <p class="head-desc">{head.desc}</p>
+                </div>
+                <button class="x" on:click={close} aria-label="Close settings"><Icon name="close" size={16} stroke={2.2} /></button>
+            </header>
+
+            <div class="body" bind:this={bodyEl}>
+                {#if section === 'account'}
+                    {#if isSignedIn}
+                        <div class="profile">
+                            <div class="avatar">{initial}</div>
+                            <div class="profile-text">
+                                <div class="profile-name">{$currentUser.displayName || 'Manager'}</div>
+                                <div class="profile-email">{$currentUser.email}</div>
+                            </div>
+                            <span class="chip chip-ok"><span class="chip-dot"></span>Signed in</span>
                         </div>
-                        <div class="setting">
-                            <div><div class="s-title">{$soundMuted ? '🔇' : '🔊'} Sound</div><div class="s-desc">{$soundMuted ? 'Muted' : 'Enabled'}</div></div>
-                            <button class="toggle {$soundMuted ? 't-red' : 't-green'}" on:click={handleMute}>{$soundMuted ? 'Off' : 'On'}</button>
+
+                        <div class="group">
+                            <div class="group-title">Cloud backup</div>
+                            <div class="row row-stack">
+                                <div class="row-text">
+                                    <div class="row-label">Back up or restore this device</div>
+                                    <div class="row-desc">
+                                        Saves your club and every Ultimate Career slot to your account, so both carry over to any
+                                        device you sign in on. On this device: {$club.length.toLocaleString()} cards and {careerSlots} career {careerSlots === 1 ? 'slot' : 'slots'}.
+                                    </div>
+                                </div>
+                                <div class="btn-row">
+                                    <button class="btn btn-accent" on:click={cloudSave} disabled={$authLoading}>
+                                        <Icon name="upgrade" size={15} stroke={2.2} /> {$authLoading ? 'Working…' : 'Save to cloud'}
+                                    </button>
+                                    <button class="btn" on:click={cloudLoad} disabled={$authLoading}>
+                                        <Icon name="archive" size={15} stroke={2.2} /> {$authLoading ? 'Working…' : 'Load from cloud'}
+                                    </button>
+                                </div>
+                                <div class="note note-warn">Loading replaces what is on this device. It also loads saves from the old website.</div>
+                            </div>
                         </div>
-                    </div>
-                    <div class="redeem-section">
-                        <div class="s-title">🎟️ Redeem Code</div>
-                        <div class="redeem-row">
-                            <input type="text" bind:value={redeemCode} placeholder="Enter code..." class="redeem-input" on:keydown={(e) => e.key === 'Enter' && redeemCodeFn()}>
-                            <button class="redeem-btn" on:click={redeemCodeFn}>Redeem</button>
+
+                        <div class="group">
+                            <div class="row">
+                                <div class="row-text">
+                                    <div class="row-label">Sign out</div>
+                                    <div class="row-desc">Your progress stays on this device.</div>
+                                </div>
+                                <button class="btn btn-quiet" on:click={handleSignOut}>Sign out</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="wipe-section">
-                        <div class="wipe-label">Danger Zone</div>
-                        <button class="wipe-btn" on:click={wipeAccount}>🗑️ Wipe All Local Data</button>
-                        <div class="wipe-hint">Erases everything — cards, squad, progress, quests. Cannot be undone.</div>
-                    </div>
-                {:else}
-                    <!-- ACCOUNT INFO -->
-                    <div class="user-card">
-                        <div class="user-avatar">👤</div>
-                        <div class="user-info">
-                            <div class="user-name">{$currentUser.displayName || 'Manager'}</div>
-                            <div class="user-email">{$currentUser.email}</div>
+                    {:else}
+                        <div class="guest">
+                            <span class="guest-ico"><Icon name="user" size={20} /></span>
+                            <div>
+                                <div class="row-label">You're playing as a guest</div>
+                                <div class="row-desc">Your progress is saved on this device only. Sign in to back it up to the cloud, use it on other devices, and appear on the leaderboards.</div>
+                            </div>
+                        </div>
+
+                        <div class="seg seg-wide" role="radiogroup" aria-label="Sign in or create an account">
+                            <button role="radio" aria-checked={authMode === 'signin'} class:seg-on={authMode === 'signin'} on:click={() => authMode = 'signin'}>Sign in</button>
+                            <button role="radio" aria-checked={authMode === 'register'} class:seg-on={authMode === 'register'} on:click={() => authMode = 'register'}>Create account</button>
+                        </div>
+
+                        {#if authMode === 'signin'}
+                            <form class="form" on:submit|preventDefault={handleSignIn}>
+                                <label class="field">
+                                    <span class="field-label">Email</span>
+                                    <input type="email" autocomplete="email" bind:value={email}>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">Password</span>
+                                    <input type="password" autocomplete="current-password" bind:value={password}>
+                                </label>
+                                <button type="submit" class="btn btn-accent btn-block" disabled={$authLoading}>{$authLoading ? 'Signing in…' : 'Sign in'}</button>
+                                <button type="button" class="link" on:click={() => resetPassword(email)}>Forgot your password?</button>
+                            </form>
+                        {:else}
+                            <form class="form" on:submit|preventDefault={handleRegister}>
+                                <label class="field">
+                                    <span class="field-label">Display name</span>
+                                    <input type="text" autocomplete="nickname" bind:value={regName}>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">Email</span>
+                                    <input type="email" autocomplete="email" bind:value={regEmail}>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">Password</span>
+                                    <input type="password" autocomplete="new-password" placeholder="At least 6 characters" bind:value={regPass}>
+                                </label>
+                                <button type="submit" class="btn btn-accent btn-block" disabled={$authLoading}>{$authLoading ? 'Creating…' : 'Create account'}</button>
+                            </form>
+                        {/if}
+                    {/if}
+
+                {:else if section === 'display'}
+                    <div class="group">
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Theme</div>
+                                <div class="row-desc">Dark is the default.</div>
+                            </div>
+                            <div class="seg" role="radiogroup" aria-label="Theme">
+                                <button role="radio" aria-checked={!$lightMode} class:seg-on={!$lightMode} on:click={() => setTheme(false)}>Dark</button>
+                                <button role="radio" aria-checked={$lightMode} class:seg-on={$lightMode} on:click={() => setTheme(true)}>Light</button>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Player photos <span class="tag">Beta</span></div>
+                                <div class="row-desc">Show real player photos on cards instead of initials. Photos are being added over time; {PHOTO_CARDS} cards have one so far.</div>
+                            </div>
+                            <button class="sw" role="switch" aria-checked={$playerPhotos} aria-label="Player photos" class:sw-on={$playerPhotos} on:click={() => playerPhotos.set(!$playerPhotos)}><span class="knob"></span></button>
+                        </div>
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Match lineups</div>
+                                <div class="row-desc">How both teams appear on the match screen. You can also switch this during a match.</div>
+                            </div>
+                            <div class="seg" role="radiogroup" aria-label="Match lineups">
+                                <button role="radio" aria-checked={$matchCardView} class:seg-on={$matchCardView} on:click={() => matchCardView.set(true)}>Cards</button>
+                                <button role="radio" aria-checked={!$matchCardView} class:seg-on={!$matchCardView} on:click={() => matchCardView.set(false)}>Compact</button>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="cloud-actions">
-                        <button class="cloud-btn save" on:click={cloudSave} disabled={$authLoading}>
-                            {$authLoading ? '...' : '☁️ Save to Cloud'}
-                        </button>
-                        <button class="cloud-btn load" on:click={cloudLoad} disabled={$authLoading}>
-                            {$authLoading ? '...' : '📥 Load from Cloud'}
-                        </button>
+                {:else if section === 'sound'}
+                    <div class="group">
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Sound effects</div>
+                                <div class="row-desc">Clicks, pack openings, wins and losses.</div>
+                            </div>
+                            <button class="sw" role="switch" aria-checked={!$soundMuted} aria-label="Sound effects" class:sw-on={!$soundMuted} on:click={handleMute}><span class="knob"></span></button>
+                        </div>
+                        <div class="row" class:row-off={$soundMuted}>
+                            <div class="row-text">
+                                <div class="row-label">Volume</div>
+                                <div class="row-desc">{$soundMuted ? 'Turn sound effects on to change the volume.' : 'Let go of the slider to hear a sample.'}</div>
+                            </div>
+                            <div class="vol">
+                                <Icon name={$soundMuted || volume === 0 ? 'mute' : 'volume'} size={16} />
+                                <input type="range" min="0" max="100" step="5" aria-label="Volume" bind:value={volume} on:input={onVolume} on:change={previewVolume} disabled={$soundMuted} style="--fill: {volume}%">
+                                <span class="vol-n">{volume}%</span>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="cloud-note">
-                        Backs up your club <strong>and every Ultimate Career slot</strong>, so both
-                        transfer to any device you sign in on. Loads cards, squad, BE, stats and
-                        progress from the old website too.
-                        <br>Locally: <strong>{$club.length}</strong> cards and
-                        <strong>{careerSlots}</strong> career {careerSlots === 1 ? 'slot' : 'slots'}.
-                        <br><span class="cloud-warn">Loading replaces what is on this device.</span>
+                {:else if section === 'codes'}
+                    <div class="group">
+                        <div class="row row-stack">
+                            <div class="row-text">
+                                <div class="row-label">Code</div>
+                                <div class="row-desc">Each code can be redeemed once per save slot. Codes are not case sensitive.</div>
+                            </div>
+                            <form class="code-row" on:submit|preventDefault={redeemCodeFn}>
+                                <input type="text" class="code-input" bind:value={redeemCode} placeholder="Enter code" aria-label="Code" autocomplete="off" spellcheck="false">
+                                <button type="submit" class="btn btn-accent">Redeem</button>
+                            </form>
+                        </div>
+                    </div>
+                    {#if redeemedList.length}
+                        <div class="group">
+                            <div class="group-title">Redeemed on this save</div>
+                            <div class="codes">
+                                {#each redeemedList as c (c)}
+                                    <span class="code-chip"><Icon name="check" size={12} stroke={2.6} /> {c}</span>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
+
+                {:else if section === 'data'}
+                    <div class="group">
+                        <div class="group-title">Saving</div>
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Saved automatically</div>
+                                <div class="row-desc">Your progress saves to this browser as you play, in three save slots per gamemode. Choose a slot from the main menu.</div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Cloud backup</div>
+                                <div class="row-desc">{isSignedIn ? 'Back up your club and careers to your account.' : 'Sign in to back up your club and careers to the cloud.'}</div>
+                            </div>
+                            {#if isSignedIn}
+                                <button class="btn" on:click={cloudSave} disabled={$authLoading}>{$authLoading ? 'Working…' : 'Back up now'}</button>
+                            {:else}
+                                <button class="btn" on:click={() => go('account')}>Sign in</button>
+                            {/if}
+                        </div>
                     </div>
 
-                    <button class="signout-btn" on:click={handleSignOut}>Sign Out</button>
+                    <div class="group group-danger">
+                        <div class="group-title">Danger zone</div>
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Wipe all local data</div>
+                                <div class="row-desc">Erases every save slot in both gamemodes on this device: cards, squad, progress, quests and careers. Your settings are kept. Cannot be undone.</div>
+                            </div>
+                            <button class="btn btn-destroy" on:click={wipeAccount}>Wipe data</button>
+                        </div>
+                    </div>
                 {/if}
             </div>
-
-        {:else}
-            <!-- === SIGNED OUT VIEW === -->
-            <div class="tabs">
-                <button class="tab" class:tab-on={view === 'signin'} on:click={() => view = 'signin'}>Sign In</button>
-                <button class="tab" class:tab-on={view === 'register'} on:click={() => view = 'register'}>Register</button>
-                <button class="tab" class:tab-on={view === 'settings'} on:click={() => view = 'settings'}>Settings</button>
-            </div>
-
-            <div class="body">
-                {#if view === 'signin'}
-                    <div class="section-title">Welcome Back</div>
-                    <p class="section-desc">Sign in to sync progress across devices.</p>
-                    <input type="email" placeholder="Email" class="field" bind:value={email} on:keydown={e => e.key === 'Enter' && handleSignIn()}>
-                    <input type="password" placeholder="Password" class="field" bind:value={password} on:keydown={e => e.key === 'Enter' && handleSignIn()}>
-                    <button class="primary-btn" on:click={handleSignIn} disabled={$authLoading}>
-                        {$authLoading ? 'Signing in...' : 'Sign In'}
-                    </button>
-                    <button class="reset-link" on:click={() => resetPassword(email)}>
-                        Forgot password?
-                    </button>
-
-                {:else if view === 'register'}
-                    <div class="section-title">Create Account</div>
-                    <p class="section-desc">Set up your manager profile.</p>
-                    <input type="text" placeholder="Display Name" class="field" bind:value={regName}>
-                    <input type="email" placeholder="Email" class="field" bind:value={regEmail}>
-                    <input type="password" placeholder="Password (min 6 chars)" class="field" bind:value={regPass} on:keydown={e => e.key === 'Enter' && handleRegister()}>
-                    <button class="success-btn" on:click={handleRegister} disabled={$authLoading}>
-                        {$authLoading ? 'Creating...' : 'Create Account'}
-                    </button>
-
-                {:else}
-                    <div class="section-title">Settings</div>
-                    <div class="settings-list">
-                        <div class="setting">
-                            <div><div class="s-title">{$lightMode ? '☀️' : '🌙'} Theme</div><div class="s-desc">{$lightMode ? 'Light mode' : 'Dark mode'}</div></div>
-                            <button class="toggle {$lightMode ? 't-yellow' : 't-slate'}" on:click={toggleLightMode}>{$lightMode ? 'Light' : 'Dark'}</button>
-                        </div>
-                        <div class="setting">
-                            <div><div class="s-title">{$soundMuted ? '🔇' : '🔊'} Sound</div><div class="s-desc">{$soundMuted ? 'Muted' : 'Enabled'}</div></div>
-                            <button class="toggle {$soundMuted ? 't-red' : 't-green'}" on:click={handleMute}>{$soundMuted ? 'Off' : 'On'}</button>
-                        </div>
-                    </div>
-                    <div class="redeem-section">
-                        <div class="s-title">🎟️ Redeem Code</div>
-                        <div class="redeem-row">
-                            <input type="text" bind:value={redeemCode} placeholder="Enter code..." class="redeem-input" on:keydown={(e) => e.key === 'Enter' && redeemCodeFn()}>
-                            <button class="redeem-btn" on:click={redeemCodeFn}>Redeem</button>
-                        </div>
-                    </div>
-                    <div class="wipe-section">
-                        <div class="wipe-label">Danger Zone</div>
-                        <button class="wipe-btn" on:click={wipeAccount}>🗑️ Wipe All Local Data</button>
-                        <div class="wipe-hint">Erases everything — cards, squad, progress, quests. Cannot be undone.</div>
-                    </div>
-                {/if}
-            </div>
-        {/if}
+        </section>
     </div>
 </div>
 {/if}
@@ -263,210 +427,249 @@
 <style>
     .overlay {
         position: fixed; inset: 0; z-index: 100;
-        background: rgba(0,0,0,0.75);
+        background: rgba(2, 6, 18, 0.72);
         backdrop-filter: blur(8px);
         display: flex; align-items: center; justify-content: center;
         padding: 16px;
     }
-    .modal {
-        width: 100%; max-width: 420px; position: relative;
-        background: linear-gradient(170deg, #0d1224 0%, #0a0f1c 100%);
-        border: 1px solid rgba(71, 85, 105, 0.2);
-        border-radius: 20px;
-        box-shadow: 0 25px 80px rgba(0,0,0,0.6), 0 0 40px rgba(79,70,229,0.05);
+    .sp {
+        width: 100%; max-width: 860px; height: min(620px, calc(100vh - 32px));
+        display: grid; grid-template-columns: 220px minmax(0, 1fr);
+        background: #0b1121;
+        border: 1px solid rgba(100, 116, 139, 0.22);
+        border-radius: 18px;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+        outline: none;
+    }
+
+    /* ── Sidebar ── */
+    .nav {
+        display: flex; flex-direction: column;
+        background: #080d1a;
+        border-right: 1px solid rgba(100, 116, 139, 0.16);
+        padding: 18px 12px 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; }
+    .brand-ico {
+        width: 32px; height: 32px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        color: #c7d2fe; background: rgba(99, 102, 241, 0.16); border: 1px solid rgba(129, 140, 248, 0.25);
+    }
+    .brand-text { font-size: 16px; font-weight: 900; color: #f1f5f9; letter-spacing: 0.2px; }
+    .nav-list { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+    .sec-btn {
+        display: flex; align-items: center; gap: 11px; width: 100%;
+        padding: 10px 12px; border-radius: 10px;
+        font-family: inherit; font-size: 13.5px; font-weight: 700; text-align: left;
+        color: #94a3b8; background: transparent; border: 1px solid transparent;
+        cursor: pointer; transition: background 0.12s ease, color 0.12s ease;
+    }
+    .sec-btn:hover { color: #e2e8f0; background: rgba(51, 65, 85, 0.28); }
+    .nav-on, .nav-on:hover { color: #fff; background: rgba(99, 102, 241, 0.16); border-color: rgba(129, 140, 248, 0.22); }
+    .nav-on :global(.ico) { color: #a5b4fc; }
+    .nav-label { flex: 1; white-space: nowrap; }
+    .nav-short { display: none; }
+    .nav-dot { width: 7px; height: 7px; border-radius: 50%; background: #475569; flex-shrink: 0; }
+    .nav-dot-on { background: #10b981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.6); }
+    .nav-foot { padding: 12px 10px 0; font-size: 11px; font-weight: 700; color: #475569; }
+
+    /* ── Page ── */
+    .main { display: flex; flex-direction: column; min-height: 0; }
+    .head {
+        display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid rgba(100, 116, 139, 0.14);
+    }
+    .head-title { margin: 0; font-size: 20px; font-weight: 900; color: #f1f5f9; letter-spacing: -0.2px; }
+    .head-desc { margin: 4px 0 0; font-size: 13px; color: #94a3b8; }
+    .x {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        color: #94a3b8; background: rgba(51, 65, 85, 0.3); border: 1px solid rgba(100, 116, 139, 0.22);
+        cursor: pointer; transition: all 0.12s ease;
+    }
+    .x:hover { color: #fff; background: rgba(71, 85, 105, 0.45); }
+    .body { flex: 1; overflow-y: auto; padding: 20px 26px 26px; display: flex; flex-direction: column; gap: 18px; }
+
+    /* Groups + rows */
+    .group {
+        border: 1px solid rgba(100, 116, 139, 0.18); border-radius: 14px;
+        background: rgba(15, 23, 42, 0.45);
         overflow: hidden;
     }
+    .group-title {
+        padding: 12px 18px 0;
+        font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #64748b;
+    }
+    .row {
+        display: flex; align-items: center; justify-content: space-between; gap: 20px;
+        padding: 16px 18px;
+    }
+    .row + .row { border-top: 1px solid rgba(100, 116, 139, 0.12); }
+    .row-stack { flex-direction: column; align-items: stretch; gap: 14px; }
+    .row-off { opacity: 0.55; }
+    .row-text { min-width: 0; }
+    .row-label { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 800; color: #e2e8f0; }
+    .row-desc { margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: #8b9ab0; }
+    .tag {
+        font-size: 9.5px; font-weight: 900; letter-spacing: 0.8px; text-transform: uppercase;
+        color: #fbbf24; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.28);
+        padding: 1px 6px; border-radius: 6px;
+    }
+    .note { font-size: 12px; line-height: 1.5; color: #8b9ab0; }
+    .note-warn { color: #fbbf24; }
 
-    /* Close */
-    .close-btn {
-        position: absolute; top: 12px; right: 14px; z-index: 10;
-        width: 32px; height: 32px; border-radius: 10px;
-        background: rgba(51,65,85,0.3); border: 1px solid rgba(71,85,105,0.2);
-        color: #64748b; font-size: 14px; font-weight: 700;
-        cursor: pointer; display: flex; align-items: center; justify-content: center;
-        transition: all 0.12s ease;
+    /* Switch */
+    .sw {
+        position: relative; flex-shrink: 0;
+        width: 46px; height: 26px; border-radius: 999px; padding: 0;
+        background: #334155; border: 1px solid rgba(148, 163, 184, 0.2);
+        cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
     }
-    .close-btn:hover { background: rgba(239,68,68,0.15); color: #f87171; border-color: rgba(239,68,68,0.2); }
+    .knob {
+        position: absolute; top: 2px; left: 2px;
+        width: 20px; height: 20px; border-radius: 50%;
+        background: #e2e8f0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        transition: transform 0.15s ease;
+    }
+    .sw-on { background: #6366f1; border-color: #818cf8; }
+    .sw-on .knob { transform: translateX(20px); background: #fff; }
 
-    /* Tabs */
-    .tabs {
-        display: flex; border-bottom: 1px solid rgba(51,65,85,0.2);
-        background: rgba(15,23,42,0.3);
+    /* Segmented control */
+    .seg {
+        display: inline-flex; flex-shrink: 0; padding: 3px; gap: 2px;
+        background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(100, 116, 139, 0.22); border-radius: 10px;
     }
-    .tab {
-        flex: 1; padding: 14px 12px;
-        font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
-        color: #475569; background: transparent; border: none; border-bottom: 2px solid transparent;
-        cursor: pointer; transition: all 0.12s ease;
+    .seg button {
+        padding: 7px 14px; border-radius: 8px; border: none;
+        font-family: inherit; font-size: 12.5px; font-weight: 800;
+        color: #94a3b8; background: transparent; cursor: pointer; white-space: nowrap;
+        transition: background 0.12s ease, color 0.12s ease;
     }
-    .tab:hover { color: #94a3b8; }
-    .tab-on { color: #93c5fd !important; border-color: #3b82f6; background: rgba(59,130,246,0.03); }
-
-    /* Body */
-    .body { padding: 24px; }
-
-    .section-title {
-        font-size: 20px; font-weight: 900; color: #e2e8f0;
-        text-align: center; margin-bottom: 4px;
-    }
-    .section-desc {
-        font-size: 11px; color: #475569; text-align: center; margin-bottom: 20px;
-    }
-
-    /* Fields */
-    .field {
-        width: 100%; padding: 12px 16px;
-        background: rgba(15,23,42,0.5); border: 1px solid rgba(51,65,85,0.35);
-        border-radius: 12px; color: #e2e8f0; font-size: 13px;
-        font-family: inherit; outline: none; margin-bottom: 10px;
-        transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    }
-    .field:focus {
-        border-color: rgba(59,130,246,0.4);
-        box-shadow: 0 0 0 3px rgba(59,130,246,0.08);
-    }
-    .field::placeholder { color: #334155; }
+    .seg button:hover { color: #e2e8f0; }
+    .seg .seg-on, .seg .seg-on:hover { color: #fff; background: #4f46e5; box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35); }
+    .seg-wide { display: flex; }
+    .seg-wide button { flex: 1; padding: 9px 14px; }
 
     /* Buttons */
-    .primary-btn {
-        width: 100%; padding: 12px;
-        background: linear-gradient(135deg, #3b82f6, #6366f1);
-        color: white; font-weight: 900; font-size: 13px;
-        border: none; border-radius: 12px; cursor: pointer;
-        box-shadow: 0 4px 15px rgba(59,130,246,0.25);
-        transition: all 0.15s ease;
+    .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0;
+        padding: 9px 16px; border-radius: 10px;
+        font-family: inherit; font-size: 13px; font-weight: 800; white-space: nowrap;
+        color: #e2e8f0; background: rgba(51, 65, 85, 0.45); border: 1px solid rgba(100, 116, 139, 0.3);
+        cursor: pointer; transition: all 0.12s ease;
     }
-    .primary-btn:hover:not(:disabled) { box-shadow: 0 6px 20px rgba(59,130,246,0.4); transform: translateY(-1px); }
-    .primary-btn:disabled { opacity: 0.5; cursor: wait; }
-
-    .reset-link {
-        display: block; width: 100%; margin-top: 10px;
+    .btn:hover:not(:disabled) { background: rgba(71, 85, 105, 0.55); border-color: rgba(148, 163, 184, 0.4); }
+    .btn:disabled { opacity: 0.55; cursor: wait; }
+    .btn-accent { color: #fff; background: #4f46e5; border-color: #6366f1; }
+    .btn-accent:hover:not(:disabled) { background: #5b52f0; border-color: #818cf8; }
+    .btn-quiet { background: transparent; }
+    .btn-destroy { color: #fecaca; background: rgba(185, 28, 28, 0.25); border-color: rgba(239, 68, 68, 0.4); }
+    .btn-destroy:hover:not(:disabled) { background: rgba(185, 28, 28, 0.42); border-color: rgba(248, 113, 113, 0.6); }
+    .btn-block { width: 100%; padding: 11px 16px; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn-row .btn { flex: 1; min-width: 150px; }
+    .link {
+        align-self: center; margin-top: 2px;
+        font-family: inherit; font-size: 12.5px; font-weight: 700; color: #94a3b8;
         background: none; border: none; cursor: pointer;
-        font-size: 11px; font-weight: 700; color: #64748b;
-        text-align: center; transition: color 0.12s;
     }
-    .reset-link:hover { color: #93c5fd; }
+    .link:hover { color: #c7d2fe; text-decoration: underline; }
 
-    .success-btn {
-        width: 100%; padding: 12px;
-        background: linear-gradient(135deg, #059669, #10b981);
-        color: white; font-weight: 900; font-size: 13px;
-        border: none; border-radius: 12px; cursor: pointer;
-        box-shadow: 0 4px 15px rgba(16,185,129,0.2);
-        transition: all 0.15s ease;
-    }
-    .success-btn:hover:not(:disabled) { box-shadow: 0 6px 20px rgba(16,185,129,0.35); transform: translateY(-1px); }
-    .success-btn:disabled { opacity: 0.5; cursor: wait; }
-
-    /* Signed-in user card */
-    .user-card {
+    /* Account */
+    .profile {
         display: flex; align-items: center; gap: 14px;
-        padding: 16px; border-radius: 14px; margin-bottom: 20px;
-        background: linear-gradient(135deg, rgba(30,41,59,0.5), rgba(15,23,42,0.6));
-        border: 1px solid rgba(71,85,105,0.2);
+        padding: 16px 18px; border-radius: 14px;
+        background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.18);
     }
-    .user-avatar {
-        width: 48px; height: 48px; border-radius: 14px;
-        background: rgba(79,70,229,0.12); border: 1px solid rgba(99,102,241,0.2);
+    .avatar {
+        width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
-        font-size: 22px; flex-shrink: 0;
+        font-size: 19px; font-weight: 900; color: #fff;
+        background: linear-gradient(135deg, #4f46e5, #7c3aed);
     }
-    .user-info { min-width: 0; }
-    .user-name { font-size: 16px; font-weight: 900; color: #e2e8f0; }
-    .user-email { font-size: 11px; color: #64748b; margin-top: 2px; word-break: break-all; }
+    .profile-text { flex: 1; min-width: 0; }
+    .profile-name { font-size: 16px; font-weight: 900; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-email { margin-top: 2px; font-size: 12.5px; color: #8b9ab0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 800; }
+    .chip-ok { color: #6ee7b7; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
+    .guest {
+        display: flex; gap: 14px; align-items: flex-start;
+        padding: 16px 18px; border-radius: 14px;
+        background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(129, 140, 248, 0.22);
+    }
+    .guest-ico {
+        width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        color: #c7d2fe; background: rgba(99, 102, 241, 0.16);
+    }
+    .form { display: flex; flex-direction: column; gap: 12px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field-label { font-size: 12px; font-weight: 800; color: #cbd5e1; }
+    .field input, .code-input {
+        width: 100%; padding: 11px 14px; border-radius: 10px;
+        font-family: inherit; font-size: 14px; color: #f1f5f9;
+        background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(100, 116, 139, 0.32);
+        outline: none; transition: border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    .field input:focus, .code-input:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18); }
+    .field input::placeholder, .code-input::placeholder { color: #475569; }
 
-    /* Cloud actions */
-    .cloud-actions { display: flex; gap: 10px; margin-bottom: 14px; }
-    .cloud-btn {
-        flex: 1; padding: 12px 8px;
-        border-radius: 12px; font-size: 12px; font-weight: 800;
-        cursor: pointer; border: 1px solid; transition: all 0.12s ease;
-        text-align: center;
+    /* Volume */
+    .vol { display: flex; align-items: center; gap: 10px; flex-shrink: 0; color: #94a3b8; }
+    .vol input[type="range"] {
+        -webkit-appearance: none; appearance: none;
+        width: 180px; height: 6px; border-radius: 999px; cursor: pointer;
+        background: linear-gradient(to right, #6366f1 var(--fill), #334155 var(--fill));
     }
-    .cloud-btn:disabled { opacity: 0.5; cursor: wait; }
-    .cloud-btn.save {
-        background: rgba(16,185,129,0.08); color: #34d399; border-color: rgba(16,185,129,0.2);
+    .vol input[type="range"]:disabled { cursor: not-allowed; }
+    .vol input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none; appearance: none;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #fff; border: 2px solid #6366f1; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
     }
-    .cloud-btn.save:hover:not(:disabled) { background: rgba(16,185,129,0.15); }
-    .cloud-btn.load {
-        background: rgba(59,130,246,0.08); color: #60a5fa; border-color: rgba(59,130,246,0.2);
+    .vol input[type="range"]::-moz-range-thumb {
+        width: 14px; height: 14px; border-radius: 50%;
+        background: #fff; border: 2px solid #6366f1;
     }
-    .cloud-btn.load:hover:not(:disabled) { background: rgba(59,130,246,0.15); }
+    .vol-n { width: 40px; text-align: right; font-size: 12.5px; font-weight: 800; color: #e2e8f0; font-variant-numeric: tabular-nums; }
 
-    .cloud-note {
-        font-size: 10px; color: #475569; text-align: center;
-        padding: 10px 12px; border-radius: 10px; margin-bottom: 16px;
-        background: rgba(15,23,42,0.3); border: 1px solid rgba(51,65,85,0.15);
-        line-height: 1.5;
+    /* Codes */
+    .code-row { display: flex; gap: 10px; }
+    .code-input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+    .code-input::placeholder { text-transform: none; letter-spacing: 0; font-family: inherit; font-weight: 500; }
+    .codes { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px 16px; }
+    .code-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 5px 10px; border-radius: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 700;
+        color: #a7f3d0; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25);
     }
-    .cloud-note strong { color: #94a3b8; }
-    .cloud-warn { color: #f59e0b; }
 
-    .signout-btn {
-        width: 100%; padding: 10px;
-        background: transparent; color: #ef4444; font-size: 12px; font-weight: 700;
-        border: 1px solid rgba(239,68,68,0.15); border-radius: 10px;
-        cursor: pointer; transition: all 0.12s ease;
-    }
-    .signout-btn:hover { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.3); }
+    /* Danger */
+    .group-danger { border-color: rgba(239, 68, 68, 0.28); background: rgba(127, 29, 29, 0.08); }
+    .group-danger .group-title { color: #f87171; }
 
-    /* Settings */
-    .settings-list { display: flex; flex-direction: column; gap: 10px; }
-    .setting {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 14px 16px; border-radius: 14px;
-        background: rgba(15,23,42,0.35); border: 1px solid rgba(51,65,85,0.2);
-    }
-    .s-title { font-size: 13px; font-weight: 800; color: #e2e8f0; }
-    .s-desc { font-size: 10px; color: #475569; margin-top: 2px; }
-    .toggle {
-        padding: 6px 18px; border-radius: 8px;
-        font-size: 11px; font-weight: 800; cursor: pointer;
-        border: 1px solid; transition: all 0.12s ease;
-    }
-    .t-slate { background: rgba(51,65,85,0.3); color: #94a3b8; border-color: rgba(71,85,105,0.25); }
-    .t-yellow { background: rgba(234,179,8,0.1); color: #fbbf24; border-color: rgba(234,179,8,0.2); }
-    .t-green { background: rgba(16,185,129,0.1); color: #34d399; border-color: rgba(16,185,129,0.15); }
-    .t-red { background: rgba(239,68,68,0.08); color: #f87171; border-color: rgba(239,68,68,0.15); }
-
-    /* Redeem Code */
-    .redeem-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(51,65,85,0.15); }
-    .redeem-row { display: flex; gap: 8px; margin-top: 8px; }
-    .redeem-input {
-        flex: 1; padding: 8px 12px; border-radius: 8px;
-        background: rgba(15,23,42,0.5); border: 1px solid rgba(51,65,85,0.3);
-        color: #e2e8f0; font-size: 12px; font-weight: 700;
-        font-family: monospace; text-transform: uppercase; letter-spacing: 1px;
-    }
-    .redeem-input::placeholder { text-transform: none; letter-spacing: 0; color: #334155; }
-    .redeem-btn {
-        padding: 8px 16px; border-radius: 8px;
-        background: linear-gradient(135deg, #6366f1, #818cf8); border: none;
-        color: white; font-size: 11px; font-weight: 900;
-        text-transform: uppercase; cursor: pointer; transition: all 0.12s;
-    }
-    .redeem-btn:hover { box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
-
-    /* Wipe / Danger Zone */
-    .wipe-section {
-        margin-top: 20px;
-        padding-top: 16px;
-        border-top: 1px solid rgba(239,68,68,0.1);
-    }
-    .wipe-label {
-        font-size: 10px; font-weight: 900; text-transform: uppercase;
-        letter-spacing: 1.5px; color: #ef4444; margin-bottom: 10px;
-    }
-    .wipe-btn {
-        width: 100%; padding: 11px;
-        background: rgba(127,29,29,0.2); color: #f87171;
-        font-size: 12px; font-weight: 800;
-        border: 1px solid rgba(239,68,68,0.2); border-radius: 10px;
-        cursor: pointer; transition: all 0.12s ease;
-    }
-    .wipe-btn:hover { background: rgba(127,29,29,0.4); border-color: rgba(239,68,68,0.4); }
-    .wipe-hint {
-        font-size: 9px; color: #475569; text-align: center;
-        margin-top: 6px; line-height: 1.4;
+    /* ── Phone: the sidebar becomes a row of tabs above the page ── */
+    @media (max-width: 720px) {
+        .overlay { padding: 0; align-items: stretch; }
+        .sp {
+            max-width: none; height: 100%; border-radius: 0; border: none;
+            grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+        }
+        .nav { flex-direction: row; padding: 8px 8px; border-right: none; border-bottom: 1px solid rgba(100, 116, 139, 0.16); }
+        .brand, .nav-foot, .nav-label { display: none; }
+        .nav-list { flex-direction: row; gap: 4px; }
+        .sec-btn { position: relative; flex: 1 1 0; min-width: 0; flex-direction: column; gap: 4px; padding: 8px 2px 7px; }
+        .nav-short { display: block; font-size: 11px; font-weight: 800; white-space: nowrap; }
+        .nav-dot { position: absolute; top: 7px; right: calc(50% - 16px); }
+        .head { padding: 16px 16px 14px; }
+        .body { padding: 16px 16px 24px; gap: 14px; }
+        .row { flex-wrap: wrap; gap: 12px; padding: 14px 16px; }
+        .row-text { flex: 1 1 220px; }
+        .vol { width: 100%; }
+        .vol input[type="range"] { flex: 1; width: auto; }
     }
 </style>

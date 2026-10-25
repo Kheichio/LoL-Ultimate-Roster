@@ -1,11 +1,13 @@
 <script>
     import Card from '../card/Card.svelte';
+    import Icon from '../ui/Icon.svelte';
     import { club, squad, blueEssence, trackStats, collectionRegistry, saveGame } from '../../stores/game.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
-    import { getDB, makeUniqueId, TIER_ORDER, ALL_SPECIAL } from '../../utils/cards.js';
-    import { get } from 'svelte/store';
+    import { getDB, makeUniqueId, ALL_SPECIAL, TIER_COLORS } from '../../utils/cards.js';
 
+    // Combine cards of one role and tier into one random card of the next tier up. The rules
+    // are unchanged from the old lab; Challenger cannot be forged (packs only).
     const upgradePaths = [
         { from: 'Bronze', to: 'Silver', count: 10, cost: 50 },
         { from: 'Silver', to: 'Gold', count: 10, cost: 100 },
@@ -14,79 +16,68 @@
         { from: 'Diamond', to: 'Master', count: 8, cost: 800 },
         { from: 'Master', to: 'Grandmaster', count: 5, cost: 1500 },
     ];
-
     const roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP', 'COACH'];
     const roleIcons = {
         TOP: '/icons/Top_icon.png', JNG: '/icons/Jungle_icon.png', MID: '/icons/Middle_icon.png',
-        ADC: '/icons/Bottom_icon.png', SUP: '/icons/Support_icon.png', COACH: '/icons/Specialist_icon.png'
+        ADC: '/icons/Bottom_icon.png', SUP: '/icons/Support_icon.png', COACH: '/icons/Specialist_icon.png',
     };
+    const color = (t) => TIER_COLORS[t] || '#94a3b8';
 
     let selectedPath = upgradePaths[0];
     let selectedRole = 'TOP';
     let showResult = false;
     let resultCard = null;
 
+    // `ids` is passed in rather than closed over, so every reactive line below that calls this
+    // also re-runs when the squad changes (Svelte only tracks names it can see).
     $: activeSquadIds = new Set(Object.values($squad).filter(Boolean).map(c => c.uniqueId));
+    const usable = (c, ids) => !ids.has(c.uniqueId) && !c.locked && !ALL_SPECIAL.includes(c.quality);
 
-    $: eligible = $club.filter(c =>
-        c.quality === selectedPath.from &&
-        c.role === selectedRole &&
-        !activeSquadIds.has(c.uniqueId) &&
-        !c.locked &&
-        !ALL_SPECIAL.includes(c.quality)
-    ).sort((a, b) => a.rating - b.rating);
-
+    $: eligible = $club.filter(c => c.quality === selectedPath.from && c.role === selectedRole && usable(c, activeSquadIds))
+        .sort((a, b) => a.rating - b.rating);
     $: canUpgrade = eligible.length >= selectedPath.count && $blueEssence >= selectedPath.cost;
 
-    $: pathCounts = (() => {
-        const counts = {};
-        upgradePaths.forEach(p => {
-            const byRole = {};
-            roles.forEach(r => {
-                byRole[r] = $club.filter(c =>
-                    c.quality === p.from && c.role === r &&
-                    !activeSquadIds.has(c.uniqueId) && !c.locked && !ALL_SPECIAL.includes(c.quality)
-                ).length;
-            });
-            counts[p.from] = byRole;
-        });
-        return counts;
+    // { tier: { role: count } } of usable cards — drives every badge on the page.
+    $: counts = (() => {
+        const out = {};
+        for (const p of upgradePaths) out[p.from] = Object.fromEntries(roles.map(r => [r, 0]));
+        for (const c of $club) if (out[c.quality] && out[c.quality][c.role] !== undefined && usable(c, activeSquadIds)) out[c.quality][c.role]++;
+        return out;
     })();
+    $: readyByPath = Object.fromEntries(upgradePaths.map(p => [p.from,
+        $blueEssence >= p.cost ? roles.filter(r => counts[p.from][r] >= p.count).length : 0]));
+    $: bestFill = Object.fromEntries(upgradePaths.map(p => [p.from, Math.min(1, Math.max(...roles.map(r => counts[p.from][r])) / p.count)]));
+    $: totalReady = Object.values(readyByPath).reduce((s, v) => s + v, 0);
 
-    $: pathReadyCounts = (() => {
-        const ready = {};
-        upgradePaths.forEach(p => {
-            let count = 0;
-            roles.forEach(r => {
-                if ((pathCounts[p.from]?.[r] || 0) >= p.count && $blueEssence >= p.cost) count++;
-            });
-            ready[p.from] = count;
-        });
-        return ready;
+    // What the forge can actually produce for this path and role.
+    $: targetPool = (() => {
+        const db = getDB();
+        if (!db) return [];
+        return db.filter(p => p.quality === selectedPath.to && p.role === selectedRole && !ALL_SPECIAL.includes(p.quality));
     })();
+    $: poolMin = targetPool.length ? Math.min(...targetPool.map(p => p.rating)) : 0;
+    $: poolMax = targetPool.length ? Math.max(...targetPool.map(p => p.rating)) : 0;
 
-    $: totalUpgradesAvailable = Object.values(pathReadyCounts).reduce((s, v) => s + v, 0);
+    function selectPath(p) {
+        selectedPath = p;
+        // Jump to a role that can actually forge on this path, if the current one cannot.
+        if (counts[p.from][selectedRole] < p.count) {
+            const ready = roles.find(r => counts[p.from][r] >= p.count);
+            if (ready) selectedRole = ready;
+        }
+    }
 
     function performUpgrade() {
         if (!canUpgrade) return;
-
         const db = getDB();
         if (!db) return;
-
-        const toConsume = eligible.slice(0, selectedPath.count);
-        const consumeIds = new Set(toConsume.map(c => c.uniqueId));
-
-        let pool = db.filter(p =>
-            p.quality === selectedPath.to &&
-            p.role === selectedRole &&
-            !ALL_SPECIAL.includes(p.quality)
-        );
-        if (pool.length === 0) pool = db.filter(p => p.quality === selectedPath.to && !ALL_SPECIAL.includes(p.quality));
-        if (pool.length === 0) { showToast('No cards available for this upgrade tier.', 'error'); return; }
+        const consumeIds = new Set(eligible.slice(0, selectedPath.count).map(c => c.uniqueId));
+        let pool = db.filter(p => p.quality === selectedPath.to && p.role === selectedRole && !ALL_SPECIAL.includes(p.quality));
+        if (!pool.length) pool = db.filter(p => p.quality === selectedPath.to && !ALL_SPECIAL.includes(p.quality));
+        if (!pool.length) { showToast('No cards available for this upgrade tier.', 'error'); return; }
 
         const pick = pool[Math.floor(Math.random() * pool.length)];
         const newCard = { ...pick, uniqueId: makeUniqueId('upg_') };
-
         club.update(c => [...c.filter(x => !consumeIds.has(x.uniqueId)), newCard]);
         collectionRegistry.update(reg => ({ ...reg, [newCard.id]: true }));
         blueEssence.update(v => v - selectedPath.cost);
@@ -99,650 +90,267 @@
         showToast(`Upgraded to ${newCard.name} (${selectedPath.to})!`, 'success');
     }
 
-    function closeResult() {
+    function forgeAgain() {
         showResult = false;
         resultCard = null;
+        performUpgrade();
     }
 </script>
 
-<section class="upgrade-page">
-    <h2 class="page-title">Upgrade Lab</h2>
-    <p class="page-subtitle">Combine cards of the same role and tier to forge a higher-tier card.</p>
+<section class="ul">
+    <!-- ── Hero ── -->
+    <header class="hero">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="hero-text">
+            <span class="eyebrow"><Icon name="upgrade" size={13} stroke={2.2} /> Upgrade Lab</span>
+            <h2 class="title">Turn duplicates into a better card</h2>
+            <p class="sub">Feed in cards of one role and tier and forge one random card of the tier above. Your squad, locked cards and Legacy/Award cards are never used — and the lowest-rated cards always go first.</p>
+        </div>
+        <div class="hero-stats">
+            <div class="hs" class:hs-on={totalReady > 0}>
+                <span class="hs-n">{totalReady}</span>
+                <span class="hs-l">ready to forge</span>
+            </div>
+            <div class="hs">
+                <span class="hs-n hs-be"><Icon name="gem" size={16} stroke={2.2} /> {$blueEssence.toLocaleString()}</span>
+                <span class="hs-l">Blue Essence</span>
+            </div>
+        </div>
+    </header>
 
-    <div class="main-grid">
-        <!-- Left: Upgrade Path Selector -->
-        <div class="paths-column">
-            <h3 class="section-label">Select Upgrade</h3>
-            {#each upgradePaths as path}
-                {@const isSelected = selectedPath.from === path.from}
-                {@const readyCount = pathReadyCounts[path.from] || 0}
-                <button
-                    class="path-btn"
-                    class:path-btn--active={isSelected}
-                    on:click={() => { selectedPath = path; }}
-                >
-                    <div class="path-btn__header">
-                        <span class="path-btn__name" class:path-btn__name--active={isSelected}>
-                            {path.from} → {path.to}
-                            {#if readyCount > 0}<span class="path-badge">{readyCount}</span>{/if}
-                        </span>
-                        <span class="path-btn__cost">{path.cost} BE</span>
+    <!-- ── Tier ladder ── -->
+    <div class="ladder">
+        {#each upgradePaths as p (p.from)}
+            {@const on = selectedPath.from === p.from}
+            {@const ready = readyByPath[p.from]}
+            <button class="step" class:step-on={on} class:step-ready={ready > 0} style="--a: {color(p.from)}; --b: {color(p.to)};" on:click={() => selectPath(p)}>
+                <span class="st-tiers">
+                    <span class="st-dot" style="background: {color(p.from)};"></span>{p.from}
+                    <Icon name="arrow" size={12} stroke={2.4} />
+                    <span class="st-dot" style="background: {color(p.to)};"></span>{p.to}
+                </span>
+                <span class="st-meta">{p.count} cards · {p.cost.toLocaleString()} BE</span>
+                <span class="st-bar"><span style="width: {bestFill[p.from] * 100}%;"></span></span>
+                {#if ready > 0}<span class="st-badge">{ready}</span>{/if}
+            </button>
+        {/each}
+    </div>
+
+    <div class="main">
+        <!-- ── Forge ── -->
+        <div class="forge" style="--a: {color(selectedPath.from)}; --b: {color(selectedPath.to)};">
+            <div class="panel-h">Choose a role</div>
+            <div class="roles">
+                {#each roles as role}
+                    {@const n = counts[selectedPath.from][role]}
+                    {@const enough = n >= selectedPath.count}
+                    <button class="role" class:role-on={selectedRole === role} class:role-ready={enough && $blueEssence >= selectedPath.cost} on:click={() => (selectedRole = role)}>
+                        <img src={roleIcons[role]} alt="">
+                        <span class="role-n">{role}</span>
+                        <span class="role-c" class:role-c-ok={enough}>{n}/{selectedPath.count}</span>
+                        <span class="role-bar"><span style="width: {Math.min(1, n / selectedPath.count) * 100}%;"></span></span>
+                    </button>
+                {/each}
+            </div>
+
+            <div class="recipe">
+                <div class="in">
+                    <div class="stack">
+                        {#each Array(Math.min(5, selectedPath.count)) as _, i}
+                            <span class="back" style="transform: translateX({(i - 2) * 10}px) rotate({(i - 2) * 5}deg);"></span>
+                        {/each}
+                        <span class="stack-n">{selectedPath.count}×</span>
                     </div>
-                    <div class="path-btn__req">
-                        Requires {path.count} × {path.from} cards (same role)
-                    </div>
-                </button>
-            {/each}
+                    <span class="rc-tier" style="color: {color(selectedPath.from)};">{selectedPath.from}</span>
+                    <span class="rc-sub">{selectedRole}</span>
+                </div>
+                <div class="arrow">
+                    <Icon name="arrow" size={22} stroke={2.4} />
+                    <span>{selectedPath.cost.toLocaleString()} BE</span>
+                </div>
+                <div class="out">
+                    <div class="mystery"><span>?</span></div>
+                    <span class="rc-tier" style="color: {color(selectedPath.to)};">{selectedPath.to}</span>
+                    <span class="rc-sub">{targetPool.length ? `${targetPool.length} possible · ${poolMin}–${poolMax} rated` : `Random ${selectedRole}`}</span>
+                </div>
+            </div>
+
+            <div class="checks">
+                <div class="check" class:ok={eligible.length >= selectedPath.count}>
+                    <Icon name={eligible.length >= selectedPath.count ? 'check' : 'close'} size={13} stroke={2.6} />
+                    <span>{eligible.length} of {selectedPath.count} {selectedPath.from} {selectedRole} cards</span>
+                </div>
+                <div class="check" class:ok={$blueEssence >= selectedPath.cost}>
+                    <Icon name={$blueEssence >= selectedPath.cost ? 'check' : 'close'} size={13} stroke={2.6} />
+                    <span>{selectedPath.cost.toLocaleString()} BE of {$blueEssence.toLocaleString()}</span>
+                </div>
+            </div>
+
+            <button class="forge-btn" disabled={!canUpgrade} on:click={performUpgrade}>
+                {#if eligible.length < selectedPath.count}
+                    Need {selectedPath.count - eligible.length} more {selectedPath.from} {selectedRole} card{selectedPath.count - eligible.length === 1 ? '' : 's'}
+                {:else if $blueEssence < selectedPath.cost}
+                    Need {(selectedPath.cost - $blueEssence).toLocaleString()} more BE
+                {:else}
+                    <Icon name="sparkle" size={16} stroke={2.2} /> Forge a {selectedPath.to} {selectedRole}
+                {/if}
+            </button>
         </div>
 
-        <!-- Center + Right: Role + Preview -->
-        <div class="detail-column">
-            <!-- Role Selector -->
-            <div class="panel">
-                <h3 class="section-label">Select Role</h3>
-                <div class="role-grid">
-                    {#each roles as role}
-                        {@const count = pathCounts[selectedPath.from]?.[role] || 0}
-                        {@const enough = count >= selectedPath.count}
-                        {@const canDo = enough && $blueEssence >= selectedPath.cost}
-                        <button
-                            class="role-btn"
-                            class:role-btn--active={selectedRole === role}
-                            class:role-btn--ready={canDo}
-                            on:click={() => { selectedRole = role; }}
-                        >
-                            {#if canDo}<span class="role-ready-dot"></span>{/if}
-                            <img
-                                src={roleIcons[role]}
-                                alt={role}
-                                class="role-btn__icon"
-                                class:role-btn__icon--active={selectedRole === role}
-                            >
-                            <div class="role-btn__label" class:role-btn__label--active={selectedRole === role}>{role}</div>
-                            <div class="role-btn__count" class:role-btn__count--enough={enough}>{count}/{selectedPath.count}</div>
-                        </button>
+        <!-- ── Cards going in ── -->
+        <div class="pile">
+            <div class="panel-h">
+                {selectedPath.from} {selectedRole} cards you can use <span class="pile-n">{eligible.length}</span>
+            </div>
+            {#if eligible.length}
+                <p class="pile-sub">{eligible.length >= selectedPath.count ? `The ${selectedPath.count} marked cards go into the forge — always your lowest-rated.` : `Collect ${selectedPath.count - eligible.length} more to forge. Packs, the Archive and Club requests on the Transfer Market all help.`}</p>
+                <div class="pile-grid">
+                    {#each eligible as card, i (card.uniqueId)}
+                        <div class="pile-card" class:used={i < selectedPath.count && canUpgrade}>
+                            <Card {card} mini={true} />
+                            {#if i < selectedPath.count && canUpgrade}<span class="used-tag">Used</span>{/if}
+                        </div>
                     {/each}
                 </div>
-            </div>
-
-            <!-- Upgrade Summary -->
-            <div class="panel panel--preview">
-                <div class="preview-header">
-                    <h3 class="section-label">Upgrade Preview</h3>
-                </div>
-
-                <div class="preview-visual">
-                    <!-- From -->
-                    <div class="preview-slot">
-                        <div class="preview-card preview-card--from">
-                            <div class="preview-card__count">{selectedPath.count}×</div>
-                            <div class="preview-card__tier">{selectedPath.from}</div>
-                        </div>
-                        <div class="preview-slot__label">{selectedRole}</div>
-                    </div>
-
-                    <!-- Arrow -->
-                    <div class="preview-arrow">
-                        <div class="preview-arrow__icon">→</div>
-                        <div class="preview-arrow__cost">{selectedPath.cost} BE</div>
-                    </div>
-
-                    <!-- To -->
-                    <div class="preview-slot">
-                        <div class="preview-card preview-card--to">
-                            <div class="preview-card__mystery">?</div>
-                            <div class="preview-card__tier preview-card__tier--to">{selectedPath.to}</div>
-                        </div>
-                        <div class="preview-slot__label preview-slot__label--to">Random {selectedRole}</div>
-                    </div>
-                </div>
-
-                <!-- Status -->
-                <div class="status-rows">
-                    <div class="status-row">
-                        <span class="status-row__label">Cards available</span>
-                        <span class="status-row__value" class:status-row__value--ok={eligible.length >= selectedPath.count} class:status-row__value--bad={eligible.length < selectedPath.count}>{eligible.length} / {selectedPath.count}</span>
-                    </div>
-                    <div class="status-row">
-                        <span class="status-row__label">Cost</span>
-                        <span class="status-row__value" class:status-row__value--ok={$blueEssence >= selectedPath.cost} class:status-row__value--bad={$blueEssence < selectedPath.cost}>{selectedPath.cost} BE</span>
-                    </div>
-                    <div class="status-row">
-                        <span class="status-row__label">Your balance</span>
-                        <span class="status-row__value status-row__value--balance">{$blueEssence} BE</span>
-                    </div>
-                </div>
-
-                <!-- Upgrade button -->
-                <button
-                    class="upgrade-btn"
-                    class:upgrade-btn--ready={canUpgrade}
-                    class:upgrade-btn--disabled={!canUpgrade}
-                    disabled={!canUpgrade}
-                    on:click={performUpgrade}
-                >
-                    {#if eligible.length < selectedPath.count}
-                        Need {selectedPath.count - eligible.length} more {selectedPath.from} {selectedRole} cards
-                    {:else if $blueEssence < selectedPath.cost}
-                        Need {selectedPath.cost - $blueEssence} more BE
-                    {:else}
-                        Upgrade {selectedPath.count}× {selectedPath.from} → 1× {selectedPath.to}
-                    {/if}
-                </button>
-            </div>
-
-            <!-- Cards that would be consumed -->
-            {#if eligible.length > 0}
-                <div class="panel panel--eligible">
-                    <h3 class="section-label eligible-heading">
-                        Eligible Cards ({eligible.length})
-                        {#if eligible.length >= selectedPath.count}
-                            <span class="consumed-warning">— lowest {selectedPath.count} will be consumed</span>
-                        {/if}
-                    </h3>
-                    <div class="eligible-grid">
-                        {#each eligible as card, i (card.uniqueId)}
-                            <div class="eligible-card-wrap">
-                                <Card {card} mini={true} />
-                                {#if i < selectedPath.count}
-                                    <div class="consumed-overlay">
-                                        <span class="consumed-badge">CONSUMED</span>
-                                    </div>
-                                {/if}
-                            </div>
-                        {/each}
-                    </div>
+            {:else}
+                <div class="pile-empty">
+                    <Icon name="cards" size={28} />
+                    <span>No spare {selectedPath.from} {selectedRole} cards yet.</span>
                 </div>
             {/if}
         </div>
     </div>
 </section>
 
-<!-- Result Overlay -->
 {#if showResult && resultCard}
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="result-overlay" on:click={closeResult}>
-    <div class="result-title">Upgrade Complete!</div>
-    <div class="animate-card-reveal">
-        <Card card={resultCard} />
+<div class="result" style="--b: {color(resultCard.quality)};" on:click={() => (showResult = false)}>
+    <div class="result-glow" aria-hidden="true"></div>
+    <div class="result-label">Forged · {resultCard.quality}</div>
+    <div class="result-card"><Card card={resultCard} /></div>
+    <div class="result-actions">
+        {#if canUpgrade}
+            <button class="result-again" on:click|stopPropagation={forgeAgain}><Icon name="sparkle" size={14} stroke={2.2} /> Forge again</button>
+        {/if}
+        <button class="result-btn" on:click|stopPropagation={() => (showResult = false)}>Done</button>
     </div>
-    <button class="result-continue" on:click|stopPropagation={closeResult}>
-        Continue
-    </button>
 </div>
 {/if}
 
 <style>
-    /* ── Page Layout ── */
-    .upgrade-page {
-        max-width: 900px;
-        margin: 0 auto;
-        padding: 8px 0 40px;
-    }
-
-    .page-title {
-        font-size: 22px;
-        font-weight: 900;
-        color: #eab308;
-        letter-spacing: 0.05em;
-        margin: 0 0 4px;
-    }
-
-    .page-subtitle {
-        font-size: 12px;
-        color: #64748b;
-        margin: 0 0 20px;
-    }
-
-    .main-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 20px;
-    }
-
-    @media (min-width: 1024px) {
-        .main-grid {
-            grid-template-columns: 1fr 2fr;
-        }
-    }
-
-    /* ── Section Label ── */
-    .section-label {
-        font-size: 10px;
-        font-weight: 900;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        margin: 0 0 10px;
-    }
-
-    /* ── Panel ── */
-    .panel {
-        background: rgba(12, 16, 28, 0.5);
-        border: 1px solid rgba(51, 65, 85, 0.2);
-        border-radius: 16px;
-        padding: 16px;
-    }
-
-    .panel--preview {
-        padding: 20px;
-    }
-
-    .panel--eligible {
-        background: rgba(12, 16, 28, 0.35);
-        border-color: rgba(51, 65, 85, 0.15);
-    }
-
-    /* ── Paths Column ── */
-    .paths-column {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .paths-column > .section-label {
-        margin-bottom: 0;
-    }
-
-    /* ── Detail Column ── */
-    .detail-column {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-    }
-
-    /* ── Path Buttons ── */
-    .path-btn {
-        width: 100%;
-        text-align: left;
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(51, 65, 85, 0.3);
-        background: rgba(30, 41, 59, 0.4);
-        cursor: pointer;
-        transition: background 0.15s, border-color 0.15s;
-    }
-
-    .path-btn:hover {
-        background: rgba(51, 65, 85, 0.4);
-    }
-
-    .path-btn--active {
-        background: rgba(113, 63, 18, 0.2);
-        border-color: rgba(202, 138, 4, 0.4);
-        box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.2);
-    }
-
-    .path-btn--active:hover {
-        background: rgba(113, 63, 18, 0.25);
-    }
-
-    .path-btn__header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 4px;
-    }
-
-    .path-btn__name {
-        font-size: 12px;
-        font-weight: 900;
-        color: #cbd5e1;
-    }
-
-    .path-btn__name--active {
-        color: #fde047;
-    }
-
-    .path-btn__cost {
-        font-size: 9px;
-        font-family: monospace;
-        color: #64748b;
-    }
-
-    .path-btn__req {
-        font-size: 9px;
-        color: #64748b;
-    }
-
-    .path-badge {
-        display: inline-flex; align-items: center; justify-content: center;
-        min-width: 16px; height: 16px; padding: 0 4px;
-        border-radius: 100px; font-size: 9px; font-weight: 900;
-        background: #22c55e; color: white;
-        margin-left: 6px; line-height: 1;
-    }
-
-    /* ── Role Grid ── */
-    .role-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 8px;
-    }
-
-    @media (min-width: 640px) {
-        .role-grid {
-            grid-template-columns: repeat(6, 1fr);
-        }
-    }
-
-    .role-btn {
-        padding: 12px;
-        border-radius: 12px;
-        text-align: center;
-        cursor: pointer;
-        transition: background 0.15s, border-color 0.15s;
-        border: 1px solid rgba(51, 65, 85, 0.4);
-        background: rgba(30, 41, 59, 0.6);
-    }
-
-    .role-btn:hover {
-        background: rgba(51, 65, 85, 0.5);
-    }
-
-    .role-btn--active {
-        background: rgba(30, 58, 138, 0.3);
-        border-color: rgba(59, 130, 246, 0.5);
-    }
-
-    .role-btn--active:hover {
-        background: rgba(30, 58, 138, 0.35);
-    }
-
-    .role-btn__icon {
-        width: 24px;
-        height: 24px;
-        margin: 0 auto 4px;
-        opacity: 0.4;
-    }
-
-    .role-btn__icon--active {
-        opacity: 1;
-    }
-
-    .role-btn__label {
-        font-size: 10px;
-        font-weight: 900;
-        color: #64748b;
-    }
-
-    .role-btn__label--active {
-        color: #93c5fd;
-    }
-
-    .role-btn__count {
-        font-size: 9px;
-        font-family: monospace;
-        color: #475569;
-    }
-
-    .role-btn__count--enough {
-        color: #34d399;
-    }
-
-    .role-btn--ready {
-        border-color: rgba(34,197,94,0.4);
-        position: relative;
-    }
-
-    .role-ready-dot {
-        position: absolute; top: 6px; right: 6px;
-        width: 8px; height: 8px; border-radius: 50%;
-        background: #22c55e;
-        box-shadow: 0 0 6px rgba(34,197,94,0.5);
-    }
-
-    /* ── Preview Visual ── */
-    .preview-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 16px;
-    }
-
-    .preview-header .section-label {
-        margin-bottom: 0;
-    }
-
-    .preview-visual {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 16px;
-        margin-bottom: 20px;
-    }
-
-    .preview-slot {
-        text-align: center;
-    }
-
-    .preview-card {
-        width: 80px;
-        height: 112px;
-        border-radius: 12px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .preview-card--from {
-        background: rgba(51, 65, 85, 0.4);
-        border: 2px dashed #475569;
-    }
-
-    .preview-card--to {
-        background: rgba(113, 63, 18, 0.2);
-        border: 2px solid rgba(202, 138, 4, 0.4);
-    }
-
-    .preview-card__count {
-        font-size: 18px;
-        font-weight: 900;
-        color: #64748b;
-    }
-
-    .preview-card__mystery {
-        font-size: 18px;
-        font-weight: 900;
-        color: #eab308;
-    }
-
-    .preview-card__tier {
-        font-size: 9px;
-        font-weight: 700;
-        color: #475569;
-    }
-
-    .preview-card__tier--to {
-        color: #ca8a04;
-    }
-
-    .preview-slot__label {
-        font-size: 9px;
-        font-family: monospace;
-        color: #64748b;
-        margin-top: 4px;
-    }
-
-    .preview-slot__label--to {
-        color: #eab308;
-    }
-
-    .preview-arrow {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .preview-arrow__icon {
-        font-size: 20px;
-        color: #eab308;
-    }
-
-    .preview-arrow__cost {
-        font-size: 9px;
-        font-family: monospace;
-        color: #64748b;
-    }
-
-    /* ── Status Rows ── */
-    .status-rows {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-bottom: 16px;
-        font-size: 12px;
-    }
-
-    .status-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 4px 8px;
-        border-radius: 6px;
-        background: rgba(15, 23, 42, 0.4);
-    }
-
-    .status-row__label {
-        color: #64748b;
-    }
-
-    .status-row__value {
-        font-weight: 700;
-    }
-
-    .status-row__value--ok {
-        color: #34d399;
-    }
-
-    .status-row__value--bad {
-        color: #f87171;
-    }
-
-    .status-row__value--balance {
-        color: #60a5fa;
-    }
-
-    /* ── Upgrade Button ── */
-    .upgrade-btn {
-        width: 100%;
-        padding: 12px;
-        border-radius: 12px;
-        font-weight: 900;
-        font-size: 13px;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        cursor: pointer;
-        transition: background 0.15s;
-        border: none;
-    }
-
-    .upgrade-btn--ready {
-        background: #ca8a04;
-        color: #0f172a;
-        box-shadow: 0 4px 12px rgba(202, 138, 4, 0.3);
-    }
-
-    .upgrade-btn--ready:hover {
-        background: #eab308;
-    }
-
-    .upgrade-btn--disabled {
-        background: #334155;
-        color: #475569;
-        cursor: not-allowed;
-    }
-
-    /* ── Eligible Cards ── */
-    .eligible-heading {
-        margin-bottom: 12px;
-    }
-
-    .consumed-warning {
-        color: #f87171;
-        margin-left: 4px;
-    }
-
-    .eligible-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        justify-content: center;
-    }
-
-    .eligible-card-wrap {
-        position: relative;
-    }
-
-    .consumed-overlay {
-        position: absolute;
-        inset: 0;
-        background: rgba(127, 29, 29, 0.4);
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .consumed-badge {
-        color: #fca5a5;
-        font-size: 12px;
-        font-weight: 900;
-        background: rgba(69, 10, 10, 0.8);
-        padding: 4px 8px;
-        border-radius: 6px;
-    }
-
-    /* ── Result Overlay ── */
-    .result-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 80;
-        background: rgba(0, 0, 0, 0.9);
-        backdrop-filter: blur(16px);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 16px;
-    }
-
-    .result-title {
-        font-size: 16px;
-        font-weight: 900;
-        color: #eab308;
-        text-transform: uppercase;
-        letter-spacing: 3px;
-        margin-bottom: 24px;
-    }
-
-    .animate-card-reveal {
-        animation: upgradeReveal 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-
-    .result-continue {
-        margin-top: 24px;
-        background: #334155;
-        color: #e2e8f0;
-        padding: 10px 32px;
-        border-radius: 12px;
-        font-weight: 900;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        cursor: pointer;
-        transition: background 0.15s;
-        border: none;
-    }
-
-    .result-continue:hover {
-        background: #475569;
-    }
-
-    @keyframes upgradeReveal {
-        from { opacity: 0; transform: scale(0.5) rotateY(90deg); }
-        to { opacity: 1; transform: scale(1) rotateY(0deg); }
+    .ul { display: flex; flex-direction: column; gap: 16px; padding-bottom: 40px; }
+
+    /* ── Hero ── */
+    .hero {
+        position: relative; overflow: hidden; display: flex; gap: 24px; align-items: center; flex-wrap: wrap;
+        padding: 22px 26px; border-radius: 24px;
+        background: radial-gradient(60% 140% at 0% 50%, rgba(192,132,252,0.15), transparent 65%), linear-gradient(120deg, #140b1d, #0b0e1a 60%);
+        border: 1px solid rgba(192,132,252,0.28);
+    }
+    .hero-glow { position: absolute; right: -90px; top: -130px; width: 380px; height: 380px; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, rgba(250,204,21,0.1), transparent 65%); }
+    .hero-text { position: relative; flex: 1; min-width: 260px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; color: #d8b4fe; }
+    .title { font-size: clamp(22px, 2.8vw, 30px); font-weight: 900; color: #fff; letter-spacing: -0.4px; margin-top: 6px; }
+    .sub { font-size: 13px; color: #94a3b8; margin-top: 4px; max-width: 620px; line-height: 1.55; }
+    .hero-stats { position: relative; display: flex; gap: 10px; }
+    .hs { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 16px; min-width: 130px; border-radius: 16px; background: rgba(2,6,23,0.5); border: 1px solid rgba(148,163,184,0.15); }
+    .hs-on { border-color: rgba(52,211,153,0.45); background: radial-gradient(circle at 100% 0%, rgba(52,211,153,0.18), transparent 70%), rgba(2,6,23,0.5); }
+    .hs-n { display: inline-flex; align-items: center; gap: 6px; font-size: 24px; font-weight: 900; color: #fff; line-height: 1; font-variant-numeric: tabular-nums; }
+    .hs-on .hs-n { color: #6ee7b7; }
+    .hs-be { color: #7dd3fc; font-size: 20px; }
+    .hs-l { font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
+
+    /* ── Ladder ── */
+    .ladder { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+    .step {
+        position: relative; display: flex; flex-direction: column; gap: 5px; padding: 11px 12px 14px; border-radius: 14px; cursor: pointer; text-align: left;
+        background: rgba(12,16,28,0.6); border: 1px solid rgba(71,85,105,0.28); transition: border-color 0.15s, transform 0.15s, background 0.15s;
+    }
+    .step:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--b) 45%, transparent); }
+    .step-on { background: linear-gradient(140deg, color-mix(in srgb, var(--b) 20%, transparent), rgba(12,16,28,0.8)); border-color: color-mix(in srgb, var(--b) 70%, transparent); box-shadow: 0 8px 22px color-mix(in srgb, var(--b) 14%, transparent); }
+    .st-tiers { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 900; color: #e2e8f0; white-space: nowrap; overflow: hidden; }
+    .st-tiers :global(.ico) { color: #64748b; flex-shrink: 0; }
+    .st-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .st-meta { font-size: 10.5px; font-weight: 700; color: #64748b; }
+    .st-bar { position: absolute; left: 12px; right: 12px; bottom: 6px; height: 3px; border-radius: 3px; background: rgba(30,41,59,0.9); overflow: hidden; }
+    .st-bar span { display: block; height: 100%; border-radius: 3px; background: var(--a); }
+    .st-badge { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 100px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 900; color: #052e16; background: #34d399; box-shadow: 0 2px 8px rgba(52,211,153,0.45); }
+
+    /* ── Main ── */
+    .main { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px; align-items: start; }
+    .panel-h { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #94a3b8; }
+
+    .forge {
+        display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: 20px;
+        background: linear-gradient(170deg, color-mix(in srgb, var(--b) 9%, rgba(12,16,28,0.7)), rgba(12,16,28,0.7) 50%);
+        border: 1px solid color-mix(in srgb, var(--b) 30%, rgba(71,85,105,0.3));
+    }
+    .roles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .role {
+        position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px 12px; border-radius: 12px; cursor: pointer;
+        background: rgba(2,6,23,0.45); border: 1px solid rgba(71,85,105,0.3); transition: all 0.15s;
+    }
+    .role img { width: 22px; height: 22px; opacity: 0.45; }
+    .role:hover img, .role-on img { opacity: 1; }
+    .role-on { background: rgba(37,99,235,0.18); border-color: rgba(96,165,250,0.6); }
+    .role-ready { border-color: rgba(52,211,153,0.5); }
+    .role-ready::after { content: ''; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.6); }
+    .role-n { font-size: 11px; font-weight: 900; color: #cbd5e1; }
+    .role-c { font-size: 10.5px; font-weight: 800; color: #64748b; font-variant-numeric: tabular-nums; }
+    .role-c-ok { color: #34d399; }
+    .role-bar { position: absolute; left: 8px; right: 8px; bottom: 5px; height: 2px; border-radius: 2px; background: rgba(30,41,59,0.9); overflow: hidden; }
+    .role-bar span { display: block; height: 100%; background: var(--a); }
+
+    .recipe { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 18px 10px 14px; border-radius: 16px; background: rgba(2,6,23,0.45); }
+    .in, .out { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+    .stack { position: relative; width: 84px; height: 100px; display: flex; align-items: center; justify-content: center; }
+    .back { position: absolute; width: 58px; height: 82px; border-radius: 10px; background: linear-gradient(160deg, color-mix(in srgb, var(--a) 55%, #0b1220), #0b1220); border: 1px solid color-mix(in srgb, var(--a) 70%, transparent); box-shadow: 0 4px 10px rgba(0,0,0,0.35); }
+    .stack-n { position: relative; z-index: 1; font-size: 20px; font-weight: 900; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+    .mystery { width: 64px; height: 90px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 5px 0; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--b) 45%, transparent), #0b1220 75%); border: 2px solid var(--b); box-shadow: 0 0 24px color-mix(in srgb, var(--b) 40%, transparent); animation: glow 2.4s ease-in-out infinite; }
+    .mystery span { font-size: 30px; font-weight: 900; color: #fff; }
+    @keyframes glow { 50% { box-shadow: 0 0 36px color-mix(in srgb, var(--b) 60%, transparent); } }
+    .rc-tier { font-size: 14px; font-weight: 900; }
+    .rc-sub { font-size: 10.5px; font-weight: 700; color: #64748b; }
+    .arrow { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--b); }
+    .arrow span { font-size: 10.5px; font-weight: 900; color: #94a3b8; white-space: nowrap; }
+
+    .checks { display: flex; flex-direction: column; gap: 6px; }
+    .check { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; font-weight: 700; color: #fca5a5; background: rgba(127,29,29,0.15); }
+    .check.ok { color: #6ee7b7; background: rgba(6,78,59,0.2); }
+
+    .forge-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 14px; border-radius: 14px; border: none; cursor: pointer; font-size: 14px; font-weight: 900; color: #0b1220; background: linear-gradient(135deg, color-mix(in srgb, var(--b) 80%, #fff), var(--b)); box-shadow: 0 8px 24px color-mix(in srgb, var(--b) 35%, transparent); transition: transform 0.12s, filter 0.12s; }
+    .forge-btn:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
+    .forge-btn:disabled { background: rgba(30,41,59,0.7); color: #64748b; box-shadow: none; cursor: not-allowed; }
+
+    .pile { display: flex; flex-direction: column; gap: 10px; padding: 18px; border-radius: 20px; background: rgba(12,16,28,0.55); border: 1px solid rgba(71,85,105,0.25); min-height: 200px; }
+    .pile-n { padding: 1px 8px; border-radius: 100px; font-size: 10.5px; color: #e2e8f0; background: rgba(51,65,85,0.6); letter-spacing: 0; }
+    .pile-sub { font-size: 12.5px; color: #64748b; }
+    .pile-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pile-card { position: relative; zoom: 0.84; }
+    .used::after { content: ''; position: absolute; inset: 0; border-radius: 12px; background: rgba(76,29,149,0.35); outline: 2px solid rgba(192,132,252,0.7); pointer-events: none; }
+    .used-tag { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 2; padding: 2px 10px; border-radius: 100px; font-size: 11px; font-weight: 900; color: #fff; background: #7c3aed; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+    .pile-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 30px; color: #475569; font-size: 13px; }
+
+    /* ── Result ── */
+    .result { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,0.9); backdrop-filter: blur(16px); }
+    .result-glow { position: absolute; width: 520px; height: 520px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--b) 30%, transparent), transparent 65%); pointer-events: none; }
+    .result-label { position: relative; font-size: 15px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; color: var(--b); margin-bottom: 22px; }
+    .result-card { position: relative; animation: reveal 0.55s cubic-bezier(0.16,1,0.3,1) forwards; }
+    @keyframes reveal { from { opacity: 0; transform: scale(0.5) rotateY(90deg); } to { opacity: 1; transform: none; } }
+    .result-actions { position: relative; display: flex; gap: 10px; margin-top: 24px; }
+    .result-again { display: inline-flex; align-items: center; gap: 7px; padding: 12px 24px; border-radius: 12px; border: none; cursor: pointer; font-size: 13px; font-weight: 900; color: #0b1220; background: var(--b); }
+    .result-btn { padding: 12px 28px; border-radius: 12px; background: rgba(51,65,85,0.45); border: 1px solid rgba(71,85,105,0.3); color: #e2e8f0; font-size: 13px; font-weight: 800; cursor: pointer; }
+
+    @media (max-width: 1100px) {
+        .ladder { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .main { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+        .hero { padding: 18px; }
+        .hero-stats { width: 100%; }
+        .hs { flex: 1; min-width: 0; }
+        .ladder { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .pile-card { zoom: 0.7; }
     }
 </style>

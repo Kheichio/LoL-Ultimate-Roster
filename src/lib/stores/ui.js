@@ -3,7 +3,15 @@ import { loadFromStorage } from '../utils/storage.js';
 
 const hasPlayed = loadFromStorage('lur_starter');
 export const activeTab = writable(hasPlayed ? 'home' : 'welcome');
+// The Settings panel (modals/AuthPanel.svelte — it grew out of the account panel and still
+// owns sign-in). `settingsSection` is the page it opens on; open it through openSettings().
 export const showAuthPanel = writable(false);
+export const SETTINGS_SECTIONS = ['account', 'display', 'sound', 'codes', 'data'];
+export const settingsSection = writable('account');
+export function openSettings(section = 'display') {
+    settingsSection.set(SETTINGS_SECTIONS.includes(section) ? section : 'display');
+    showAuthPanel.set(true);
+}
 export const confirmModalState = writable({ open: false, message: 'This action cannot be undone.', onConfirm: null });
 export const showConfirmModal = {
     subscribe: derived(confirmModalState, $s => $s.open).subscribe,
@@ -30,6 +38,14 @@ export const lightMode = writable(localStorage.getItem('lur_light_mode') === '1'
 export const matchCardView = writable(localStorage.getItem('lur_match_cards') !== '0');
 matchCardView.subscribe(v => {
     try { localStorage.setItem('lur_match_cards', v ? '1' : '0'); } catch (e) { /* private mode */ }
+});
+
+// Real player photos on cards (data/playerPictures.js). OFF unless the player turns it on:
+// only a few dozen cards have a photo so far, and a collection where most cards show
+// initials and a handful show a face looks unfinished. A device preference like the theme.
+export const playerPhotos = writable(localStorage.getItem('lur_player_photos') === '1');
+playerPhotos.subscribe(v => {
+    try { localStorage.setItem('lur_player_photos', v ? '1' : '0'); } catch (e) { /* private mode */ }
 });
 
 export function toggleLightMode() {

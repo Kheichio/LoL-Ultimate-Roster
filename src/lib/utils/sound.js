@@ -4,6 +4,18 @@ let _bus = null;
 // transitively reaches sound.js unloadable outside a browser — which is most of
 // the career mode, and every headless tool that touches it.
 let _muted = typeof localStorage !== 'undefined' && localStorage.getItem('lur_sound_muted') === '1';
+// Volume 0-100, a device preference set from the Settings panel. It scales the master gain,
+// so the mix and the limiter below behave exactly as before at 100.
+const MASTER_GAIN = 0.55;
+function readVolume() {
+    try {
+        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('lur_sound_volume') : null;
+        if (raw === null) return 100;
+        const v = Math.round(Number(raw));
+        return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100;
+    } catch (e) { return 100; }
+}
+let _volume = readVolume();
 
 function ctx() {
     if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -15,6 +27,15 @@ export function toggleMute() {
     _muted = !_muted;
     localStorage.setItem('lur_sound_muted', _muted ? '1' : '0');
     return _muted;
+}
+
+export function getVolume() { return _volume; }
+export function setVolume(v) {
+    const n = Math.round(Number(v));
+    _volume = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 100;
+    try { localStorage.setItem('lur_sound_volume', String(_volume)); } catch (e) { /* private mode */ }
+    if (_bus) _bus.master.gain.value = MASTER_GAIN * _volume / 100;
+    return _volume;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -33,7 +54,7 @@ function bus() {
     if (_bus) return _bus;
     const c = ctx();
     const master = c.createGain();
-    master.gain.value = 0.55;
+    master.gain.value = MASTER_GAIN * _volume / 100;
 
     const limiter = c.createDynamicsCompressor();
     limiter.threshold.value = -18;
@@ -71,7 +92,7 @@ function bus() {
     limiter.connect(master);
     master.connect(c.destination);
 
-    _bus = { input };
+    _bus = { input, master };
     return _bus;
 }
 

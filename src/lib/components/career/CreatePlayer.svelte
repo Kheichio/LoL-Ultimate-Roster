@@ -19,6 +19,7 @@
     import { CAREER_PILLARS, openMenu } from '../../stores/menu.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
+    import RegionIcon from '../ui/RegionIcon.svelte';
 
     // --- Stage rail ------------------------------------------------------
     const STAGES = [
@@ -515,7 +516,7 @@
                                     <button class="regcard" class:sel={regionId === r.id} style="--a:{r.accent}"
                                         on:click={() => pickRegion(r.id)} aria-pressed={regionId === r.id}>
                                         <span class="rc-top">
-                                            <span class="rc-flag" aria-hidden="true">{r.flag}</span>
+                                            <span class="rc-flag"><RegionIcon region={r.id} size={28} fallback={r.flag} /></span>
                                             <span class="rc-names">
                                                 <span class="rc-name">{r.name}</span>
                                                 <span class="rc-league">{r.league}</span>
@@ -767,7 +768,7 @@
                                     <div class="fc-id">
                                         <div class="fc-handle">
                                             <span class="fc-name">{cleanHandle || 'Rookie'}</span>
-                                            {#if region}<span class="fc-flag" aria-hidden="true">{region.flag}</span>{/if}
+                                            {#if region}<span class="fc-flag"><RegionIcon region={region.id} size={17} fallback={region.flag} /></span>{/if}
                                             {#if role}<span class="fc-role" style="--rc:{role.accent}">{role.short}</span>{/if}
                                         </div>
                                         <div class="fc-sub">
@@ -1039,7 +1040,7 @@
     .regcard:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--a) 40%, transparent); }
     .regcard.sel { border-color: color-mix(in srgb, var(--a) 60%, transparent); background: color-mix(in srgb, var(--a) 8%, rgba(12, 16, 28, 0.6)); box-shadow: 0 10px 30px color-mix(in srgb, var(--a) 13%, transparent); }
     .rc-top { display: flex; align-items: center; gap: 11px; }
-    .rc-flag { font-size: 24px; line-height: 1; }
+    .rc-flag { width: 42px; height: 34px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 24px; line-height: 1; color: #e2e8f0; }
     .rc-names { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .rc-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 15px; font-weight: 700; color: #e8eefb; }
     .rc-league { font-size: 9px; font-weight: 900; letter-spacing: 1.6px; color: var(--a); }
@@ -1162,7 +1163,7 @@
     .fc-id { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 6px; }
     .fc-handle { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .fc-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.025em; color: #e8eefb; }
-    .fc-flag { font-size: 17px; }
+    .fc-flag { display: inline-flex; align-items: center; font-size: 17px; color: #e2e8f0; }
     .fc-role { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: var(--rc); background: color-mix(in srgb, var(--rc) 12%, transparent); border: 1px solid color-mix(in srgb, var(--rc) 30%, transparent); }
     .fc-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11.5px; font-weight: 600; color: #56688a; }
     .fc-tier { color: var(--tier); font-weight: 800; letter-spacing: 0.4px; }

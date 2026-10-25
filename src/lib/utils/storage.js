@@ -14,11 +14,11 @@
 //  slots shipped is already slot 1, so nobody's club or career needs migrating
 //  and nothing can be lost by a migration that goes wrong. Slots 2+ append `@n`.
 //
-//  Three keys are DEVICE preferences, not save data. They are never namespaced —
-//  a player who switches slot should not lose their theme and get their audio
-//  unmuted.
+//  These keys are DEVICE preferences (the Settings panel), not save data. They are
+//  never namespaced — a player who switches slot should not lose their theme and
+//  get their audio unmuted. A new setting belongs here too.
 
-const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards']);
+const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos']);
 
 // Slot bookkeeping lives under its own prefix so it can never be namespaced by
 // its own resolver (`lurmeta_` matches neither `lur_` nor `lurc_`).

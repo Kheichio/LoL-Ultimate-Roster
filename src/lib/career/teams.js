@@ -17,7 +17,7 @@ import {
     MIN_AGE_INTERNATIONAL,
 } from './constants.js';
 import { calcOVR, clamp, statusInfo } from './ratings.js';
-import { getDB, getEffectiveRating, ratingToQuality, getEra } from '../utils/cards.js';
+import { getDB, getEffectiveRating, ratingToQuality, getEra, MYTHIC_TIERS } from '../utils/cards.js';
 
 // The five playing seats, in board order. COACH is handled separately because
 // a coach card's `rating` sits on its own scale and must not pollute a roster
@@ -313,7 +313,10 @@ function trimCache(map, limit) {
     if (map.size > limit) map.clear();
 }
 
-/** Real cards for an org, active in `year`, best pick per role first. */
+/** Real cards for an org, active in `year`, best pick per role first.
+ *  Hall of Legends cards are commemorative, not a season's roster, and every one is a perfect
+ *  100: matched on team alias alone, the HoL Faker took T1's 2024 mid seat from his season card
+ *  and the HoL Caps took G2's from 2026. The roster game's CPU pools exclude them too. */
 function orgCards(team, year) {
     const db = getDB();
     if (!db) return [];
@@ -321,7 +324,7 @@ function orgCards(team, year) {
     if (!aliases || !aliases.length) return [];
     const set = new Set(aliases);
     return db
-        .filter(card => set.has(card.team) && cardActiveIn(card, year))
+        .filter(card => set.has(card.team) && !MYTHIC_TIERS.includes(card.quality) && cardActiveIn(card, year))
         .sort((a, b) => cardScore(b, year) - cardScore(a, year));
 }
 

@@ -24,6 +24,7 @@
     } from '../../stores/career.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import { openMenu } from '../../stores/menu.js';
 
     import {
@@ -919,7 +920,7 @@
                     {/if}
                     {#if offerRegion}
                         <span class="co-tag" style="--t:{offerRegion.accent}">
-                            <span aria-hidden="true">{offerRegion.flag}</span> {offerRegion.league}
+                            <RegionIcon region={offerRegion.id} size={12} fallback={offerRegion.flag} /> {offerRegion.league}
                         </span>
                     {/if}
                     {#if offerWeeksLeft !== null}

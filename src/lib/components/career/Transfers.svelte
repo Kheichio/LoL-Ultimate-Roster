@@ -27,6 +27,7 @@
         releaseFromClub, canChangeRole, roleChangePreview, changeRole, goalProgress,
     } from '../../career/contracts.js';
     import { allTeamsForPlayer } from '../../career/teams.js';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -537,7 +538,7 @@
                                         <span class="tag" style="--tg:{tier.accent}">{tier.name}</span>
                                         {#if reg}
                                             <span class="tag tag-reg">
-                                                <span aria-hidden="true">{reg.flag}</span> {reg.league}
+                                                <RegionIcon region={reg.id} size={12} fallback={reg.flag} /> {reg.league}
                                             </span>
                                         {/if}
                                         <span class="tag" style="--tg:{ROLE_BY_ID[o.role] ? ROLE_BY_ID[o.role].accent : '#64748b'}">
@@ -974,7 +975,7 @@
                             <span class="sc-name">{goalRow.name || 'Unknown club'}</span>
                             <span class="sc-meta">
                                 <span class="sc-tier" style="--tg:{gTier.accent}">{gTier.short}</span>
-                                {#if gReg}<span aria-hidden="true">{gReg.flag}</span> {gReg.league}{:else}Open circuit{/if}
+                                {#if gReg}<RegionIcon region={gReg.id} size={12} fallback={gReg.flag} /> {gReg.league}{:else}Open circuit{/if}
                                 <span class="meta-dot">&#x00B7;</span> Looks at {Math.round(Number(goalGate.ovr) || 0)} rated
                                 {#if (Number(goalGate.mmr) || 0) > 0}
                                     <span class="meta-dot">&#x00B7;</span> {Math.round(Number(goalGate.mmr))} MMR
@@ -1052,7 +1053,7 @@
                                     aria-pressed={!!goalGroup && goalGroup.id === g.id}
                                     style="--pk:{g.accent}"
                                     on:click={() => { playSound('click'); goalRegion = g.id; }}
-                                >{#if g.flag}<span aria-hidden="true">{g.flag}</span> {/if}{g.label}</button>
+                                >{#if g.flag}<RegionIcon region={g.id} size={13} fallback={g.flag} /> {/if}{g.label}</button>
                             {/each}
                         </div>
 
@@ -1112,7 +1113,7 @@
                                 <span class="sc-name">{row.team.name}</span>
                                 <span class="sc-meta">
                                     <span class="sc-tier" style="--tg:{tier.accent}">{tier.short}</span>
-                                    {#if reg}<span aria-hidden="true">{reg.flag}</span> {reg.league}{:else}Open circuit{/if}
+                                    {#if reg}<RegionIcon region={reg.id} size={12} fallback={reg.flag} /> {reg.league}{:else}Open circuit{/if}
                                     <span class="meta-dot">&#x00B7;</span> Strength {Math.round(row.team.strength)}
                                 </span>
                             </div>
