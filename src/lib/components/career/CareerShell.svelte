@@ -19,7 +19,7 @@
     import { currentUser } from '../../stores/auth.js';
     import { activeSlot } from '../../utils/storage.js';
     import {
-        CAREER_SCREENS, REGION_BY_ID, ROLE_BY_ID, ENERGY_MAX, HEALTH_MAX,
+        CAREER_SCREENS, REGION_BY_ID, ROLE_BY_ID, ENERGY_MAX, HEALTH_MAX, WEEKS_PER_YEAR,
     } from '../../career/constants.js';
     import {
         ovrTier, ovrLabel, formLabel, moraleLabel, energyLabel, healthLabel,
@@ -27,6 +27,7 @@
     } from '../../career/ratings.js';
 
     import RegionIcon from '../ui/RegionIcon.svelte';
+    import Icon from '../ui/Icon.svelte';
     import CreatePlayer from './CreatePlayer.svelte';
     import Hub from './Hub.svelte';
     import Training from './Training.svelte';
@@ -145,6 +146,13 @@
         { key: 'health', label: 'Health', max: HEALTH_MAX },
     ];
     $: meterInfo = { energy, form, morale, health };
+
+    // One pip per activity slot, so "how much of my week is left" reads at a glance.
+    $: slotPips = Array.from({ length: Math.max(0, Math.min(8, Number($career.weekly.actionsMax) || 0)) },
+        (_, i) => i < (Number($career.weekly.actionsLeft) || 0));
+    // Tab badges: things waiting for the player on another screen.
+    $: offerCount = Array.isArray($career.offers) ? $career.offers.length : 0;
+    $: yearPct = Math.max(0, Math.min(100, ((Number($career.time.week) || 1) / WEEKS_PER_YEAR) * 100));
 </script>
 
 <section class="career-root">
@@ -204,22 +212,27 @@
 
                 <!-- Wallet + clock -->
                 <div class="wallet">
-                    <div class="w-cell" title="Gold">
-                        <span class="w-ico" aria-hidden="true">&#x1F4B0;</span>
+                    <div class="w-cell w-gold" title="Gold">
+                        <Icon name="coins" size={14} stroke={2} />
                         <span class="w-val">{fmtGold($career.money.gold)}</span>
                     </div>
-                    <div class="w-cell" title="Followers">
-                        <span class="w-ico" aria-hidden="true">&#x1F464;</span>
+                    <div class="w-cell w-fans" title="Followers">
+                        <Icon name="friends" size={14} stroke={2} />
                         <span class="w-val">{fmtFollowers($career.money.followers)}</span>
                     </div>
-                    <div class="w-cell" title="Legacy Points — earned from titles and milestones">
-                        <span class="w-ico" aria-hidden="true">&#x1F3C6;</span>
+                    <div class="w-cell w-lp" title="Legacy Points — earned from titles and milestones">
+                        <Icon name="medal" size={14} stroke={2} />
                         <span class="w-val">{$career.money.legacy}</span>
                     </div>
-                    <div class="clock" style="--ph:{$currentPhase.accent}">
-                        <span class="c-week">W{$career.time.week}</span>
-                        <span class="c-year">{$career.time.year}</span>
-                        <span class="c-phase">{$currentPhase.short}</span>
+                    <div class="clock" style="--ph:{$currentPhase.accent}" title="{$currentPhase.name} · week {$career.time.week} of {WEEKS_PER_YEAR}">
+                        <div class="c-top">
+                            <span class="c-phase">{$currentPhase.name}</span>
+                            <span class="c-year">{$career.time.year}</span>
+                        </div>
+                        <div class="c-bot">
+                            <span class="c-week">Week {$career.time.week}</span>
+                            <span class="c-bar"><span class="c-fill" style="width:{yearPct}%"></span></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -234,14 +247,20 @@
                             on:click={() => go(s.id)}
                             aria-current={$careerScreen === s.id ? 'page' : undefined}
                         >
-                            <span class="ctab-ico" aria-hidden="true">{s.icon}</span>
+                            <span class="ctab-ico" aria-hidden="true"><Icon name={s.glyph || 'home'} size={15} stroke={2} /></span>
                             <span class="ctab-t">{s.name}</span>
+                            {#if s.id === 'transfers' && offerCount > 0}
+                                <span class="ctab-badge" title="{offerCount} offer{offerCount === 1 ? '' : 's'} waiting">{offerCount}</span>
+                            {/if}
                         </button>
                     {/each}
                     <span class="cnav-spacer"></span>
                     <span class="acts" title="Activity slots left this week">
+                        <span class="acts-pips" aria-hidden="true">
+                            {#each slotPips as on}<span class="pip" class:pip-on={on}></span>{/each}
+                        </span>
                         <span class="acts-n">{$career.weekly.actionsLeft}</span>
-                        <span class="acts-l">/ {$career.weekly.actionsMax} actions</span>
+                        <span class="acts-l">of {$career.weekly.actionsMax} actions left</span>
                     </span>
                 </div>
             </nav>
@@ -375,28 +394,42 @@
     }
     .meter { min-width: 0; }
     .m-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-    .m-lbl { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #3f5069; }
+    .m-lbl { font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
     .m-val { font-size: 11px; font-weight: 800; font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
     .m-bar { height: 3px; border-radius: 3px; background: rgba(148, 163, 184, 0.12); overflow: hidden; }
     .m-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
 
     /* Wallet */
-    .wallet { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
-    .w-cell { display: flex; align-items: center; gap: 6px; }
-    .w-ico { font-size: 12px; opacity: 0.8; }
+    .wallet { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .w-cell {
+        display: flex; align-items: center; gap: 6px;
+        padding: 6px 10px; border-radius: 9px;
+        background: rgba(15, 23, 42, 0.55);
+        border: 1px solid rgba(51, 65, 85, 0.3);
+    }
+    .w-gold { color: #fbbf24; }
+    .w-fans { color: #60a5fa; }
+    .w-lp { color: #c084fc; }
     .w-val {
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 12px; font-weight: 700; color: #cbd5e1;
+        font-size: 12px; font-weight: 700; color: #e2e8f0;
     }
     .clock {
-        display: flex; align-items: baseline; gap: 6px;
+        display: flex; flex-direction: column; gap: 4px;
+        min-width: 132px;
         padding: 6px 12px; border-radius: 10px;
-        background: rgba(15, 23, 42, 0.65);
-        border: 1px solid color-mix(in srgb, var(--ph) 28%, transparent);
+        background: color-mix(in srgb, var(--ph) 8%, rgba(15, 23, 42, 0.7));
+        border: 1px solid color-mix(in srgb, var(--ph) 32%, transparent);
     }
-    .c-week { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; font-weight: 800; color: #e2e8f0; }
-    .c-year { font-size: 10px; font-weight: 700; color: #4a5b76; }
-    .c-phase { font-size: 8.5px; font-weight: 800; letter-spacing: 1.2px; color: var(--ph); }
+    .c-top, .c-bot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .c-phase {
+        font-size: 10px; font-weight: 800; letter-spacing: 0.4px; color: var(--ph);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px;
+    }
+    .c-year { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 10px; font-weight: 700; color: #94a3b8; }
+    .c-week { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11.5px; font-weight: 800; color: #e2e8f0; white-space: nowrap; }
+    .c-bar { flex: 1; height: 3px; border-radius: 3px; background: rgba(148, 163, 184, 0.14); overflow: hidden; min-width: 40px; }
+    .c-fill { display: block; height: 100%; border-radius: 3px; background: var(--ph); }
 
     /* ═══════════ NAV ═══════════ */
     .cnav { border-top: 1px solid rgba(51, 65, 85, 0.18); }
@@ -419,7 +452,7 @@
         background: transparent;
         font-family: inherit;
         font-size: 12px; font-weight: 700;
-        color: #64748b;
+        color: #94a3b8;
         cursor: pointer;
         white-space: nowrap;
     }
@@ -429,20 +462,31 @@
         background: rgba(139, 92, 246, 0.12);
         border-color: rgba(139, 92, 246, 0.28);
     }
-    .ctab-ico { font-size: 12px; opacity: 0.9; }
+    .ctab-ico { display: inline-flex; opacity: 0.9; }
+    .ctab { position: relative; }
+    .ctab-badge {
+        min-width: 16px; height: 16px; padding: 0 4px;
+        display: inline-grid; place-items: center;
+        border-radius: 999px;
+        font-size: 9.5px; font-weight: 800; line-height: 1;
+        color: #0b1120; background: #fbbf24;
+    }
     .cnav-spacer { flex: 1; }
     .acts {
-        display: flex; align-items: baseline; gap: 5px;
+        display: flex; align-items: center; gap: 7px;
         padding: 5px 12px; border-radius: 8px;
         background: rgba(15, 23, 42, 0.55);
         border: 1px solid rgba(51, 65, 85, 0.3);
         white-space: nowrap;
     }
+    .acts-pips { display: inline-flex; gap: 3px; }
+    .pip { width: 7px; height: 7px; border-radius: 50%; background: rgba(148, 163, 184, 0.18); }
+    .pip-on { background: #a78bfa; box-shadow: 0 0 6px rgba(167, 139, 250, 0.55); }
     .acts-n {
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 14px; font-weight: 800; color: #a78bfa;
+        font-size: 13px; font-weight: 800; color: #c4b5fd;
     }
-    .acts-l { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; color: #475569; }
+    .acts-l { font-size: 10px; font-weight: 700; letter-spacing: 0.3px; color: #94a3b8; }
 
     /* ═══════════ MAIN ═══════════ */
     .cmain {
@@ -464,18 +508,25 @@
     }
     @media (max-width: 900px) {
         .chead-in { flex-wrap: wrap; gap: 12px; padding: 10px 14px; }
-        .meters { order: 3; max-width: none; width: 100%; margin-left: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        /* flex-basis, not just width: `flex: 1` above sets a 0% basis that would
+           otherwise squeeze the four meters in beside the wallet on a phone. */
+        .meters { order: 3; flex: 1 1 100%; max-width: none; width: 100%; margin-left: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); }
         .wallet { margin-left: auto; gap: 10px; }
         .cmain { padding: 18px 14px 48px; }
         .cnav-in { padding: 6px 14px; }
+    }
+    @media (max-width: 1280px) {
+        .w-fans { display: none; }
     }
     @media (max-width: 620px) {
         .handle { max-width: 120px; font-size: 14px; }
         .ovr { width: 42px; height: 42px; }
         .ovr-n { font-size: 18px; }
-        .w-cell:nth-child(3) { display: none; }
+        .w-lp { display: none; }
+        .clock { min-width: 0; }
+        .c-bar { display: none; }
         .ctab-t { display: none; }
         .ctab { padding: 8px 12px; }
-        .ctab-ico { font-size: 15px; }
+        .acts-l { display: none; }
     }
 </style>

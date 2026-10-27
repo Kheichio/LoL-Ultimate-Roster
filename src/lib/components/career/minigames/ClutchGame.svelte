@@ -25,13 +25,16 @@
     //
     //  Self-contained: no stores, no career imports, no assets, no network.
     // =====================================================================
-    import { onDestroy } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
 
     // ---- contract -------------------------------------------------------
     export let difficulty = 1;      // 1 Basic / 2 Advanced / 3 Elite
     export let drill = null;        // { id, attr, name, desc }
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     const DIFF_NAMES = ['Basic Drill', 'Advanced', 'Elite'];
 
@@ -279,6 +282,10 @@
     }
 
     function loop(t) {
+        // Off the playing view there is nothing to animate, so the loop parks
+        // itself instead of spinning on the result screen. startRound() starts it
+        // again (it only requests a frame while rafId is null).
+        if (view !== 'playing') { rafId = null; lastT = 0; return; }
         rafId = requestAnimationFrame(loop);
         const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
         lastT = t;
@@ -518,6 +525,9 @@
         // gets one slow sweep as it fills.
         ringReady = reduceMotion;
         if (!reduceMotion) later(flowTimers, () => { ringReady = true; }, 60);
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) finishSession();
     }
 
     function verdict(s) {
@@ -612,6 +622,9 @@
     $: headName = (drill && drill.name) ? drill.name : 'Clutch Trial';
     $: headDesc = (drill && drill.desc) ? drill.desc
         : 'Tilt resistance. Playing the same on game five of a Bo5 as you did on game one.';
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) startRound(); });
 </script>
 
 <section class="cg" class:reduced={reduceMotion}>
@@ -776,7 +789,7 @@
 
             <div class="cg-actions">
                 <button type="button" class="cg-btn cg-btn-go" on:click={finishSession} disabled={submitted} aria-label="Finish the session and bank the result">
-                    Finish Session
+                    See your gain &rarr;
                 </button>
             </div>
         </div>

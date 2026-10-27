@@ -1198,13 +1198,13 @@ export const START_PATHS = [
     {
         id: 'precomp',
         name: 'Pre-Competitive',
-        tag: 'Age 13 — unsigned',
+        tag: 'Age 13 — amateur side',
         ages: [13, 14, 15],
         // The age your genetic trait shows itself. Late on purpose: a trait you
         // could see at creation is a trait players reroll a new career for.
         revealAge: 16,
         accent: '#22c55e',
-        blurb: 'You are thirteen, you are nobody, and you have a computer. Grind solo queue, train whatever you like, and make somebody in a scouting office write your name down.',
+        blurb: 'You are thirteen, you play for a local amateur team, and you have a computer. Grind solo queue, train whatever you like, and make somebody in a scouting office write your name down.',
         baseAttr: 33,          // mean starting attribute before every modifier
         spread: 7,             // per-attribute random spread
         potentialBase: 78,     // mean hidden ceiling
@@ -1216,19 +1216,24 @@ export const START_PATHS = [
         // see SOLOQ_FLOOR_MMR. Starting above it only produces a visible demotion
         // every fortnight for the first two months.
         startMMR: 1250,
+        // NOT signed in the professional sense: the career starts on an AMATEUR
+        // side the player picks at creation (createCareer's cfg.clubId). Tier 3
+        // keeps the unsigned rules on purpose -- no club practice schedule and the
+        // 72 soft cap -- because an amateur team is not a professional environment.
         signed: false,
+        amateurStart: true,
         trainingMult: 0.82,    // no coach, no facility — cheaper to do, worse per rep
         weeklyActions: 4,      // school and nothing else, so more free time
         perks: [
+            'You pick your first team: a local amateur side in your region',
             'Train any attribute, any week, with no club schedule',
             'Highest potential ceiling in the mode (+8 average)',
-            'One extra activity per week compared with a signed pro',
-            'Free role changes until the day you sign',
+            'One extra activity per week, and free role changes while amateur',
         ],
         risks: [
             'Starting attributes are roughly 25 points below a debutant',
-            'No salary — you live on stream tips and prize money',
-            'Untrained soft cap of 72 until a club signs you',
+            'Amateur pay is pocket money — you live on stream tips and prizes',
+            'Soft cap of 72 until an academy or a pro club signs you',
             'If nobody scouts you before 18, the offers dry up fast',
         ],
     },
@@ -1556,6 +1561,29 @@ export const ACTIVITIES = [
 
 export const ACTIVITY_BY_ID = ACTIVITIES.reduce((m, a) => { m[a.id] = a; return m; }, {});
 
+/** What each activity GIVES, as short chips for the Hub, so a player can choose
+ *  by outcome instead of reading prose. Written against the handlers in
+ *  engine.js (doRest, doFriends, doTherapy...) -- change one, change the other.
+ *  `down: true` marks a cost. */
+export const ACTIVITY_GIVES = {
+    train:      [{ t: 'Raises one attribute' }],
+    soloq:      [{ t: 'Ladder rank' }, { t: 'Small all-round gains' }, { t: 'Followers' }],
+    scrim:      [{ t: 'Teamfighting' }, { t: 'Shotcalling' }, { t: 'Chemistry' }],
+    champ_lab:  [{ t: 'Champion mastery' }],
+    vod:        [{ t: 'Game knowledge' }, { t: 'Map awareness' }],
+    stream:     [{ t: 'Gold' }, { t: 'Followers' }, { t: 'Form', down: true }],
+    media:      [{ t: 'Followers' }, { t: 'Morale (risky)' }],
+    gym:        [{ t: 'Health' }, { t: 'Fewer injuries' }],
+    rest:       [{ t: 'Energy' }, { t: 'Morale' }, { t: 'Health' }],
+    friends:    [{ t: 'Morale' }, { t: 'Energy' }, { t: 'Form', down: true }],
+    therapy:    [{ t: 'Big morale lift' }, { t: 'Eases burnout' }],
+    recover:    [{ t: 'Health' }, { t: 'Energy' }, { t: 'Form', down: true }],
+    fans:       [{ t: 'Lots of followers' }, { t: 'Morale' }],
+    sponsorday: [{ t: 'Gold' }, { t: 'Morale', down: true }],
+    coach1on1:  [{ t: 'Chemistry' }, { t: 'Morale' }, { t: 'Small knowledge gains' }],
+    language:   [{ t: 'Learn a language' }, { t: 'Opens transfers abroad' }],
+};
+
 /** Sixteen activities against a three-slot week is too many undifferentiated
  *  buttons, so the Hub renders them in labelled sections. Order is the order
  *  they appear on screen. */
@@ -1649,15 +1677,19 @@ export const CLUB_TIERS = {
 export const TIER_OVR_CEILING = { 1: 99, 2: 84, 3: 78 };
 
 // Weekly club training sessions by tier — the debut path's main constraint.
+// Tier 3 is NOT read: an amateur side books no practice block, so training.
+// weeklyTrainingSlots and engine.startCareerWeek treat it like being unsigned.
+// The key stays so a lookup on a rotted tier still finds a number.
 export const CLUB_TRAINING_SLOTS = { 1: 3, 2: 2, 3: 1 };
 
 // ─────────────────────────────────────────────────────────────────────────
 //  AGE GATES
 //  Rating was the only thing standing between a thirteen-year-old and a
-//  main-league roster, and rating is reachable young: signing ANY club — an
-//  amateur Discord stack included — makes environmentCap() return ATTR_MAX, so
-//  the unsigned soft cap stops throttling the moment a prospect is on a roster.
-//  A well-trained fifteen-year-old could clear the 66 eligibility bar.
+//  main-league roster, and rating is reachable young: signing an academy or a
+//  pro club makes environmentCap() return ATTR_MAX, so the soft cap stops
+//  throttling the moment a prospect is in a professional room (an amateur side
+//  keeps it -- see ratings.environmentCap). A well-trained fifteen-year-old
+//  could clear the 66 eligibility bar.
 //
 //  Keyed per tier rather than one MAIN_LEAGUE_MIN_AGE so "academies from 14"
 //  later is a single literal. Read them with Number() — team.tier arrives as a
@@ -1843,8 +1875,12 @@ export const LEAGUES = {
     },
 };
 
-// Amateur / open circuit — where an unsigned pre-comp player scrims. These are
-// shared across regions and are deliberately generic.
+// Amateur / open circuit — where every pre-comp career starts. These six are
+// shared by every region (region 'ALL'), so their IDS are permanent save data
+// like every club id, but their NAMES are localised to the region the career is
+// being played in -- a Korean prospect starts at a Hongdae PC bang team, a
+// Brazilian one at a Recife lan house. The generic names below are what a
+// career with no region (and the old saves' history rows) read.
 export const AMATEUR_TEAMS = [
     t3('am_pug1', 'Solo Queue Five',   38, '#64748b'),
     t3('am_pug2', 'Discord Stack',     42, '#5865f2'),
@@ -1853,6 +1889,87 @@ export const AMATEUR_TEAMS = [
     t3('am_pug5', 'Open Qualifier Team', 54, '#a855f7'),
     t3('am_pug6', 'Tier Two Hopefuls', 58, '#f59e0b'),
 ];
+
+/** Each amateur side's name and one-line identity in each region, weakest first
+ *  (the same order and strength band as AMATEUR_TEAMS). ASCII only -- see the
+ *  encoding note in lifeCheck. */
+export const AMATEUR_LOCAL = {
+    LCK: [
+        ['Hongdae Solo Stack',        'Five solo queue players from the same PC bang who started duoing.'],
+        ['Busan Kakao Five',          'A group chat that turned into a team. Mostly still a group chat.'],
+        ['Sinchon PC Bang Crew',      'The regulars at the 24-hour PC bang, sponsored in instant ramen.'],
+        ['Hanbit University Esports', 'A campus club with a real coach and a fixed scrim night.'],
+        ['Gangnam Open Qualifiers',   'They enter every open qualifier on the calendar, and win some.'],
+        ['Seoul Rising Stars',        'The best amateur side in the city. Academies watch their games.'],
+    ],
+    LPL: [
+        ['Chengdu Night Owls',        'Five students who only ever queue after midnight.'],
+        ['Wuhan WeChat Five',         'A friend group that took the internet cafe league seriously.'],
+        ['Shanghai Net Cafe Crew',    'The internet cafe regulars, sponsored by the cafe owner.'],
+        ['Hangzhou University',       'A campus team with a coach, a schedule and a whiteboard.'],
+        ['Guangzhou Open Qualifiers', 'Fixtures at every open cup in the south. They travel well.'],
+        ['Beijing Rising Stars',      'The strongest amateur side in the capital. Scouts know the name.'],
+    ],
+    LEC: [
+        ['Berlin Solo Stack',         'Five solo queue grinders who finally agreed on a Discord.'],
+        ['Madrid Discord Five',       'A server full of friends that entered one tournament for fun.'],
+        ['Paris LAN Cafe Crew',       'The regulars of a LAN cafe near the station. They never leave.'],
+        ['Warsaw University Esports', 'A university team with a coach, scrims and a sports budget.'],
+        ['Copenhagen Open Qualifiers','They play every open qualifier in Europe and get further each time.'],
+        ['London Rising Stars',       'Top of the amateur scene. Academies send someone to every final.'],
+    ],
+    LCS: [
+        ['Ohio Solo Stack',           'Five solo queue players who met in the same ranked games.'],
+        ['Texas Discord Five',        'A Discord server that turned into a roster over one summer.'],
+        ['Brooklyn LAN Center Crew',  'The regulars at the local gaming center, sponsored in free hours.'],
+        ['State College Esports',     'A varsity program with a coach, scholarships and scrim blocks.'],
+        ['California Open Qualifiers','Every open cup on the West Coast has their name on the bracket.'],
+        ['Toronto Rising Stars',      'The best amateur team on the continent. Academies take notes.'],
+    ],
+    LCP: [
+        ['Hanoi Net Cafe Five',       'Five friends from the same internet cafe, playing for the hours.'],
+        ['Taipei Discord Stack',      'An online team that finally met in person for a cup.'],
+        ['Osaka LAN Crew',            'The LAN cafe regulars, and the loudest team at every event.'],
+        ['Sydney University Esports', 'A campus team with a coach and a weekly scrim night.'],
+        ['Manila Open Qualifiers',    'They enter every open qualifier in the region and travel for it.'],
+        ['Saigon Rising Stars',       'The strongest amateur side in the region. Scouts already know them.'],
+    ],
+    CBLOL: [
+        ['Curitiba Solo Duo',         'Five solo queue players who got tired of their random teammates.'],
+        ['Rio Discord Stack',         'A Discord server full of friends that entered one cup and kept going.'],
+        ['Recife Lan House Crew',     'The regulars at the neighbourhood lan house, sponsored in hours.'],
+        ['Porto Alegre Universitarios','A university team with a coach, scrims and a real schedule.'],
+        ['Belo Horizonte Qualifiers', 'They play every open qualifier in Brazil and win more each year.'],
+        ['Sao Paulo Promessas',       'The best amateur side in the country. Academies come to watch.'],
+    ],
+};
+
+const AMATEUR_BASE_NAMES = AMATEUR_TEAMS.map(t => t.name);
+let _amateurLocale = '';
+
+/** Rename the amateur sides for the region a career is played in. Called by the
+ *  career store whenever a career is created or loaded; '' (or any region with
+ *  no table) restores the generic names. Mutates the shared team objects ON
+ *  PURPOSE, so every reader -- teamById, allTeams, tables, news, offers -- sees
+ *  one name without a single call site having to know about locales. */
+export function setAmateurLocale(regionId) {
+    const rid = AMATEUR_LOCAL[regionId] ? regionId : '';
+    if (rid === _amateurLocale) return;
+    _amateurLocale = rid;
+    AMATEUR_TEAMS.forEach((t, i) => {
+        const name = rid ? AMATEUR_LOCAL[rid][i][0] : AMATEUR_BASE_NAMES[i];
+        t.name = name;
+        if (_TEAM_INDEX && _TEAM_INDEX[t.id]) _TEAM_INDEX[t.id].name = name;
+    });
+}
+
+/** The one-line identity of an amateur side in the current locale. */
+export function amateurBlurb(teamId) {
+    const i = AMATEUR_TEAMS.findIndex(t => t.id === teamId);
+    if (i < 0) return '';
+    const table = AMATEUR_LOCAL[_amateurLocale];
+    return table ? table[i][1] : 'An open-circuit side. Nobody is paid, everybody plays.';
+}
 
 export function allTeams() {
     const out = [];
@@ -1946,14 +2063,16 @@ export const DEFAULT_START_YEAR = 2026;
 
 // Every career screen id, in nav order. CareerShell routes on these.
 export const CAREER_SCREENS = [
-    { id: 'hub',       name: 'Hub',       icon: '\u{1F3E0}' },
-    { id: 'training',  name: 'Training',  icon: '\u{1F3AF}' },
-    { id: 'club',      name: 'Club',      icon: '\u{1F6E1}' },
-    { id: 'calendar',  name: 'Season',    icon: '\u{1F4C5}' },
-    { id: 'shop',      name: 'Shop',      icon: '\u{1F6D2}' },
-    { id: 'transfers', name: 'Transfers', icon: '\u{1F4DD}' },
-    { id: 'profile',   name: 'Profile',   icon: '\u{1F464}' },
+    // `glyph` is the ui/Icon.svelte name the shell draws; `icon` is the old
+    // emoji, kept for anything else that still reads it.
+    { id: 'hub',       name: 'Hub',       icon: '\u{1F3E0}', glyph: 'home' },
+    { id: 'training',  name: 'Training',  icon: '\u{1F3AF}', glyph: 'target' },
+    { id: 'club',      name: 'Club',      icon: '\u{1F6E1}', glyph: 'shield' },
+    { id: 'calendar',  name: 'Season',    icon: '\u{1F4C5}', glyph: 'calendar' },
+    { id: 'shop',      name: 'Shop',      icon: '\u{1F6D2}', glyph: 'store' },
+    { id: 'transfers', name: 'Transfers', icon: '\u{1F4DD}', glyph: 'trade' },
+    { id: 'profile',   name: 'Profile',   icon: '\u{1F464}', glyph: 'user' },
     // The globe is deliberately unlike the seven above it: at <=620px
-    // CareerShell hides .ctab-t entirely, so the emoji IS the tab.
-    { id: 'board',     name: 'Legends',   icon: '\u{1F30D}' },
+    // CareerShell hides .ctab-t entirely, so the icon IS the tab.
+    { id: 'board',     name: 'Legends',   icon: '\u{1F30D}', glyph: 'globe' },
 ];

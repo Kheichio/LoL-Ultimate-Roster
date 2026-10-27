@@ -11,6 +11,9 @@
     export let drill = null;        // { id, attr, name, desc }
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     // Accent for this attribute (LDR) is #ec4899 - see --acc in the style block.
     const ICON = '\u{1F5E3}';
@@ -40,9 +43,13 @@
         // par instead -- which holds the OLD limits -- so a five-second call is
         // worth exactly what it was worth before, and the extra seconds buy a
         // slow reader a real answer rather than a bonus.
-        1: { reps: 8,  read: 8000, limit: 20000, par: 11000, reveal: 3200, expo: 0.90, name: 'Basic Drill' },
-        2: { reps: 9,  read: 7000, limit: 17000, par: 9000,  reveal: 2800, expo: 1.22, name: 'Advanced' },
-        3: { reps: 10, read: 6000, limit: 14000, par: 7000,  reveal: 2400, expo: 1.55, name: 'Elite' },
+        //
+        // reps were 8/9/10, which made this a two-and-a-half-minute drill. The
+        // score is a per-scenario MEAN (finishRound), so halving the count keeps
+        // the 0.50 calibration and only widens the spread of a single session.
+        1: { reps: 4,  read: 8000, limit: 20000, par: 11000, reveal: 2600, expo: 0.90, name: 'Basic Drill' },
+        2: { reps: 5,  read: 7000, limit: 17000, par: 9000,  reveal: 2300, expo: 1.22, name: 'Advanced' },
+        3: { reps: 5,  read: 6000, limit: 14000, par: 7000,  reveal: 2000, expo: 1.55, name: 'Elite' },
     };
 
     $: dlvl = Math.max(1, Math.min(3, Math.round(Number(difficulty)) || 1));
@@ -546,6 +553,9 @@
             game: 'shotcall',
         };
         stage = 'result';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) finishSession();
     }
 
     function finishSession() {
@@ -629,6 +639,9 @@
         : pickedOpt && pickedOpt.credit >= 0.9 ? 'v-good'
         : pickedOpt && pickedOpt.credit >= 0.4 ? 'v-mid'
         : 'v-bad';
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) startRound(); });
 </script>
 
 <section class="cc" class:rm={reduceMotion} aria-label="Comms Check shotcalling drill">
@@ -823,7 +836,7 @@
 
             <div class="actions">
                 <button class="btn go wide" on:click={finishSession} aria-label="Finish the session and bank the score">
-                    Finish Session
+                    See your gain &rarr;
                 </button>
             </div>
         </div>

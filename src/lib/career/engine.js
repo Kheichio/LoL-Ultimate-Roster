@@ -31,7 +31,7 @@ import {
 import {
     clamp, randInt, calcOVR, calcPotentialOVR, statusInfo, decayFor, rankFromMMR,
     fmtGold, fmtFollowers, rollTrait, traitPotentialBonus, traitEffects,
-    revealAgeFor,
+    revealAgeFor, isAmateurTier,
 } from './ratings.js';
 import {
     generateSchedule, blankStandings, simulateAIWeek, leagueTable,
@@ -41,6 +41,7 @@ import {
 } from './teams.js';
 import {
     SOLOQ_GAIN, SCRIM_GAIN, VOD_GAIN, trainingMultiplier, restRecovery,
+    minigamesOn, grantActivityXP, weeklyTrainingSlots,
 } from './training.js';
 import {
     weeklyIncome, expireSponsors, expireBuffs, lifestyleEffects, perkEffects,
@@ -57,6 +58,7 @@ import {
     rollWeeklyEvent, rollWeeklyEvents, rollPreGameEvent, firstTimeEvent, rollInterview,
 } from './events.js';
 import { buildMatch, quickSim, applyMatchResult } from './match.js';
+import { drawObjectives, settleObjectivesResult } from './objectives.js';
 import {
     career, matchState, careerOverlay, pushOverlay, absWeek, saveCareer, addNews,
     grantGold, spendGold, grantFollowers, adjustCondition, applyAttrGain, spendAction,
@@ -363,8 +365,10 @@ export function startCareerWeek() {
     const actions = Math.max(1, Math.round(
         num(path.weeklyActions, 3) + num(life.extraActions, 0) + num(perks.extraActions, 0),
     ));
-    const clubSlots = c.player.clubId
-        ? (CLUB_TRAINING_SLOTS[c.player.clubTier] || CLUB_TRAINING_SLOTS[3])
+    // An amateur side books no practice block (training.weeklyTrainingSlots), so
+    // it is stocked like an unsigned week: every activity slot can be a drill.
+    const clubSlots = c.player.clubId && !isAmateurTier(c.player.clubTier)
+        ? (CLUB_TRAINING_SLOTS[c.player.clubTier] || CLUB_TRAINING_SLOTS[2])
         : actions;
 
     career.update(x => ({
@@ -675,6 +679,14 @@ export function activityGate(c, act) {
     }
 
     if (act.once && activityDone(c, act.id)) return deny(`${act.name} is once a week, and you have had it.`);
+
+    // The level system's practice block books the club's practice schedule, the
+    // same weekly limit a drill has (training.weeklyTrainingSlots). In minigame
+    // mode 'train' is the Training screen's door and the drills gate themselves.
+    if (act.id === 'train' && !minigamesOn()) {
+        const sl = safe(() => weeklyTrainingSlots(c), null);
+        if (sl && sl.used >= sl.max) return deny(`Club schedule is full -- ${sl.max} practice sessions a week at this tier.`);
+    }
 
     if (typeof act.when === 'function' && !safe(() => act.when(c), true)) {
         return deny(act.whenReason || 'Not something you need right now.');
@@ -1372,14 +1384,53 @@ function doLanguage(c, payload) {
 }
 
 /**
- * Spend one activity slot. `train` is deliberately not handled here -- a drill
- * runs through a minigame and training.completeDrill() owns that whole flow.
+ * The level system's practice block: the 'train' activity while the minigames
+ * are off. Its payload is XP -- the most of any activity -- which doActivity pays
+ * after the handler like every other XP-bearing activity.
+ */
+function doPractice() {
+    adjustCondition('form', 1);
+    const detail = 'A full block of structured practice';
+    logWeek('Practice Block', detail, '#3b82f6');
+    return ok('Practice block done.', detail);
+}
+
+/** Add the XP line to a result and to the week-log entry its handler just wrote,
+ *  so one activity stays one line in the log. */
+function withXP(res, gained) {
+    if (!gained || !(gained.xp > 0)) return res;
+    const pts = Number(gained.points) || 0;
+    const lvl = gained.levels > 0
+        ? ` Level ${gained.level}! +${pts} attribute point${pts === 1 ? '' : 's'}.`
+        : '';
+    const tag = `+${gained.xp} XP`;
+    career.update(x => {
+        const log = Array.isArray(x.weekly && x.weekly.log) ? x.weekly.log : [];
+        if (!log.length) return x;
+        const last = log[log.length - 1];
+        if (!last || typeof last !== 'object') return x;
+        const next = { ...last, detail: last.detail ? `${last.detail} - ${tag}` : tag };
+        return { ...x, weekly: { ...x.weekly, log: [...log.slice(0, -1), next] } };
+    });
+    return {
+        ...res,
+        msg: `${res.msg || ''} ${tag}.${lvl}`.trim(),
+        detail: res.detail ? `${res.detail} - ${tag}` : tag,
+        xp: gained.xp,
+        levels: gained.levels,
+    };
+}
+
+/**
+ * Spend one activity slot. In minigame mode `train` is deliberately not handled
+ * here -- a drill runs through a minigame and training.completeDrill() owns that
+ * whole flow. In the level system it is the practice block.
  */
 export function doActivity(activityId, payload) {
     const before = snap();
     const act = ACTIVITY_BY_ID[activityId];
     if (!act) return no('That is not something you can do this week.');
-    if (activityId === 'train') return no('Training drills are run from the Training screen.');
+    if (activityId === 'train' && minigamesOn()) return no('Training drills are run from the Training screen.');
 
     const gate = activityGate(before, act);
     if (!gate.ok) return no(gate.reason);
@@ -1398,6 +1449,7 @@ export function doActivity(activityId, payload) {
     const c = snap();
     let res;
     switch (activityId) {
+        case 'train':     res = doPractice(c); break;
         case 'soloq':     res = doSoloQueue(c); break;
         case 'scrim':     res = doScrim(c); break;
         case 'champ_lab': res = doChampLab(c); break;
@@ -1432,6 +1484,11 @@ export function doActivity(activityId, payload) {
             weekly: { ...x.weekly, counts: { ...cur, [activityId]: num(cur[activityId], 0) + 1 } },
         };
     });
+
+    // THE LEVEL SYSTEM. XP for the practice activities, priced off `before` so the
+    // training multiplier reads the condition the player started the session in.
+    // grantActivityXP pays nothing while the minigames are on.
+    if (res && res.ok) res = withXP(res, safe(() => grantActivityXP(before, activityId), null));
 
     // Hours on the hands carry a risk; the activities that exist to repair the
     // player obviously do not.
@@ -1626,7 +1683,11 @@ export function ensureSeason() {
     const stale = c.season.stamp === stamp
         && scheduleOf(c).length
         && !scheduleMatchesDivision(c);
-    if (c.season.stamp === stamp && scheduleOf(c).length && !stale) return c.season;
+    if (c.season.stamp === stamp && scheduleOf(c).length && !stale) {
+        // A save from before briefs existed gets one for the split it is in.
+        ensureBrief(stamp);
+        return snap().season;
+    }
 
     // ONLY REDRAW IN A PHASE THAT ACTUALLY HAS LEAGUE FIXTURES.
     //
@@ -1654,6 +1715,23 @@ export function ensureSeason() {
     // matters: it starts under spring's stamp and sits in summer's, so the
     // rebuild that draws the summer schedule would otherwise delete the tie the
     // player is about to play. Carry that bracket and its fixtures across.
+    // A MID-SPLIT MOVE. The stamp changed INSIDE the same split -- an academy
+    // calling an amateur player up, or a release -- and the block about to be
+    // replaced holds league games the player has already PLAYED for the old club.
+    // Redrawing straight over them wiped them, and the split was then banked at
+    // its close as a 0-0 under a club that had not played it (careerSmoke
+    // histclub / histempty, seed 42 once the level system moved the RNG stream).
+    // Those games belong to the old club, so they are filed now as that club's
+    // own row for this split, and the new block is marked as joined mid-split.
+    // Locking amateurs in for the split instead was measured at +0.08 on the
+    // mean match rating (see contracts.splitUnderway) and is not an option.
+    const prevStamp = String(c.season.stamp || '').split(':');
+    const movedMidSplit = prevStamp.length === 3
+        && prevStamp[0] === String(c.time.year) && prevStamp[1] === split
+        && prevStamp[2] !== (c.player.clubId || 'free')
+        && scheduleOf(c).some(f => f && f.played && f.kind !== 'bracket');
+    if (movedMidSplit) bankPartialSplit(c, split, prevStamp[2]);
+
     const phaseNow = phaseForWeek(num(c.time.week, 1)).id;
     const liveBracket = c.season.bracket && c.season.bracket.kind === phaseNow
         ? c.season.bracket
@@ -1685,10 +1763,44 @@ export function ensureSeason() {
             wins: 0, losses: 0, gameWins: 0, gameLosses: 0,
             champPoints: 0,
             bracket: liveBracket,
+            // A new fixture list is a new brief. Anything still here belonged to
+            // the split or the club this draw replaces.
+            objectives: null,
+            // True when this block replaced another club's mid-split (see
+            // bankPartialSplit): closeSplit copies it onto the history row, so a
+            // 0-0 for a club joined after the last league game reads as that.
+            joinedMidSplit: movedMidSplit,
         },
     }));
+    ensureBrief(stamp);
     saveCareer();
     return snap().season;
+}
+
+/** File the games played so far this split as the OLD club's own history row,
+ *  before ensureSeason redraws the block for the new one. Same row shape as
+ *  closeSplit's, with no placement (the split is not over) and `leftMidSplit`. */
+function bankPartialSplit(c, split, stampClub) {
+    const clubId = (c.season && c.season.clubId) || (stampClub && stampClub !== 'free' ? stampClub : null);
+    if (!clubId) return;
+    const team = safe(() => teamById(clubId), null);
+    const row = {
+        year: num(c.time.year, DEFAULT_START_YEAR),
+        split,
+        teamId: clubId,
+        teamName: team ? team.name : 'Unsigned',
+        w: num(c.season.wins, 0),
+        l: num(c.season.losses, 0),
+        placement: null,
+        champPoints: num(c.season.champPoints, 0),
+        awards: [],
+        leftMidSplit: true,
+    };
+    career.update(x => ({
+        ...x,
+        history: [...(Array.isArray(x.history) ? x.history : []), row].slice(-60),
+    }));
+    addNews(`${row.teamName} -- ${split === 'summer' ? 'Summer' : 'Spring'} ${row.year} filed at ${row.w}-${row.l} on the way out.`, 'transfer');
 }
 
 // ---------------------------------------------------------------------------
@@ -2518,6 +2630,11 @@ function closeSplit(splitId) {
     const awards = safe(() => endOfSplitAwards(tableCtx, rows), []);
     if (awards.length) safe(() => grantAwards(awards), '');
 
+    // The club's brief is settled FIRST, off the entry snapshot: it reads
+    // flags.splitTrained (emptied further down) and the split's own schedule,
+    // and the review below has to see the settled score, not a projection.
+    const brief = safe(() => settleBrief(c, splitId), null);
+
     const team = seasonClubId ? teamById(seasonClubId) : null;
     let row = null;
     career.update(x => {
@@ -2531,6 +2648,11 @@ function closeSplit(splitId) {
             placement: mine ? mine.rank : null,
             champPoints: num(x.season.champPoints, 0),
             awards: awards.map(a => ({ id: a.id, name: a.name, icon: a.icon })),
+            // Compact on purpose: history is persisted for the whole career.
+            ...(brief ? { brief: { met: brief.met, failed: brief.failed, total: brief.total } } : {}),
+            // The club was joined mid-split; the games before it are on the old
+            // club's own row (ensureSeason -> bankPartialSplit).
+            ...(x.season && x.season.joinedMidSplit ? { joinedMidSplit: true } : {}),
         };
         return {
             ...x,
@@ -2538,12 +2660,13 @@ function closeSplit(splitId) {
         };
     });
 
-    // The split does not just end in the news feed. The overlay holds one panel
-    // at a time, so a split that produced silverware opens the ceremony -- it
-    // lists the same awards the review would have -- and a quiet one opens the
-    // season review instead.
+    // The split does not just end in the news feed. Silverware opens the
+    // ceremony; the season review follows whenever there is a brief to report
+    // on (its verdict is the point of the split now), or on its own when the
+    // split was quiet. It is pushed at the END of this function, once the club
+    // has given its verdict, so the review can say what the brief cost or paid.
     if (awards.length) pushOverlay('awards', awards);
-    else if (row) pushOverlay('season', row);
+    const reviewPayload = (brief || !awards.length) && row ? { ...row, brief } : null;
 
     // A season good enough to move the ceiling. Checked before the season block
     // is reset, because it reads the split's own per-match ratings.
@@ -2558,9 +2681,15 @@ function closeSplit(splitId) {
     // charge a player who drilled every week the full loss.
     career.update(x => ({ ...x, flags: { ...x.flags, splitTrained: {} } }));
 
-    if (!c.player.clubId) { saveCareer(); return; }
+    if (!c.player.clubId) {
+        if (reviewPayload) pushOverlay('season', reviewPayload);
+        saveCareer();
+        return;
+    }
 
     const review = safe(() => clubReview(snap()), null);
+    let strikes = null;
+    let terminated = null;
     if (review) {
         addNews(review.text, review.verdict === 'cutting' || review.verdict === 'concerned' ? 'drama' : 'system');
         if (review.statusChange) {
@@ -2570,13 +2699,124 @@ function closeSplit(splitId) {
         // verdict has been shown. recordReview is engine-only on purpose —
         // clubReview() is re-run by the Club screen on every reactive update,
         // so counting inside it would fire the player for opening a tab.
-        safe(() => recordReview(snap(), splitId, review), null);
-        safe(() => enforceContract(snap()), null);
+        strikes = safe(() => recordReview(snap(), splitId, review), null);
+        terminated = safe(() => enforceContract(snap()), null);
     }
     // promotionCheck only after enforcement: a terminated player has no club to
     // be promoted from, and the gate reads clubId.
-    safe(() => promotionCheck(snap()), null);
+    const promoted = safe(() => promotionCheck(snap()), null);
+
+    if (reviewPayload) {
+        const notes = [];
+        if (review) notes.push({ label: 'Club verdict', text: VERDICT_LINE[review.verdict] || review.text, accent: VERDICT_ACCENT[review.verdict] });
+        if (strikes && strikes.after > strikes.before) {
+            notes.push({ label: 'Warning', text: `Warning ${strikes.after} of 3 on your file. A third and the contract is torn up.`, accent: '#ef4444' });
+        } else if (strikes && strikes.after < strikes.before) {
+            notes.push({ label: 'Warning', text: strikes.after ? `A warning comes off your file. ${strikes.after} left.` : 'Your file is clean again.', accent: '#22c55e' });
+        }
+        if (terminated) notes.push({ label: 'Contract', text: `${terminated.team} have terminated your contract.`, accent: '#ef4444' });
+        pushOverlay('season', {
+            ...reviewPayload,
+            notes,
+            statusChange: review && review.statusChange ? review.statusChange : undefined,
+            promoted: !!(promoted && promoted.promoted),
+        });
+    }
     saveCareer();
+}
+
+/** One line per verdict for the season review. The full text goes to the news. */
+const VERDICT_LINE = {
+    untouchable: 'Untouchable. The club are building around you.',
+    happy: 'Happy. You did the job you were signed to do.',
+    watching: 'Watching. Neither impressed nor worried - yet.',
+    concerned: 'Concerned. The numbers are not there and your minutes are under review.',
+    cutting: 'Out of patience. Something has to change before the window.',
+};
+const VERDICT_ACCENT = {
+    untouchable: '#eab308', happy: '#22c55e', watching: '#94a3b8', concerned: '#f59e0b', cutting: '#ef4444',
+};
+
+// ---------------------------------------------------------------------------
+//  THE CLUB'S BRIEF
+//  objectives.js decides what the brief is and how it went; this applies it.
+//  Called once per split from closeSplit(), on the entry snapshot.
+// ---------------------------------------------------------------------------
+
+function settleBrief(c, splitId) {
+    const obj = c && c.season && c.season.objectives;
+    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.list) || !obj.list.length) return null;
+    if (obj.result) return null;                       // already settled
+    if (obj.split !== splitId) return null;            // a stale brief from another split
+    const res = settleObjectivesResult(c, obj);
+    if (!res) return null;
+
+    // The burnout bench is a recovery, and a morale sink running through it
+    // turns it into a trap -- see "Morale has a downside now".
+    const morale = res.morale < 0 && burnoutBenched(c) ? 0 : res.morale;
+    // Chemistry is the room's, so it only moves if this is still the room.
+    const sameClub = obj.clubId === (c.player && c.player.clubId);
+    const team = teamById(obj.clubId);
+
+    career.update(x => {
+        const b = (x.flags && x.flags.briefs) || {};
+        return {
+            ...x,
+            season: x.season.objectives && x.season.objectives.stamp === obj.stamp
+                ? { ...x.season, objectives: { ...x.season.objectives, result: res } }
+                : x.season,
+            player: {
+                ...x.player,
+                chemistry: sameClub ? clamp(num(x.player.chemistry, 50) + res.chemistry, 0, 100) : x.player.chemistry,
+            },
+            flags: {
+                ...x.flags,
+                briefs: {
+                    splits: num(b.splits, 0) + 1,
+                    met: num(b.met, 0) + res.met,
+                    failed: num(b.failed, 0) + res.failed,
+                    sweeps: num(b.sweeps, 0) + (res.sweep ? 1 : 0),
+                    gold: num(b.gold, 0) + res.gold,
+                },
+                lastObjectives: {
+                    year: obj.year, split: obj.split, clubId: obj.clubId,
+                    teamName: team ? team.name : '',
+                    ...res,
+                },
+            },
+        };
+    });
+    if (morale) adjustCondition('morale', morale);
+    if (res.gold > 0) grantGold(res.gold);
+
+    const who = team ? team.name : 'The club';
+    if (res.sweep) {
+        addNews(`Every objective met. ${who} pay out ${fmtGold(res.gold)} gold in bonuses and the staff are using your name in other people's reviews.`, 'award');
+    } else if (res.failed === 0) {
+        addNews(`The brief is done: ${res.met} of ${res.total} met${res.gold ? `, ${fmtGold(res.gold)} gold in bonuses` : ''}.`, 'system');
+    } else {
+        const missed = res.items.filter(i => i.state === 'failed').map(i => i.title.toLowerCase());
+        addNews(`${who} wanted you to ${missed.join(' and ')}. ${res.failed === 1 ? 'That one' : 'Those'} went in the review.`, 'drama');
+    }
+    return res;
+}
+
+/** Make sure the player has a brief for the split being played. Drawn with the
+ *  season, and lazily for a save that predates briefs. A brief drawn for a club
+ *  the player has since left is left alone until it is settled -- it is still
+ *  the record of that club's split. */
+function ensureBrief(stamp) {
+    const c = snap();
+    if (!c || !c.created || !c.player.clubId) return;
+    const cur = c.season && c.season.objectives;
+    if (cur && cur.stamp === stamp) return;
+    // Never overwrite an unsettled brief from ANOTHER club: closeSplit still
+    // owes it a settlement. A transfer in a drawing phase redraws the season
+    // and clears it explicitly (ensureSeason), so this only guards the lazy path.
+    if (cur && !cur.result && cur.clubId !== c.player.clubId && cur.split === splitForWeek(num(c.time.week, 1))) return;
+    const obj = safe(() => drawObjectives(c, stamp), null);
+    if (!obj) return;
+    career.update(x => ({ ...x, season: { ...x.season, objectives: obj } }));
 }
 
 // ---------------------------------------------------------------------------
@@ -3030,6 +3270,8 @@ export function rolloverYear() {
             bracket: null,
             qualified: {},
             results: {},
+            // Settled by closeSplit('summer') above; the new year draws its own.
+            objectives: null,
         },
         player: { ...x.player, transferRequested: false },
     }));

@@ -22,14 +22,14 @@ import {
 } from './constants.js';
 import {
     calcOVR, clamp, gainCurve, attrCeiling, environmentCap, growthFor,
-    pick, randInt, traitEffects, traitsOf,
+    pick, randInt, traitEffects, traitsOf, isAmateurTier,
 } from './ratings.js';
 import {
     gearTrainingBonus, lifestyleTrainingBonus, perkEffects, buffValue,
 } from './economy.js';
 import {
     career, applyAttrGain, spendAction, spendGold, adjustCondition,
-    addNews, logWeek, saveCareer,
+    addNews, logWeek, saveCareer, skipMinigames,
 } from '../stores/career.js';
 import { getDB, getEffectiveRating } from '../utils/cards.js';
 import { showToast } from '../stores/toasts.js';
@@ -591,7 +591,7 @@ export function expectedGain(c, drill_) {
 
     const capped = cur >= ceiling
         || cur >= d.attrCap
-        || (!p.clubId && cur >= UNSIGNED_SOFT_CAP);
+        || cur >= environmentCap(p);
 
     return { min: apply(0.30), max: apply(1.0), mult, capped };
 }
@@ -614,9 +614,15 @@ export function weeklyTrainingSlots(c) {
     const trained = (s && s.weekly && s.weekly.trained) || {};
     let used = 0;
     for (const k of ATTR_KEYS) used += Number(trained[k]) || 0;
+    // The level system's practice block books the same club schedule a drill
+    // does. doActivity counts it in weekly.counts.train; it is 0 in minigame mode.
+    const counts = (s && s.weekly && s.weekly.counts && typeof s.weekly.counts === 'object') ? s.weekly.counts : {};
+    used += Math.max(0, Number(counts.train) || 0);
 
-    if (!p.clubId) return { used, max: Infinity };
-    const max = CLUB_TRAINING_SLOTS[p.clubTier] || CLUB_TRAINING_SLOTS[3];
+    // An amateur side has no practice block to book: you train on your own time,
+    // exactly as you did unsigned. Only an academy or a pro club schedules you.
+    if (!p.clubId || isAmateurTier(p.clubTier)) return { used, max: Infinity };
+    const max = CLUB_TRAINING_SLOTS[p.clubTier] || CLUB_TRAINING_SLOTS[2];
     return { used, max };
 }
 
@@ -819,6 +825,20 @@ export function restRecovery(c) {
 // ---------------------------------------------------------------------------
 
 /**
+ * A QUICK SESSION: the drill without its minigame, for a player who wants the
+ * week moving. It is scored at a fixed QUICK_SCORE, a shade under the 0.50
+ * reference (scoreFactor gives 0.84x), so playing the drill always pays more
+ * than skipping it and skipping is never a trap. Everything else is the real
+ * session through completeDrill(): the slot, energy, fee, injury roll and the
+ * split's decline protection.
+ */
+export const QUICK_SCORE = 0.45;
+export function quickDrill(drill_) {
+    const res = completeDrill(drill_, QUICK_SCORE);
+    return res && typeof res === 'object' ? { ...res, quick: true } : res;
+}
+
+/**
  * Run a drill for real: spend the slot, the gold and the energy, apply the
  * attribute gain, roll for injury, nudge form and morale, and write the log.
  * Returns what the result screen needs to render.
@@ -968,6 +988,190 @@ export function completeDrill(drill_, score01) {
 }
 
 // ---------------------------------------------------------------------------
+//  THE LEVEL SYSTEM
+//  The default way attributes grow, while the "Skip training minigames" setting
+//  is on (stores/career.js skipMinigames). Practice activities pay XP, every
+//  XP_PER_LEVEL of it is a level, and every level banks an attribute point the
+//  Training screen spends on the attribute of the player's choice.
+//
+//  ONE GROWTH ECONOMY AT A TIME. XP is only paid while the level system is on,
+//  so a career can never stack levels on top of drills; points already banked
+//  stay spendable in either mode, which makes switching back and forth safe.
+//
+//  It is priced against the drill economy, which is what careerSmoke's balance
+//  lines (the 7.6 rating line, progression, ceilingstall) were measured on:
+//    - XP is multiplied by trainingMultiplier() AT EARN TIME, exactly when a
+//      drill applies it, so age, club, gear, perks, buffs, morale, energy,
+//      health and burnout all still decide how fast a career improves.
+//    - A point goes through applyAttrGain(), so gainCurve(), the potential
+//      ceiling and the unsigned soft cap apply to it exactly as to a drill.
+//    - Spending a point books flags.splitTrained like a drill, so it protects
+//      the attribute from that split's decline and counts for the club brief.
+//    - The practice block (the 'train' activity in this mode) keeps the club's
+//      weekly practice limit, via weeklyTrainingSlots().
+//  POINT_GAIN was calibrated with careerSmoke against a --drills control run.
+// ---------------------------------------------------------------------------
+
+/** True while the minigame drills are the way to train (the setting is off). */
+export function minigamesOn() {
+    let skip = true;
+    const unsub = skipMinigames.subscribe(v => { skip = v; });
+    unsub();
+    return skip === false;
+}
+
+// One point per 100 XP, paid three at a time: a typical week levels up about
+// once. MEASURED, not chosen: at one point per 100-XP level a twelve-year career
+// read "Level 1160", which is a number, not a level.
+export const XP_PER_LEVEL = 300;
+export const POINTS_PER_LEVEL = 3;
+
+/** Base XP per activity, before the training multiplier. The practice block pays
+ *  the most per slot; VOD review and the coach pay the most per point of energy.
+ *  Sized so careerSmoke spends about as many points as the --drills control runs
+ *  drills: the first cut paid a third more, which moved the mean match rating
+ *  from 7.51 to 7.59 against the 7.6 hard fail. */
+export const ACTIVITY_XP = {
+    train: 45, scrim: 30, soloq: 25, vod: 20, coach1on1: 25, champ_lab: 15,
+};
+
+/** Raw (pre-curve) attribute points one spent point is worth: about one average
+ *  drill session at a typical mid-career multiplier. */
+export const POINT_GAIN = 1.4;
+
+/** The player's level, XP toward the next one, and points waiting to be spent. */
+export function levelOf(c) {
+    const s = c || snap();
+    const p = (s && s.player) || {};
+    const n = (v, d) => { const x = Math.floor(Number(v)); return Number.isFinite(x) && x >= 0 ? x : d; };
+    const level = Math.max(1, n(p.level, 1));
+    const xp = Math.min(XP_PER_LEVEL, n(p.xp, 0));
+    return { level, xp, need: XP_PER_LEVEL, pct: xp / XP_PER_LEVEL, points: n(p.points, 0) };
+}
+
+/** What one session of this activity pays right now, after the multiplier. 0 for
+ *  an activity that earns none, and 0 while the minigames are on. */
+export function activityXP(c, activityId) {
+    const base = Number(ACTIVITY_XP[activityId]) || 0;
+    if (base <= 0 || minigamesOn()) return 0;
+    const s = c || snap();
+    return Math.max(1, Math.round(base * trainingMultiplier(s)));
+}
+
+/**
+ * Pay one activity's XP and bank any levels it completes. `c` is the snapshot
+ * from BEFORE the activity spent its energy, so the multiplier is read off the
+ * same condition the player started the session in -- the moment a drill reads it.
+ */
+export function grantActivityXP(c, activityId) {
+    const xp = activityXP(c, activityId);
+    if (xp <= 0) return { xp: 0, levels: 0, level: levelOf(c).level };
+    let levels = 0;
+    let level = 1;
+    let from = 1;
+    career.update(x => {
+        const cur = levelOf(x);
+        let total = cur.xp + xp;
+        level = cur.level;
+        from = cur.level;
+        let points = cur.points;
+        while (total >= XP_PER_LEVEL) {
+            total -= XP_PER_LEVEL;
+            level += 1;
+            points += POINTS_PER_LEVEL;
+            levels += 1;
+        }
+        return { ...x, player: { ...x.player, xp: total, level, points } };
+    });
+    // A level is about a week of work, so a news line for every one would bury the
+    // feed (it keeps 80 entries). The result message reports each level; the
+    // news marks every tenth.
+    if (levels > 0 && Math.floor(level / 10) > Math.floor(from / 10)) {
+        addNews(`Training level ${Math.floor(level / 10) * 10} reached.`, 'training');
+    }
+    return { xp, levels, level, points: levels * POINTS_PER_LEVEL };
+}
+
+/** What spending one point on this attribute would add right now, in real
+ *  applied points (after the curve and the ceiling). */
+export function pointGainPreview(c, attrKey) {
+    const s = c || snap();
+    const p = (s && s.player) || {};
+    if (!ATTR_BY_KEY[attrKey]) return { gain: 0, capped: true };
+    const cur = (p.attrs && p.attrs[attrKey]) || 0;
+    const ceiling = attrCeiling(p, attrKey);
+    const curve = gainCurve(cur, ceiling, environmentCap(p));
+    const gain = round2(Math.max(0, Math.min(POINT_GAIN * curve, ceiling - cur)));
+    return { gain, capped: cur >= ceiling };
+}
+
+/** Everything that can stop a point being spent, in the order the player should hear it. */
+export function canSpendPoint(c, attrKey) {
+    const s = c || snap();
+    if (!s || !s.created) return { ok: false, reason: 'No career in progress.' };
+    if (s.flags && s.flags.retired) return { ok: false, reason: 'You are retired. Enjoy it.' };
+    if (!ATTR_BY_KEY[attrKey]) return { ok: false, reason: 'That attribute does not exist.' };
+    if (levelOf(s).points < 1) {
+        return { ok: false, reason: 'No attribute points to spend. Level up by practising, scrimming, queueing or reviewing VODs.' };
+    }
+    const p = s.player;
+    const name = ATTR_BY_KEY[attrKey].name;
+    if (((p.attrs && p.attrs[attrKey]) || 0) >= attrCeiling(p, attrKey)) {
+        // The maintenance case, exactly as canTrain() has it: at the ceiling and
+        // not yet protected, a point buys the protection and nothing else.
+        if (trainedThisSplit(s, attrKey) > 0) {
+            return { ok: false, reason: `${name} is at your ceiling and already protected this split.` };
+        }
+        return { ok: true, maintenance: true, reason: `${name} is at your ceiling, so a point adds nothing -- it protects ${name} from this split's decline.` };
+    }
+    return { ok: true, reason: '' };
+}
+
+/** Spend one point on one attribute. Returns what the Training screen reports. */
+export function spendPoint(attrKey) {
+    const before = snap();
+    const name = ATTR_BY_KEY[attrKey] ? ATTR_BY_KEY[attrKey].name : String(attrKey || '');
+    const gate = canSpendPoint(before, attrKey);
+    if (!gate.ok) return { ok: false, gain: 0, attr: attrKey, attrName: name, message: gate.reason };
+
+    const ovrBefore = calcOVR(before.player.attrs, before.player.role);
+    const firstOfSplit = trainedThisSplit(before, attrKey) === 0;
+
+    // The point and the split ledger in one update: this is the function that
+    // proves the point was spent, the same job completeDrill() does for a drill.
+    career.update(c => ({
+        ...c,
+        player: { ...c.player, points: Math.max(0, levelOf(c).points - 1) },
+        flags: {
+            ...c.flags,
+            splitTrained: {
+                ...((c.flags && c.flags.splitTrained) || {}),
+                [attrKey]: (Number(c.flags && c.flags.splitTrained && c.flags.splitTrained[attrKey]) || 0) + 1,
+            },
+        },
+    }));
+    const gain = gate.maintenance ? 0 : applyAttrGain(attrKey, POINT_GAIN);
+
+    const after = snap();
+    const ovrAfter = calcOVR(after.player.attrs, after.player.role);
+    const levelUp = ovrAfter > ovrBefore;
+    const gainText = gain > 0 ? `+${gain.toFixed(2)} ${name}` : `${name} held`;
+    logWeek(POINT_LOG_LABEL, firstOfSplit ? `${gainText} -- protected from this split's decline` : gainText,
+        ATTR_BY_KEY[attrKey] ? ATTR_BY_KEY[attrKey].color : '#3b82f6');
+    if (levelUp) addNews(`Overall rating up to ${ovrAfter} after putting a point into ${name}.`, 'training');
+    saveCareer();
+
+    return {
+        ok: true, gain, attr: attrKey, attrName: name, maintenance: !!gate.maintenance,
+        levelUp, ovrBefore, ovrAfter, firstOfSplit, pointsLeft: levelOf(after).points,
+    };
+}
+
+/** The week-log label a spent point is filed under, so the Training screen can
+ *  pick points out of a mixed log the way it picks drills out by name. */
+export const POINT_LOG_LABEL = 'Attribute point';
+
+// ---------------------------------------------------------------------------
 //  SMALL CONVENIENCES FOR THE TRAINING SCREEN
 // ---------------------------------------------------------------------------
 
@@ -1001,7 +1205,7 @@ export function trainingOverview(c) {
             declinedThisSplit: m.declinedThisSplit,
             // Above the soft cap an unsigned player is running at 15% of normal.
             // environmentCap(), not the constant: the Self-Made perk moves it.
-            throttled: !p.clubId && cur >= environmentCap(p),
+            throttled: (!p.clubId || isAmateurTier(p.clubTier)) && cur >= environmentCap(p),
             drills: drillsForAttr(a.key),
         };
     });

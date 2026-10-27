@@ -22,6 +22,9 @@
     export let drill = null;        // { id, attr, name, desc }
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     // -- difficulty table ------------------------------------------------
     //  ready  = "watch the map" beat before the flash
@@ -31,9 +34,11 @@
     //  There is deliberately no `ans` any more. Difficulty lives entirely in how
     //  little of the map you are shown and how much is on it.
     const CFG = {
-        1: { qs: 9,  ready: 480, flash: 900, bull: 6.0, fall: 18, emin: 2, emax: 3, amin: 0, amax: 0, tag: 'Basic Drill' },
-        2: { qs: 10, ready: 430, flash: 620, bull: 5.0, fall: 16, emin: 3, emax: 4, amin: 0, amax: 1, tag: 'Advanced' },
-        3: { qs: 11, ready: 380, flash: 380, bull: 4.5, fall: 14, emin: 4, emax: 5, amin: 1, amax: 2, tag: 'Elite' },
+        // qs was 9/10/11; the score is a per-question mean (score01), so a shorter
+        // session keeps its calibration.
+        1: { qs: 6, ready: 480, flash: 900, bull: 6.0, fall: 18, emin: 2, emax: 3, amin: 0, amax: 0, tag: 'Basic Drill' },
+        2: { qs: 7, ready: 430, flash: 620, bull: 5.0, fall: 16, emin: 3, emax: 4, amin: 0, amax: 1, tag: 'Advanced' },
+        3: { qs: 7, ready: 380, flash: 380, bull: 4.5, fall: 14, emin: 4, emax: 5, amin: 1, amax: 2, tag: 'Elite' },
     };
 
     $: dNum = Math.max(1, Math.min(3, Math.round(Number(difficulty) || 1)));
@@ -461,6 +466,11 @@
         step = 'feedback';
         phase = 'result';
         liveMsg = 'Drill complete. ' + Math.round(score01 * 100) + ' out of 100.';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        // score01 is reactive, but `results` last changed a whole feedback hold
+        // ago, so it is current here.
+        if (briefed) finishSession();
     }
 
     // -- scoring ---------------------------------------------------------
@@ -600,6 +610,9 @@
                 ? 'Minimap. Crosshair at ' + Math.round(crosshair.x) + ', ' + Math.round(crosshair.y) +
                   '. Arrow keys to move, Enter to lock in.'
                 : 'Minimap';
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) startRound(); });
 </script>
 
 <section class="mr" class:rm={reduceMotion}>
@@ -667,7 +680,7 @@
 
             <p class="verdict">{verdictFor(score01)}</p>
             <button class="btn-go wide" type="button" on:click={finishSession} disabled={finished} aria-label="Finish the session and bank the result">
-                Finish Session
+                See your gain &rarr;
             </button>
         </div>
 

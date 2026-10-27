@@ -224,6 +224,14 @@ const ST = await load('lib/stores/career.js');
 const BD = await load('lib/career/board.js');
 const AC = await load('lib/utils/anticheat.js');
 
+// THE TRAINING MODE. The shipped default is the LEVEL SYSTEM (practice
+// activities earn XP, levels pay attribute points), so that is what a plain run
+// measures. --drills runs the minigame drill economy instead: it is the CONTROL
+// the level system's POINT_GAIN was calibrated against, and the only coverage
+// completeDrill() still gets. Compare the two across seeds, never one run each.
+const DRILL_MODE = process.argv.includes('--drills');
+ST.skipMinigames.set(!DRILL_MODE);
+
 // svelte store read without importing svelte's get (keeps the dep surface tiny)
 function readStore(s) {
     let v = null;
@@ -268,10 +276,16 @@ function fail(severity, file, symptom, evidence, suggestedFix, dedupeKey) {
 let CTX = { label: '?', week: 0, year: 0, cfg: null };
 const FIRST_CLUB = new Map();   // career label -> tier of the first club actually joined
 const SPLIT_CLUB = new Map();   // "label|year|split" -> club the split was PLAYED for
+// "label|year|split" -> EVERY club that had played league rows in that split. A
+// mid-split move (an academy calling an amateur up) legitimately files two rows,
+// one per club (engine.bankPartialSplit), so the club check reads this set; the
+// LAST club alone would call the old club's honest partial row a misfiling.
+const SPLIT_CLUBS = new Map();
 // Career labels that were EVER observed sitting on their own goal club's roster.
 // Sampled live, once a week, because flags.goalReached is a one-way stamp and a
 // later transfer erases the only other evidence the player was ever there.
 const GOAL_AT = new Set();
+const BRIEFS_SEEN = new Set();   // "label|year|split|club" -> a brief settlement already tallied
 function ctxLine() {
     return `[${CTX.label}] year ${CTX.year} week ${CTX.week}`;
 }
@@ -681,6 +695,41 @@ function assertInvariants(c, tally) {
         if (c.player.clubId && c.player.clubId === p.goalClubId) GOAL_AT.add(CTX.label);
     }
 
+    // ---- the club's brief (objectives.js) ----------------------------------
+    // Tallied off flags.lastObjectives, once per settlement. A brief the club
+    // drew for a signed player must exist in a drawing phase, and every settled
+    // item must be in a final state -- an 'ontrack' or 'open' that survives
+    // settlement is a projection that was paid out as if it were a result.
+    {
+        const lo = c.flags && c.flags.lastObjectives;
+        if (lo && typeof lo === 'object' && Array.isArray(lo.items)) {
+            const key = `${CTX.label}|${lo.year}|${lo.split}|${lo.clubId}`;
+            if (!BRIEFS_SEEN.has(key)) {
+                BRIEFS_SEEN.add(key);
+                stats.briefs.settled++;
+                if (lo.sweep) stats.briefs.sweeps++;
+                stats.briefs.gold += Number(lo.gold) || 0;
+                for (const it of lo.items) {
+                    const k = String(it.kind) + ':' + String(it.state);
+                    stats.briefs.byKind.set(k, (stats.briefs.byKind.get(k) || 0) + 1);
+                    if (!['met', 'failed', 'unjudged', 'missed'].includes(it.state)) {
+                        fail('wrong', 'src/lib/career/objectives.js',
+                            'a settled brief carries an objective that is not in a final state',
+                            `${ctxLine()} -> ${it.kind} settled as '${it.state}'`,
+                            'settleObjectivesResult must read objectiveProgress with final: true, which decides every open item.',
+                            'briefstate|' + it.kind + '|' + it.state);
+                    }
+                }
+            }
+        }
+        const ph = K.phaseForWeek(Number(c.time.week) || 1).id;
+        if (c.player.clubId && (ph === 'spring' || ph === 'summer')) {
+            stats.briefs.signedWeeks++;
+            const o = c.season && c.season.objectives;
+            if (!o || o.clubId !== c.player.clubId) stats.briefs.missingWeeks++;
+        }
+    }
+
     if (c.player.clubId && !FIRST_CLUB.has(CTX.label)) {
         const t = K.teamById(c.player.clubId);
         FIRST_CLUB.set(CTX.label, t ? Number(t.tier) || 0 : Number(c.player.clubTier) || 0);
@@ -715,6 +764,8 @@ function assertInvariants(c, tally) {
         if (inPlay && played && c.player.clubId) {
             const key = `${CTX.label}|${c.time.year}|${c.season.split}`;
             SPLIT_CLUB.set(key, c.player.clubId);
+            if (!SPLIT_CLUBS.has(key)) SPLIT_CLUBS.set(key, new Set());
+            SPLIT_CLUBS.get(key).add(c.player.clubId);
         }
     }
 
@@ -999,6 +1050,19 @@ const stats = {
     drills: 0,
     drillsZeroGain: 0,
     drillGainSum: 0,
+    // The level system (the default; see DRILL_MODE). practiceBlocks is the
+    // 'train' activity in this mode, xpPaid every XP an activity returned,
+    // levels the level-ups those paid, and points/pointGainSum/pointsZeroGain
+    // the spending side, mirroring the three drill counters above.
+    // Splits filed in two rows because the player changed club mid-split
+    // (engine.bankPartialSplit). Printed so a run that never exercises it says so.
+    midSplitMoves: 0,
+    practiceBlocks: 0,
+    xpPaid: 0,
+    levels: 0,
+    points: 0,
+    pointGainSum: 0,
+    pointsZeroGain: 0,
     awardIds: new Map(),
     perfectRatings: 0,
     // ---- languages, the solo queue grind and the two new event pools --------
@@ -1028,6 +1092,9 @@ const stats = {
     consUses: 0,           // successful useConsumable() calls
     consRefusals: 0,       // uses a cap actually refused
     consProbes: 0,         // cap-exhaustion probes driven
+    // The club's brief: settlements seen, clean sweeps, gold paid, kind:state
+    // counts, and signed regular-season weeks with / without a brief.
+    briefs: { settled: 0, sweeps: 0, gold: 0, byKind: new Map(), signedWeeks: 0, missingWeeks: 0 },
     consMaxWeek: new Map(),    // consumable id -> highest weekly.counts['cons:id']
     consMaxCareer: new Map(),  // consumable id -> highest flags.consumablesUsed[id]
     consMaxHeld: new Map(),    // consumable id -> highest inventory.consumables[id]
@@ -1106,6 +1173,41 @@ const GRINDER_SOLOQ_SHARE = 0.9;
 const SOLOQ_GRIND_RE = /\(-(\d+) health\)/;
 const SOLOQ_TILT_RE = /tilted \((-?\d+) morale\)/;
 
+/** THE LEVEL SYSTEM'S SPENDING SIDE. Every banked point goes on a random
+ *  attribute that will take it -- the same uniform pick the drill branch makes
+ *  from the trainable drills, so the two modes differ in the economy and not in
+ *  how a simulated player chooses. A point refused by canSpendPoint is never
+ *  forced; an attribute at its ceiling AND already protected is skipped. */
+function spendPoints() {
+    let guard = 0;
+    while (guard++ < 40) {
+        const c = cur();
+        if (!c || !c.player || (Number(c.player.points) || 0) < 1) return;
+        const keys = K.ATTR_KEYS.filter(k => step('canSpendPoint', () => TR.canSpendPoint(c, k).ok, false));
+        if (!keys.length) return;
+        const k = rpick(keys);
+        const res = step('training.spendPoint', () => TR.spendPoint(k), null);
+        if (!res || !res.ok) return;
+        stats.points++;
+        if (isNum(res.gain)) {
+            stats.pointGainSum += res.gain;
+            if (res.gain <= 0) stats.pointsZeroGain++;
+        } else {
+            fail('wrong', 'src/lib/career/training.js', 'spendPoint returned a non-numeric gain',
+                `${ctxLine()} -> ${k} gain ${JSON.stringify(res.gain)}`,
+                'applyAttrGain must always resolve to a number.');
+        }
+    }
+}
+
+/** Book the XP an activity result reports, then spend whatever it banked. */
+function noteXP(res) {
+    if (DRILL_MODE || !res) return;
+    if (isNum(res.xp)) stats.xpPaid += res.xp;
+    if (isNum(res.levels)) stats.levels += res.levels;
+    spendPoints();
+}
+
 function spendActions() {
     let guard = 0;
     while (guard++ < 24) {
@@ -1114,7 +1216,17 @@ function spendActions() {
         if (c.flags && c.flags.retired) break;
 
         let res = null;
-        if (rand() < 0.5) {
+        if (!DRILL_MODE && rand() < 0.5) {
+            // The level system's half of the week: the practice block, which is the
+            // 'train' activity in this mode and books the club's practice schedule.
+            res = step('engine.doActivity(train)', () => G.doActivity('train'), null);
+            if (res && res.ok) {
+                stats.practiceBlocks++;
+                noteXP(res);
+                drainOverlay();
+                continue;
+            }
+        } else if (DRILL_MODE && rand() < 0.5) {
             const drills = TR.DRILLS.filter(d => step('canTrain', () => TR.canTrain(c, d).ok, false));
             if (drills.length) {
                 const d = rpick(drills);
@@ -1173,6 +1285,7 @@ function spendActions() {
                 const tilt = SOLOQ_TILT_RE.exec(detail);
                 if (tilt) stats.soloqTiltMorale += Math.abs(Number(tilt[1]) || 0);
             }
+            noteXP(res);
             drainOverlay();
             continue;
         }
@@ -2412,7 +2525,19 @@ function runCareer(cfg, label) {
         // ---- the split is filed under the club that PLAYED it --------------
         const key = `${label}|${h.year}|${h.split}`;
         const playedFor = SPLIT_CLUB.get(key);
-        if (playedFor && h.teamId && h.teamId !== playedFor) {
+        const playedForAny = SPLIT_CLUBS.get(key) || new Set();
+        // A club joined mid-split may legitimately have played nothing yet (the
+        // call-up came after its last league game); its row says so. Every other
+        // row must belong to a club that actually played league games that split,
+        // which is what still catches an offseason move filing a season under the
+        // new club -- the bug this check was written for.
+        // A `leftMidSplit` row is the OLD club's games, filed by bankPartialSplit
+        // from the very block being replaced, so it cannot be the misfiling this
+        // check exists for -- and the once-a-week sampler can miss its club
+        // entirely when the call-up lands in the same week as its games (seed 42
+        // and 1234: two Bo1 games, then an academy call that week). Its own
+        // invariant is that it is non-empty, which the 0-0 check below enforces.
+        if (playedFor && h.teamId && !playedForAny.has(h.teamId) && !h.joinedMidSplit && !h.leftMidSplit) {
             const nm = id => { const t = K.teamById(id); return t ? t.name : String(id); };
             fail('wrong', 'src/lib/career/engine.js',
                 'a season was filed under a club that never played it',
@@ -2424,7 +2549,21 @@ function runCareer(cfg, label) {
         // A split whose games were played but whose record came out empty is the
         // other half of the same bug: ensureSeason rebuilding during the
         // offseason zeroed a finished season before it was written down.
-        if (playedFor && w + l === 0) {
+        if (h.leftMidSplit) {
+            stats.midSplitMoves++;
+            // The row exists only because the old club HAD played games; empty,
+            // or filed under the club the player moved TO, it is the bug itself.
+            const next = history.find(x => x && x !== h && x.year === h.year && x.split === h.split && x.joinedMidSplit);
+            if (w + l === 0 || (next && next.teamId === h.teamId)) {
+                fail('wrong', 'src/lib/career/engine.js',
+                    'a mid-split move filed the old club\'s games wrongly',
+                    `${label} -> ${h.year} ${h.split} left-mid-split row ${h.teamName} ${w}-${l}` +
+                    (next ? `, joined ${next.teamName}` : ''),
+                    'bankPartialSplit must file season.wins/losses under the club of the block being replaced.',
+                    'midsplit');
+            }
+        }
+        if (playedFor && w + l === 0 && !h.joinedMidSplit) {
             fail('wrong', 'src/lib/career/engine.js',
                 'a season that was played was recorded as 0-0',
                 `${label} -> ${h.year} ${h.split} under ${h.teamName}`,
@@ -2728,17 +2867,43 @@ for (const r of results) {
 {
     console.log('');
     console.log('---- TRAINING THROUGHPUT ---------------------------------');
-    console.log(`  drills completed       : ${stats.drills}`);
-    console.log(`  of those, +0.00 gain   : ${stats.drillsZeroGain}` +
-        (stats.drills ? `  (${((stats.drillsZeroGain / stats.drills) * 100).toFixed(0)}% of paid sessions moved nothing)` : ''));
-    console.log(`  mean gain per drill    : ${stats.drills ? (stats.drillGainSum / stats.drills).toFixed(3) : '-'}`);
+    console.log(`  training mode          : ${DRILL_MODE ? 'minigame drills (--drills control)' : 'level system (the default)'}`);
+    if (DRILL_MODE) {
+        console.log(`  drills completed       : ${stats.drills}`);
+        console.log(`  of those, +0.00 gain   : ${stats.drillsZeroGain}` +
+            (stats.drills ? `  (${((stats.drills ? stats.drillsZeroGain / stats.drills : 0) * 100).toFixed(0)}% of paid sessions moved nothing)` : ''));
+        console.log(`  mean gain per drill    : ${stats.drills ? (stats.drillGainSum / stats.drills).toFixed(3) : '-'}`);
+        console.log(`  total drill gain       : ${stats.drillGainSum.toFixed(1)} attribute points`);
+    } else {
+        console.log(`  practice blocks        : ${stats.practiceBlocks}`);
+        console.log(`  XP paid / levels       : ${stats.xpPaid} XP, ${stats.levels} levels (${(stats.levels / Math.max(1, results.length)).toFixed(1)} per career)`);
+        console.log(`  points spent           : ${stats.points}` +
+            (stats.points ? `  (${((stats.pointsZeroGain / stats.points) * 100).toFixed(0)}% moved nothing - maintenance or a ceiling)` : ''));
+        console.log(`  mean gain per point    : ${stats.points ? (stats.pointGainSum / stats.points).toFixed(3) : '-'}`);
+        console.log(`  total point gain       : ${stats.pointGainSum.toFixed(1)} attribute points`);
+        // Inertness, both halves. A level system that never levels anyone up and
+        // one whose points never reach an attribute look identical from outside:
+        // the progression line would fail eventually, but on its own shape.
+        if (stats.levels === 0) {
+            fail('wrong', 'src/lib/career/training.js', 'the level system never levels anybody up',
+                `${stats.practiceBlocks} practice blocks and ${stats.xpPaid} XP over the whole run, 0 levels`,
+                'engine.doActivity must call grantActivityXP after every XP-bearing activity while the minigames are off.',
+                'nolevels');
+        }
+        if (stats.levels > 0 && stats.points === 0) {
+            fail('wrong', 'src/lib/career/training.js', 'levels were gained but no attribute point was ever spent',
+                `${stats.levels} levels, 0 points spent`,
+                'grantActivityXP must bank POINTS_PER_LEVEL into player.points; canSpendPoint must allow a spend.',
+                'nopoints');
+        }
+    }
     console.log('  peak attribute vs ceiling (peak, not retirement -- age decay is not a training stall):');
     for (const r of results) {
         const line = r.headroom.map(h => `${h.k}${h.peak.toFixed(1)}/${h.cap}`).join(' ');
         console.log('    ' + r.label.slice(0, 26).padEnd(27) + line);
     }
 
-    if (stats.drills >= 200 && stats.drillsZeroGain / stats.drills > 0.25) {
+    if (DRILL_MODE && stats.drills >= 200 && stats.drillsZeroGain / stats.drills > 0.25) {
         fail('wrong', 'src/lib/stores/career.js',
             'a large share of paid training sessions raise nothing at all',
             `${stats.drillsZeroGain} of ${stats.drills} successful drills ` +
@@ -3700,6 +3865,7 @@ console.log(`  role changes           : ${stats.roleChanges}`);
     const total = terms.reduce((s, v) => s + v, 0);
     console.log(`  terminations           : ${mean(terms).toFixed(2)} per career (${total} total)`
         + `, ${mean(results.map(r => Number(r.endStrikes) || 0)).toFixed(2)} strikes carried at the end`);
+    console.log(`  mid-split moves        : ${stats.midSplitMoves} split${stats.midSplitMoves === 1 ? '' : 's'} filed in two rows (old club's games banked on the way out)`);
     // NOT a failure at zero. This harness drives near-optimal careers -- they
     // train every week, so ovr outruns the club strength and clubReview returns
     // 'happy' almost every split. The mechanism is proven separately, by a probe
@@ -3713,6 +3879,46 @@ console.log(`  role changes           : ${stats.roleChanges}`);
             'clubs are firing players constantly',
             `${mean(terms).toFixed(2)} terminations per career`,
             'STRIKES_BEFORE_TERMINATION is too low, or recordReview is counting the same split twice.');
+    }
+}
+// The club's brief. Two-sided, like every system here: a brief nobody ever
+// fails is a bonus with extra steps, and a brief nobody ever meets is a tax.
+// Both look identical from a pass/fail on everything else.
+{
+    const B = stats.briefs;
+    const kinds = new Map();
+    for (const [k, n] of B.byKind) {
+        const [kind, state] = k.split(':');
+        if (!kinds.has(kind)) kinds.set(kind, { met: 0, failed: 0, other: 0 });
+        const row = kinds.get(kind);
+        if (state === 'met') row.met += n; else if (state === 'failed') row.failed += n; else row.other += n;
+    }
+    const line = Array.from(kinds.entries())
+        .map(([k, r]) => `${k} ${r.met}/${r.met + r.failed}${r.other ? ` (+${r.other} unjudged/missed)` : ''}`)
+        .join(', ');
+    const metAll = Array.from(kinds.values()).reduce((s, r) => s + r.met, 0);
+    const failAll = Array.from(kinds.values()).reduce((s, r) => s + r.failed, 0);
+    console.log(`  club briefs            : ${B.settled} settled, ${B.sweeps} clean sweeps, ${Math.round(B.gold).toLocaleString()} gold paid`
+        + ` -- met ${metAll} / failed ${failAll} (${metAll + failAll ? Math.round((metAll / (metAll + failAll)) * 100) : 0}% met)`);
+    console.log(`                           ${line || 'no objectives settled'}`);
+    console.log(`                           ${B.missingWeeks} of ${B.signedWeeks} signed regular-season weeks had no brief`);
+    if (B.signedWeeks > 0 && B.settled === 0) {
+        fail('wrong', 'src/lib/career/engine.js', 'no club brief was ever settled',
+            `${B.signedWeeks} signed regular-season weeks, 0 settlements`,
+            'closeSplit must call settleBrief on the ENTRY snapshot, before flags.splitTrained is reset.', 'briefnone');
+    }
+    if (B.settled > 0 && metAll === 0) {
+        fail('wrong', 'src/lib/career/objectives.js', 'no objective was ever met', line,
+            'Every target is unreachable -- re-read the draw in drawObjectives().', 'briefnomet');
+    }
+    if (B.settled > 0 && failAll === 0) {
+        fail('wrong', 'src/lib/career/objectives.js', 'no objective was ever failed', line,
+            'A brief nobody can fail is a bonus, not a stake. The targets are too soft for even these careers.', 'briefnofail');
+    }
+    if (B.signedWeeks > 0 && B.missingWeeks / B.signedWeeks > 0.05) {
+        fail('wrong', 'src/lib/career/engine.js', 'signed players are playing regular-season weeks without a brief',
+            `${B.missingWeeks} of ${B.signedWeeks} weeks`,
+            'ensureSeason must draw a brief with every fixture list (ensureBrief), including the lazy path.', 'briefmissing');
     }
 }
 // Club momentum and roster churn. Both are balance readouts, but two of them

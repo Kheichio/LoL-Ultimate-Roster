@@ -13,9 +13,12 @@
     import { calcCoachBonus, calcRegionChem, calcEraChem, calcTeamChem, calcLegacyBonus } from '../../utils/combat.js';
     import {
         ME, MATCHDAYS, PLAYOFF_SPOTS, WINS_NEEDED, SPLITS, LEAGUE_PRIZES, PLAYOFF_PRIZES, PERFECT_LEAGUE_BONUS, GR_STEPS, GOLDEN_ROAD_PRIZE,
-        splitInfo, splitIndex, seasonYear, buildCpuTeams, createLeague, recordMyMatch, myFixture, myPlayed, leagueComplete, standings,
+        splitInfo, splitIndex, seasonYear, createLeague, recordMyMatch, myFixture, myPlayed, leagueComplete, standings,
         seedPlayoffs, advancePlayoffs, simulatePlayoffs, myPlayoffSeries, myPlayoffResult, qualifiesFor, splitOutcome, splitPrize, regionalKey, grFresh,
+        powerBand,
     } from '../../utils/league.js';
+    import { worldOf, buildSeasonTeams, homeQualifiers, realOrgs, regionMeta, WORLD_REGIONS, FICTIONAL_SETS } from '../../utils/world.js';
+    import RegionIcon from '../ui/RegionIcon.svelte';
     import { get } from 'svelte/store';
     import { onDestroy, onMount } from 'svelte';
 
@@ -75,6 +78,12 @@
     $: chemBonus = (squadReady ? calcRegionChem(starters) + calcEraChem(starters) + calcTeamChem(starters) : 0) + calcCoachBonus($squad.COACH) + calcLegacyBonus(starters) + ($skills.conditioning || 0);
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
     $: tacticsLevel = $skills.tactics || 0;
+    // The league is drawn to the Power the split starts with (league.POWER_BANDS).
+    $: band = powerBand(totalPower);
+    $: bandNote = !band ? 'Opponents follow the season calendar'
+        : band.boss[1] === 0 ? `${band.name} tier: a few Hard sides, every side near your level`
+        : band.min >= 110 ? `${band.name} tier: mostly Hard sides and several Bosses`
+        : `${band.name} tier: more Hard sides and a Boss or two`;
 
     // ── The season ──
     $: sd = $seasonData;
@@ -196,7 +205,8 @@
         const db = getDB();
         if (!db) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
         const cur = get(seasonData);
-        const lg = createLeague(buildCpuTeams(db, cur.currentSplit));
+        // Drawn to the Power the split starts with, which the squad lock then holds.
+        const lg = createLeague(buildSeasonTeams(db, cur.currentSplit, worldOf(cur), Math.random, totalPower));
         seasonData.update(s => ({
             ...s, stage: 'league', league: lg, playoffs: null, summary: null,
             meta: generateMeta(), lockedSquad: JSON.parse(JSON.stringify(get(squad))), swapsUsed: 0,
@@ -344,7 +354,12 @@
             ...x,
             currentSplit: x.currentSplit + 1,
             stage: 'idle', league: null, playoffs: null, summary: null, meta: [], lockedSquad: null,
-            qualified: sum.qualified ? { event: info.event, eventName: info.eventName, split: x.currentSplit, year: seasonYear(x.currentSplit), played: false, won: null } : x.qualified,
+            // `field` and `world` are captured here because `league` is cleared on this same line:
+            // the international bracket needs this league's other top teams and its region.
+            qualified: sum.qualified ? {
+                event: info.event, eventName: info.eventName, split: x.currentSplit, year: seasonYear(x.currentSplit), played: false, won: null,
+                field: homeQualifiers(x.league, x.playoffs, 3), world: worldOf(x),
+            } : x.qualified,
             trophyCase: [...(x.trophyCase || []), { split: x.currentSplit, name: info.name, year: seasonYear(x.currentSplit), wins: sum.w, losses: sum.l, position: sum.position, playoff: sum.playoff, title: outcome.title, reward: earned }],
         }));
         playSound('claim');
@@ -362,6 +377,24 @@
     function openCurrent() {
         phase = sd.stage === 'league' ? 'league' : sd.stage === 'playoffs' ? 'playoffs' : sd.stage === 'done' ? 'results' : 'overview';
     }
+
+    // ── Your league (seasonData.world, utils/world.js) ──
+    // Chosen between splits only: a league drawn under one setting keeps it to the end, and an
+    // international spot carries the region it was won in (qualified.world).
+    $: world = worldOf(sd);
+    $: worldLocked = sd.stage !== 'idle';
+    $: worldAccent = world.chosen ? (regionMeta(world.region) || {}).accent || '#818cf8' : '#818cf8';
+    $: worldPreview = !world.chosen ? []
+        : world.mode === 'real' ? realOrgs(world.region).slice(0, MATCHDAYS).map(o => ({ name: o.name, accent: o.accent }))
+        : (FICTIONAL_SETS[world.region] || []).slice(0, MATCHDAYS).map(name => ({ name, accent: worldAccent }));
+    function setWorld(mode, region) {
+        if (get(seasonData).stage !== 'idle') return;
+        seasonData.update(s => ({ ...s, world: { mode, region } }));
+        saveGame();
+        const r = regionMeta(region);
+        showToast(mode === 'real' ? `Next split: the real ${region}${r ? ` (${r.name})` : ''}.` : `Next split: fictional ${region} teams.`, 'success');
+    }
+    const safeColor = (c) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : null);
 
     // ── Overview helpers ──
     $: yearTrack = SPLITS.map((s, i) => ({ ...s, state: i < splitIdx ? 'done' : i === splitIdx ? 'now' : 'next' }));
@@ -403,7 +436,7 @@
                 {/if}
             </div>
             <div class="snh-text">
-                <span class="snh-eyebrow"><Icon name="calendar" size={12} stroke={2.2} /> Season · Year {year}</span>
+                <span class="snh-eyebrow"><Icon name="calendar" size={12} stroke={2.2} /> Season · Year {year}{#if world.chosen}<span class="snh-reg"><RegionIcon region={world.region} size={12} mono /> {world.region} · {world.mode === 'real' ? 'real teams' : 'fictional'}</span>{/if}</span>
                 <h2 class="snh-title">{split.name} Split</h2>
                 <p class="snh-sub">
                     {#if sd.stage === 'league'}Matchday {Math.min(played + 1, MATCHDAYS)} of {MATCHDAYS}. Finish top {PLAYOFF_SPOTS} for the Regional Trophy — {split.qualify === 1 ? 'its champion' : 'both its finalists'} go{split.qualify === 1 ? 'es' : ''} to {split.eventName}.
@@ -425,6 +458,7 @@
                     {:else}
                         <button class="cta" on:click={beginSplit} use:pressFx={{ color: 'rgba(255,255,255,0.4)' }}><Icon name="play" size={15} stroke={2.2} /> Start {split.name} split</button>
                         <span class="cta-note">Your squad · {totalPower} power · locks for the split</span>
+                        <span class="cta-note cta-band">{bandNote}</span>
                     {/if}
                 {:else if sd.stage === 'done'}
                     <button class="cta cta-claim" on:click={() => phase = 'results'} use:pressFx={{ color: 'rgba(255,255,255,0.45)' }}><Icon name="gift" size={16} stroke={2.2} /> Split results</button>
@@ -439,6 +473,40 @@
                 {/if}
             </div>
         </header>
+
+        <!-- ═══ Your league ═══ -->
+        <section class="world" style="--wc: {worldAccent};">
+            <div class="w-head">
+                <span class="p-ico" style="--c: {worldAccent};"><Icon name="globe" size={15} /></span>
+                <div class="w-text">
+                    <span class="p-title">Your league</span>
+                    <span class="w-sub">
+                        {#if !world.chosen}Classic fictional league. Pick a region to play its real teams, or a themed fictional set.
+                        {:else if world.mode === 'real'}The real {world.region}{regionMeta(world.region) ? ` (${regionMeta(world.region).name})` : ''}: its top nine orgs, fielding their own players.
+                        {:else}Fictional {world.region} teams, with invented names.{/if}
+                    </span>
+                </div>
+                <div class="w-mode" role="radiogroup" aria-label="League teams">
+                    <button role="radio" aria-checked={world.mode === 'real'} class:on={world.mode === 'real'} disabled={worldLocked} on:click={() => setWorld('real', world.region)}>Real teams</button>
+                    <button role="radio" aria-checked={world.mode === 'fictional'} class:on={world.mode === 'fictional'} disabled={worldLocked} on:click={() => setWorld('fictional', world.region)}>Fictional</button>
+                </div>
+            </div>
+            <div class="w-regions" role="radiogroup" aria-label="Region">
+                {#each WORLD_REGIONS as r}
+                    <button class="wr" role="radio" aria-checked={world.chosen && world.region === r.id} class:on={world.chosen && world.region === r.id} style="--rc: {r.accent};" disabled={worldLocked} on:click={() => setWorld(world.mode, r.id)}>
+                        <span class="wr-logo"><RegionIcon region={r.id} size={16} mono /></span>
+                        <span class="wr-id">{r.id}</span>
+                        <span class="wr-name">{r.name}</span>
+                    </button>
+                {/each}
+            </div>
+            {#if worldPreview.length}
+                <div class="w-teams" aria-label="Teams in this league">
+                    {#each worldPreview as t}<span class="wt" style="--tc: {safeColor(t.accent) || worldAccent};">{t.name}</span>{/each}
+                </div>
+            {/if}
+            <span class="w-note"><Icon name={worldLocked ? 'lock' : 'calendar'} size={11} stroke={2.4} /> {worldLocked ? 'Locked while a split is running. Change it between splits.' : 'Applies from the next split you start.'} First Stand, MSI and Worlds always draw the top teams of every region, Master-tier players only.</span>
+        </section>
 
         <!-- ═══ Golden Road ═══ -->
         <section class="gold" class:gold-broken={gr.broken}>
@@ -476,7 +544,7 @@
                 <ol class="how">
                     <li><span class="how-n">1</span><span><b>League</b> — 10 teams, everyone plays everyone once (best of 5). The table updates every matchday.</span></li>
                     <li><span class="how-n">2</span><span><b>Regional Trophy</b> — the top {PLAYOFF_SPOTS}: semi-finals 1 v 4 and 2 v 3, then the final.</span></li>
-                    <li><span class="how-n">3</span><span><b>International</b> — Winter's champion goes to First Stand; Spring and Summer send both finalists to MSI and Worlds.</span></li>
+                    <li><span class="how-n">3</span><span><b>International</b> — Winter's champion goes to First Stand; Spring and Summer send both finalists to MSI and Worlds. Each is a knockout bracket (8 teams, Worlds 16) against the best of every region, Master-tier players only.</span></li>
                 </ol>
                 <div class="prizes">
                     <div class="pz-col">
@@ -552,7 +620,7 @@
                     <span class="nx-kicker">Matchday {played + 1} · best of 5
                         {#if nextOpp.tag === 'BOSS'}<span class="tag tag-boss">Boss</span>{:else if nextOpp.tag === 'HARD'}<span class="tag tag-hard">Hard</span>{/if}
                     </span>
-                    <h3 class="nx-name">{nextOpp.name}</h3>
+                    <h3 class="nx-name">{#if safeColor(nextOpp.accent)}<span class="org-dot org-dot-lg" style="--oc: {safeColor(nextOpp.accent)};"></span>{/if}{nextOpp.name}</h3>
                     <div class="nx-line">
                         {#each nextLineup as p}
                             <span class="nx-p" title="{p.role}: {p.card ? p.card.name : '—'}" style="--t: {p.card ? (TIER_COLORS[p.card.quality] || '#64748b') : '#334155'};"><img src={ROLE_ICONS[p.role]} alt={p.role}><b>{p.card ? p.card.rating : '–'}</b><span>{p.card ? p.card.name : '—'}</span></span>
@@ -590,7 +658,7 @@
                         {@const t = teamOf(row.id)}
                         <div class="tr-row" class:tr-me={row.id === ME} class:tr-cut={row.pos === PLAYOFF_SPOTS} class:tr-in={row.pos <= PLAYOFF_SPOTS} role="row">
                             <span class="c-pos">{row.pos}</span>
-                            <span class="c-team">{row.id === ME ? $teamIdentity.name : t.name}{#if t.tag === 'BOSS'}<span class="tag tag-boss">Boss</span>{:else if t.tag === 'HARD'}<span class="tag tag-hard">Hard</span>{/if}</span>
+                            <span class="c-team">{#if row.id !== ME && safeColor(t.accent)}<span class="org-dot" style="--oc: {safeColor(t.accent)};"></span>{/if}{row.id === ME ? $teamIdentity.name : t.name}{#if t.tag === 'BOSS'}<span class="tag tag-boss">Boss</span>{:else if t.tag === 'HARD'}<span class="tag tag-hard">Hard</span>{/if}</span>
                             <span class="c-w">{row.w}</span>
                             <span class="c-l">{row.l}</span>
                             <span class="col-gd">{row.gw}–{row.gl}</span>
@@ -736,7 +804,7 @@
             <section class="next next-gold">
                 <div class="nx-left">
                     <span class="nx-kicker">{mySeries.stage === 'final' ? 'The final' : 'Semi-final'} · best of 5</span>
-                    <h3 class="nx-name">{nextOpp.name}</h3>
+                    <h3 class="nx-name">{#if safeColor(nextOpp.accent)}<span class="org-dot org-dot-lg" style="--oc: {safeColor(nextOpp.accent)};"></span>{/if}{nextOpp.name}</h3>
                     <div class="nx-line">
                         {#each nextLineup as p}
                             <span class="nx-p" style="--t: {p.card ? (TIER_COLORS[p.card.quality] || '#64748b') : '#334155'};"><img src={ROLE_ICONS[p.role]} alt={p.role}><b>{p.card ? p.card.rating : '–'}</b><span>{p.card ? p.card.name : '—'}</span></span>
@@ -884,6 +952,7 @@
     .yr-now { color: #0b1020; background: #a5b4fc; border-color: #a5b4fc; }
     .snh-cta { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
     .cta-note { font-size: 11px; color: #64748b; font-weight: 700; text-align: right; }
+    .cta-band { color: #fbbf24; }
     .cta-note-ev { color: #fbbf24; }
     .cta { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 13px 24px; border-radius: 14px; cursor: pointer; font-size: 14px; font-weight: 900; color: #fff; border: none; background: linear-gradient(135deg, #6366f1, #818cf8); box-shadow: 0 8px 24px rgba(99,102,241,0.4); }
     .cta:hover { transform: translateY(-1px); }
@@ -918,6 +987,32 @@
     .gs-next .gs-label { color: #fef3c7; }
     .gs-broken .gs-box { color: #f87171; }
     .gs-broken .gs-label { text-decoration: line-through; color: #78716c; }
+
+    /* ── Your league ── */
+    .snh-eyebrow:has(.snh-reg) { flex-wrap: wrap; row-gap: 4px; }
+    .snh-reg { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; padding-left: 8px; border-left: 1px solid rgba(129,140,248,0.35); }
+    .world { padding: 16px 18px; border-radius: 20px; background: radial-gradient(60% 160% at 100% 0%, color-mix(in srgb, var(--wc) 14%, transparent), transparent 60%), rgba(12,16,28,0.6); border: 1px solid color-mix(in srgb, var(--wc) 30%, rgba(71,85,105,0.25)); display: flex; flex-direction: column; gap: 12px; }
+    .w-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .w-text { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+    .w-sub { font-size: 12px; color: #94a3b8; }
+    .w-mode { display: inline-flex; padding: 3px; border-radius: 12px; background: rgba(2,6,23,0.55); border: 1px solid rgba(71,85,105,0.3); }
+    .w-mode button { padding: 7px 14px; border-radius: 9px; font-size: 12px; font-weight: 800; color: #94a3b8; background: none; border: none; cursor: pointer; }
+    .w-mode button.on { color: #0b1020; background: var(--wc); }
+    .w-mode button:disabled, .wr:disabled { cursor: not-allowed; }
+    .w-mode button:disabled:not(.on), .wr:disabled:not(.on) { opacity: 0.45; }
+    .w-regions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+    .wr { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 11px; border-radius: 13px; text-align: left; cursor: pointer; color: #cbd5e1; background: rgba(2,6,23,0.45); border: 1px solid rgba(71,85,105,0.3); transition: border-color 0.15s, background 0.15s; }
+    .wr:not(:disabled):hover { border-color: color-mix(in srgb, var(--rc) 55%, transparent); }
+    .wr.on { border-color: var(--rc); background: color-mix(in srgb, var(--rc) 14%, rgba(2,6,23,0.5)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc) 14%, transparent); }
+    .wr-logo { height: 16px; display: flex; align-items: center; color: var(--rc); }
+    .wr-id { font-size: 13px; font-weight: 900; color: #f1f5f9; }
+    .wr-name { font-size: 10.5px; font-weight: 700; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .w-teams { display: flex; flex-wrap: wrap; gap: 6px; }
+    .wt { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 800; color: #e2e8f0; background: rgba(2,6,23,0.5); border: 1px solid color-mix(in srgb, var(--tc) 35%, transparent); }
+    .wt::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--tc); }
+    .w-note { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #64748b; line-height: 1.4; }
+    .org-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; background: var(--oc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--oc) 25%, transparent); }
+    .org-dot-lg { width: 11px; height: 11px; margin-right: 9px; }
 
     /* Stat tiles */
     .sn-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -1142,6 +1237,7 @@
     @media (max-width: 900px) {
         .sn-grid, .lg-grid { grid-template-columns: 1fr; }
         .sn-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .w-regions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         .snh-cta { align-items: flex-start; width: 100%; }
         .cta-note { text-align: left; }
         .bracket { grid-template-columns: 1fr; }

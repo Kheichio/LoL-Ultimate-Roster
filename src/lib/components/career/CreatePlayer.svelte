@@ -11,9 +11,11 @@
     import {
         START_PATHS, REGIONS, ROLES, PLAYSTYLES, CHAMPIONS, championsForRole,
         championsForStyle, championFitsStyle, championFit, ATTRS, AGE_TRADE,
+        AMATEUR_TEAMS, AMATEUR_LOCAL, LEAGUES,
     } from '../../career/constants.js';
     import {
         previewAttrs, previewPotential, calcOVR, calcPotentialOVR, ovrTier, ovrLabel,
+        amateurStartingStatus, statusInfo, AMATEUR_ROTATION_GAP,
     } from '../../career/ratings.js';
     import { createCareer, careerScreen } from '../../stores/career.js';
     import { CAREER_PILLARS, openMenu } from '../../stores/menu.js';
@@ -23,7 +25,7 @@
 
     // --- Stage rail ------------------------------------------------------
     const STAGES = [
-        'Intro', 'Path', 'Age', 'Region', 'Role', 'Playstyle', 'Champion', 'Handle', 'Confirm',
+        'Intro', 'Path', 'Age', 'Region', 'Role', 'Playstyle', 'Champion', 'Team', 'Handle', 'Confirm',
     ];
     const LAST = STAGES.length - 1;
 
@@ -37,6 +39,7 @@
     let roleId = '';
     let playstyleId = '';
     let championId = '';
+    let clubId = '';
     let handle = '';
     let champSearch = '';
     let hoverChamp = null;
@@ -191,6 +194,36 @@
             .sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    // --- First team -------------------------------------------------------
+    // Pre-Competitive picks one of the six amateur sides, NAMED for the region
+    // they grew up in (constants.AMATEUR_LOCAL -- the same table createCareer
+    // localises with, so the name picked is the name signed). Academy Debut
+    // picks one of its region's academies. The seat each one offers comes from
+    // ratings.amateurStartingStatus, the rule createCareer applies.
+    $: clubOptions = (() => {
+        if (!path || !regionId) return [];
+        if (path.signed) {
+            const L = LEAGUES[regionId];
+            return (L ? L.tier2 : [])
+                .map(t => ({ id: t.id, name: t.name, strength: t.strength, accent: t.accent, blurb: '', status: 'sub' }))
+                .sort((a, b) => b.strength - a.strength);
+        }
+        const local = AMATEUR_LOCAL[regionId] || [];
+        return AMATEUR_TEAMS.map((t, i) => ({
+            id: t.id,
+            name: (local[i] && local[i][0]) || t.name,
+            blurb: (local[i] && local[i][1]) || '',
+            strength: t.strength,
+            accent: t.accent,
+            status: amateurStartingStatus(pvOVR, t.strength),
+        }));
+    })();
+    // A pick the new path or region no longer offers resolves to null here (and
+    // so fails the stage), and pickPath / pickRegion clear it outright.
+    $: club = clubOptions.find(o => o.id === clubId) || null;
+    $: strongest = clubOptions.reduce((m, o) => Math.max(m, o.strength), 1);
+    function pickClub(id) { if (clubId !== id) { clubId = id; playSound('click'); } }
+
     // --- Handles ---------------------------------------------------------
     const HANDLE_POOL = [
         'Vexen', 'Nocturn', 'Kairos', 'Solstice', 'Zephyr', 'Onyx', 'Vantage', 'Halcyon',
@@ -223,11 +256,12 @@
         !!roleId,
         !!playstyleId,
         !!championId,
+        !!club,
         handleValid,
         true,
     ];
     $: canNext = valid[stage];
-    $: canFinish = valid.slice(1, 8).every(Boolean);
+    $: canFinish = valid.slice(1, LAST).every(Boolean);
     $: railSteps = STAGES.slice(1).map((label, idx) => {
         const i = idx + 1;
         return {
@@ -271,12 +305,13 @@
     // --- Selection handlers (each resets what it invalidates) ------------
     function pickPath(id) {
         if (pathId === id) return;
-        pathId = id; age = null;
+        pathId = id; age = null; clubId = '';
         maxStage = Math.min(maxStage, Math.max(stage, 2));
         playSound('click');
     }
     function pickAge(v) { if (age !== v) { age = v; playSound('click'); } }
-    function pickRegion(id) { if (regionId !== id) { regionId = id; playSound('click'); } }
+    // The team list is the region's, so a new region means a new pick.
+    function pickRegion(id) { if (regionId !== id) { regionId = id; clubId = ''; playSound('click'); } }
     function pickRole(id) {
         if (roleId === id) return;
         roleId = id; playstyleId = ''; championId = ''; hoverChamp = null; champSearch = '';
@@ -303,7 +338,7 @@
 
     function confirmCareer() {
         if (!canFinish) {
-            const missing = [1, 2, 3, 4, 5, 6, 7].find(i => !valid[i]);
+            const missing = [1, 2, 3, 4, 5, 6, 7, 8].find(i => !valid[i]);
             if (missing !== undefined) {
                 showToast('Finish the ' + STAGES[missing].toLowerCase() + ' step first.', 'error');
                 goto(missing, true);
@@ -311,11 +346,11 @@
             return;
         }
         createCareer({
-            handle: cleanHandle, pathId, age, regionId, roleId, playstyleId, championId,
+            handle: cleanHandle, pathId, age, regionId, roleId, playstyleId, championId, clubId,
         });
         careerScreen.set('hub');
         playSound('win');
-        showToast(cleanHandle + ' signs on. Welcome to Ultimate Career.', 'success');
+        showToast(cleanHandle + (club ? ' signs for ' + club.name + '.' : ' signs on.') + ' Welcome to Ultimate Career.', 'success');
         if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
     }
 
@@ -327,7 +362,8 @@
         { label: 'Role',      value: role ? role.name : null,          accent: role ? role.accent : null,     step: 4 },
         { label: 'Playstyle', value: style ? style.name : null,        accent: null,                          step: 5 },
         { label: 'Champion',  value: champ ? champ.name : null,        accent: null,                          step: 6 },
-        { label: 'Handle',    value: cleanHandle || null,              accent: null,                          step: 7 },
+        { label: 'Team',      value: club ? club.name : null,          accent: club ? club.accent : null,     step: 7 },
+        { label: 'Handle',    value: cleanHandle || null,              accent: null,                          step: 8 },
     ].map(s => ({ ...s, jump: s.step <= maxStage && valid.slice(0, s.step).every(Boolean) }));
 </script>
 
@@ -716,8 +752,50 @@
                                 </div>
                             {/if}
 
-                        <!-- ---------- 7 - HANDLE ---------- -->
+                        <!-- ---------- 7 - FIRST TEAM ---------- -->
                         {:else if stage === 7}
+                            <div class="head">
+                                {#if path && path.signed}
+                                    <h2 class="h2">Which academy signs you?</h2>
+                                    <p class="sub">Every academy in {region ? region.league : 'your region'} wants you on the bench to start. A stronger one wins more and sits closer to a main roster; a weaker one is an easier room to break into.</p>
+                                {:else}
+                                    <h2 class="h2">Pick your first team.</h2>
+                                    <p class="sub">Every pro started on an amateur side. These are the ones in {region ? region.name : 'your region'}. A stronger team wins more but shares the minutes; a weaker one starts you every game. You can move up the moment an academy calls.</p>
+                                {/if}
+                            </div>
+
+                            {#if !clubOptions.length}
+                                <div class="emptybox"><p>Pick a region first.</p></div>
+                            {:else}
+                                <div class="teamgrid">
+                                    {#each clubOptions as o (o.id)}
+                                        {@const si = statusInfo(o.status)}
+                                        <button class="teamcard" class:sel={clubId === o.id} style="--a:{o.accent}"
+                                            on:click={() => pickClub(o.id)} aria-pressed={clubId === o.id}>
+                                            <span class="tm-top">
+                                                <span class="tm-badge" aria-hidden="true">{o.name.charAt(0)}</span>
+                                                <span class="tm-name">{o.name}</span>
+                                            </span>
+                                            {#if o.blurb}<span class="tm-blurb">{o.blurb}</span>{/if}
+                                            <span class="tm-row">
+                                                <span class="tm-k">Team strength</span>
+                                                <span class="tm-bar"><span class="tm-fill" style="width:{Math.round((o.strength / strongest) * 100)}%"></span></span>
+                                                <span class="tm-v">{o.strength}</span>
+                                            </span>
+                                            <span class="tm-seat" style="--s:{si.accent}">
+                                                You start as <b>{si.name}</b>
+                                                {#if o.status === 'starter'}&middot; plays every week{:else if o.status === 'rotation'}&middot; about half the games{:else}&middot; earn your way in{/if}
+                                            </span>
+                                        </button>
+                                    {/each}
+                                </div>
+                                {#if path && !path.signed}
+                                    <p class="foot-note">You are rated {pvOVR} right now. A team more than {AMATEUR_ROTATION_GAP} stronger than you puts you in the rotation.</p>
+                                {/if}
+                            {/if}
+
+                        <!-- ---------- 8 - HANDLE ---------- -->
+                        {:else if stage === 8}
                             <div class="head">
                                 <h2 class="h2">What do they chant?</h2>
                                 <p class="sub">Sixteen characters, on a jersey, on a scoreboard, in a crowd. Pick something you would not mind hearing for ten years.</p>
@@ -752,7 +830,7 @@
                                 {/each}
                             </div>
 
-                        <!-- ---------- 8 - CONFIRM ---------- -->
+                        <!-- ---------- 9 - CONFIRM ---------- -->
                         {:else}
                             <div class="head">
                                 <h2 class="h2">This is you.</h2>
@@ -787,6 +865,13 @@
                                             {#if style && champ}<span class="fc-dot">&middot;</span>{/if}
                                             {#if champ}<span>{champ.name}</span>{/if}
                                         </div>
+                                        {#if club}
+                                            <div class="fc-line">
+                                                <span style="color:{club.accent}">{club.name}</span>
+                                                <span class="fc-dot">&middot;</span>
+                                                <span>{statusInfo(club.status).name}</span>
+                                            </div>
+                                        {/if}
                                     </div>
                                     <div class="fc-pot">
                                         <span class="fc-pot-n">{pvPotOVR}</span>
@@ -1035,6 +1120,23 @@
     .ac-delta { font-size: 10.5px; line-height: 1.5; color: #56688a; margin-top: 8px; }
 
     /* --- 3 REGION --- */
+    /* --- 7 FIRST TEAM --- */
+    .teamgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+    .teamcard { display: flex; flex-direction: column; gap: 10px; text-align: left; padding: 16px; border-radius: 16px; cursor: pointer; background: rgba(12, 16, 28, 0.5); border: 1px solid rgba(51, 65, 85, 0.4); border-top: 3px solid color-mix(in srgb, var(--a) 70%, transparent); font-family: inherit; transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease; }
+    .teamcard:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--a) 40%, transparent); }
+    .teamcard.sel { border-color: color-mix(in srgb, var(--a) 65%, transparent); background: color-mix(in srgb, var(--a) 9%, rgba(12, 16, 28, 0.6)); box-shadow: 0 10px 30px color-mix(in srgb, var(--a) 14%, transparent); }
+    .tm-top { display: flex; align-items: center; gap: 10px; }
+    .tm-badge { width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center; border-radius: 10px; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 16px; font-weight: 700; color: var(--a); background: color-mix(in srgb, var(--a) 14%, transparent); border: 1px solid color-mix(in srgb, var(--a) 35%, transparent); }
+    .tm-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 14.5px; font-weight: 700; color: #e8eefb; line-height: 1.25; }
+    .tm-blurb { font-size: 11.5px; line-height: 1.6; color: #6b7f9e; }
+    .tm-row { display: flex; align-items: center; gap: 9px; }
+    .tm-k { font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #3f5069; white-space: nowrap; }
+    .tm-bar { flex: 1; height: 5px; border-radius: 5px; background: rgba(148, 163, 184, 0.12); overflow: hidden; }
+    .tm-fill { display: block; height: 100%; border-radius: 5px; background: var(--a); }
+    .tm-v { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; font-weight: 800; color: #cbd5e1; }
+    .tm-seat { font-size: 11px; color: #7b8cab; padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--s) 8%, rgba(15, 23, 42, 0.6)); border: 1px solid color-mix(in srgb, var(--s) 26%, transparent); }
+    .tm-seat b { color: var(--s); }
+
     .regiongrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
     .regcard { display: flex; flex-direction: column; gap: 12px; text-align: left; padding: 18px; border-radius: 18px; cursor: pointer; background: rgba(12, 16, 28, 0.5); border: 1px solid rgba(51, 65, 85, 0.4); font-family: inherit; transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease; }
     .regcard:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--a) 40%, transparent); }

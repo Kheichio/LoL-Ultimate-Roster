@@ -18,31 +18,39 @@
     import {
         career, careerScreen, careerOverlay, pushOverlay,
         currentTeam, currentPhase, soloRank,
-        saveCareer, logWeek,
+        saveCareer, logWeek, skipMinigames,
     } from '../../stores/career.js';
+    import { levelOf, activityXP } from '../../career/training.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
 
     import {
-        ACTIVITIES, ACTIVITY_GROUPS, NEWS_TYPES, CLUB_TIERS, teamById,
+        ACTIVITIES, ACTIVITY_GROUPS, ACTIVITY_GIVES, NEWS_TYPES, CLUB_TIERS, teamById,
         CHAMPION_BY_ID, metaFor, metaTierFor, metaLabelFor, splitForWeek,
+        WEEKS_PER_YEAR, PHASES,
     } from '../../career/constants.js';
     import {
         statusInfo, fmtGold, fmtRecord, fmtKDA, ordinal,
         calcOVR, SCOUT_MMR_GATE,
+        isAmateurTier,
     } from '../../career/ratings.js';
     import {
         describeTeam, teamStrength, teamStrengthWithPlayer, leagueTable, tournamentNow,
+        winChance,
     } from '../../career/teams.js';
-    import { contractStatusLine, interestedTeams } from '../../career/contracts.js';
+    import {
+        contractStatusLine, interestedTeams, clubReview, ACADEMY_SCOUT_OVR,
+    } from '../../career/contracts.js';
     import { matchRatingLabel } from '../../career/match.js';
     import { normaliseBoards } from '../../career/scoreboard.js';
+    import { objectiveProgress, CLEAN_SWEEP_MULT } from '../../career/objectives.js';
     import BracketView from './BracketView.svelte';
     import ClubScout from './ClubScout.svelte';
+    import Icon from '../ui/Icon.svelte';
     import {
         ensureSeason, weekSummary, canAdvanceWeek, doActivity,
         startFixture, simFixture, advanceWeek, benchOrStart, activityGate,
-        soloQueueCost,
+        soloQueueCost, burnoutOf, burnoutBenched,
     } from '../../career/engine.js';
 
     // ---------------------------------------------------------------
@@ -355,12 +363,26 @@
     $: soloCost = safeSoloCost(c);
     $: practiceChamp = practiceChampFor(c);
 
+    // THE LEVEL SYSTEM (training.js): while "Skip training minigames" is on, the
+    // practice activities pay XP and 'train' is a Practice Block run right here
+    // rather than a door to the minigame drills.
+    $: levelMode = $skipMinigames;
+    $: lv = (() => { try { return levelOf(c); } catch (e) { return { level: 1, xp: 0, need: 300, pct: 0, points: 0 }; } })();
+
     $: activities = ACTIVITIES.map(a => {
-        // 'train' is legal here and routed to the Training screen by the engine,
-        // so it is gated on everything EXCEPT the engine's own redirect.
+        // In minigame mode 'train' is legal here and routed to the Training screen
+        // by runActivity, so it is gated on everything EXCEPT the engine's own
+        // redirect. In the level system it is an ordinary activity.
         const g = safeGate(c, a);
+        const practiceBlock = levelMode && a.id === 'train';
         return {
             act: a,
+            title: practiceBlock ? 'Practice Block' : a.name,
+            desc: practiceBlock
+                ? 'A full block of structured practice. The most XP of any activity: level up to earn attribute points.'
+                : a.desc,
+            gives: practiceBlock ? [] : (ACTIVITY_GIVES[a.id] || []),
+            xp: levelMode ? safeXP(c, a.id) : 0,
             disabled: !g.ok,
             reason: g.reason,
             // Both are per-row so the markup never has to test the id twice.
@@ -369,6 +391,10 @@
             namesChamp: a.id === 'champ_lab',
         };
     });
+
+    function safeXP(career_, id) {
+        try { return Math.max(0, Number(activityXP(career_, id)) || 0); } catch (e) { return 0; }
+    }
 
     $: activityGroups = ACTIVITY_GROUPS
         .map(g => ({ ...g, rows: activities.filter(e => (e.act.group || 'practice') === g.id) }))
@@ -410,6 +436,222 @@
     $: news = (Array.isArray(c.news) ? c.news : [])
         .filter(n => n && typeof n === 'object');
     $: shownNews = showAllNews ? news.slice(0, 40) : news.slice(0, 12);
+
+    // ---------------------------------------------------------------
+    //  the club's brief (career/objectives.js) and where it leaves you
+    //  Both reads are pure and wrapped: clubReview() re-runs on every
+    //  render here exactly as it does on the Club screen, which is safe
+    //  because it never writes -- strikes are counted by the engine only.
+    // ---------------------------------------------------------------
+    function safeBrief(career) {
+        try { return objectiveProgress(career); } catch (e) { return null; }
+    }
+    function safeReview(career) {
+        try {
+            const r = clubReview(career);
+            return r && typeof r === 'object' && r.verdict ? r : null;
+        } catch (e) { return null; }
+    }
+
+    const BRIEF_STATE = {
+        met:      { label: 'Met',         tone: 'good' },
+        ontrack:  { label: 'On track',    tone: 'good' },
+        open:     { label: 'In progress', tone: 'idle' },
+        behind:   { label: 'Behind',      tone: 'bad' },
+        failed:   { label: 'Failed',      tone: 'bad' },
+        unjudged: { label: 'Not judged',  tone: 'idle' },
+        missed:   { label: 'Missed',      tone: 'idle' },
+    };
+    const BRIEF_GLYPH = { table: 'ranking', rating: 'star', drills: 'target', ovr: 'trend', stretch: 'trophy' };
+    const VERDICT = {
+        untouchable: { label: 'Untouchable', color: '#eab308', line: 'The club are building around you.' },
+        happy:       { label: 'Happy',       color: '#22c55e', line: 'You are doing the job you were signed to do.' },
+        watching:    { label: 'Watching',    color: '#94a3b8', line: 'Neither impressed nor worried. Yet.' },
+        concerned:   { label: 'Concerned',   color: '#f59e0b', line: 'Your minutes are under review. A warning goes on file at the split close.' },
+        cutting:     { label: 'Out of patience', color: '#ef4444', line: 'Two warnings at the split close. Three and the contract is torn up.' },
+    };
+
+    $: brief = safeBrief(c);
+    $: review = p.clubId ? safeReview(c) : null;
+    // A verdict needs evidence. Before a few league games the review is mostly
+    // "rating versus club strength", which reads as a judgement on a player who
+    // has not stepped on stage yet -- so the Hub waits for a sample to show it.
+    const VERDICT_MIN_GAMES = 3;
+    $: leaguePlayed = (Array.isArray(c.season && c.season.schedule) ? c.season.schedule : [])
+        .filter(f => f && f.played && f.kind !== 'bracket').length;
+    $: verdict = review && (leaguePlayed >= VERDICT_MIN_GAMES || (brief && brief.settled))
+        ? (VERDICT[review.verdict] || VERDICT.watching)
+        : null;
+    $: strikesOn = review ? Math.max(0, Number(review.strikes) || 0) : 0;
+    $: strikesMax = review ? Math.max(1, Number(review.strikesBefore) || 3) : 3;
+    $: briefBonus = brief ? brief.items.filter(i => !i.stretch).reduce((s, i) => s + (Number(i.bonus) || 0), 0) : 0;
+
+    // ---------------------------------------------------------------
+    //  the activity board: a line icon per activity, and up to two
+    //  suggestions read off the player's condition and the brief, so a
+    //  sixteen-card board opens on "start here" instead of a wall.
+    // ---------------------------------------------------------------
+    const ACT_GLYPH = {
+        train: 'target', soloq: 'ranking', scrim: 'swords', champ_lab: 'sparkle', vod: 'play',
+        stream: 'video', media: 'quests', gym: 'dumbbell', rest: 'moon', friends: 'coffee',
+        therapy: 'heart', recover: 'bandage', fans: 'welcome', sponsorday: 'briefcase',
+        coach1on1: 'chat', language: 'guide',
+    };
+
+    function suggestFor(career, rows, b) {
+        const out = {};
+        let n = 0;
+        const pl = (career && career.player) || {};
+        const usable = (id) => rows.some(r => r.act.id === id && !r.disabled);
+        const add = (id, why) => {
+            if (n >= 2 || out[id] || !usable(id)) return;
+            out[id] = why; n++;
+        };
+        const v = (x, d) => (Number.isFinite(Number(x)) ? Number(x) : d);
+        if (v(pl.health, 100) < 55) { add('recover', 'Health is low'); add('gym', 'Health is low'); }
+        if (v(pl.energy, 100) < 35) add('rest', 'Energy is low');
+        if (v(pl.morale, 70) < 40) { add('friends', 'Morale is low'); add('therapy', 'Morale is low'); }
+        const dev = b && b.items.find(i => (i.kind === 'drills' || i.kind === 'ovr') && i.state === 'open');
+        if (dev) add('train', 'Your brief');
+        add('train', 'Raises your rating');
+        add('scrim', 'Builds chemistry');
+        return out;
+    }
+    $: suggested = suggestFor(c, activities, brief);
+
+    // ---------------------------------------------------------------
+    //  the week at a glance: the phase timeline, four numbers, the one
+    //  thing to do next, and the things that need the player's attention.
+    //  Condition (energy, health, morale, form) is not repeated here: the
+    //  shell header shows all four on every career screen.
+    // ---------------------------------------------------------------
+    function n(v, d) { const x = Number(v); return Number.isFinite(x) ? x : d; }
+
+    $: actionsUsed = Math.max(0, actionsMax - actionsLeft);
+    $: winPct = (nextFixture && opponent)
+        ? (() => { try { return Math.round(winChance(myPower, oppPower) * 100); } catch (e) { return null; } })()
+        : null;
+
+    $: briefCore = brief ? brief.items.filter(i => !i.stretch) : [];
+    $: briefOnTrack = briefCore.filter(i => i.state === 'met' || i.state === 'ontrack').length;
+    $: heroTiles = [
+        levelMode
+            ? { key: 'level', icon: 'star', color: '#a78bfa', value: 'Lv ' + lv.level, label: lv.xp + '/' + lv.need + ' XP', tip: 'Your training level. Practice activities pay XP; every level pays attribute points to spend in Training.' }
+            : { key: 'acts', icon: 'target', color: '#a78bfa', value: actionsLeft + '/' + actionsMax, label: 'Actions left', tip: 'Activity slots left this week. Unused slots are lost when the week ends.' },
+        { key: 'rec', icon: 'swords', color: '#38bdf8', value: fmtRecord(c.season.wins, c.season.losses), label: (c.season.split === 'summer' ? 'Summer' : 'Spring') + ' record', tip: 'Series won and lost this split, playoffs included.' },
+        { key: 'table', icon: 'ranking', color: '#34d399', value: myRow && myRow.rank ? ordinal(myRow.rank) : '-', label: 'League table', tip: 'Your club\'s place in its division.' },
+        { key: 'brief', icon: 'flag', color: '#fbbf24', value: brief ? briefOnTrack + '/' + briefCore.length : '-', label: 'Brief on track', tip: 'Club brief objectives met or on track this split.' },
+    ];
+
+    // THE one thing to do next, as the hero's big button: play the match, then
+    // spend the week's activities, then advance. A player who wants to end the
+    // week early still can, from the line under it and from the sticky bar.
+    $: lastWeek = n(c.time.week, 1) >= WEEKS_PER_YEAR;
+    $: nextAction = (() => {
+        if (nextFixture && opponent) {
+            if (bench.plays) {
+                return {
+                    kind: 'play', icon: 'play',
+                    kicker: (isBracketTie ? 'Knockout' : 'Next up') + ' - ' + fixtureLabel,
+                    title: 'Play vs ' + opponent.name,
+                    sub: 'Best of ' + bestOf + (winPct !== null ? ' - about ' + winPct + '% to win' : ''),
+                };
+            }
+            return {
+                kind: 'sim', icon: 'clock',
+                kicker: 'Next up - ' + fixtureLabel,
+                title: 'Simulate vs ' + opponent.name,
+                sub: 'You are not starting this one',
+            };
+        }
+        if (actionsLeft > 0) {
+            return {
+                kind: 'acts', icon: 'target',
+                kicker: 'This week',
+                title: 'Use your activities',
+                sub: actionsLeft + ' of ' + actionsMax + ' left - train, scrim, rest or earn',
+            };
+        }
+        return {
+            kind: 'advance', icon: 'calendar',
+            kicker: 'Week done',
+            title: lastWeek ? 'Start the new year' : 'Advance to week ' + (n(c.time.week, 1) + 1),
+            sub: gate.ok ? (income && income.total > 0 ? 'Collect ' + fmtGold(income.total) + ' gold in wages' : 'Everything is done') : (gate.reason || 'Not yet'),
+            disabled: !gate.ok,
+        };
+    })();
+
+    function runNext() {
+        if (busy || nextAction.disabled) return;
+        if (nextAction.kind === 'play') playMatch();
+        else if (nextAction.kind === 'sim') simMatch();
+        else if (nextAction.kind === 'acts') {
+            playSound('click');
+            const el = typeof document !== 'undefined' ? document.getElementById('hub-activities') : null;
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else endWeek();
+    }
+    $: weekPct = Math.max(0, Math.min(100, (n(c.time.week, 1) / WEEKS_PER_YEAR) * 100));
+    $: yearPhases = PHASES.map(ph => ({
+        ...ph,
+        left: ((ph.from - 1) / WEEKS_PER_YEAR) * 100,
+        width: ((ph.to - ph.from + 1) / WEEKS_PER_YEAR) * 100,
+        on: ph.id === phase.id,
+    }));
+
+    $: alerts = buildAlerts(c, offers, brief, strikesOn, strikesMax, phase);
+
+    // To-do cards: a short label and one line of detail, in the Roster Home's
+    // style. `go` makes the card a link to that screen.
+    function buildAlerts(career, offerList, b, strikes, strikeCap, ph) {
+        const out = [];
+        try {
+            const pl = career.player || {};
+            let bo = null, benched = false;
+            try { bo = burnoutOf(career); benched = burnoutBenched(career); } catch (e) { bo = null; }
+            if (benched) out.push({ tone: 'bad', icon: 'alert', label: 'Burnt out - benched', sub: 'A Rest Day, the psychologist or a day with friends gets you back.' });
+            else if (bo && bo.weeks > 0) out.push({ tone: 'warn', icon: 'flame', label: 'Burnout building', sub: `${bo.weeks} week${bo.weeks === 1 ? '' : 's'} of low morale in a row. Lift it before it benches you.` });
+
+            // Banked attribute points from the level system. First, because it is
+            // the one item on this list that is pure upside.
+            const pts = Math.max(0, Math.floor(n(pl.points, 0)));
+            if (pts > 0) out.push({ tone: 'good', icon: 'star', label: `${pts} attribute point${pts === 1 ? '' : 's'} to spend`, sub: 'Put them into the attributes you want to raise.', go: 'training' });
+
+            if (n(pl.energy, 100) < 25) out.push({ tone: 'bad', icon: 'bolt', label: 'Exhausted', sub: 'Under 25 energy all training pays half. Take a Rest Day.' });
+            else if (n(pl.energy, 100) < 40) out.push({ tone: 'warn', icon: 'bolt', label: 'Energy getting low', sub: 'A Rest Day gives 50 back.' });
+            if (n(pl.health, 100) < 55) out.push({ tone: 'warn', icon: 'heart', label: 'Health is low', sub: 'You may be left out. Gym & Physio or a Recovery Week repairs it.' });
+
+            const offerN = Array.isArray(offerList) ? offerList.length : 0;
+            if (offerN) out.push({ tone: 'info', icon: 'trade', label: `${offerN} contract offer${offerN === 1 ? '' : 's'} waiting`, sub: 'Answer them before they expire.', go: 'transfers' });
+            if (!pl.clubId) out.push({ tone: 'info', icon: 'search', label: 'You are not at a club', sub: 'Win solo queue games to get noticed, and watch Transfers.', go: 'transfers' });
+
+            if (strikes > 0) out.push({ tone: strikes >= strikeCap - 1 ? 'bad' : 'warn', icon: 'alert', label: `${strikes} of ${strikeCap} contract warnings`, sub: `One more bad review ${strikes >= strikeCap - 1 ? 'ends the contract' : 'adds another'}.`, go: 'club' });
+
+            const behind = b && Array.isArray(b.items) ? b.items.filter(i => i.state === 'behind') : [];
+            if (behind.length) out.push({ tone: 'warn', icon: 'flag', label: 'Behind on your club brief', sub: behind.map(i => i.title).join(' - ') });
+
+            const k = pl.contract;
+            if (k && pl.clubId && n(k.endYear, 9999) <= n(career.time.year, 0) && ph && ph.id === 'offseason') {
+                out.push({ tone: 'warn', icon: 'clock', label: 'Contract ends this year', sub: 'Renew or move before the new season.', go: 'transfers' });
+            } else if (ph && (ph.id === 'offseason' || ph.id === 'preseason') && pl.clubId) {
+                out.push({ tone: 'info', icon: 'trade', label: 'Transfer window open', sub: 'Clubs can make you offers this week.', go: 'transfers' });
+            }
+        } catch (e) { /* an alert must never break the screen */ }
+        return out.slice(0, 6);
+    }
+    const TONE_COLOR = { bad: '#f87171', warn: '#fbbf24', info: '#60a5fa', good: '#c4b5fd' };
+
+    // The table, cut to what fits the rail: the top four and you.
+    $: miniTable = (() => {
+        const sorted = table.slice().sort((a, b2) => (a.rank || 99) - (b2.rank || 99));
+        const top = sorted.slice(0, 4);
+        if (myRow && !top.includes(myRow)) top.push(myRow);
+        return top;
+    })();
+
+    // Amateur players are scouted on rating alone; unsigned ones on rank too.
+    $: amateur = !!p.clubId && isAmateurTier(p.clubTier);
+    $: myOVR = (() => { try { return calcOVR(p.attrs, p.role); } catch (e) { return 0; } })();
 
     // What the week is for when there is no game on the calendar.
     const GUIDANCE = {
@@ -489,7 +731,7 @@
         if (entry.disabled) { showToast(entry.reason, 'error'); return; }
         const a = entry.act;
 
-        if (a.id === 'train') { goto('training'); return; }
+        if (a.id === 'train' && !levelMode) { goto('training'); return; }
 
         busy = true;
         const before = get(career).weekly.log.length;
@@ -561,25 +803,106 @@
     function pct(v) { return Math.round(Math.max(0, Math.min(1, v)) * 100); }
 </script>
 
+<!-- ============ THE WEEK AT A GLANCE ============
+     Laid out like the Ultimate Roster home: the phase and the year on the
+     left, four numbers in the middle, and ONE big button for the next thing
+     to do. Condition lives in the shell header, so it is not repeated here. -->
+<div class="hub-page" style="--hc:{myTeamAccent}; --ph:{phase.accent}">
+
+<section class="hh" aria-label="This week">
+    <div class="hh-glow" aria-hidden="true"></div>
+    <div class="hh-when">
+        <span class="hh-k"><Icon name="calendar" size={12} stroke={2.4} /> Week {c.time.week} of {WEEKS_PER_YEAR} &middot; {c.time.year}</span>
+        <h1 class="hh-title">{phase.name}</h1>
+        <p class="hh-desc">{phase.desc}</p>
+        <div class="year" aria-hidden="true">
+            {#each yearPhases as ph (ph.id)}
+                <span class="yr-seg" class:yr-on={ph.on} style="left:{ph.left}%; width:{ph.width}%; --c:{ph.accent}" title="{ph.name}: weeks {ph.from}-{ph.to}"></span>
+            {/each}
+            <span class="yr-now" style="left:{weekPct}%"></span>
+        </div>
+    </div>
+
+    <div class="hh-stats" role="group" aria-label="This week in numbers">
+        {#each heroTiles as t (t.key)}
+            <div class="hs" style="--c:{t.color}" title={t.tip}>
+                <span class="hs-ico"><Icon name={t.icon} size={16} /></span>
+                <span class="hs-val">{t.value}</span>
+                <span class="hs-lbl">{t.label}</span>
+            </div>
+        {/each}
+    </div>
+
+    <div class="hh-act">
+        <button
+            class="cta"
+            class:cta-gold={nextAction.kind === 'advance'}
+            class:cta-ko={nextAction.kind === 'play' && isBracketTie}
+            on:click={runNext}
+            disabled={busy || nextAction.disabled}
+        >
+            <span class="cta-ico"><Icon name={nextAction.icon} size={22} stroke={2.2} /></span>
+            <span class="cta-t">
+                <span class="cta-k">{nextAction.kicker}</span>
+                <span class="cta-h">{nextAction.title}</span>
+                <span class="cta-s">{nextAction.sub}</span>
+            </span>
+            <span class="cta-arrow" aria-hidden="true"><Icon name="arrow" size={18} stroke={2.4} /></span>
+        </button>
+        {#if nextAction.kind !== 'advance' && gate.ok}
+            <button class="cta-alt" on:click={endWeek} disabled={busy}>
+                or end the week now{#if actionsLeft > 0}&nbsp;({actionsLeft} slot{actionsLeft === 1 ? '' : 's'} unused){/if}
+            </button>
+        {/if}
+    </div>
+</section>
+
+<!-- ============ TO DO ============ -->
+{#if alerts.length}
+    <section class="panel todo-panel" aria-labelledby="hub-todo">
+        <div class="ph">
+            <h2 class="ph-title" id="hub-todo"><Icon name="alert" size={14} stroke={2.2} /> Needs your attention</h2>
+            <span class="ph-note">{alerts.length} thing{alerts.length === 1 ? '' : 's'}</span>
+        </div>
+        <div class="todo">
+            {#each alerts as a, i (i + a.label)}
+                {#if a.go}
+                    <button class="td" style="--c:{TONE_COLOR[a.tone] || '#60a5fa'}" on:click={() => goto(a.go)}>
+                        <span class="td-ico"><Icon name={a.icon} size={17} stroke={2.1} /></span>
+                        <span class="td-text">
+                            <span class="td-label">{a.label}</span>
+                            <span class="td-sub">{a.sub}</span>
+                        </span>
+                        <Icon name="chevron" size={15} stroke={2.4} />
+                    </button>
+                {:else}
+                    <div class="td td-static" style="--c:{TONE_COLOR[a.tone] || '#60a5fa'}">
+                        <span class="td-ico"><Icon name={a.icon} size={17} stroke={2.1} /></span>
+                        <span class="td-text">
+                            <span class="td-label">{a.label}</span>
+                            <span class="td-sub">{a.sub}</span>
+                        </span>
+                    </div>
+                {/if}
+            {/each}
+        </div>
+    </section>
+{/if}
+
 <div class="hub">
-    <!-- ============ MAIN COLUMN ============ -->
+    <!-- ============ MAIN COLUMN: what you do ============ -->
     <div class="col main">
 
         <!-- ---------- TOURNAMENT BANNER ----------
-             FIRST thing in the column, above everything, and only while the
-             player's own club is actually in a live bracket. It reads the
-             BRACKET, not the calendar, so a club that did not qualify never
-             sees it -- the banner has to MEAN something when it appears.
-
-             This exists because a knockout week was indistinguishable from a
-             league week on this screen: the draw was rendered below the entire
-             activity board, so the one week that matters most looked exactly
-             like the other thirty-nine. -->
+             FIRST thing in the column, and only while the player's own club is
+             actually in a live bracket. It reads the BRACKET, not the calendar,
+             so a club that did not qualify never sees it. A knockout week used to
+             be indistinguishable from a league week on this screen. -->
         {#if tourney}
             <div class="tbanner" class:tb-done={tourney.done} style="--a:{tourney.accent}">
                 <div class="tb-mark" aria-hidden="true">
                     <span class="tb-pulse"></span>
-                    <span class="tb-cup">{tourney.done ? '\u{1F3C6}' : '\u{1F3DF}'}</span>
+                    <span class="tb-cup"><Icon name="trophy" size={20} /></span>
                 </div>
                 <div class="tb-body">
                     <div class="tb-top">
@@ -611,122 +934,95 @@
             </div>
         {/if}
 
-        <!-- ---------- NEXT UP ---------- -->
-        <section class="panel block next" class:next-ko={isBracketTie} aria-labelledby="hub-next">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-next">Next Up</h2>
-                <span class="phase-pill" style="--ph:{phase.accent}">
-                    Week {c.time.week} &middot; {phase.name}
-                </span>
+        <!-- ---------- NEXT MATCH ---------- -->
+        <section class="panel next" class:next-ko={isBracketTie} aria-labelledby="hub-next">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-next"><Icon name="swords" size={14} stroke={2.2} /> {nextFixture && opponent ? 'Next match' : 'This week'}</h2>
+                <span class="phase-pill" style="--ph:{phase.accent}">Week {c.time.week} &middot; {phase.name}</span>
             </div>
 
             {#if nextFixture && opponent}
                 <div class="fx">
-                    <div class="fx-top">
+                    <div class="fx-left">
                         <div class="fx-meta">
                             {#if isBracketTie}
-                                <!-- A knockout tie is not a league game and must
-                                     not read like one: lose it and the run is
-                                     over. This is the label the player was
-                                     missing entirely. -->
+                                <!-- A knockout tie is not a league game and must not
+                                     read like one: lose it and the run is over. -->
                                 <span class="fx-ko">Knockout</span>
                             {/if}
                             <span class="fx-tag" style="--a:{opponent.accent}">{fixtureLabel}</span>
                             <span class="fx-bo">Best of {bestOf}</span>
-                            {#if nextFixture.home}
-                                <span class="fx-side">Home</span>
-                            {:else}
-                                <span class="fx-side">Away</span>
-                            {/if}
+                            <span class="fx-side">{nextFixture.home ? 'Home' : 'Away'}</span>
                         </div>
                         <div class="fx-name" style="--a:{opponent.accent}">
-                            <span class="fx-vs">vs</span>
+                            <span class="fx-dot"></span>
                             <span class="fx-opp">{opponent.name}</span>
                         </div>
                         <p class="fx-desc">{oppLine}</p>
                         {#if opponent.id}
-                            <button
-                                class="linkbtn scoutbtn"
-                                on:click={() => openScout(opponent.id)}
-                                aria-label="Scout {opponent.name}"
-                            >
-                                Scout them &#x2192;
+                            <button class="ph-link scoutbtn" on:click={() => openScout(opponent.id)} aria-label="Scout {opponent.name}">
+                                Scout their roster <Icon name="chevron" size={13} stroke={2.4} />
                             </button>
                         {/if}
                     </div>
 
-                    <div class="h2h" role="group" aria-label="Head to head team strength">
-                        <div class="h2h-row">
-                            <span class="h2h-team" style="--a:{myTeamAccent}">{myTeamName}</span>
-                            <span class="h2h-team right" style="--a:{opponent.accent}">{opponent.name}</span>
+                    <div class="fx-vs" role="group" aria-label="Team strength">
+                        <div class="fx-pw">
+                            <span class="fx-pw-n" style="color:{myTeamAccent}">{myPower}</span>
+                            <span class="fx-pw-l" title={myTeamName}>You</span>
                         </div>
-                        <div class="h2h-bar">
-                            <div class="h2h-fill mine" style="width:{(myPower / powerTotal) * 100}%; background:{myTeamAccent}"></div>
-                            <div class="h2h-fill theirs" style="width:{(oppPower / powerTotal) * 100}%; background:{opponent.accent}"></div>
-                        </div>
-                        <div class="h2h-row nums">
-                            <span class="h2h-n" style="color:{myTeamAccent}">{myPower}</span>
-                            <span class="h2h-lbl">Team Strength</span>
-                            <span class="h2h-n" style="color:{opponent.accent}">{oppPower}</span>
+                        <span class="fx-x">vs</span>
+                        <div class="fx-pw">
+                            <span class="fx-pw-n" style="color:{opponent.accent}">{oppPower}</span>
+                            <span class="fx-pw-l">Them</span>
                         </div>
                     </div>
 
-                    {#if !bench.plays}
-                        <div class="benched" role="status">
-                            <span class="benched-t">You are not starting this game.</span>
-                            <span class="benched-d">{bench.reason}</span>
-                        </div>
-                        <div class="fx-btns">
-                            <button class="btn-secondary wide" on:click={simMatch} disabled={busy}>
-                                Simulate from the bench
-                            </button>
-                        </div>
-                    {:else}
-                        <div class="fx-btns">
-                            <button class="btn-primary wide" on:click={playMatch} disabled={busy}>
-                                Play Match
-                            </button>
-                            <button class="btn-secondary" on:click={simMatch} disabled={busy}>
-                                Simulate
-                            </button>
-                        </div>
-                    {/if}
+                    <div class="fx-right">
+                        {#if winPct !== null}
+                            <div class="odds">
+                                <span class="odds-n" class:odds-good={winPct >= 55} class:odds-bad={winPct <= 45}>{winPct}%</span>
+                                <span class="odds-l">to win on team strength</span>
+                                <div class="odds-bar"><div style="width:{winPct}%"></div></div>
+                            </div>
+                        {/if}
+                        {#if !bench.plays}
+                            <div class="benched" role="status">
+                                <span class="benched-t">You are not starting this game.</span>
+                                <span class="benched-d">{bench.reason}</span>
+                            </div>
+                            <button class="btn-play btn-ghost" on:click={simMatch} disabled={busy}>Simulate from the bench</button>
+                        {:else}
+                            <button class="btn-play" on:click={playMatch} disabled={busy}><Icon name="play" size={14} stroke={2.4} /> Play match</button>
+                            <button class="btn-play btn-ghost" on:click={simMatch} disabled={busy}>Simulate</button>
+                        {/if}
+                    </div>
                 </div>
+                <p class="fx-note">How you play decides the rest: your decisions in the match are about a third of the result.</p>
 
             {:else}
-                <div class="fx empty-fx">
-                    <div class="ef-head" style="--ph:{phase.accent}">
-                        <span class="ef-phase">{phase.name}</span>
-                        <span class="ef-weeks">Weeks {phase.from}&#x2013;{phase.to}</span>
+                <div class="nofx">
+                    <span class="nofx-ico" style="--c:{phase.accent}"><Icon name={playedThisWeek.length ? 'check' : 'calendar'} size={20} /></span>
+                    <div class="nofx-t">
+                        <span class="nofx-h">{playedThisWeek.length ? 'Match played' : 'No match this week'} <span class="nofx-weeks">{phase.from === phase.to ? 'Week ' + phase.from : 'Weeks ' + phase.from + '-' + phase.to}</span></span>
+                        <span class="nofx-s">{guidance}</span>
+                        {#if playedThisWeek.length}
+                            <span class="nofx-done">{playedThisWeek.length} fixture{playedThisWeek.length === 1 ? '' : 's'} already played this week.</span>
+                        {/if}
                     </div>
-                    <p class="ef-desc">{phase.desc}</p>
-                    <p class="ef-guide">{guidance}</p>
-                    {#if playedThisWeek.length}
-                        <div class="ef-done">
-                            {playedThisWeek.length} fixture{playedThisWeek.length === 1 ? '' : 's'} already played this week.
-                        </div>
-                    {/if}
                 </div>
             {/if}
         </section>
 
         <!-- ---------- BRACKET ----------
-             Only while one is actually running. The Season screen owns the
-             permanent home for this; the Hub is where the player is standing
-             the week they have a tie to play, and reading the draw should not
-             cost them a navigation.
-
-             IT SITS ABOVE THE ACTIVITY BOARD ON PURPOSE. It used to render
-             below it, which put the single most important thing on the screen
-             underneath sixteen buttons the player scrolls past every week --
-             so a knockout week looked identical to a training week and the
-             draw went unread. Anything added to this column later belongs
-             BELOW this panel, not between it and the fixture. -->
+             Only while one is running. It sits ABOVE the activity board on
+             purpose: below it, the draw went unread in the one week it matters.
+             Anything added to this column belongs BELOW this panel. -->
         {#if liveBracket}
-            <section class="panel block" aria-labelledby="hub-bracket">
-                <div class="blk-head">
-                    <h2 class="lbl" id="hub-bracket">Bracket</h2>
-                    <span class="mini">{phase.name}</span>
+            <section class="panel" aria-labelledby="hub-bracket">
+                <div class="ph">
+                    <h2 class="ph-title" id="hub-bracket"><Icon name="trophy" size={14} stroke={2.2} /> Bracket</h2>
+                    <span class="ph-note">{phase.name}</span>
                 </div>
                 <BracketView
                     bracket={liveBracket}
@@ -739,19 +1035,28 @@
             </section>
         {/if}
 
-        <!-- ---------- THIS WEEK ---------- -->
-        <section class="panel block" aria-labelledby="hub-week">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-week">This Week</h2>
-                <span class="slots">
+        <!-- ---------- ACTIVITIES ----------
+             Every activity, every group, always on screen: grouped, never
+             tabbed. Up to two are tagged Suggested off condition and the brief. -->
+        <section class="panel board" id="hub-activities" aria-labelledby="hub-week">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-week"><Icon name="target" size={14} stroke={2.2} /> Activities</h2>
+                <span class="slots" title="Activity slots left this week">
+                    <span class="slots-pips" aria-hidden="true">
+                        {#each Array(Math.max(0, Math.min(8, actionsMax))) as _, i}<span class="spip" class:spip-on={i >= actionsUsed}></span>{/each}
+                    </span>
                     <span class="slots-n">{actionsLeft}</span>
-                    <span class="slots-l">of {actionsMax} slots</span>
+                    <span class="slots-l">of {actionsMax} left</span>
                 </span>
             </div>
+            <p class="board-how">Each activity uses one slot and some energy. Slots you do not use are lost when the week ends.</p>
 
             {#each activityGroups as grp (grp.id)}
                 <div class="act-group">
-                    <p class="act-group-h"><span>{grp.name}</span></p>
+                    <div class="ag-head">
+                        <span class="ag-name">{grp.name}</span>
+                        <span class="ag-blurb">{grp.blurb}</span>
+                    </div>
                     <div class="acts">
                         {#each grp.rows as entry (entry.act.id)}
                             {@const a = entry.act}
@@ -759,38 +1064,48 @@
                                 class="act"
                                 class:act-off={entry.disabled}
                                 class:act-flash={flash && flash.id === a.id}
+                                class:act-sugg={!entry.disabled && suggested[a.id]}
                                 style="--a:{a.accent}"
                                 on:click={() => runActivity(entry)}
                                 disabled={entry.disabled || busy}
-                                aria-label="{a.name} - {entry.disabled ? entry.reason : a.desc}"
+                                aria-label="{entry.title} - {entry.disabled ? entry.reason : entry.desc}"
                             >
-                                <div class="act-top">
-                                    <span class="act-ico" aria-hidden="true">{a.icon}</span>
-                                    <span class="act-name">{a.name}</span>
+                                <span class="act-top">
+                                    <span class="act-ico" aria-hidden="true">
+                                        {#if ACT_GLYPH[a.id]}<Icon name={ACT_GLYPH[a.id]} size={17} stroke={2} />{:else}{a.icon}{/if}
+                                    </span>
+                                    <span class="act-head">
+                                        <span class="act-name">{entry.title}</span>
+                                        {#if !entry.disabled && suggested[a.id]}
+                                            <span class="act-sugg-tag"><Icon name="sparkle" size={10} stroke={2.4} /> {suggested[a.id]}</span>
+                                        {/if}
+                                    </span>
                                     <span class="act-cost" class:gain={a.energy < 0}>
                                         {a.energy < 0 ? '+' + Math.abs(a.energy) : '-' + a.energy} EN
                                     </span>
-                                </div>
-                                <span class="act-desc">{a.desc}</span>
+                                </span>
+                                <span class="act-desc">{entry.desc}</span>
+                                {#if entry.xp > 0 || entry.gives.length}
+                                    <span class="act-gives">
+                                        {#if entry.xp > 0}<span class="give give-xp">+{entry.xp} XP</span>{/if}
+                                        {#each entry.gives as g (g.t)}
+                                            <span class="give" class:give-down={g.down}>{g.down ? '-' : '+'} {g.t}</span>
+                                        {/each}
+                                    </span>
+                                {/if}
                                 <span class="act-tags">
                                     {#if a.gold}<span class="act-tag act-tag-gold">{a.gold} gold</span>{/if}
                                     {#if a.once}<span class="act-tag">once a week</span>{/if}
                                     {#if a.minAge}<span class="act-tag">{a.minAge}+</span>{/if}
                                     <!-- The repeat cost of solo queue, previewed before the click.
                                          The grind number is the REPEAT charge only - a session also
-                                         takes the ordinary injury roll on top, so it is never
-                                         presented as the whole health risk. During a burnout bench
-                                         the engine suppresses the morale half, so the tilt tag is
-                                         suppressed with it rather than promising a cost nobody pays. -->
+                                         takes the ordinary injury roll on top. During a burnout bench
+                                         the engine suppresses the morale half, so the tilt tag goes too. -->
                                     {#if entry.cost && entry.cost.grindHealth > 0}
-                                        <span class="act-tag act-tag-warn">
-                                            repeat costs {Math.round(entry.cost.grindHealth)} health
-                                        </span>
+                                        <span class="act-tag act-tag-warn">repeat costs {Math.round(entry.cost.grindHealth)} health</span>
                                     {/if}
                                     {#if entry.cost && entry.cost.maxTilt !== 0 && !entry.cost.benched}
-                                        <span class="act-tag act-tag-warn">
-                                            losing costs {Math.abs(Math.round(entry.cost.maxTilt))} more morale
-                                        </span>
+                                        <span class="act-tag act-tag-warn">losing costs {Math.abs(Math.round(entry.cost.maxTilt))} more morale</span>
                                     {/if}
                                     {#if entry.namesChamp}
                                         {#if entry.practice}
@@ -806,8 +1121,8 @@
                                 </span>
                                 {#if entry.disabled}
                                     <span class="act-block">{entry.reason}</span>
-                                {:else if a.id === 'train'}
-                                    <span class="act-go">Opens the training room &#x2192;</span>
+                                {:else if a.id === 'train' && !levelMode}
+                                    <span class="act-go">Opens the training room <Icon name="arrow" size={12} stroke={2.4} /></span>
                                 {/if}
                             </button>
                         {/each}
@@ -816,15 +1131,15 @@
             {/each}
 
             {#if flash}
-                <div class="flash" role="status">{flash.text}</div>
+                <div class="flash" role="status"><Icon name="check" size={14} stroke={2.6} /> {flash.text}</div>
             {/if}
         </section>
 
         <!-- ---------- WEEK LOG ---------- -->
-        <section class="panel block" aria-labelledby="hub-log">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-log">Week Log</h2>
-                <span class="mini">{weekLog.length} entr{weekLog.length === 1 ? 'y' : 'ies'}</span>
+        <section class="panel" aria-labelledby="hub-log">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-log"><Icon name="clock" size={14} stroke={2.2} /> This week so far</h2>
+                <span class="ph-note">{weekLog.length} entr{weekLog.length === 1 ? 'y' : 'ies'}</span>
             </div>
 
             {#if weekLog.length}
@@ -840,58 +1155,104 @@
                     {/each}
                 </ol>
             {:else}
-                <p class="empty">
-                    Nothing has happened yet this week. Spend an activity slot above and it shows up here.
-                </p>
+                <p class="empty">Nothing yet. Every activity you spend shows up here.</p>
             {/if}
         </section>
 
-        <!-- ---------- ADVANCE ---------- -->
-        <section class="panel block adv" aria-labelledby="hub-adv">
-            <div class="adv-in">
-                <div class="adv-txt">
-                    <h2 class="lbl" id="hub-adv">Advance</h2>
-                    {#if gate.ok}
-                        <p class="adv-line">
-                            End week {c.time.week} and move to week {c.time.week + 1}{#if income && income.total > 0}, collecting {fmtGold(income.total)} gold{/if}.
-                        </p>
-                        {#if actionsLeft > 0}
-                            <p class="adv-warn">
-                                You still have {actionsLeft} unused activity slot{actionsLeft === 1 ? '' : 's'}. They do not carry over.
-                            </p>
-                        {/if}
-                    {:else}
-                        <p class="adv-line block-line">{gate.reason || 'You cannot end the week yet.'}</p>
-                        {#each blockers as b}
-                            <p class="adv-warn">{b}</p>
-                        {/each}
-                    {/if}
-                </div>
-                <button
-                    class="btn-gold advbtn"
-                    on:click={endWeek}
-                    disabled={!gate.ok || busy}
-                    aria-label="Advance to the next week"
-                >
-                    Advance Week &#x2192;
-                </button>
+        <!-- ---------- ADVANCE ----------
+             Sticky to the bottom of the viewport while the column runs past it,
+             so ending the week never means scrolling past the whole board. -->
+        <section class="adv" aria-labelledby="hub-adv">
+            <div class="adv-txt">
+                <h2 class="adv-h" id="hub-adv">{lastWeek ? 'End of the year' : 'End week ' + c.time.week}</h2>
+                {#if gate.ok}
+                    <p class="adv-line">
+                        {lastWeek ? 'Roll into the new year' : 'Move to week ' + (c.time.week + 1)}{#if income && income.total > 0}, collecting {fmtGold(income.total)} gold{/if}.
+                        {#if actionsLeft > 0}<span class="adv-warn">{actionsLeft} unused slot{actionsLeft === 1 ? '' : 's'} will be lost.</span>{/if}
+                    </p>
+                {:else}
+                    <p class="adv-line adv-block">{gate.reason || 'You cannot end the week yet.'}</p>
+                    {#each blockers.filter(b => b !== gate.reason) as b}
+                        <p class="adv-line adv-warn">{b}</p>
+                    {/each}
+                {/if}
             </div>
+            <button class="advbtn" on:click={endWeek} disabled={!gate.ok || busy} aria-label="Advance to the next week">
+                Advance week <Icon name="arrow" size={15} stroke={2.4} />
+            </button>
         </section>
     </div>
 
-    <!-- ============ SIDE COLUMN ============ -->
+    <!-- ============ SIDE COLUMN: where you stand ============ -->
     <div class="col side">
+
+        <!-- ---------- THE CLUB'S BRIEF ---------- -->
+        {#if brief}
+            <section class="panel brief" aria-labelledby="hub-brief">
+                <div class="ph">
+                    <h2 class="ph-title" id="hub-brief"><Icon name="flag" size={14} stroke={2.2} /> Club brief</h2>
+                    <span class="ph-note">{brief.split === 'summer' ? 'Summer' : 'Spring'} {brief.year}</span>
+                </div>
+
+                {#if verdict}
+                    <div class="verdict" style="--v:{verdict.color}" title="The club's verdict if the split ended today">
+                        <span class="verdict-k">Verdict now</span>
+                        <span class="verdict-v">{verdict.label}</span>
+                    </div>
+                {:else if review}
+                    <div class="verdict" style="--v:#64748b" title="The club judges you once there are games to judge">
+                        <span class="verdict-k">Verdict</span>
+                        <span class="verdict-v">After {VERDICT_MIN_GAMES} games</span>
+                    </div>
+                {/if}
+
+                <ul class="obj-list">
+                    {#each brief.items as it (it.id)}
+                        {@const st = BRIEF_STATE[it.state] || BRIEF_STATE.open}
+                        <li class="obj obj-{st.tone}" class:obj-stretch={it.stretch}>
+                            <span class="obj-ico"><Icon name={BRIEF_GLYPH[it.kind] || 'flag'} size={15} stroke={2} /></span>
+                            <div class="obj-main">
+                                <div class="obj-top">
+                                    <span class="obj-group">{it.group}</span>
+                                    <span class="obj-state">{st.label}</span>
+                                </div>
+                                <span class="obj-title">{it.title}</span>
+                                <div class="obj-bar"><span class="obj-fill" style="width:{Math.round(Math.max(0, Math.min(1, it.progress)) * 100)}%"></span></div>
+                                <span class="obj-detail">{it.detail}{#if it.bonus > 0}<b class="obj-bonus">+{fmtGold(it.bonus)} gold</b>{/if}</span>
+                            </div>
+                        </li>
+                    {/each}
+                </ul>
+
+                <div class="brief-foot">
+                    {#if brief.settled}
+                        <span>Settled: {brief.met} met{brief.failed ? ', ' + brief.failed + ' failed' : ''}. A new brief arrives with the next split.</span>
+                    {:else}
+                        <span>Meet all {brief.coreTotal} for {fmtGold(Math.round(briefBonus * (1 + CLEAN_SWEEP_MULT)))} gold. Each one missed costs morale and counts against you in the split review.</span>
+                    {/if}
+                    {#if review}
+                        <span class="strikes" class:strikes-on={strikesOn > 0} title="Warnings on your contract file">
+                            {#each Array(strikesMax) as _, i}<span class="strike" class:strike-on={i < strikesOn}></span>{/each}
+                            {strikesOn} of {strikesMax} warnings
+                        </span>
+                    {/if}
+                </div>
+                {#if verdict && review && (review.verdict === 'concerned' || review.verdict === 'cutting')}
+                    <p class="brief-alarm" style="--v:{verdict.color}"><Icon name="alert" size={14} stroke={2.2} /> {verdict.line}</p>
+                {/if}
+            </section>
+        {/if}
 
         <!-- ---------- CONTRACT / SCOUTING ---------- -->
         {#if p.clubId}
-            <section class="panel block" aria-labelledby="hub-contract">
-                <div class="blk-head">
-                    <h2 class="lbl" id="hub-contract">Contract</h2>
+            <section class="panel" aria-labelledby="hub-contract">
+                <div class="ph">
+                    <h2 class="ph-title" id="hub-contract"><Icon name="briefcase" size={14} stroke={2.2} /> Contract</h2>
                     <span class="stat-chip" style="--a:{squad.accent}">{squad.name}</span>
                 </div>
                 <p class="ct-line">{statusLine}</p>
                 {#if clubTier}
-                    <div class="ct-tier" style="--a:{clubTier.accent}">{clubTier.name}</div>
+                    <span class="ct-tier" style="--a:{clubTier.accent}">{clubTier.name}</span>
                 {/if}
 
                 <div class="meter-row">
@@ -899,9 +1260,7 @@
                         <span class="meter-lbl">Chemistry</span>
                         <span class="meter-val">{Math.round(p.chemistry)}</span>
                     </div>
-                    <div class="meter-bar">
-                        <div class="meter-fill" style="width:{pct(p.chemistry / 100)}%"></div>
-                    </div>
+                    <div class="meter-bar"><div class="meter-fill" style="width:{pct(p.chemistry / 100)}%"></div></div>
                     <span class="meter-note">
                         {#if p.chemistry >= 75}The room trusts you.
                         {:else if p.chemistry >= 50}Working relationship, nothing more.
@@ -910,24 +1269,43 @@
                     </span>
                 </div>
 
-                <button class="btn-secondary full" on:click={() => goto('club')}>Open Club</button>
+                <!-- An amateur side is a stepping stone: the number that matters
+                     is how close the academies are to calling. -->
+                {#if amateur}
+                    <div class="meter-row">
+                        <div class="meter-top">
+                            <span class="meter-lbl">Academy scouts</span>
+                            <span class="meter-val">{myOVR} / {ACADEMY_SCOUT_OVR}</span>
+                        </div>
+                        <div class="meter-bar"><div class="meter-fill scout" style="width:{pct(myOVR / ACADEMY_SCOUT_OVR)}%"></div></div>
+                        <span class="meter-note">
+                            {#if myOVR >= ACADEMY_SCOUT_OVR}Academies are watching. Offers can arrive any week, and leaving an amateur side is free.
+                            {:else}Academies start calling amateur players at {ACADEMY_SCOUT_OVR} overall. Training is how you get there.{/if}
+                        </span>
+                    </div>
+                {/if}
+
+                <div class="side-btns">
+                    <button class="btn-soft" on:click={() => goto('club')}>Open club</button>
+                    <button class="btn-soft" class:btn-soft-live={offers.length > 0} on:click={() => goto('transfers')}>
+                        Offers{#if offers.length} <span class="off-n">{offers.length}</span>{/if}
+                    </button>
+                </div>
             </section>
         {:else}
-            <section class="panel block" aria-labelledby="hub-scout">
-                <div class="blk-head">
-                    <h2 class="lbl" id="hub-scout">Scouting</h2>
+            <section class="panel" aria-labelledby="hub-scout">
+                <div class="ph">
+                    <h2 class="ph-title" id="hub-scout"><Icon name="search" size={14} stroke={2.2} /> Scouting</h2>
                     <span class="stat-chip" style="--a:{$soloRank.color}">{$soloRank.label}</span>
                 </div>
                 <p class="ct-line">{statusLine}</p>
 
                 <div class="meter-row">
                     <div class="meter-top">
-                        <span class="meter-lbl">Scout Radar</span>
+                        <span class="meter-lbl">Scout radar</span>
                         <span class="meter-val">{c.soloq.mmr} / {SCOUT_MMR_GATE}</span>
                     </div>
-                    <div class="meter-bar">
-                        <div class="meter-fill scout" style="width:{pct(gateProgress)}%"></div>
-                    </div>
+                    <div class="meter-bar"><div class="meter-fill scout" style="width:{pct(gateProgress)}%"></div></div>
                     <span class="meter-note">
                         {#if c.soloq.mmr >= SCOUT_MMR_GATE}
                             You are on the radar. Keep the ladder climbing and offers will follow.
@@ -954,93 +1332,63 @@
                     {/if}
                 </div>
 
-                <button class="btn-secondary full" on:click={() => goto('transfers')}>Open Transfers</button>
+                <div class="side-btns">
+                    <button class="btn-soft" class:btn-soft-live={offers.length > 0} on:click={() => goto('transfers')}>
+                        Transfers{#if offers.length} <span class="off-n">{offers.length}</span>{/if}
+                    </button>
+                </div>
             </section>
         {/if}
 
-        <!-- ---------- SPLIT META ---------- -->
-        <!-- A split-level fact with nowhere else to live: the draft reads it in
-             champion select, but the player has to be able to plan around it
-             from the week screen. Own role only - this is a status readout,
-             not a champion browser. -->
-        <section class="panel block" aria-labelledby="hub-meta">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-meta">Split Meta</h2>
-                <span class="mini">{meta.split} {meta.year}</span>
+        <!-- ---------- SEASON ---------- -->
+        <section class="panel" aria-labelledby="hub-season">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-season"><Icon name="ranking" size={14} stroke={2.2} /> Season</h2>
+                <button class="ph-link" on:click={() => goto('calendar')}>Full season <Icon name="chevron" size={13} stroke={2.4} /></button>
             </div>
 
-            {#if meta.mine}
-                <div
-                    class="meta-mine"
-                    class:meta-strong={meta.mine.tier > 0}
-                    class:meta-weak={meta.mine.tier < 0}
-                >
-                    <span class="meta-mine-k">Your signature</span>
-                    <span class="meta-mine-n">{meta.mine.name}</span>
-                    <span class="meta-mine-t">{meta.mine.label}</span>
+            <div class="sn-grid">
+                <div class="sn-cell">
+                    <span class="sn-v">{fmtRecord(c.season.wins, c.season.losses)}</span>
+                    <span class="sn-k">Record</span>
                 </div>
-            {/if}
+                <div class="sn-cell">
+                    <span class="sn-v">{(c.season.gameWins || 0) + (c.season.gameLosses || 0)}</span>
+                    <span class="sn-k">Games</span>
+                </div>
+                <div class="sn-cell">
+                    <span class="sn-v gold">{c.season.champPoints || 0}</span>
+                    <span class="sn-k">Champ pts</span>
+                </div>
+            </div>
 
-            {#if meta.ok && (meta.strong.length || meta.weak.length)}
-                <div class="meta-band">
-                    <span class="meta-k meta-strong">Strong</span>
-                    <span class="meta-list">
-                        {#each meta.strong as ch (ch.id)}
-                            <span class="meta-ch">{ch.name}</span>
-                        {:else}
-                            <span class="meta-ch meta-nil">nothing in your role</span>
-                        {/each}
-                    </span>
-                </div>
-                <div class="meta-band">
-                    <span class="meta-k meta-weak">Weak</span>
-                    <span class="meta-list">
-                        {#each meta.weak as ch (ch.id)}
-                            <span class="meta-ch">{ch.name}</span>
-                        {:else}
-                            <span class="meta-ch meta-nil">nothing in your role</span>
-                        {/each}
-                    </span>
-                </div>
-                <span class="meta-note">
-                    The meta redraws every split. A strong pick swings a game your way, a weak one
-                    works against you, and everything else is contested.
+            {#if myRow}
+                <!-- The table, cut to the top four and you. -->
+                <ol class="mt">
+                    {#each miniTable as r (r.team.id)}
+                        <li class="mt-row" class:mt-me={r.isMine} style="--a:{r.team.accent}">
+                            <span class="mt-rank">{r.rank || '-'}</span>
+                            <span class="mt-team">{r.team.name}</span>
+                            <span class="mt-rec">{r.w}&#8211;{r.l}</span>
+                        </li>
+                    {/each}
+                </ol>
+                <span class="sn-note">
+                    {#if myRow.rank <= 1}Top of the table. Everyone is measuring themselves against you.
+                    {:else if myRow.rank <= 6}Inside the playoff cut with {table.length - myRow.rank} team{table.length - myRow.rank === 1 ? '' : 's'} below you.
+                    {:else}Outside the top six. That has to change before the split ends.{/if}
                 </span>
             {:else}
-                <p class="empty small">
-                    No meta read for your role yet. It appears once your player is created.
-                </p>
+                <p class="empty small">No division table yet. It appears once your season is generated.</p>
             {/if}
-        </section>
-
-        <!-- ---------- OFFERS ---------- -->
-        <section class="panel block offers" class:offers-live={offers.length > 0} aria-labelledby="hub-offers">
-            <div class="off-in">
-                <div class="off-txt">
-                    <h2 class="lbl" id="hub-offers">Offers</h2>
-                    {#if offers.length}
-                        <p class="off-line">
-                            {offers.length} contract offer{offers.length === 1 ? '' : 's'} on the table.
-                        </p>
-                    {:else}
-                        <p class="off-line muted">No offers right now.</p>
-                    {/if}
-                </div>
-                <div class="off-right">
-                    <span class="off-badge" class:off-zero={!offers.length}>{offers.length}</span>
-                    <button class="btn-secondary" on:click={() => goto('transfers')} aria-label="Open the transfers screen">
-                        View
-                    </button>
-                </div>
-            </div>
         </section>
 
         <!-- ---------- LAST MATCH ---------- -->
-        <section class="panel block" aria-labelledby="hub-last">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-last">Last Match</h2>
+        <section class="panel" aria-labelledby="hub-last">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-last"><Icon name="swords" size={14} stroke={2.2} /> Last match</h2>
                 {#if lastMatch}
-                    <span class="mini">W{lastMatch.week ?? c.time.week} &middot; {lastMatch.year ?? c.time.year}</span>
+                    <span class="ph-note">W{lastMatch.week ?? c.time.week} &middot; {lastMatch.year ?? c.time.year}</span>
                 {/if}
             </div>
 
@@ -1048,9 +1396,7 @@
                 <div class="lm" class:lm-win={lastMatch.won} class:lm-loss={!lastMatch.won}>
                     <div class="lm-top">
                         <span class="lm-res">{lastMatch.won ? 'WIN' : 'LOSS'}</span>
-                        <span class="lm-score">
-                            {(lastMatch.score && lastMatch.score[0]) || 0}&#8211;{(lastMatch.score && lastMatch.score[1]) || 0}
-                        </span>
+                        <span class="lm-score">{(lastMatch.score && lastMatch.score[0]) || 0}&#8211;{(lastMatch.score && lastMatch.score[1]) || 0}</span>
                         <span class="lm-opp">vs {lastMatch.opponentName || 'Unknown'}</span>
                     </div>
 
@@ -1058,22 +1404,10 @@
                         <p class="lm-bench">{lastMatch.benchReason || 'You did not play in this one.'}</p>
                     {:else}
                         <div class="lm-stats">
-                            <div class="lm-cell">
-                                <span class="lm-k">KDA</span>
-                                <span class="lm-v">{lastKDA ? lastKDA.line : '0/0/0'}</span>
-                            </div>
-                            <div class="lm-cell">
-                                <span class="lm-k">Ratio</span>
-                                <span class="lm-v">{lastKDA ? lastKDA.ratio.toFixed(2) : '0.00'}</span>
-                            </div>
-                            <div class="lm-cell">
-                                <span class="lm-k">CS</span>
-                                <span class="lm-v">{Math.round(lastMatch.cs || 0)}</span>
-                            </div>
-                            <div class="lm-cell">
-                                <span class="lm-k">Rating</span>
-                                <span class="lm-v" style="color:{lastRating.color}">{lastRating.label}</span>
-                            </div>
+                            <div class="lm-cell"><span class="lm-v">{lastKDA ? lastKDA.line : '0/0/0'}</span><span class="lm-k">KDA</span></div>
+                            <div class="lm-cell"><span class="lm-v">{lastKDA ? lastKDA.ratio.toFixed(2) : '0.00'}</span><span class="lm-k">Ratio</span></div>
+                            <div class="lm-cell"><span class="lm-v">{Math.round(lastMatch.cs || 0)}</span><span class="lm-k">CS</span></div>
+                            <div class="lm-cell"><span class="lm-v" style="color:{lastRating.color}">{lastRating.label}</span><span class="lm-k">Rating</span></div>
                         </div>
                         {#if lastMatch.mvp}
                             <div class="lm-mvp">Player of the Game</div>
@@ -1086,14 +1420,10 @@
                 </div>
 
                 <!-- ---------- THE SCOREBOARD ----------
-                     The same ten seats the result screen shows, in the place
-                     the player actually comes back to. It renders ONLY when a
-                     board survives the normaliser: a benched game has none, and
-                     nor does any result saved before boards existed, and an
-                     absent board must leave nothing behind rather than an empty
-                     table. A series is one board PER GAME and the tabs open on
-                     the decider, so the panel never shows game one and lets it
-                     stand for the whole tie. -->
+                     The same ten seats the result screen shows. Renders ONLY when
+                     a board survives the normaliser (a benched game and any result
+                     saved before boards existed have none). A series is one board
+                     PER GAME, and the tabs open on the decider. -->
                 {#if lmBoard}
                     <div class="lmb">
                         {#if lmBoards.length > 1}
@@ -1116,12 +1446,8 @@
 
                         <div class="lmb-cap">
                             Game {lmBoard.number}
-                            {#if lmBoards.length > 1}
-                                <span class="lmb-dot">&middot;</span>of {lmBoards.length}
-                            {/if}
-                            {#if lmBoard.mins}
-                                <span class="lmb-dot">&middot;</span>{lmBoard.mins} min
-                            {/if}
+                            {#if lmBoards.length > 1}<span class="lmb-dot">&middot;</span>of {lmBoards.length}{/if}
+                            {#if lmBoard.mins}<span class="lmb-dot">&middot;</span>{lmBoard.mins} min{/if}
                         </div>
 
                         {#key lmBoard.key}
@@ -1163,60 +1489,60 @@
                     </div>
                 {/if}
             {:else}
-                <p class="empty">
-                    You have not played a competitive game yet. Your first result lands here.
-                </p>
+                <p class="empty">No competitive game yet. Your first result lands here.</p>
             {/if}
         </section>
 
-        <!-- ---------- SEASON ---------- -->
-        <section class="panel block" aria-labelledby="hub-season">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-season">Season</h2>
-                <span class="mini">{c.season.split === 'summer' ? 'Summer' : 'Spring'} {c.time.year}</span>
+        <!-- ---------- SPLIT META ----------
+             The draft reads it in champion select; the player plans around it
+             from here. Own role only. -->
+        <section class="panel" aria-labelledby="hub-meta">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-meta"><Icon name="trend" size={14} stroke={2.2} /> Split meta</h2>
+                <span class="ph-note">{meta.split} {meta.year}</span>
             </div>
 
-            <div class="sn-grid">
-                <div class="sn-cell">
-                    <span class="sn-k">Record</span>
-                    <span class="sn-v">{fmtRecord(c.season.wins, c.season.losses)}</span>
+            {#if meta.mine}
+                <div class="meta-mine" class:meta-strong={meta.mine.tier > 0} class:meta-weak={meta.mine.tier < 0}>
+                    <span class="meta-mine-k">Your signature</span>
+                    <span class="meta-mine-n">{meta.mine.name}</span>
+                    <span class="meta-mine-t">{meta.mine.label}</span>
                 </div>
-                <div class="sn-cell">
-                    <span class="sn-k">Games</span>
-                    <span class="sn-v">{(c.season.gameWins || 0) + (c.season.gameLosses || 0)}</span>
-                </div>
-                <div class="sn-cell">
-                    <span class="sn-k">Champ Pts</span>
-                    <span class="sn-v gold">{c.season.champPoints || 0}</span>
-                </div>
-            </div>
-
-            {#if myRow}
-                <div class="sn-row" style="--a:{myRow.team.accent}">
-                    <span class="sn-rank">{ordinal(myRow.rank)}</span>
-                    <span class="sn-team">{myRow.team.name}</span>
-                    <span class="sn-rec">{myRow.w}&#8211;{myRow.l}</span>
-                </div>
-                <span class="sn-note">
-                    {#if myRow.rank <= 1}Top of the table. Everyone is measuring themselves against you.
-                    {:else if myRow.rank <= 6}Inside the playoff cut with {table.length - myRow.rank} team{table.length - myRow.rank === 1 ? '' : 's'} below you.
-                    {:else}Outside the top six. That has to change before the split ends.{/if}
-                </span>
-            {:else}
-                <p class="empty small">
-                    No division table yet. It appears once your season is generated.
-                </p>
             {/if}
 
-            <button class="btn-secondary full" on:click={() => goto('calendar')}>Full Season</button>
+            {#if meta.ok && (meta.strong.length || meta.weak.length)}
+                <div class="meta-band">
+                    <span class="meta-k meta-strong">Strong</span>
+                    <span class="meta-list">
+                        {#each meta.strong as ch (ch.id)}
+                            <span class="meta-ch">{ch.name}</span>
+                        {:else}
+                            <span class="meta-ch meta-nil">nothing in your role</span>
+                        {/each}
+                    </span>
+                </div>
+                <div class="meta-band">
+                    <span class="meta-k meta-weak">Weak</span>
+                    <span class="meta-list">
+                        {#each meta.weak as ch (ch.id)}
+                            <span class="meta-ch">{ch.name}</span>
+                        {:else}
+                            <span class="meta-ch meta-nil">nothing in your role</span>
+                        {/each}
+                    </span>
+                </div>
+                <span class="meta-note">The meta redraws every split. A strong pick swings a game your way, a weak one works against you.</span>
+            {:else}
+                <p class="empty small">No meta read for your role yet. It appears once your player is created.</p>
+            {/if}
         </section>
 
         <!-- ---------- NEWS ---------- -->
-        <section class="panel block" aria-labelledby="hub-news">
-            <div class="blk-head">
-                <h2 class="lbl" id="hub-news">News</h2>
+        <section class="panel" aria-labelledby="hub-news">
+            <div class="ph">
+                <h2 class="ph-title" id="hub-news"><Icon name="globe" size={14} stroke={2.2} /> News</h2>
                 {#if news.length > 12}
-                    <button class="linkbtn" on:click={() => { showAllNews = !showAllNews; }}>
+                    <button class="ph-link" on:click={() => { showAllNews = !showAllNews; }}>
                         {showAllNews ? 'Show less' : 'Show all (' + news.length + ')'}
                     </button>
                 {/if}
@@ -1235,679 +1561,455 @@
                     {/each}
                 </ul>
             {:else}
-                <p class="empty">
-                    The feed is quiet. Results, transfers and awards all report here as your career moves.
-                </p>
+                <p class="empty">The feed is quiet. Results, transfers and awards all report here.</p>
             {/if}
         </section>
     </div>
 </div>
+</div>
 
-<!-- ---------- OPPONENT SCOUTING ---------- -->
-<!-- A component-local dialog, not a screen: reading the other side's roster
+<!-- ---------- OPPONENT SCOUTING ----------
+     A component-local dialog, not a screen: reading the other side's roster
      should not cost the player their place on the week board. -->
 {#if scoutId}
     <ClubScout teamId={scoutId} year={nowYear} onClose={closeScout} />
 {/if}
 
 <style>
-    /* ===================== LAYOUT ===================== */
-    .hub {
-        display: grid;
-        grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-        gap: 18px;
-        align-items: start;
-        width: 100%;
+    /* Laid out and styled after the Ultimate Roster home (tabs/Home.svelte):
+       a gradient hero, panels with an icon + uppercase title, to-do cards, and
+       body text at readable contrast. --hc is the player's club accent, --ph the
+       phase accent. */
+    .hub-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 30px; }
+
+    /* ===================== HERO ===================== */
+    .hh {
+        position: relative; overflow: hidden;
+        display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(230px, 0.85fr) minmax(280px, 1fr);
+        align-items: center; gap: 22px;
+        padding: 24px 26px; border-radius: 24px;
+        background:
+            radial-gradient(70% 140% at 0% 0%, color-mix(in srgb, var(--ph) 28%, transparent), transparent 60%),
+            linear-gradient(120deg, #0f1428 0%, #0b0f1d 60%, #0a0d18 100%);
+        border: 1px solid color-mix(in srgb, var(--ph) 32%, rgba(100, 116, 139, 0.2));
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
     }
+    .hh-glow { position: absolute; right: -10%; top: -60%; width: 50%; height: 220%; background: radial-gradient(circle, color-mix(in srgb, var(--hc) 12%, transparent), transparent 60%); pointer-events: none; }
+    .hh-when { position: relative; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .hh-k { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ph); }
+    .hh-title { margin: 0; font-size: clamp(26px, 3vw, 36px); font-weight: 900; color: #fff; letter-spacing: -0.5px; line-height: 1.05; }
+    .hh-desc { margin: 0; font-size: 13px; line-height: 1.5; color: #94a3b8; }
+    .year { position: relative; height: 14px; margin-top: 8px; }
+    .yr-seg { position: absolute; top: 4px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--c) 30%, rgba(51, 65, 85, 0.45)); }
+    .yr-on { background: var(--c); box-shadow: 0 0 8px color-mix(in srgb, var(--c) 55%, transparent); }
+    .yr-now { position: absolute; top: 0; width: 3px; height: 14px; border-radius: 2px; background: #f8fafc; transform: translateX(-1px); box-shadow: 0 0 6px rgba(255, 255, 255, 0.6); }
+
+    .hh-stats { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .hs {
+        display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 9px; align-items: center;
+        padding: 9px 12px; border-radius: 14px;
+        background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .hs-ico { grid-row: 1 / span 2; width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+    .hs-val { font-size: 17px; font-weight: 900; color: #f1f5f9; line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hs-lbl { font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+
+    .hh-act { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .cta {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 14px; text-align: left; cursor: pointer;
+        width: 100%; padding: 18px 20px; border-radius: 20px; color: #fff; font-family: inherit;
+        background: linear-gradient(135deg, #4f46e5, #6d28d9);
+        border: 1px solid rgba(196, 181, 253, 0.4);
+        box-shadow: 0 12px 30px rgba(79, 70, 229, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .cta:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 16px 38px rgba(79, 70, 229, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+    .cta:disabled { cursor: not-allowed; opacity: 0.6; }
+    .cta-gold { background: linear-gradient(135deg, #d97706, #f59e0b); border-color: rgba(253, 230, 138, 0.5); box-shadow: 0 12px 30px rgba(217, 119, 6, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+    .cta-gold:hover:not(:disabled) { box-shadow: 0 16px 38px rgba(217, 119, 6, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+    .cta-ko { background: linear-gradient(135deg, #b45309, #a16207 45%, #7c2d12); border-color: rgba(253, 224, 71, 0.55); }
+    .cta-ico { flex-shrink: 0; width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
+    .cta-t { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .cta-k { font-size: 9.5px; font-weight: 900; letter-spacing: 1.8px; text-transform: uppercase; color: rgba(255, 255, 255, 0.78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cta-h { font-size: 17px; font-weight: 900; line-height: 1.2; }
+    .cta-s { font-size: 11.5px; color: rgba(255, 255, 255, 0.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cta-arrow { flex-shrink: 0; display: flex; opacity: 0.9; }
+    .cta-alt {
+        align-self: center; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+        font-family: inherit; font-size: 11.5px; font-weight: 700; color: #94a3b8;
+        background: none; border: none; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(148, 163, 184, 0.4);
+    }
+    .cta-alt:hover:not(:disabled) { color: #fde68a; }
+    .cta-alt:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ===================== PANELS ===================== */
+    .panel {
+        padding: 18px; border-radius: 20px; text-align: left; min-width: 0;
+        background: linear-gradient(160deg, color-mix(in srgb, var(--hc) 6%, transparent), rgba(11, 15, 28, 0.78) 45%);
+        border: 1px solid rgba(100, 116, 139, 0.22);
+    }
+    .ph { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .ph-title { margin: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 900; letter-spacing: 1.8px; text-transform: uppercase; color: #e2e8f0; }
+    .ph-title :global(svg) { color: var(--hc); }
+    .ph-note { font-size: 11px; font-weight: 700; color: #94a3b8; }
+    .ph-link { display: inline-flex; align-items: center; gap: 3px; padding: 0; background: none; border: none; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 800; color: #93c5fd; }
+    .ph-link:hover { color: #dbeafe; }
+    .empty { margin: 0; font-size: 12.5px; line-height: 1.55; color: #94a3b8; padding: 12px 14px; border-radius: 12px; border: 1px dashed rgba(100, 116, 139, 0.35); background: rgba(15, 23, 42, 0.35); }
+    .empty.small { font-size: 12px; padding: 10px 12px; }
+
+    /* ===================== TO DO ===================== */
+    .todo { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+    .td {
+        position: relative; overflow: hidden; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+        padding: 11px 12px; border-radius: 14px; color: #94a3b8; font-family: inherit;
+        background: color-mix(in srgb, var(--c) 8%, rgba(15, 23, 42, 0.6));
+        border: 1px solid color-mix(in srgb, var(--c) 26%, transparent);
+        transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+    .td:hover:not(.td-static) { border-color: color-mix(in srgb, var(--c) 60%, transparent); color: var(--c); transform: translateY(-1px); }
+    .td-static { cursor: default; }
+    .td-ico { width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); }
+    .td-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .td-label { font-size: 13px; font-weight: 800; color: #f1f5f9; }
+    .td-sub { font-size: 11.5px; line-height: 1.4; color: #94a3b8; }
+
+    /* ===================== LAYOUT ===================== */
+    .hub { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
     .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
-    .block {
-        background: rgba(12, 16, 28, 0.5);
-        border: 1px solid rgba(51, 65, 85, 0.32);
-        border-radius: 16px;
-        padding: 18px;
-        min-width: 0;
-    }
-    .blk-head {
-        display: flex; align-items: center; justify-content: space-between;
-        gap: 12px; margin-bottom: 14px;
-    }
-    .lbl {
-        margin: 0;
-        font-size: 10px; font-weight: 800; letter-spacing: 1.6px;
-        text-transform: uppercase; color: #3f5069;
-    }
-    .mini { font-size: 10px; font-weight: 700; color: #334155; letter-spacing: 0.4px; }
-
-    .empty {
-        margin: 0;
-        font-size: 12px; line-height: 1.65; color: #52658a;
-        padding: 14px;
-        border-radius: 12px;
-        border: 1px dashed rgba(51, 65, 85, 0.4);
-        background: rgba(15, 23, 42, 0.32);
-    }
-    .empty.small { font-size: 11px; padding: 11px; line-height: 1.55; }
-
-    .full { width: 100%; margin-top: 12px; }
-    .wide { flex: 1; }
-
-    .linkbtn {
-        background: none; border: none; padding: 0; cursor: pointer;
-        font-family: inherit; font-size: 10px; font-weight: 800;
-        letter-spacing: 0.6px; color: #7c8fb0;
-    }
-    .linkbtn:hover { color: #c4b5fd; }
-
-    /* ===================== NEXT UP ===================== */
-    .next { border-color: rgba(139, 92, 246, 0.24); }
-    .phase-pill {
-        font-size: 9px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
-        padding: 4px 9px; border-radius: 6px;
-        color: var(--ph);
-        background: color-mix(in srgb, var(--ph) 12%, transparent);
-        border: 1px solid color-mix(in srgb, var(--ph) 28%, transparent);
-        white-space: nowrap;
-    }
-
-    /* ---- the live tournament banner, first thing in the column ----
-       Same treatment the Calendar screen uses, so the two surfaces read as one
-       feature rather than two lookalikes. */
+    /* ===================== TOURNAMENT BANNER ===================== */
     .tbanner {
         display: flex; align-items: center; gap: 12px;
-        padding: 11px 14px; margin-bottom: 14px;
-        border-radius: 12px;
-        background: linear-gradient(135deg,
-            color-mix(in srgb, var(--a) 20%, rgba(15, 23, 42, 0.85)),
-            rgba(15, 23, 42, 0.85));
-        border: 1px solid color-mix(in srgb, var(--a) 42%, transparent);
+        padding: 12px 16px; border-radius: 16px;
+        background: linear-gradient(135deg, color-mix(in srgb, var(--a) 22%, rgba(15, 23, 42, 0.85)), rgba(15, 23, 42, 0.85));
+        border: 1px solid color-mix(in srgb, var(--a) 45%, transparent);
     }
-    .tb-mark { position: relative; flex: 0 0 40px; height: 40px; display: grid; place-items: center; }
-    .tb-cup { font-size: 21px; position: relative; z-index: 1; }
-    .tb-pulse {
-        position: absolute; inset: 0; border-radius: 50%;
-        background: color-mix(in srgb, var(--a) 30%, transparent);
-        animation: hubTbPulse 2.4s ease-in-out infinite;
-    }
-    @keyframes hubTbPulse {
-        0%, 100% { transform: scale(0.82); opacity: 0.55; }
-        50%      { transform: scale(1.06); opacity: 0.18; }
-    }
+    .tb-mark { position: relative; flex: 0 0 42px; height: 42px; display: grid; place-items: center; }
+    .tb-cup { position: relative; z-index: 1; display: flex; color: #fde68a; }
+    .tb-pulse { position: absolute; inset: 0; border-radius: 50%; background: color-mix(in srgb, var(--a) 30%, transparent); animation: hubTbPulse 2.4s ease-in-out infinite; }
+    @keyframes hubTbPulse { 0%, 100% { transform: scale(0.82); opacity: 0.55; } 50% { transform: scale(1.06); opacity: 0.18; } }
     .tb-done .tb-pulse { animation: none; opacity: 0.5; }
-    @media (prefers-reduced-motion: reduce) {
-        .tb-pulse { animation: none; opacity: 0.45; }
-    }
+    @media (prefers-reduced-motion: reduce) { .tb-pulse { animation: none; opacity: 0.45; } }
     .tb-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
     .tb-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-    .tb-title {
-        font-size: 14px; font-weight: 900; letter-spacing: 0.2px; color: #f1f5f9;
-    }
-    .tb-round {
-        font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: #e2e8f0;
-        background: color-mix(in srgb, var(--a) 26%, transparent);
-        border: 1px solid color-mix(in srgb, var(--a) 40%, transparent);
-    }
-    .tb-win { background: color-mix(in srgb, var(--a) 44%, transparent); color: #f8fafc; }
-    .tb-of, .tb-bo { font-size: 10px; font-weight: 700; color: #64748b; }
-    .tb-sub { font-size: 11px; font-weight: 600; color: #94a3b8; display: flex; gap: 6px; flex-wrap: wrap; }
-    .tb-vs { color: #475569; }
+    .tb-title { font-size: 15px; font-weight: 900; color: #f1f5f9; }
+    .tb-round { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: #f1f5f9; background: color-mix(in srgb, var(--a) 28%, transparent); border: 1px solid color-mix(in srgb, var(--a) 45%, transparent); }
+    .tb-win { background: color-mix(in srgb, var(--a) 46%, transparent); }
+    .tb-of, .tb-bo { font-size: 11px; font-weight: 700; color: #94a3b8; }
+    .tb-sub { font-size: 12px; font-weight: 600; color: #cbd5e1; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tb-vs, .tb-when { color: #94a3b8; }
     .tb-opp { color: var(--o); font-weight: 800; }
-    .tb-when { color: #475569; }
 
-    .fx { display: flex; flex-direction: column; gap: 16px; }
-    .fx-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
-    /* A knockout tie gets the loudest chip on the card and a lit edge on the
-       whole panel: lose this one and the season is over, which nothing on this
-       screen used to say. */
-    .fx-ko {
-        font-size: 8.5px; font-weight: 900; letter-spacing: 1.1px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: #fde68a;
-        background: rgba(234, 179, 8, 0.16);
-        border: 1px solid rgba(234, 179, 8, 0.45);
+    /* ===================== NEXT MATCH ===================== */
+    .next { border-color: rgba(139, 92, 246, 0.28); }
+    .next-ko { border-color: rgba(234, 179, 8, 0.45); }
+    .phase-pill { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 4px 10px; border-radius: 8px; color: var(--ph); background: color-mix(in srgb, var(--ph) 13%, transparent); border: 1px solid color-mix(in srgb, var(--ph) 30%, transparent); white-space: nowrap; }
+    .fx { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(190px, 0.75fr); gap: 20px; align-items: center; }
+    .fx-left { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .fx-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .fx-ko { font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: #fde68a; background: rgba(234, 179, 8, 0.16); border: 1px solid rgba(234, 179, 8, 0.45); }
+    .fx-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: var(--a); background: color-mix(in srgb, var(--a) 13%, transparent); border: 1px solid color-mix(in srgb, var(--a) 32%, transparent); }
+    .fx-bo, .fx-side { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: #cbd5e1; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(100, 116, 139, 0.3); }
+    .fx-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .fx-dot { flex-shrink: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 25%, transparent); }
+    .fx-opp { font-size: clamp(22px, 2.4vw, 28px); font-weight: 900; line-height: 1.1; color: #fff; letter-spacing: -0.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fx-desc { margin: 0; font-size: 12.5px; line-height: 1.55; color: #94a3b8; }
+    .scoutbtn { align-self: flex-start; }
+    .fx-vs { display: flex; align-items: center; gap: 12px; }
+    .fx-pw { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .fx-pw-n { font-size: 30px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+    .fx-pw-l { font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #94a3b8; }
+    .fx-x { font-size: 13px; font-weight: 900; color: #64748b; }
+    .fx-right { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .odds { display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 8px; row-gap: 5px; }
+    .odds-n { font-size: 24px; font-weight: 900; color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .odds-good { color: #4ade80; }
+    .odds-bad { color: #f87171; }
+    .odds-l { font-size: 11px; font-weight: 700; color: #94a3b8; }
+    .odds-bar { grid-column: 1 / -1; height: 6px; border-radius: 6px; background: rgba(30, 41, 59, 0.9); overflow: hidden; }
+    .odds-bar div { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #6366f1, #a78bfa); }
+    .btn-play {
+        display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+        padding: 11px 16px; border-radius: 12px; cursor: pointer;
+        font-family: inherit; font-size: 13px; font-weight: 900; color: #fff;
+        background: linear-gradient(135deg, #4f46e5, #7c3aed); border: 1px solid rgba(196, 181, 253, 0.4);
+        box-shadow: 0 8px 20px rgba(79, 70, 229, 0.3);
     }
-    .next-ko { border-color: rgba(234, 179, 8, 0.38); }
-    .fx-tag {
-        font-size: 8.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: var(--a);
-        background: color-mix(in srgb, var(--a) 12%, transparent);
-        border: 1px solid color-mix(in srgb, var(--a) 30%, transparent);
-    }
-    .fx-bo, .fx-side {
-        font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: #5a6d8e;
-        background: rgba(30, 41, 59, 0.5);
-        border: 1px solid rgba(51, 65, 85, 0.35);
-    }
-    .fx-name { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
-    .fx-vs { font-size: 12px; font-weight: 700; color: #475569; }
-    .fx-opp {
-        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
-        font-size: 26px; font-weight: 700; line-height: 1.1; letter-spacing: -0.015em;
-        color: var(--a);
-    }
-    .fx-desc {
-        margin: 8px 0 0;
-        font-size: 12px; line-height: 1.65; color: #6a7d9d;
-    }
-    .scoutbtn { margin-top: 9px; }
-
-    .h2h {
-        padding: 14px;
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.45);
-        border: 1px solid rgba(51, 65, 85, 0.28);
-    }
-    .h2h-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-    .h2h-team {
-        font-size: 11px; font-weight: 800; color: var(--a);
-        max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .h2h-team.right { text-align: right; }
-    .h2h-bar {
-        display: flex; gap: 3px;
-        height: 8px; margin: 9px 0 7px;
-        border-radius: 4px; overflow: hidden;
-        background: rgba(148, 163, 184, 0.08);
-    }
-    .h2h-fill { height: 100%; border-radius: 3px; transition: width 0.35s ease; opacity: 0.85; }
-    .h2h-row.nums { align-items: center; }
-    .h2h-n {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 15px; font-weight: 800;
-    }
-    .h2h-lbl {
-        font-size: 8px; font-weight: 800; letter-spacing: 1.2px;
-        text-transform: uppercase; color: #334155;
-    }
-
-    .benched {
-        display: flex; flex-direction: column; gap: 5px;
-        padding: 13px 14px;
-        border-radius: 12px;
-        background: rgba(239, 68, 68, 0.07);
-        border: 1px solid rgba(239, 68, 68, 0.24);
-    }
+    .btn-play:hover:not(:disabled) { filter: brightness(1.08); }
+    .btn-play:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-ghost { color: #cbd5e1; background: rgba(30, 41, 59, 0.6); border-color: rgba(100, 116, 139, 0.4); box-shadow: none; font-weight: 800; padding: 9px 14px; }
+    .fx-note { margin: 12px 0 0; font-size: 11.5px; color: #94a3b8; }
+    .benched { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 12px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); }
     .benched-t { font-size: 12.5px; font-weight: 800; color: #fca5a5; }
-    .benched-d { font-size: 11.5px; line-height: 1.55; color: #93748a; }
-
-    .fx-btns { display: flex; gap: 10px; flex-wrap: wrap; }
-    .fx-btns button { flex: 1 1 140px; }
-    .fx-btns button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
-
-    .empty-fx {
-        padding: 16px;
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.32);
-        border: 1px dashed rgba(51, 65, 85, 0.4);
-        gap: 10px;
-    }
-    .ef-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-    .ef-phase {
-        font-family: 'Space Grotesk', 'Quicksand', sans-serif;
-        font-size: 19px; font-weight: 700; color: var(--ph);
-    }
-    .ef-weeks {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 10px; font-weight: 700; color: #3f5069;
-    }
-    .ef-desc { margin: 0; font-size: 13px; line-height: 1.6; color: #93a5c4; }
-    .ef-guide { margin: 0; font-size: 12px; line-height: 1.65; color: #5f7392; }
-    .ef-done {
-        font-size: 10px; font-weight: 800; letter-spacing: 0.6px;
-        text-transform: uppercase; color: #22c55e;
-    }
+    .benched-d { font-size: 11.5px; line-height: 1.5; color: #cbd5e1; }
+    .nofx { display: flex; align-items: flex-start; gap: 14px; padding: 4px 2px; }
+    .nofx-ico { flex-shrink: 0; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
+    .nofx-t { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .nofx-h { font-size: 16px; font-weight: 900; color: #f1f5f9; }
+    .nofx-weeks { margin-left: 6px; font-size: 11px; font-weight: 700; color: #94a3b8; }
+    .nofx-s { font-size: 12.5px; line-height: 1.55; color: #cbd5e1; }
+    .nofx-done { font-size: 11px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; color: #4ade80; }
 
     /* ===================== ACTIVITIES ===================== */
-    .slots {
-        display: flex; align-items: baseline; gap: 5px;
-        padding: 4px 10px; border-radius: 8px;
-        background: rgba(15, 23, 42, 0.55);
-        border: 1px solid rgba(51, 65, 85, 0.3);
-        white-space: nowrap;
-    }
-    .slots-n {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 13px; font-weight: 800; color: #a78bfa;
-    }
-    .slots-l { font-size: 9px; font-weight: 700; color: #475569; }
+    .slots { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 10px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(100, 116, 139, 0.3); white-space: nowrap; }
+    .slots-pips { display: inline-flex; gap: 3px; }
+    .spip { width: 8px; height: 8px; border-radius: 50%; background: rgba(148, 163, 184, 0.22); }
+    .spip-on { background: #a78bfa; box-shadow: 0 0 6px rgba(167, 139, 250, 0.6); }
+    .slots-n { font-size: 14px; font-weight: 900; color: #c4b5fd; }
+    .slots-l { font-size: 11px; font-weight: 700; color: #94a3b8; }
+    .board-how { margin: -6px 0 12px; font-size: 12px; line-height: 1.5; color: #94a3b8; }
 
-    .acts {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
-        gap: 10px;
-    }
-
-    /* Fourteen activities against a three-slot week needs sections, or the
-       board reads as one undifferentiated wall of buttons. */
     .act-group + .act-group { margin-top: 16px; }
-    .act-group-h {
-        display: flex; align-items: center; gap: 12px;
-        margin-bottom: 9px;
-        font-size: 9px; font-weight: 800; letter-spacing: 2px;
-        text-transform: uppercase; color: #475569;
-    }
-    .act-group-h::after {
-        content: ''; flex: 1; height: 1px; background: rgba(51, 65, 85, 0.35);
-    }
-    .act-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .act-tag {
-        font-size: 8.5px; font-weight: 800; letter-spacing: 0.5px;
-        text-transform: uppercase; color: #64748b;
-        background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.4);
-        padding: 2px 6px; border-radius: 5px;
-    }
-    .act-tag-gold { color: #eab308; border-color: rgba(234, 179, 8, 0.28); }
-    .act-tag-warn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.28); }
+    .ag-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(100, 116, 139, 0.18); }
+    .ag-name { font-size: 11px; font-weight: 900; letter-spacing: 1.4px; text-transform: uppercase; color: #cbd5e1; }
+    .ag-blurb { font-size: 11.5px; color: #94a3b8; }
+    .acts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
     .act {
-        display: flex; flex-direction: column; gap: 7px;
-        text-align: left;
-        padding: 13px;
-        border-radius: 13px;
-        background: rgba(15, 23, 42, 0.5);
-        border: 1px solid rgba(51, 65, 85, 0.3);
-        border-left: 2px solid color-mix(in srgb, var(--a) 55%, transparent);
-        font-family: inherit;
-        cursor: pointer;
+        display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
+        padding: 12px; border-radius: 14px; font-family: inherit;
+        background: color-mix(in srgb, var(--a) 6%, rgba(15, 23, 42, 0.65));
+        border: 1px solid color-mix(in srgb, var(--a) 22%, rgba(100, 116, 139, 0.15));
         transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
     }
-    .act:hover:not(:disabled) {
-        background: rgba(30, 41, 59, 0.55);
-        border-color: color-mix(in srgb, var(--a) 40%, transparent);
-        border-left-color: var(--a);
-        transform: translateY(-1px);
-    }
+    .act:hover:not(:disabled) { border-color: color-mix(in srgb, var(--a) 60%, transparent); background: color-mix(in srgb, var(--a) 11%, rgba(15, 23, 42, 0.65)); transform: translateY(-1px); }
     .act:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
-    .act-off, .act:disabled { opacity: 0.45; cursor: not-allowed; }
-    .act-flash { border-color: color-mix(in srgb, var(--a) 55%, transparent); background: color-mix(in srgb, var(--a) 8%, rgba(15,23,42,0.5)); }
-
-    .act-top { display: flex; align-items: center; gap: 8px; }
-    .act-ico { font-size: 14px; line-height: 1; }
-    .act-name {
-        flex: 1; min-width: 0;
-        font-size: 12.5px; font-weight: 800; color: #dbe5f5;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .act-cost {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 9.5px; font-weight: 800; color: #f87171; white-space: nowrap;
-    }
-    .act-cost.gain { color: #34d399; }
-    .act-desc { display: block; margin: 0; font-size: 10.5px; line-height: 1.55; color: #5a6d8e; white-space: normal; }
-    .act-block {
-        font-size: 9.5px; font-weight: 800; letter-spacing: 0.4px;
-        color: #f59e0b;
-    }
-    .act-go { font-size: 9.5px; font-weight: 800; letter-spacing: 0.4px; color: var(--a); }
-
-    .flash {
-        margin-top: 12px;
-        padding: 10px 13px;
-        border-radius: 10px;
-        font-size: 11.5px; line-height: 1.55; color: #a5b4d0;
-        background: rgba(139, 92, 246, 0.08);
-        border: 1px solid rgba(139, 92, 246, 0.24);
-    }
+    .act-off, .act:disabled { opacity: 0.5; cursor: not-allowed; }
+    .act-flash { border-color: color-mix(in srgb, var(--a) 65%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 16%, transparent); }
+    .act-sugg { border-color: color-mix(in srgb, var(--a) 50%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--a) 25%, transparent), 0 8px 22px color-mix(in srgb, var(--a) 14%, transparent); }
+    .act-top { display: flex; align-items: center; gap: 10px; }
+    .act-ico { flex-shrink: 0; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; font-size: 15px; line-height: 1; color: var(--a); background: color-mix(in srgb, var(--a) 15%, transparent); }
+    .act-head { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .act-name { font-size: 13.5px; font-weight: 800; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .act-sugg-tag { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 10px; font-weight: 800; color: var(--a); }
+    .act-cost { flex-shrink: 0; font-size: 11px; font-weight: 900; padding: 3px 7px; border-radius: 7px; color: #fca5a5; background: rgba(239, 68, 68, 0.1); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .act-cost.gain { color: #86efac; background: rgba(34, 197, 94, 0.1); }
+    .act-desc { font-size: 12px; line-height: 1.45; color: #a5b4c8; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .act-gives { display: flex; flex-wrap: wrap; gap: 4px; }
+    .give { font-size: 10.5px; font-weight: 800; padding: 2px 8px; border-radius: 999px; color: #86efac; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.25); }
+    .give-down { color: #fca5a5; background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25); }
+    .give-xp { color: #ddd6fe; background: rgba(139, 92, 246, 0.16); border-color: rgba(167, 139, 250, 0.4); }
+    .act-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .act-tags:empty { display: none; }
+    .act-tag { font-size: 10px; font-weight: 800; letter-spacing: 0.3px; color: #cbd5e1; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(100, 116, 139, 0.35); padding: 2px 7px; border-radius: 6px; }
+    .act-tag-gold { color: #fde047; border-color: rgba(234, 179, 8, 0.35); }
+    .act-tag-warn { color: #fbbf24; border-color: rgba(245, 158, 11, 0.35); }
+    .act-block { font-size: 11px; font-weight: 800; color: #fbbf24; }
+    .act-go { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; color: var(--a); }
+    .flash { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 13px; border-radius: 12px; font-size: 12.5px; line-height: 1.5; color: #e2e8f0; background: rgba(34, 197, 94, 0.09); border: 1px solid rgba(34, 197, 94, 0.3); }
+    .flash :global(svg) { color: #4ade80; flex-shrink: 0; }
 
     /* ===================== WEEK LOG ===================== */
     .tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-    .tl-item {
-        position: relative;
-        display: flex; gap: 12px;
-        padding: 0 0 13px 0;
-    }
-    .tl-item::before {
-        content: '';
-        position: absolute;
-        left: 4px; top: 13px; bottom: 0;
-        width: 1px;
-        background: rgba(51, 65, 85, 0.4);
-    }
+    .tl-item { position: relative; display: flex; gap: 12px; padding: 0 0 13px 0; }
+    .tl-item::before { content: ''; position: absolute; left: 4px; top: 13px; bottom: 0; width: 1px; background: rgba(100, 116, 139, 0.35); }
     .tl-item:last-child { padding-bottom: 0; }
     .tl-item:last-child::before { display: none; }
-    .tl-dot {
-        flex-shrink: 0;
-        width: 9px; height: 9px; margin-top: 4px;
-        border-radius: 50%;
-        background: var(--a);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 16%, transparent);
-    }
-    .tl-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .tl-label { font-size: 11.5px; font-weight: 800; color: var(--a); }
-    .tl-detail { font-size: 11.5px; line-height: 1.55; color: #7b8dab; }
+    .tl-dot { flex-shrink: 0; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: var(--a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a) 18%, transparent); }
+    .tl-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .tl-label { font-size: 12.5px; font-weight: 800; color: #f1f5f9; }
+    .tl-detail { font-size: 12px; line-height: 1.5; color: #a5b4c8; }
 
-    /* ===================== ADVANCE ===================== */
-    .adv { border-color: rgba(245, 158, 11, 0.22); }
-    .adv-in {
-        display: flex; align-items: center; justify-content: space-between;
-        gap: 16px; flex-wrap: wrap;
+    /* ===================== ADVANCE (sticky) ===================== */
+    .adv {
+        position: sticky; bottom: 12px; z-index: 6;
+        display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+        padding: 12px 14px 12px 18px; border-radius: 18px;
+        background: rgba(10, 14, 26, 0.94);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        box-shadow: 0 -10px 30px rgba(2, 6, 23, 0.55);
     }
     .adv-txt { flex: 1 1 240px; min-width: 0; }
-    .adv-txt .lbl { margin-bottom: 7px; }
-    .adv-line { margin: 0; font-size: 12.5px; line-height: 1.6; color: #93a5c4; }
-    .adv-line.block-line { color: #fca5a5; font-weight: 700; }
-    .adv-warn { margin: 5px 0 0; font-size: 11px; line-height: 1.5; color: #6a7d9d; }
-    .advbtn { flex-shrink: 0; padding: 13px 26px; font-size: 13px; }
-    .advbtn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
-
-    /* ===================== SIDE: CONTRACT ===================== */
-    .stat-chip {
-        font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: var(--a);
-        background: color-mix(in srgb, var(--a) 12%, transparent);
-        border: 1px solid color-mix(in srgb, var(--a) 30%, transparent);
-        white-space: nowrap;
+    .adv-h { margin: 0 0 2px; font-size: 12px; font-weight: 900; letter-spacing: 1.4px; text-transform: uppercase; color: #fde68a; }
+    .adv-line { margin: 0; font-size: 12.5px; line-height: 1.5; color: #cbd5e1; }
+    .adv-block { color: #fca5a5; font-weight: 700; }
+    .adv-warn { color: #fbbf24; }
+    .advbtn {
+        flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px;
+        padding: 12px 22px; border-radius: 14px; cursor: pointer;
+        font-family: inherit; font-size: 13.5px; font-weight: 900; color: #1c1404;
+        background: linear-gradient(135deg, #fde68a, #f59e0b); border: none;
+        box-shadow: 0 8px 22px rgba(245, 158, 11, 0.3);
     }
-    .ct-line { margin: 0; font-size: 11.5px; line-height: 1.6; color: #8fa1c0; }
-    .ct-tier {
-        margin-top: 9px;
-        display: inline-block;
-        font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: var(--a);
-        border: 1px solid color-mix(in srgb, var(--a) 30%, transparent);
-    }
+    .advbtn:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+    .advbtn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 
+    /* ===================== SIDE: BRIEF ===================== */
+    .brief { border-color: rgba(56, 189, 248, 0.28); }
+    .verdict { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--v) 10%, rgba(15, 23, 42, 0.6)); border: 1px solid color-mix(in srgb, var(--v) 40%, transparent); }
+    .verdict-k { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .verdict-v { font-size: 13px; font-weight: 900; color: var(--v); }
+    .obj-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .obj { --t: #64748b; display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(100, 116, 139, 0.22); border-left: 3px solid var(--t); }
+    .obj-good { --t: #22c55e; }
+    .obj-bad { --t: #ef4444; background: rgba(239, 68, 68, 0.06); }
+    .obj-idle { --t: #64748b; }
+    .obj-stretch { border-style: dashed; border-left-style: solid; }
+    .obj-ico { flex-shrink: 0; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--t); background: color-mix(in srgb, var(--t) 14%, transparent); }
+    .obj-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .obj-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .obj-group { font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #94a3b8; }
+    .obj-state { font-size: 10px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; padding: 2px 7px; border-radius: 6px; color: var(--t); background: color-mix(in srgb, var(--t) 13%, transparent); border: 1px solid color-mix(in srgb, var(--t) 35%, transparent); white-space: nowrap; }
+    .obj-title { font-size: 13px; font-weight: 800; color: #f1f5f9; }
+    .obj-bar { height: 5px; border-radius: 5px; background: rgba(148, 163, 184, 0.14); overflow: hidden; }
+    .obj-fill { display: block; height: 100%; border-radius: 5px; background: var(--t); transition: width 0.3s ease; }
+    .obj-detail { font-size: 11.5px; line-height: 1.45; color: #a5b4c8; }
+    .obj-bonus { margin-left: 6px; color: #fbbf24; font-weight: 800; white-space: nowrap; }
+    .brief-foot { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 11.5px; line-height: 1.5; color: #94a3b8; }
+    .strikes { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: #94a3b8; white-space: nowrap; }
+    .strikes-on { color: #f87171; }
+    .strike { width: 10px; height: 10px; border-radius: 3px; background: rgba(148, 163, 184, 0.16); border: 1px solid rgba(148, 163, 184, 0.3); }
+    .strike-on { background: #ef4444; border-color: #ef4444; }
+    .strike:last-of-type { margin-right: 4px; }
+    .brief-alarm { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 9px 12px; border-radius: 10px; font-size: 12px; font-weight: 700; color: var(--v); background: color-mix(in srgb, var(--v) 10%, transparent); border: 1px solid color-mix(in srgb, var(--v) 32%, transparent); }
+
+    /* ===================== SIDE: CONTRACT / SCOUTING ===================== */
+    .stat-chip { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: var(--a); background: color-mix(in srgb, var(--a) 13%, transparent); border: 1px solid color-mix(in srgb, var(--a) 32%, transparent); white-space: nowrap; }
+    .ct-line { margin: 0; font-size: 12.5px; line-height: 1.55; color: #cbd5e1; }
+    .ct-tier { display: inline-block; margin-top: 8px; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: var(--a); border: 1px solid color-mix(in srgb, var(--a) 35%, transparent); }
     .meter-row { margin-top: 14px; }
     .meter-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
-    .meter-lbl { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #3f5069; }
-    .meter-val {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 11px; font-weight: 800; color: #cbd5e1;
-    }
-    .meter-bar { height: 5px; border-radius: 3px; background: rgba(148, 163, 184, 0.1); overflow: hidden; }
-    .meter-fill { height: 100%; border-radius: 3px; background: #a78bfa; transition: width 0.3s ease; }
-    .meter-fill.scout { background: #22d3ee; }
-    .meter-note { display: block; margin-top: 7px; font-size: 10.5px; line-height: 1.55; color: #55688a; }
-
-    /* ===================== SIDE: SCOUTING ===================== */
+    .meter-lbl { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .meter-val { font-size: 12px; font-weight: 900; color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .meter-bar { height: 6px; border-radius: 6px; background: rgba(30, 41, 59, 0.9); overflow: hidden; }
+    .meter-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #7c3aed, #a78bfa); transition: width 0.3s ease; }
+    .meter-fill.scout { background: linear-gradient(90deg, #0891b2, #22d3ee); }
+    .meter-note { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: #94a3b8; }
+    .side-btns { display: flex; gap: 8px; margin-top: 14px; }
+    .btn-soft { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 900; color: #e0e7ff; background: rgba(99, 102, 241, 0.16); border: 1px solid rgba(129, 140, 248, 0.35); }
+    .btn-soft:hover { background: rgba(99, 102, 241, 0.28); }
+    .btn-soft-live { color: #f5f3ff; background: rgba(168, 85, 247, 0.24); border-color: rgba(192, 132, 252, 0.6); }
+    .off-n { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font-size: 10.5px; color: #1e1b4b; background: #c4b5fd; }
     .scout-list { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
     .scout-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 2px; }
-    .scout-n {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 16px; font-weight: 800; color: #22d3ee;
-    }
-    .scout-l { font-size: 9.5px; font-weight: 800; letter-spacing: 0.9px; text-transform: uppercase; color: #3f5069; }
-    .scout-row {
-        display: flex; align-items: center; justify-content: space-between; gap: 10px;
-        padding: 7px 10px;
-        border-radius: 9px;
-        background: rgba(15, 23, 42, 0.45);
-        border-left: 2px solid var(--a);
-    }
-    .scout-team {
-        font-size: 11px; font-weight: 700; color: #c3d0e6;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .scout-int {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 11px; font-weight: 800; color: var(--a);
-    }
+    .scout-n { font-size: 18px; font-weight: 900; color: #22d3ee; }
+    .scout-l { font-size: 10.5px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: #94a3b8; }
+    .scout-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-radius: 9px; background: rgba(15, 23, 42, 0.5); border-left: 3px solid var(--a); }
+    .scout-team { font-size: 12px; font-weight: 700; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .scout-int { font-size: 12px; font-weight: 900; color: var(--a); }
+
+    /* ===================== SIDE: SEASON ===================== */
+    .sn-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .sn-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 9px 10px; border-radius: 12px; background: rgba(2, 6, 23, 0.4); border: 1px solid rgba(148, 163, 184, 0.12); }
+    .sn-v { font-size: 17px; font-weight: 900; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+    .sn-v.gold { color: #fbbf24; }
+    .sn-k { font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .mt { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .mt-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 9px; background: rgba(15, 23, 42, 0.5); border-left: 3px solid color-mix(in srgb, var(--a) 60%, transparent); }
+    .mt-me { background: color-mix(in srgb, var(--a) 14%, rgba(15, 23, 42, 0.6)); border-left-color: var(--a); }
+    .mt-rank { font-size: 12px; font-weight: 900; color: #94a3b8; }
+    .mt-me .mt-rank { color: var(--a); }
+    .mt-team { font-size: 12.5px; font-weight: 700; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mt-me .mt-team { color: #fff; font-weight: 900; }
+    .mt-rec { font-size: 12px; font-weight: 800; color: #cbd5e1; font-variant-numeric: tabular-nums; }
+    .sn-note { display: block; margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: #94a3b8; }
+
+    /* ===================== SIDE: LAST MATCH ===================== */
+    .lm { padding: 12px; border-radius: 14px; background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(100, 116, 139, 0.22); }
+    .lm-win { border-left: 4px solid #22c55e; }
+    .lm-loss { border-left: 4px solid #ef4444; }
+    .lm-top { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+    .lm-res { font-size: 11px; font-weight: 900; letter-spacing: 1.3px; }
+    .lm-win .lm-res { color: #4ade80; }
+    .lm-loss .lm-res { color: #f87171; }
+    .lm-score { font-size: 20px; font-weight: 900; color: #fff; font-variant-numeric: tabular-nums; }
+    .lm-opp { flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lm-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+    .lm-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .lm-v { font-size: 13.5px; font-weight: 900; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+    .lm-k { font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .lm-mvp { margin-top: 10px; display: inline-block; font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: #fde047; background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.35); }
+    .lm-bench { margin: 10px 0 0; font-size: 12px; line-height: 1.5; color: #cbd5e1; }
+    .lm-head { margin: 10px 0 0; font-size: 12px; line-height: 1.55; font-style: italic; color: #94a3b8; }
+
+    /* The recap scoreboard, at side-rail density: the two sides STACK, and every
+       seat is ONE line (champion beside the name), so ten rows fit a narrow rail. */
+    .lmb { margin-top: 12px; }
+    .lmb-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+    .lmb-tab { display: flex; align-items: baseline; gap: 5px; padding: 4px 9px; border-radius: 7px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(100, 116, 139, 0.35); font-family: inherit; cursor: pointer; }
+    .lmb-tab:hover { border-color: rgba(139, 92, 246, 0.5); }
+    .lmb-tab:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
+    .lmb-on { background: rgba(139, 92, 246, 0.14); border-color: rgba(139, 92, 246, 0.55); }
+    .lmb-tab-n { font-size: 11px; font-weight: 800; color: #cbd5e1; }
+    .lmb-on .lmb-tab-n { color: #fff; }
+    .lmb-tab-r { font-size: 10px; font-weight: 900; color: #f87171; }
+    .lmb-won .lmb-tab-r { color: #4ade80; }
+    .lmb-cap { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; margin-bottom: 7px; }
+    .lmb-dot { margin: 0 4px; color: #64748b; }
+    .lmb-side { padding: 8px 10px 6px; border-radius: 10px; background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(100, 116, 139, 0.22); border-top: 2px solid rgba(239, 68, 68, 0.45); }
+    .lmb-side + .lmb-side { margin-top: 8px; }
+    .lmb-side-win { border-top-color: rgba(34, 197, 94, 0.6); }
+    .lmb-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+    .lmb-team { flex: 1; min-width: 0; font-size: 12px; font-weight: 800; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lmb-verdict { flex-shrink: 0; font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #f87171; }
+    .lmb-side-win .lmb-verdict { color: #4ade80; }
+    .lmb-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: baseline; gap: 7px; padding: 3px 0; border-bottom: 1px solid rgba(100, 116, 139, 0.15); }
+    .lmb-row:last-child { border-bottom: none; }
+    .lmb-role { font-size: 9.5px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; color: #94a3b8; }
+    .lmb-me .lmb-role { color: #c4b5fd; }
+    .lmb-who { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+    .lmb-nm { min-width: 0; font-size: 12px; font-weight: 700; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lmb-me .lmb-nm { color: #fff; }
+    .lmb-you { flex-shrink: 0; font-size: 9px; font-weight: 900; letter-spacing: 0.6px; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; color: #ddd6fe; background: rgba(139, 92, 246, 0.22); }
+    .lmb-champ { min-width: 0; font-size: 11px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lmb-kda { font-size: 11.5px; font-weight: 800; color: #cbd5e1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .lmb-me .lmb-kda { color: #fff; }
 
     /* ===================== SIDE: SPLIT META ===================== */
-    .meta-mine {
-        display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-        padding: 9px 11px;
-        border-radius: 10px;
-        background: rgba(15, 23, 42, 0.5);
-        border-left: 2px solid #64748b;
-    }
+    .meta-mine { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 9px 12px; border-radius: 11px; background: rgba(15, 23, 42, 0.55); border-left: 3px solid #64748b; }
     .meta-mine.meta-strong { border-left-color: #4ade80; }
     .meta-mine.meta-weak { border-left-color: #f87171; }
-    .meta-mine-k { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #334155; }
-    .meta-mine-n {
-        flex: 1; min-width: 0;
-        font-size: 12px; font-weight: 800; color: #dbe5f5;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .meta-mine-t {
-        font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
-        color: #94a3b8;
-    }
+    .meta-mine-k { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .meta-mine-n { flex: 1; min-width: 0; font-size: 13px; font-weight: 800; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta-mine-t { font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #cbd5e1; }
     .meta-mine.meta-strong .meta-mine-t { color: #4ade80; }
     .meta-mine.meta-weak .meta-mine-t { color: #f87171; }
-
-    .meta-band { display: flex; align-items: baseline; gap: 9px; margin-top: 11px; }
-    .meta-k {
-        flex-shrink: 0; width: 42px;
-        font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
-    }
+    .meta-band { display: flex; align-items: baseline; gap: 9px; margin-top: 10px; }
+    .meta-k { flex-shrink: 0; width: 48px; font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }
     .meta-k.meta-strong { color: #4ade80; }
     .meta-k.meta-weak { color: #f87171; }
     .meta-list { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-    .meta-ch {
-        font-size: 9.5px; font-weight: 700; color: #8fa1c0;
-        background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.4);
-        padding: 2px 6px; border-radius: 5px;
-    }
-    .meta-ch.meta-nil { color: #475569; font-weight: 600; font-style: italic; }
-    .meta-note { display: block; margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #55688a; }
-
-    /* ===================== SIDE: OFFERS ===================== */
-    .offers-live { border-color: rgba(168, 85, 247, 0.32); }
-    .off-in { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .off-txt { min-width: 0; }
-    .off-txt .lbl { margin-bottom: 5px; }
-    .off-line { margin: 0; font-size: 11.5px; line-height: 1.5; color: #c4b5fd; font-weight: 700; }
-    .off-line.muted { color: #52658a; font-weight: 600; }
-    .off-right { display: flex; align-items: center; gap: 10px; }
-    .off-badge {
-        display: grid; place-items: center;
-        min-width: 32px; height: 32px; padding: 0 8px;
-        border-radius: 9px;
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 15px; font-weight: 800;
-        color: #c4b5fd;
-        background: rgba(139, 92, 246, 0.14);
-        border: 1px solid rgba(139, 92, 246, 0.32);
-    }
-    .off-badge.off-zero { color: #475569; background: rgba(15, 23, 42, 0.5); border-color: rgba(51, 65, 85, 0.32); }
-
-    /* ===================== SIDE: LAST MATCH ===================== */
-    .lm {
-        padding: 13px;
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.45);
-        border: 1px solid rgba(51, 65, 85, 0.3);
-    }
-    .lm-win { border-left: 3px solid #22c55e; }
-    .lm-loss { border-left: 3px solid #ef4444; }
-    .lm-top { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
-    .lm-res { font-size: 10px; font-weight: 800; letter-spacing: 1.3px; }
-    .lm-win .lm-res { color: #22c55e; }
-    .lm-loss .lm-res { color: #ef4444; }
-    .lm-score {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 18px; font-weight: 800; color: #e8eefb;
-    }
-    .lm-opp {
-        flex: 1; min-width: 0;
-        font-size: 11px; font-weight: 700; color: #6a7d9d;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .lm-stats {
-        display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 8px; margin-top: 12px;
-    }
-    .lm-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .lm-k { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #334155; }
-    .lm-v {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 12px; font-weight: 800; color: #cbd5e1;
-        overflow: hidden; text-overflow: ellipsis;
-    }
-    .lm-mvp {
-        margin-top: 10px;
-        display: inline-block;
-        font-size: 8.5px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase;
-        padding: 3px 8px; border-radius: 5px;
-        color: #eab308;
-        background: rgba(234, 179, 8, 0.12);
-        border: 1px solid rgba(234, 179, 8, 0.3);
-    }
-    .lm-bench { margin: 10px 0 0; font-size: 11px; line-height: 1.55; color: #7d6a8e; }
-    .lm-head { margin: 11px 0 0; font-size: 11px; line-height: 1.6; font-style: italic; color: #64748b; }
-
-    /* The recap scoreboard, at side-rail density. The two sides STACK instead
-       of sitting in two columns the way the result screen prints them: ten
-       names, ten champions and ten KDA lines do not fit two columns of a narrow
-       rail, and for the same reason every seat is ONE line here - champion
-       beside the name rather than under it. This is a recap, not the main
-       event; it must not push the rest of the column off a phone. */
-    .lmb { margin-top: 12px; }
-    .lmb-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
-    .lmb-tab {
-        display: flex; align-items: baseline; gap: 5px;
-        padding: 3px 8px; border-radius: 6px;
-        background: rgba(15, 23, 42, 0.55);
-        border: 1px solid rgba(51, 65, 85, 0.35);
-        font-family: inherit; cursor: pointer;
-    }
-    .lmb-tab:hover { border-color: rgba(139, 92, 246, 0.4); }
-    .lmb-tab:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
-    .lmb-on { background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.45); }
-    .lmb-tab-n { font-size: 10px; font-weight: 800; color: #7c8db0; }
-    .lmb-on .lmb-tab-n { color: #dbe4f5; }
-    .lmb-tab-r { font-size: 8.5px; font-weight: 900; letter-spacing: 0.6px; color: #f87171; }
-    .lmb-won .lmb-tab-r { color: #4ade80; }
-
-    .lmb-cap {
-        font-size: 8px; font-weight: 800; letter-spacing: 1.1px;
-        text-transform: uppercase; color: #334155; margin-bottom: 7px;
-    }
-    .lmb-dot { margin: 0 4px; color: #23304a; }
-
-    .lmb-side {
-        padding: 8px 10px 6px;
-        border-radius: 10px;
-        background: rgba(15, 23, 42, 0.45);
-        border: 1px solid rgba(51, 65, 85, 0.28);
-        border-top: 2px solid rgba(239, 68, 68, 0.35);
-    }
-    .lmb-side + .lmb-side { margin-top: 8px; }
-    .lmb-side-win { border-top-color: rgba(34, 197, 94, 0.5); }
-    .lmb-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
-    .lmb-team {
-        flex: 1; min-width: 0;
-        font-size: 10.5px; font-weight: 800; color: #b9c7de;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .lmb-verdict {
-        flex-shrink: 0;
-        font-size: 8px; font-weight: 900; letter-spacing: 1.2px;
-        text-transform: uppercase; color: #f87171;
-    }
-    .lmb-side-win .lmb-verdict { color: #4ade80; }
-
-    .lmb-row {
-        display: grid; grid-template-columns: 24px minmax(0, 1fr) auto;
-        align-items: baseline; gap: 7px;
-        padding: 3px 0;
-        border-bottom: 1px solid rgba(51, 65, 85, 0.18);
-    }
-    .lmb-row:last-child { border-bottom: none; }
-    .lmb-role {
-        font-size: 8px; font-weight: 900; letter-spacing: 0.6px;
-        text-transform: uppercase; color: #3f5069;
-    }
-    .lmb-me .lmb-role { color: #a78bfa; }
-    .lmb-who { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
-    .lmb-nm {
-        min-width: 0;
-        font-size: 10.5px; font-weight: 700; color: #b9c7de;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .lmb-me .lmb-nm { color: #e8eefb; }
-    .lmb-you {
-        flex-shrink: 0;
-        font-size: 7.5px; font-weight: 900; letter-spacing: 0.8px; text-transform: uppercase;
-        padding: 1px 4px; border-radius: 4px;
-        color: #c4b5fd; background: rgba(139, 92, 246, 0.16);
-    }
-    .lmb-champ {
-        min-width: 0;
-        font-size: 9.5px; color: #56688a;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .lmb-kda {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 10px; font-weight: 800; color: #8fa1c0; white-space: nowrap;
-    }
-    .lmb-me .lmb-kda { color: #e2e8f0; }
-
-    /* ===================== SIDE: SEASON ===================== */
-    .sn-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .sn-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-    .sn-k { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #334155; }
-    .sn-v {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 16px; font-weight: 800; color: #e2e8f0;
-    }
-    .sn-v.gold { color: #eab308; }
-    .sn-row {
-        display: flex; align-items: center; gap: 10px;
-        margin-top: 13px;
-        padding: 9px 11px;
-        border-radius: 10px;
-        background: rgba(15, 23, 42, 0.5);
-        border-left: 2px solid var(--a);
-    }
-    .sn-rank {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 12px; font-weight: 800; color: var(--a);
-        flex-shrink: 0;
-    }
-    .sn-team {
-        flex: 1; min-width: 0;
-        font-size: 11.5px; font-weight: 700; color: #dbe5f5;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .sn-rec {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 11px; font-weight: 800; color: #7b8dab;
-    }
-    .sn-note { display: block; margin-top: 8px; font-size: 10.5px; line-height: 1.55; color: #55688a; }
+    .meta-ch { font-size: 11px; font-weight: 700; color: #e2e8f0; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(100, 116, 139, 0.35); padding: 2px 7px; border-radius: 6px; }
+    .meta-ch.meta-nil { color: #94a3b8; font-weight: 600; font-style: italic; }
+    .meta-note { display: block; margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: #94a3b8; }
 
     /* ===================== SIDE: NEWS ===================== */
     .feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-    .feed-item {
-        padding: 9px 11px;
-        border-radius: 10px;
-        background: rgba(15, 23, 42, 0.42);
-        border-left: 2px solid var(--a);
-        min-width: 0;
-    }
-    .feed-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
-    .feed-type {
-        font-size: 8px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
-        color: var(--a);
-    }
-    .feed-when {
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 9px; font-weight: 700; color: #334155; white-space: nowrap;
-    }
-    .feed-txt { margin: 0; font-size: 11.5px; line-height: 1.55; color: #8fa1c0; }
+    .feed-item { padding: 9px 12px; border-radius: 11px; background: rgba(15, 23, 42, 0.5); border-left: 3px solid var(--a); min-width: 0; }
+    .feed-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+    .feed-type { font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: var(--a); }
+    .feed-when { font-size: 10.5px; font-weight: 700; color: #94a3b8; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .feed-txt { margin: 0; font-size: 12.5px; line-height: 1.5; color: #cbd5e1; }
 
     /* ===================== RESPONSIVE ===================== */
-    @media (max-width: 1000px) {
+    @media (max-width: 1240px) {
+        .hh { grid-template-columns: minmax(0, 1fr) minmax(260px, 0.9fr); }
+        .hh-stats { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .fx { grid-template-columns: minmax(0, 1fr) auto; }
+        .fx-right { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
+    }
+    @media (max-width: 1060px) {
         .hub { grid-template-columns: minmax(0, 1fr); }
     }
-    @media (max-width: 620px) {
-        .block { padding: 14px; border-radius: 14px; }
-        .fx-opp { font-size: 21px; }
-        .acts { grid-template-columns: minmax(0, 1fr); }
-        .adv-in { flex-direction: column; align-items: stretch; }
-        .advbtn { width: 100%; }
-        .lm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-        .fx-btns button { flex: 1 1 100%; }
+    @media (max-width: 760px) {
+        .hh { grid-template-columns: minmax(0, 1fr); padding: 18px; gap: 16px; }
+        .hh-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-row: auto; }
+        .fx { grid-template-columns: minmax(0, 1fr); }
+        .fx-vs { justify-content: flex-start; }
+        .fx-right { display: flex; }
     }
-    @media (max-width: 360px) {
-        .sn-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .h2h-lbl { display: none; }
+    @media (max-width: 620px) {
+        .panel { padding: 14px; border-radius: 16px; }
+        .acts { grid-template-columns: minmax(0, 1fr); }
+        .todo { grid-template-columns: minmax(0, 1fr); }
+        /* One compact row on a phone. Stacked, .adv-txt's 240px flex-basis became
+           a 240px HEIGHT and the sticky bar covered a third of the screen. */
+        .adv { flex-wrap: nowrap; gap: 10px; padding: 10px 10px 10px 14px; bottom: 8px; }
+        .adv-txt { flex: 1 1 auto; }
+        .adv-line:not(.adv-block) { display: none; }
+        .advbtn { padding: 11px 14px; font-size: 13px; }
+        .lm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .cta { padding: 14px 16px; }
+        .cta-ico { width: 40px; height: 40px; }
     }
 </style>

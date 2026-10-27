@@ -8,7 +8,8 @@
     import { currentUser } from '../../stores/auth.js';
     import { showToast } from '../../stores/toasts.js';
     import { badges } from '../../stores/badges.js';
-    import { TIER_ORDER, ALL_SPECIAL, TIER_COLORS, getEffectiveRating } from '../../utils/cards.js';
+    import { TIER_ORDER, ALL_SPECIAL, TIER_COLORS, getEffectiveRating, getDB } from '../../utils/cards.js';
+    import { teamFullName } from '../../utils/world.js';
     import { XP_PER_TIER, MAX_TIER } from '../../utils/battlepass.js';
     // The update log is deliberately NOT on this page any more — it lives on the main menu.
 
@@ -131,17 +132,76 @@
     let availableIcons = DEFAULT_ICONS;
     let availableColors = DEFAULT_COLORS;
 
+    // ── Public profile: favourite team and player ──
+    // Picked from the card database rather than typed, and published by stores/leaderboard.js
+    // (each clamped to 40 characters there). A value from before the dropdowns that matches
+    // nothing in the database is kept and offered as "(current)" so opening the editor never
+    // loses it.
+    const FAV_REGIONS = ['LCK', 'LPL', 'LEC', 'LCS', 'LCP', 'CBLOL'];
+    const FAV_ROLES = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
+    const ROLE_LABEL = { TOP: 'Top', JNG: 'Jungle', MID: 'Mid', ADC: 'Bot', SUP: 'Support' };
+    let editFavTeam = '';
+    let editFavPlayer = '';
+    let playerFilter = '';
+    let favCatalog = null;
+    function buildFavCatalog() {
+        const db = getDB();
+        if (!Array.isArray(db)) return { teams: [], players: [] };
+        const teams = new Map(), players = new Map();
+        for (const c of db) {
+            if (!c || typeof c.name !== 'string' || typeof c.team !== 'string') continue;
+            // A team belongs to the region of its most recent card outside Legacy.
+            const t = teams.get(c.team) || { name: c.team, region: null, year: -1 };
+            if (FAV_REGIONS.includes(c.region) && (c.year || 0) >= t.year) { t.region = c.region; t.year = c.year || 0; }
+            teams.set(c.team, t);
+            if (!FAV_ROLES.includes(c.role)) continue;
+            const p = players.get(c.name) || { name: c.name, roles: {}, teams: new Set(), best: 0 };
+            p.roles[c.role] = (p.roles[c.role] || 0) + 1;
+            p.teams.add(c.team);
+            p.best = Math.max(p.best, c.rating || 0);
+            players.set(c.name, p);
+        }
+        const byName = (a, b) => a.name.localeCompare(b.name);
+        return {
+            teams: [...teams.values()].map(t => ({ name: t.name, region: t.region || 'Other', full: teamFullName(t.name) })).sort(byName),
+            players: [...players.values()].map(p => ({ name: p.name, role: Object.entries(p.roles).sort((a, b) => b[1] - a[1])[0][0], teams: p.teams, best: p.best })).sort(byName),
+        };
+    }
+    $: favTeamGroups = favCatalog ? [...FAV_REGIONS, 'Other']
+        .map(r => ({ label: r === 'Other' ? 'Other' : r, teams: favCatalog.teams.filter(t => t.region === r) }))
+        .filter(g => g.teams.length) : [];
+    $: favTeamKnown = !!favCatalog && favCatalog.teams.some(t => t.name === editFavTeam);
+    $: favPlayerKnown = !!favCatalog && favCatalog.players.some(p => p.name === editFavPlayer);
+    $: favPlayerGroups = (() => {
+        if (!favCatalog) return [];
+        const q = playerFilter.trim().toLowerCase();
+        const list = q ? favCatalog.players.filter(p => p.name.toLowerCase().includes(q)) : favCatalog.players;
+        const ofTeam = editFavTeam ? list.filter(p => p.teams.has(editFavTeam)).sort((a, b) => b.best - a.best) : [];
+        const shown = new Set(ofTeam.map(p => p.name));
+        const groups = ofTeam.length ? [{ label: `${editFavTeam} players`, players: ofTeam }] : [];
+        for (const role of FAV_ROLES) {
+            const ps = list.filter(p => p.role === role && !shown.has(p.name));
+            if (ps.length) groups.push({ label: ROLE_LABEL[role], players: ps });
+        }
+        return groups;
+    })();
+    $: favPlayerCount = favPlayerGroups.reduce((n, g) => n + g.players.length, 0);
+
     function startEdit() {
         editName = $teamIdentity.name;
         editLogo = $teamIdentity.logo;
         editColor = teamColor;
+        editFavTeam = $teamIdentity.favouriteTeam || '';
+        editFavPlayer = $teamIdentity.favouritePlayer || '';
+        playerFilter = '';
+        if (!favCatalog || !favCatalog.teams.length) favCatalog = buildFavCatalog();
         availableIcons = [...new Set([...DEFAULT_ICONS, ...($teamIdentity.unlockedIcons || []), editLogo])];
         availableColors = [...new Set([...DEFAULT_COLORS, ...($teamIdentity.unlockedColors || []), editColor])];
         editing = true;
     }
     function saveEdit() {
         if (!editName.trim()) { showToast('Enter a team name.', 'error'); return; }
-        teamIdentity.update(t => ({ ...t, name: editName.trim(), logo: editLogo, color: editColor }));
+        teamIdentity.update(t => ({ ...t, name: editName.trim(), logo: editLogo, color: editColor, favouriteTeam: String(editFavTeam || '').slice(0, 40), favouritePlayer: String(editFavPlayer || '').slice(0, 40) }));
         saveGame();
         editing = false;
         showToast('Team identity updated!', 'success');
@@ -157,22 +217,22 @@
             { label: 'Complete a season split', current: $trackStats.splitsCompleted || 0, target: 1 },
             { label: 'Collect 100 cards', current: $club.length, target: 100 },
             { label: 'Win a Regional Trophy', current: $trackStats.regionalSplitWon || 0, target: 1 },
-            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 50 },
+            { label: 'Reach 50 Glory', current: $weightedTrophies, target: 50 },
             { label: 'Win 10 tournaments', current: $trackStats.tournamentsWon || 0, target: 10 },
             { label: 'Complete 5 season splits', current: $trackStats.splitsCompleted || 0, target: 5 },
             { label: 'Win a First Stand', current: $trackStats.firstStandWon || 0, target: 1 },
             { label: 'Collect 200 cards', current: $club.length, target: 200 },
-            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 100 },
+            { label: 'Reach 100 Glory', current: $weightedTrophies, target: 100 },
             { label: 'Win an MSI', current: $trackStats.msiWon || 0, target: 1 },
             { label: 'Reach Tower Floor 25', current: $trackStats.towerHighestFloor || 0, target: 25 },
             { label: 'Win a World Championship', current: $trackStats.worldsWon || 0, target: 1 },
             { label: 'Complete a Golden Road', current: $trackStats.goldenRoads || 0, target: 1 },
-            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 250 },
+            { label: 'Reach 250 Glory', current: $weightedTrophies, target: 250 },
             { label: 'Win 50 tournaments', current: $trackStats.tournamentsWon || 0, target: 50 },
             { label: 'Reach Tower Floor 50', current: $trackStats.towerHighestFloor || 0, target: 50 },
             { label: 'Collect 500 cards', current: $club.length, target: 500 },
-            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 500 },
-            { label: 'Reach  Achievement Score', current: $weightedTrophies, target: 1000 },
+            { label: 'Reach 500 Glory', current: $weightedTrophies, target: 500 },
+            { label: 'Reach 1,000 Glory', current: $weightedTrophies, target: 1000 },
         ];
         return all.filter(m => m.current < m.target).slice(0, 4);
     })();
@@ -224,6 +284,10 @@
                     <div class="hx-track"><div class="hx-fill" style="width: {xpPct}%;"></div></div>
                     <span class="hx-text">{$managerXP.toLocaleString()} / {xpNeed.toLocaleString()} XP</span>
                 </div>
+                <button class="hero-fav" on:click={startEdit} title="Your public profile">
+                    <Icon name="heart" size={11} />
+                    {#if $teamIdentity.favouriteTeam || $teamIdentity.favouritePlayer}{$teamIdentity.favouriteTeam || ''}{$teamIdentity.favouriteTeam && $teamIdentity.favouritePlayer ? ' · ' : ''}{$teamIdentity.favouritePlayer || ''}{:else}Pick a favourite team and player{/if}
+                </button>
                 {#if $currentUser}<span class="hero-user"><Icon name="user" size={11} /> {$currentUser.displayName || $currentUser.email}</span>{/if}
             </div>
         </div>
@@ -232,7 +296,7 @@
             <div class="hs"><span class="hs-ico hs-be"><Icon name="gem" size={16} /></span><span class="hs-val">{$blueEssence.toLocaleString()}</span><span class="hs-lbl">Blue Essence</span></div>
             <div class="hs"><span class="hs-ico hs-cards"><Icon name="cards" size={16} /></span><span class="hs-val">{$club.length}</span><span class="hs-lbl">Cards</span></div>
             <div class="hs"><span class="hs-ico hs-power"><Icon name="bolt" size={16} /></span><span class="hs-val">{starters.length === 5 ? avgRating : '—'}</span><span class="hs-lbl">Squad avg</span></div>
-            <div class="hs"><span class="hs-ico hs-tro"><Icon name="trophy" size={16} /></span><span class="hs-val">{$weightedTrophies}</span><span class="hs-lbl">Achievement</span></div>
+            <div class="hs"><span class="hs-ico hs-tro"><Icon name="trophy" size={16} /></span><span class="hs-val">{$weightedTrophies}</span><span class="hs-lbl">Glory</span></div>
         </div>
 
         <button class="hero-cta" on:click={() => switchTab(nextStep.tab)} use:pressFx={{ color: 'rgba(255,255,255,0.4)' }}>
@@ -427,7 +491,7 @@
             <button class="panel side-card sc-rank" on:click={() => switchTab('leaderboard')}>
                 <div class="ph"><h2 class="ph-title"><Icon name="ranking" size={15} /> Your ranking</h2></div>
                 <div class="rank-title">{prestigeTitle}</div>
-                <div class="rank-tp">Achievement Score {$weightedTrophies}</div>
+                <div class="rank-tp">Glory {$weightedTrophies}</div>
                 {#if nextTitleThreshold}
                     <div class="bar bar-gold"><div class="bar-fill" style="width: {Math.min(100, ($weightedTrophies / nextTitleThreshold) * 100)}%;"></div></div>
                     <div class="rank-next">{nextTitleThreshold - $weightedTrophies} more to <b>{getTitle(nextTitleThreshold)}</b></div>
@@ -500,6 +564,34 @@
             {/each}
         </div>
         <p class="ed-hint">More crests and colours unlock on the Battle Pass.</p>
+
+        <div class="ed-profile">
+            <div class="ed-label ed-label-top">Public profile</div>
+            <p class="ed-pnote">Shown when other managers open your club on the Ranking.</p>
+            <label class="ed-flabel" for="ed-fav-team">Favourite team</label>
+            <select id="ed-fav-team" class="input ed-select" bind:value={editFavTeam}>
+                <option value="">None</option>
+                {#if editFavTeam && !favTeamKnown}<option value={editFavTeam}>{editFavTeam} (current)</option>{/if}
+                {#each favTeamGroups as g (g.label)}
+                    <optgroup label={g.label}>
+                        {#each g.teams as t (t.name)}<option value={t.name}>{t.full ? `${t.name} · ${t.full}` : t.name}</option>{/each}
+                    </optgroup>
+                {/each}
+            </select>
+            <label class="ed-flabel" for="ed-fav-player">Favourite player</label>
+            <input class="input ed-input ed-search" type="search" placeholder="Search {favCatalog ? favCatalog.players.length.toLocaleString() : ''} players..." bind:value={playerFilter} aria-label="Search players">
+            <select id="ed-fav-player" class="input ed-select" bind:value={editFavPlayer}>
+                <option value="">None</option>
+                {#if editFavPlayer && !favPlayerKnown}<option value={editFavPlayer}>{editFavPlayer} (current)</option>{/if}
+                {#each favPlayerGroups as g (g.label)}
+                    <optgroup label={g.label}>
+                        {#each g.players as p (p.name)}<option value={p.name}>{p.name}</option>{/each}
+                    </optgroup>
+                {/each}
+            </select>
+            <span class="ed-pcount">{playerFilter.trim() ? `${favPlayerCount} match${favPlayerCount === 1 ? '' : 'es'}` : editFavTeam && favPlayerGroups[0] && favPlayerGroups[0].label.endsWith(' players') ? `${editFavTeam}'s players are listed first` : 'Pick a favourite team to list its players first'}</span>
+        </div>
+
         <div class="ed-btns">
             <button class="btn-primary" on:click={saveEdit}>Save</button>
             <button class="btn-secondary" on:click={cancelEdit}>Cancel</button>
@@ -539,6 +631,8 @@
     .hk-title { color: #fbbf24; }
     .hk-dot { color: #475569; }
     .hk-prestige { display: inline-flex; align-items: center; gap: 3px; color: #fde68a; }
+    .hero-fav { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 8px; padding: 3px 10px; border-radius: 100px; font-size: 11px; font-weight: 800; color: #f9a8d4; cursor: pointer; background: rgba(244,114,182,0.08); border: 1px solid rgba(244,114,182,0.25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hero-fav:hover { background: rgba(244,114,182,0.16); }
     .hero-name { font-size: clamp(26px, 3vw, 38px); font-weight: 900; color: #fff; letter-spacing: -0.5px; line-height: 1.05; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .hero-xp { display: flex; align-items: center; gap: 10px; margin-top: 4px; max-width: 420px; }
     .hx-track { flex: 1; height: 8px; border-radius: 8px; background: rgba(15,23,42,0.85); overflow: hidden; border: 1px solid rgba(255,255,255,0.06); }
@@ -703,8 +797,10 @@
     .soon b { color: #c4b5fd; }
 
     /* Identity editor */
-    .ov { position: fixed; inset: 0; z-index: 85; background: rgba(2,4,12,0.8); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; padding: 16px; }
-    .ed { position: relative; width: 100%; max-width: 420px; max-height: 92vh; overflow-y: auto; padding: 24px; border-radius: 22px; background: linear-gradient(170deg, #0f1428, #0a0e1a); border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent); box-shadow: 0 30px 80px rgba(0,0,0,0.6); }
+    /* The sticky header draws above this overlay (it sits in a higher stacking context), so the
+       dialog keeps clear of its ~70px instead of sliding under it on a short screen. */
+    .ov { position: fixed; inset: 0; z-index: 85; background: rgba(2,4,12,0.8); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; padding: 80px 16px 16px; }
+    .ed { position: relative; width: 100%; max-width: 420px; max-height: calc(100vh - 96px); max-height: calc(100dvh - 96px); overflow-y: auto; padding: 24px; border-radius: 22px; background: linear-gradient(170deg, #0f1428, #0a0e1a); border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent); box-shadow: 0 30px 80px rgba(0,0,0,0.6); }
     .ed-close { position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; border-radius: 10px; background: rgba(51,65,85,0.35); border: 1px solid rgba(71,85,105,0.25); color: #94a3b8; cursor: pointer; }
     .ed-title { font-size: 18px; font-weight: 900; color: #f1f5f9; margin-bottom: 14px; }
     .ed-preview { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; margin-bottom: 14px; background: radial-gradient(circle at 0% 50%, color-mix(in srgb, var(--tc) 35%, transparent), transparent 70%), rgba(15,23,42,0.6); border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent); }
@@ -721,6 +817,14 @@
     .color-opt:hover { transform: scale(1.08); }
     .color-sel { border-color: #fff !important; box-shadow: 0 0 12px rgba(255,255,255,0.25); }
     .ed-hint { font-size: 11px; color: #64748b; margin-top: 12px; }
+    .ed-profile { margin-top: 16px; padding-top: 4px; border-top: 1px solid rgba(71,85,105,0.3); }
+    .ed-label-top { margin-top: 12px; margin-bottom: 2px; }
+    .ed-pnote { font-size: 11px; color: #64748b; margin-bottom: 8px; }
+    .ed-flabel { display: block; font-size: 11px; font-weight: 800; color: #94a3b8; margin: 10px 0 5px; }
+    .ed-select { width: 100%; cursor: pointer; }
+    .ed-select option, .ed-select optgroup { background: #0f1428; color: #e2e8f0; }
+    .ed-search { margin-bottom: 6px; }
+    .ed-pcount { display: block; font-size: 10.5px; color: #64748b; margin-top: 5px; }
     .ed-btns { display: flex; gap: 8px; margin-top: 16px; }
     .ed-btns button { flex: 1; }
 

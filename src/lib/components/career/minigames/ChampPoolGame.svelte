@@ -12,6 +12,9 @@
     export let drill = null;
     export let onComplete = null;
     export let onQuit = null;
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     // ---------- tuning ----------------------------------------------------
     // `read` seconds show the board and the question with NO options and no
@@ -33,9 +36,12 @@
     // holds the OLD caps - so a four-second read is worth exactly what it was
     // worth before, and the extra seconds buy an answer rather than a bonus.
     const DIFFS = {
-        1: { picks: 10, read: 5.5, bank: 85, cap: 18.0, par: 11.0, name: 'Basic Drill', blurb: 'Ten boards and eighty-five seconds of thinking to spend on them.' },
-        2: { picks: 11, read: 4.8, bank: 80, cap: 16.0, par: 9.5,  name: 'Advanced',    blurb: 'Eleven boards, a tighter bank, scouting noise.' },
-        3: { picks: 12, read: 4.2, bank: 72, cap: 14.0, par: 8.0,  name: 'Elite',       blurb: 'Twelve boards, seventy-two seconds, pro-level drafts.' },
+        // Halved from 10/11/12 boards (a two-and-a-half-minute drill). The score is
+        // a per-board mean (endRound), so the calibration holds; the BANK is cut in
+        // the same proportion, so the seconds of thinking per board are unchanged.
+        1: { picks: 5, read: 5.5, bank: 43, cap: 18.0, par: 11.0, name: 'Basic Drill', blurb: 'Five boards and forty-three seconds of thinking to spend on them.' },
+        2: { picks: 6, read: 4.8, bank: 44, cap: 16.0, par: 9.5,  name: 'Advanced',    blurb: 'Six boards, a tighter bank, scouting noise.' },
+        3: { picks: 6, read: 4.2, bank: 36, cap: 14.0, par: 8.0,  name: 'Elite',       blurb: 'Six boards, thirty-six seconds, pro-level drafts.' },
     };
     const REVEAL_MS = 900;
 
@@ -415,6 +421,9 @@
     }
 
     function loop(ts) {
+        // Parks itself once the session is over rather than spinning on the
+        // result screen; startRound() always requests a fresh frame.
+        if (state !== 'playing') { rafId = null; lastTs = 0; return; }
         rafId = requestAnimationFrame(loop);
         if (!lastTs) { lastTs = ts; return; }
         const dt = Math.min(0.25, (ts - lastTs) / 1000);
@@ -563,6 +572,9 @@
             difficulty: dLevel,
         };
         state = 'result';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) finishSession();
     }
 
     function verdictFor(s) {
@@ -623,6 +635,9 @@
     const MARK_TEXT = { clean: 'Clean read', half: 'Playable', miss: 'Wrong call', timeout: 'Out of time' };
     $: lastResult = results.length ? results[results.length - 1] : null;
     $: scorePct = Math.round(scoreOut * 100);
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) startRound(); });
 </script>
 
 <div class="dr" class:reduce={reduceMotion}>
@@ -792,7 +807,7 @@
             </div>
 
             <div class="btnrow">
-                <button class="go" on:click={finishSession} disabled={finished} aria-label="Finish the session and bank the result">Finish Session</button>
+                <button class="go" on:click={finishSession} disabled={finished} aria-label="Finish the session and bank the result">See your gain &rarr;</button>
             </div>
         </div>
     {/if}

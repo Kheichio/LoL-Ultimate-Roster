@@ -406,7 +406,7 @@ export function rosterSlotSummary(slot) {
 
     return {
         // Titles actually won, one each — what the game calls "Trophies". `trophies` below is the
-        // weighted Achievement Score and keeps its name for slotCheck and old readers.
+        // weighted Glory and keeps its name for slotCheck and old readers.
         titles:    stat('worldsWon') + stat('msiWon') + stat('firstStandWon') + stat('regionalSplitWon'),
         season:    `Year ${seasonYear(splitNum)} · ${splitInfo(splitNum).name} split`,
         seasonLive: !!(rawSeason && (rawSeason.stage === 'league' || rawSeason.stage === 'playoffs')),

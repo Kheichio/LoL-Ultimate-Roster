@@ -11,6 +11,7 @@
     //  it is never namespaced by save slot and survives Wipe All Local Data.
     // ═══════════════════════════════════════════════════════════════════════════
     import { showAuthPanel, settingsSection, soundMuted, lightMode, toggleLightMode, matchCardView, playerPhotos, openConfirmModal } from '../../stores/ui.js';
+    import { skipMinigames } from '../../stores/career.js';
     import { currentUser, authLoading, signIn, register, signOut, cloudSave, cloudLoad, resetPassword } from '../../stores/auth.js';
     import { careerSlotCount } from '../../stores/career.js';
     import { showToast } from '../../stores/toasts.js';
@@ -336,6 +337,13 @@
                                 <button role="radio" aria-checked={$matchCardView} class:seg-on={$matchCardView} on:click={() => matchCardView.set(true)}>Cards</button>
                                 <button role="radio" aria-checked={!$matchCardView} class:seg-on={!$matchCardView} on:click={() => matchCardView.set(false)}>Compact</button>
                             </div>
+                        </div>
+                        <div class="row">
+                            <div class="row-text">
+                                <div class="row-label">Skip training minigames</div>
+                                <div class="row-desc">Ultimate Career: practice, scrims, solo queue and VOD review earn XP, and every level gives attribute points to spend in Training. Turn off to train with the minigame drills instead.</div>
+                            </div>
+                            <button class="sw" role="switch" aria-checked={$skipMinigames} aria-label="Skip training minigames" class:sw-on={$skipMinigames} on:click={() => skipMinigames.set(!$skipMinigames)}><span class="knob"></span></button>
                         </div>
                     </div>
 

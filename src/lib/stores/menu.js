@@ -14,10 +14,21 @@ import { activeSlot } from '../utils/storage.js';
 //   'studio'  → the Studio8Heads page (who we are, our games, partners)
 //   'game'    → Ultimate Roster (App renders the normal Header + TabContent shell)
 //   'career'  → Ultimate Career (App renders CareerShell instead)
+//   'manager' → Ultimate Manager (App renders ManagerShell instead)
 export const menuScreen = writable('menu');
 
-// 'roster' | 'career' | null — which gamemode the player picked.
+// 'roster' | 'career' | 'manager' | null — which gamemode the player picked.
 export const selectedMode = writable(null);
+
+/** The menuScreen a playable gamemode lives on. */
+export function screenForMode(modeId) {
+    return modeId === 'career' ? 'career' : modeId === 'manager' ? 'manager' : 'game';
+}
+
+/** The storage slot family a gamemode saves into (storage.js). */
+export function familyForMode(modeId) {
+    return modeId === 'career' ? 'career' : modeId === 'manager' ? 'manager' : 'roster';
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 //  BOOT INTENT
@@ -43,12 +54,12 @@ export function takeBootIntent() {
         v = sessionStorage.getItem(BOOT_KEY);
         sessionStorage.removeItem(BOOT_KEY);
     } catch (e) { return null; }
-    return v === 'roster' || v === 'career' ? v : null;
+    return v === 'roster' || v === 'career' || v === 'manager' ? v : null;
 }
 
 /** Which slot each gamemode is currently pointed at. */
 export function currentSlot(modeId) {
-    return activeSlot(modeId === 'career' ? 'career' : 'roster');
+    return activeSlot(familyForMode(modeId));
 }
 
 export const GAMEMODES = [
@@ -68,6 +79,16 @@ export const GAMEMODES = [
         tagline: 'Create · Train · Ascend',
         desc: 'Create a pro player from nothing. Pick a role and a region, grind out of the academy, earn your starting spot, and chase a Hall of Legends career.',
         accent: '#8b5cf6',
+        available: true,
+    },
+    {
+        id: 'manager',
+        name: 'Ultimate Manager',
+        // Run an org from the front office: ManagerShell, saves under `lurm_` (storage.js).
+        // Inspired by the manager career in EA FC / FIFA.
+        tagline: 'Sign · Scout · Manage',
+        desc: 'Take charge of a real org in 2013, 2017, 2020, 2023 or 2026. Set the lineup and tactics, call the draft, buy and sell players, and answer to a board that expects trophies.',
+        accent: '#10b981',
         available: true,
     },
 ];

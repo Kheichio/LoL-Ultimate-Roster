@@ -169,7 +169,7 @@
             <div class="p-head">
                 <span class="p-ico" style="--c: {currentTitle.color};"><Icon name="medal" size={15} /></span>
                 <span class="p-title">Manager title</span>
-                <span class="p-note">Achievement Score {$weightedTrophies}</span>
+                <span class="p-note">Glory {$weightedTrophies}</span>
             </div>
             <div class="tt-now">
                 <span class="tt-name" style="color: {currentTitle.color};">{currentTitle.title}</span>

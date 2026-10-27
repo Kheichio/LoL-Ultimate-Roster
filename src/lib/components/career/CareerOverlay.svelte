@@ -595,6 +595,30 @@
         if (o.promoted) push('Promotion', 'Promoted to the main roster.', '#22c55e');
         if (typeof o.transfer === 'string') push('Transfer', o.transfer, '#a855f7');
 
+        // The club's brief, as settled by engine.settleBrief(). Optional: a free
+        // agent's split and every save from before briefs existed carry none.
+        let brief = null;
+        const b = o.brief && typeof o.brief === 'object' ? o.brief : null;
+        if (b && Array.isArray(b.items) && b.items.some(i => i && typeof i === 'object' && typeof i.title === 'string' && i.title)) {
+            brief = {
+                items: b.items
+                    .filter(i => i && typeof i === 'object' && typeof i.title === 'string' && i.title)
+                    .map((i, idx) => ({
+                        key: String(i.id || idx),
+                        title: i.title,
+                        detail: typeof i.detail === 'string' ? i.detail : '',
+                        state: typeof i.state === 'string' ? i.state : 'unjudged',
+                        stretch: !!i.stretch,
+                        bonus: Math.max(0, Math.round(num(i.bonus, 0))),
+                    })),
+                met: Math.max(0, Math.round(num(b.met, 0))),
+                total: Math.max(0, Math.round(num(b.total, 0))),
+                gold: Math.max(0, Math.round(num(b.gold, 0))),
+                morale: Math.round(num(b.morale, 0)),
+                sweep: !!b.sweep,
+            };
+        }
+
         return {
             year, splitId,
             splitName: SPLIT_NAME[splitId] || (splitId ? splitId.charAt(0).toUpperCase() + splitId.slice(1) : 'Split'),
@@ -603,8 +627,11 @@
             teamAccent: o.teamAccent || (team ? team.accent : '#64748b'),
             awards,
             notes,
+            brief,
         };
     }
+    const BRIEF_MARK = { met: '✓', failed: '✕', unjudged: '–', missed: '–' };
+    const BRIEF_TONE = { met: '#22c55e', failed: '#ef4444', unjudged: '#64748b', missed: '#64748b' };
 </script>
 
 <div class="co-over" style="--ac:{accent}">
@@ -1072,6 +1099,32 @@
                         {/if}
                     </div>
                 </div>
+
+                {#if season.brief}
+                    <p class="co-lbl">Club brief &middot; {season.brief.met} of {season.brief.total} met{season.brief.sweep ? ' — clean sweep' : ''}</p>
+                    <div class="co-brief">
+                        {#each season.brief.items as it (it.key)}
+                            <div class="co-brief-row" style="--t:{BRIEF_TONE[it.state] || '#64748b'}">
+                                <span class="co-brief-mark" aria-hidden="true">{BRIEF_MARK[it.state] || '–'}</span>
+                                <span class="co-brief-main">
+                                    <span class="co-brief-t">{it.title}{#if it.stretch}<span class="co-brief-opt">stretch</span>{/if}</span>
+                                    {#if it.detail}<span class="co-brief-d">{it.detail}</span>{/if}
+                                </span>
+                                {#if it.state === 'met' && it.bonus > 0}
+                                    <span class="co-brief-g">+{fmtGold(it.bonus)}</span>
+                                {/if}
+                            </div>
+                        {/each}
+                        {#if season.brief.gold > 0 || season.brief.morale !== 0}
+                            <div class="co-brief-sum">
+                                {#if season.brief.gold > 0}<span class="co-brief-g">+{fmtGold(season.brief.gold)} gold</span>{/if}
+                                {#if season.brief.morale !== 0}
+                                    <span style="color:{season.brief.morale > 0 ? '#22c55e' : '#f87171'}">{season.brief.morale > 0 ? '+' : ''}{season.brief.morale} morale</span>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
 
                 <p class="co-lbl">Awards</p>
                 {#if season.awards.length}
@@ -1720,6 +1773,26 @@
     .co-total-l { font-size: 9.5px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: #78716c; }
 
     /* ============ SEASON NOTES ============ */
+    /* Season review: the club's brief, one row per objective. */
+    .co-brief { display: flex; flex-direction: column; gap: 6px; }
+    .co-brief-row {
+        display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 11px;
+        background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(51, 65, 85, 0.28); border-left: 3px solid var(--t);
+    }
+    .co-brief-mark {
+        flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+        font-size: 12px; font-weight: 900; color: var(--t); background: color-mix(in srgb, var(--t) 14%, transparent);
+    }
+    .co-brief-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .co-brief-t { font-size: 12.5px; font-weight: 800; color: #e2e8f0; }
+    .co-brief-opt {
+        margin-left: 7px; font-size: 8px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+        padding: 2px 6px; border-radius: 4px; color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.4);
+    }
+    .co-brief-d { font-size: 11px; color: #6a7d9d; }
+    .co-brief-g { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; font-weight: 800; color: #fbbf24; }
+    .co-brief-sum { display: flex; justify-content: flex-end; gap: 14px; padding: 2px 4px 0; font-size: 11px; font-weight: 800; }
+
     .co-notes { display: flex; flex-direction: column; gap: 8px; }
     .co-note {
         display: flex; flex-direction: column; gap: 4px; padding: 12px 13px; border-radius: 12px;

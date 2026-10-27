@@ -834,13 +834,13 @@
             {#if mine}
             <p class="note">
                 Weights below are for {role.name}. The ghosted part of each bar is your ceiling &#8212;
-                no drill ever pushes past it. Moving the ceiling itself takes a breakthrough split,
+                no training ever pushes past it. Moving the ceiling itself takes a breakthrough split,
                 the Evergreen perk, or a performance camp.
             </p>
             {:else}
             <p class="note">
                 Weights below are for {role.name}. The ghosted part of each bar is the ceiling {whom} was
-                born with &#8212; no drill ever pushes past it. Moving the ceiling itself takes a breakthrough
+                born with &#8212; no training ever pushes past it. Moving the ceiling itself takes a breakthrough
                 split, the Evergreen perk, or a performance camp.
             </p>
             {/if}
@@ -863,10 +863,10 @@
                     <p class="peak-note">
                         {#if peakDrop > 0 && mine}
                             {peakDrop} overall off your best. Attributes go back when a split goes
-                            badly and the drills stop &#8212; training an attribute is what protects it.
+                            badly and the training stops &#8212; training an attribute is what protects it.
                         {:else if peakDrop > 0}
                             {peakDrop} overall off {whom} at their best. Attributes go back when a
-                            split goes badly and the drills stop.
+                            split goes badly and the training stops.
                         {:else if mine}
                             This is the best you have ever rated. Nothing has been given back yet.
                         {:else}

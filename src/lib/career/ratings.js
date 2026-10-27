@@ -170,12 +170,29 @@ export function attrCeiling(player, key) {
     return clamp(pot, ATTR_MIN, ATTR_MAX);
 }
 
-/** Environment cap: unsigned players stall out at UNSIGNED_SOFT_CAP.
+/** Tier 3, the open circuit. Number() because a rotted save carries it as a string. */
+export function isAmateurTier(tier) {
+    return Number(tier) === 3;
+}
+
+/** The seat a new pre-comp player gets at the amateur side they pick. A side
+ *  far stronger than you plays you in rotation; anything closer starts you.
+ *  Shared by createCareer and the creator's team step, so the screen and the
+ *  career can never disagree about what the pick means. */
+export const AMATEUR_ROTATION_GAP = 14;
+export function amateurStartingStatus(ovr, clubStrength) {
+    return (Number(clubStrength) || 0) - (Number(ovr) || 0) > AMATEUR_ROTATION_GAP ? 'rotation' : 'starter';
+}
+
+/** Environment cap: unsigned and amateur players stall out at UNSIGNED_SOFT_CAP.
  *  `player.softCap` is written when the Self-Made perk is bought, which is what
  *  that perk always claimed to do and never did. */
 export function environmentCap(player) {
     if (!player) return ATTR_MAX;
-    if (player.clubId) return ATTR_MAX;
+    // An AMATEUR side (tier 3) is not a professional environment either: every
+    // pre-comp career now starts on one, and lifting the cap there would have
+    // turned "pick a team at creation" into "skip the whole pre-comp grind".
+    if (player.clubId && !isAmateurTier(player.clubTier)) return ATTR_MAX;
     const own = Number(player.softCap);
     return clamp(Number.isFinite(own) && own > 0 ? own : UNSIGNED_SOFT_CAP, ATTR_MIN, ATTR_MAX);
 }

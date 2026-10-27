@@ -53,6 +53,49 @@ for (let s = 1; s <= 120; s += 7) {
     ok(t.length === 9 && t.every(x => x.avgRating > 0), `split ${s}: builds without hanging`);
 }
 
+// ── Scaling to your Power ──
+//  The bands are minimums on top of the year curve, so they are checked on an early split
+//  (split 1: the year curve alone gives no HARD and no BOSS side at all).
+{
+    ok(L.powerBand(89) === null && L.powerBand(0) === null, 'under 90 Power there is no band: the calendar alone decides');
+    ok(L.powerBand(90).min === 90 && L.powerBand(100).min === 100 && L.powerBand(110).min === 110 && L.powerBand(130).min === 110, 'bands at 90 / 100 / 110');
+    const count = (teams, tag) => teams.filter(t => t.tag === tag).length;
+    const runs = { 85: [], 95: [], 105: [], 115: [] };
+    for (const p of Object.keys(runs)) for (let i = 0; i < 40; i++) runs[p].push(L.buildCpuTeams(db, 1, rng, L.MATCHDAYS, undefined, Number(p)));
+    const mean = (list, f) => list.reduce((s, t) => s + f(t), 0) / list.length;
+    // Under 90: split 1 is exactly what it always was.
+    ok(runs[85].every(t => count(t, 'HARD') === 0 && count(t, 'BOSS') === 0), '85 Power, split 1: no HARD or BOSS side (unchanged)');
+    // 90-99: a few HARD sides, no BOSS.
+    ok(runs[95].every(t => count(t, 'HARD') >= 2 && count(t, 'HARD') <= 3 && count(t, 'BOSS') === 0), '95 Power: 2-3 HARD sides and no BOSS');
+    // 100-109: more HARD, a BOSS or two.
+    ok(runs[105].every(t => count(t, 'HARD') >= 4 && count(t, 'BOSS') >= 1 && count(t, 'BOSS') <= 2), '105 Power: 4+ HARD sides and 1-2 BOSSes');
+    // 110+: mostly HARD, more BOSSes.
+    ok(runs[115].every(t => count(t, 'HARD') >= 5 && count(t, 'BOSS') >= 2 && count(t, 'HARD') + count(t, 'BOSS') >= 7), '115 Power: mostly HARD sides and 2+ BOSSes');
+    // The first matchday is never a wall, at any Power.
+    ok(Object.values(runs).every(list => list.every(t => !t[0].tag)), 'matchday 1 is always an ordinary side');
+    // Every side is still a full five, and the tags sit where they should.
+    ok(Object.values(runs).every(list => list.every(t => t.length === 9 && t.every(x => Object.keys(x.cards).length === 5))), 'every scaled league has nine full fives');
+    // HARD sides play a few points under you; BOSS sides at or above you.
+    for (const p of [95, 105, 115]) {
+        const hard = runs[p].flatMap(t => t.filter(x => x.tag === 'HARD'));
+        ok(hard.every(x => x.avgRating >= p - 9), `${p} Power: every HARD side plays at least ${p - 9} (lowest ${Math.min(...hard.map(x => x.avgRating))})`);
+    }
+    for (const p of [105, 115]) {
+        const boss = runs[p].flatMap(t => t.filter(x => x.tag === 'BOSS'));
+        ok(boss.every(x => x.avgRating >= Math.max(110, p)), `${p} Power: every BOSS side plays at ${Math.max(110, p)}+ (lowest ${Math.min(...boss.map(x => x.avgRating))})`);
+    }
+    // The ordinary sides rise with you: no more Bronze rosters for a 115-Power club.
+    const ord = (p) => mean(runs[p], t => mean(t.filter(x => !x.tag), x => x.avgRating));
+    console.log(`  ordinary side mean rating at split 1: 85 Power ${ord(85).toFixed(1)}, 95 Power ${ord(95).toFixed(1)}, 105 Power ${ord(105).toFixed(1)}, 115 Power ${ord(115).toFixed(1)}`);
+    ok(ord(95) > ord(85) && ord(105) > ord(95) && ord(115) >= ord(105), 'ordinary sides get stronger as your Power rises');
+    ok(ord(115) >= 85, `a 115-Power club meets ordinary sides of 85+ (got ${ord(115).toFixed(1)})`);
+    // A late split under a band keeps the year curve's own extra sides and never hangs.
+    for (let s = 1; s <= 120; s += 11) {
+        const t = L.buildCpuTeams(db, s, rng, L.MATCHDAYS, undefined, 118);
+        ok(t.length === 9 && t.every(x => x.avgRating > 0) && !t[0].tag, `split ${s} at 118 Power: builds, opens on an ordinary side`);
+    }
+}
+
 // ── A full league ──
 for (let r = 0; r < 9; r++) lg = L.recordMyMatch(lg, r, r % 3 === 0 ? 1 : 3, r % 3 === 0 ? 3 : 2, rng);
 ok(L.myPlayed(lg) === 9, 'you played 9');

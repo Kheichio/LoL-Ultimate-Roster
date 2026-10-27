@@ -11,6 +11,9 @@
     export let drill = null;        // { id, attr, name, desc }
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     const ACCENT = '#94a3b8';
     const ICON = '\u{1F4D6}';
@@ -416,9 +419,12 @@
     // It must stay clear of n * (read + qms + fb) or a slow player is cut off
     // early -- and unanswered questions count as wrong.
     const CONFIG = {
-        1: { n: 10, read: 6000, qms: 18000, fb: 2600, session: 300000, name: 'Basic Drill' },
-        2: { n: 12, read: 5200, qms: 15000, fb: 2300, session: 300000, name: 'Advanced' },
-        3: { n: 14, read: 4500, qms: 12000, fb: 2000, session: 300000, name: 'Elite' },
+        // n was 10/12/14. One question per category (buildRound draws evenly over
+        // the five) is the floor, and accuracy is a mean, so a shorter round keeps
+        // its calibration.
+        1: { n: 5, read: 6000, qms: 18000, fb: 2600, session: 300000, name: 'Basic Drill' },
+        2: { n: 6, read: 5200, qms: 15000, fb: 2300, session: 300000, name: 'Advanced' },
+        3: { n: 7, read: 4500, qms: 12000, fb: 2000, session: 300000, name: 'Elite' },
     };
     $: diffLevel = Math.max(1, Math.min(3, Math.round(Number(difficulty) || 1)));
     $: cfg = CONFIG[diffLevel];
@@ -656,6 +662,9 @@
         score01 = Math.max(0, Math.min(1, Math.round(raw * 1000) / 1000));
         verdict = verdictFor(score01);
         phase = 'result';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) handleFinish();
     }
 
     function handleFinish() {
@@ -757,6 +766,9 @@
         ? drill.desc
         : 'Patch literacy, item math, powerspikes, and what the meta is about to become.';
     $: qSeconds = (cfg.qms / 1000).toFixed(cfg.qms % 1000 ? 1 : 0);
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) start(); });
 </script>
 
 <svelte:window on:keydown={handleKey} />
@@ -969,7 +981,7 @@
 
             <div class="actions">
                 <button class="btn go" type="button" on:click={handleFinish}
-                    aria-label="Finish the session and bank the result">Finish Session</button>
+                    aria-label="Finish the session and bank the result">See your gain &rarr;</button>
             </div>
         </div>
     {/if}

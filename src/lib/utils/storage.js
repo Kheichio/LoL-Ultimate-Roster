@@ -5,10 +5,10 @@
 //  which is why the save-slot system lives here rather than in each store: one
 //  resolver namespaces every key at once and no caller has to know slots exist.
 //
-//  Two independent slot families, because the two gamemodes already share
-//  nothing:
-//    roster  — Ultimate Roster,  keys prefixed `lur_`
-//    career  — Ultimate Career,  keys prefixed `lurc_`
+//  Three independent slot families, because the gamemodes share nothing:
+//    roster   — Ultimate Roster,  keys prefixed `lur_`
+//    career   — Ultimate Career,  keys prefixed `lurc_`
+//    manager  — Ultimate Manager, keys prefixed `lurm_`
 //
 //  SLOT 1 USES THE BARE KEY. That is deliberate: every save that existed before
 //  slots shipped is already slot 1, so nobody's club or career needs migrating
@@ -18,13 +18,18 @@
 //  never namespaced — a player who switches slot should not lose their theme and
 //  get their audio unmuted. A new setting belongs here too.
 
-const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos']);
+const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos', 'lur_drill_briefs', 'lur_career_skip_minigames']);
 
 // Slot bookkeeping lives under its own prefix so it can never be namespaced by
-// its own resolver (`lurmeta_` matches neither `lur_` nor `lurc_`).
-const META_ROSTER_SLOT = 'lurmeta_roster_slot';
-const META_CAREER_SLOT = 'lurmeta_career_slot';
+// its own resolver (`lurmeta_` matches none of `lur_`, `lurc_`, `lurm_`).
+const META_SLOT = {
+    roster: 'lurmeta_roster_slot',
+    career: 'lurmeta_career_slot',
+    manager: 'lurmeta_manager_slot',
+};
 const META_KEY_INDEX   = 'lurmeta_key_index';
+export const SLOT_FAMILIES = ['roster', 'career', 'manager'];
+const isFamily = (f) => SLOT_FAMILIES.includes(f);
 
 // A FOURTH SLOT IS A TWO-STAGE DEPLOY. firestore.rules proves ownership of a
 // career-board entry by rebuilding `uid + '__1'`, `'__2'` and `'__3'` literally
@@ -64,18 +69,20 @@ export function clampSlot(n) {
 export function familyOf(key) {
     const k = String(key == null ? '' : key);
     if (DEVICE_KEYS.has(k)) return null;
-    if (k.startsWith('lurc_')) return 'career';   // must be tested before `lur_`
+    if (k.startsWith('lurc_')) return 'career';    // both must be tested before `lur_`
+    if (k.startsWith('lurm_')) return 'manager';
     if (k.startsWith('lur_')) return 'roster';
     return null;
 }
 
 let _slots = {
-    roster: clampSlot(rawGet(META_ROSTER_SLOT)),
-    career: clampSlot(rawGet(META_CAREER_SLOT)),
+    roster: clampSlot(rawGet(META_SLOT.roster)),
+    career: clampSlot(rawGet(META_SLOT.career)),
+    manager: clampSlot(rawGet(META_SLOT.manager)),
 };
 
 export function activeSlot(family) {
-    return family === 'career' || family === 'roster' ? _slots[family] : 1;
+    return isFamily(family) ? _slots[family] : 1;
 }
 
 /**
@@ -83,11 +90,11 @@ export function activeSlot(family) {
  * changed — callers use that to decide whether a reload is needed.
  */
 export function setActiveSlot(family, slot) {
-    if (family !== 'career' && family !== 'roster') return false;
+    if (!isFamily(family)) return false;
     const next = clampSlot(slot);
     if (_slots[family] === next) return false;
     _slots[family] = next;
-    rawSet(family === 'career' ? META_CAREER_SLOT : META_ROSTER_SLOT, String(next));
+    rawSet(META_SLOT[family], String(next));
     return true;
 }
 
@@ -207,12 +214,16 @@ function keysForFamily(family) {
 
 /** Erase one slot of one gamemode. Nothing else is touched. */
 export function clearSlot(family, slot) {
-    if (family !== 'career' && family !== 'roster') return;
+    if (!isFamily(family)) return;
     const n = clampSlot(slot);
     for (const key of keysForFamily(family)) rawRemove(resolveKey(key, n));
 }
 
 export function slotHasData(family, slot) {
+    if (family === 'manager') {
+        const m = loadFromSlot('lurm_manager', slot);
+        return !!(m && m.created);
+    }
     const probe = family === 'career' ? 'lurc_career' : 'lur_club';
     const v = loadFromSlot(probe, slot);
     if (family === 'career') return !!(v && v.created);
@@ -228,7 +239,7 @@ export function slotHasData(family, slot) {
  * theme, their audio setting and the career save the copy never mentioned.
  */
 export function clearStorage() {
-    for (const family of ['roster', 'career']) {
+    for (const family of SLOT_FAMILIES) {
         for (const key of keysForFamily(family)) {
             for (const slot of SLOT_IDS) rawRemove(resolveKey(key, slot));
         }

@@ -53,10 +53,10 @@ export function fmtNum(v) {
 }
 
 // `trophies` is the WEIGHTED score (stores/game.js weightedTrophies) and keeps its Firestore field
-// name — firestore.rules requires a field called `trophies` — but it is shown as "Achievement
-// Score". "Trophies" now means titles actually won, one each: the `titles` field.
+// name — firestore.rules requires a field called `trophies` — but it is shown as "Glory" (it was
+// "Achievement Score" before 1.8.7). "Trophies" means titles actually won, one each: `titles`.
 export const LB_COLUMNS = [
-    { key: 'trophies',        label: 'Achievement Score', icon: 'medal', color: '#fbbf24', hint: 'A weighted score of everything won: Worlds 6, MSI 4, First Stand 2, domestic title 1, Golden Road 10. It decides your manager title.' },
+    { key: 'trophies',        label: 'Glory', icon: 'medal', color: '#fbbf24', hint: 'A weighted score of everything won: Worlds 6, MSI 4, First Stand 2, domestic title 1, Golden Road 10. It decides your manager title.' },
     { key: 'titles',          label: 'Trophies',     icon: 'trophy',   color: '#facc15', hint: 'Titles actually won, one each: Worlds, MSI, First Stand and domestic Regional Trophies' },
     { key: 'totalPower',      label: 'Power',        icon: 'bolt',     color: '#34d399', hint: 'Squad power, the same number the Squad page shows' },
     { key: 'goldenRoads',     label: 'Golden Road',  icon: 'crown',    color: '#eab308', hint: 'Golden Roads completed, with each manager\'s road for the current year' },

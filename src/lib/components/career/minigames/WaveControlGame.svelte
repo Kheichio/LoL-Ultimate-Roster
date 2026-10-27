@@ -33,6 +33,9 @@
     export let drill = null;        // { id, attr, name, desc }
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     // ASCII-only source is a repo rule (tools/careerRender.mjs) and PowerShell
     // has corrupted literal glyphs in this project before. Escapes only.
@@ -760,6 +763,9 @@
         liveMsg = 'Session over. ' + Math.round(score * 100) + ' out of 100. ' + label + '.';
         resultAt = nowMs();
         view = 'result';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) done();
     }
 
     function done() {
@@ -805,6 +811,9 @@
                 : 'Hold the wave. Last hit only and add it to the push, worth about ' + r0(previewHold)
                   + ' CS if you crash next beat.';
     $: crashAria = 'Crash the push into their tower now for about ' + r0(previewCrash) + ' CS.';
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) start(); });
 </script>
 
 <section class="wc" class:rm={reduceMotion}>
@@ -966,7 +975,7 @@
             <p class="wc-coach">{res.coach}</p>
 
             <button type="button" class="wc-btn wc-btn-go wc-done"
-                    aria-label="Finish the session and bank the result" on:click={done}>Finish Session</button>
+                    aria-label="Finish the session and bank the result" on:click={done}>See your gain &rarr;</button>
         </div>
     {/if}
 

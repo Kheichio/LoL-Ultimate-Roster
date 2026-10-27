@@ -4,6 +4,7 @@
     import ToastContainer from './lib/components/layout/ToastContainer.svelte';
     import MainMenu from './lib/components/layout/MainMenu.svelte';
     import CareerShell from './lib/components/career/CareerShell.svelte';
+    import ManagerShell from './lib/components/manager/ManagerShell.svelte';
     import ConfirmModal from './lib/components/modals/ConfirmModal.svelte';
     import CardInspectModal from './lib/components/modals/CardInspectModal.svelte';
     import AuthPanel from './lib/components/modals/AuthPanel.svelte';
@@ -46,6 +47,8 @@
      entirely rather than sitting inside the roster game. -->
 {#if $menuScreen === 'career'}
     <CareerShell />
+{:else if $menuScreen === 'manager'}
+    <ManagerShell />
 {:else if $menuScreen !== 'game'}
     <MainMenu />
 {/if}
@@ -56,7 +59,7 @@
 <AuthPanel />
 
 {#if $menuScreen === 'game'}
-    <div class="version-badge">Beta 1.8.1 Public Build</div>
+    <div class="version-badge">Beta 1.8.10 Public Build</div>
 {/if}
 
 <style>

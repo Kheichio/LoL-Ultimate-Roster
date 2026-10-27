@@ -18,6 +18,9 @@
     export let drill = null;        // { id, attr, name, desc }
     export let onComplete = null;   // (score01, meta) => void
     export let onQuit = null;       // () => void
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     // ---------------------------------------------------------------
     //  TUNING
@@ -27,9 +30,11 @@
     const DIFFS = {
         // scan = board visible, targets locked, no clock. Skippable with Space.
         //        The reaction window (limit) only opens once it ends.
-        1: { rounds: 9,  scan: 4000, limit: 3400, reveal: 1000, minRound: 2900, name: 'Basic Drill' },
-        2: { rounds: 10, scan: 3300, limit: 3000, reveal: 950,  minRound: 2500, name: 'Advanced' },
-        3: { rounds: 11, scan: 2700, limit: 2500, reveal: 850,  minRound: 2250, name: 'Elite' },
+        // rounds was 9/10/11; the score is a per-fight mean (finishRun), so a
+        // shorter session keeps its calibration.
+        1: { rounds: 6, scan: 4000, limit: 3400, reveal: 1000, minRound: 2900, name: 'Basic Drill' },
+        2: { rounds: 7, scan: 3300, limit: 3000, reveal: 950,  minRound: 2500, name: 'Advanced' },
+        3: { rounds: 7, scan: 2700, limit: 2500, reveal: 850,  minRound: 2250, name: 'Elite' },
     };
     $: diff = DIFFS[difficulty] ? difficulty : 1;
     $: CFG = DIFFS[diff];
@@ -501,6 +506,9 @@
             game: 'focus',
         };
         view = 'done';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) handleFinish();
     }
 
     function handleStart() { startRun(); }
@@ -606,6 +614,9 @@
         if (r.credit > 0.01) return { text: 'THIRD CHOICE', tone: 'mid' };
         return { text: 'WASTED ROTATION', tone: 'bad' };
     }
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) handleStart(); });
 </script>
 
 <svelte:window on:keydown={handleKey} />
@@ -814,7 +825,7 @@
             {/if}
 
             <div class="actions">
-                <button class="btn go wide" on:click={handleFinish} aria-label="Finish the session and bank the result">Finish Session</button>
+                <button class="btn go wide" on:click={handleFinish} aria-label="Finish the session and bank the result">See your gain &rarr;</button>
             </div>
         </div>
     {/if}

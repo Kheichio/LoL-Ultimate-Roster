@@ -131,6 +131,7 @@ const S = await load('lib/utils/storage.js');
 const K = await load('lib/career/constants.js');
 const GAME = await load('lib/stores/game.js');
 const CAREER = await load('lib/stores/career.js');
+const MANAGER = await load('lib/stores/manager.js');
 
 function readStore(s) { let out; const un = s.subscribe(v => { out = v; }); un(); return out; }
 
@@ -191,9 +192,13 @@ eq('career slot 3 is namespaced', S.resolveKey('lurc_career', 3), 'lurc_career@3
 
 eq('lurc_ is career, not roster', S.familyOf('lurc_career'), 'career',
     '"lurc_" starts with "lur", so it must be tested first or career saves land in the roster family.');
+eq('lurm_ is manager, not roster', S.familyOf('lurm_manager'), 'manager',
+    '"lurm_" starts with "lur" too: tested after roster it would put manager saves in the roster family.');
 eq('lur_ is roster', S.familyOf('lur_club'), 'roster');
+eq('manager slot 1 is the bare key', S.resolveKey('lurm_manager', 1), 'lurm_manager');
+eq('manager slot 2 is namespaced', S.resolveKey('lurm_manager', 2), 'lurm_manager@2');
 
-for (const k of ['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos']) {
+for (const k of ['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos', 'lur_drill_briefs', 'lur_career_skip_minigames']) {
     eq('device pref ' + k + ' has no family', S.familyOf(k), null,
         'Namespacing a device preference resets the theme and unmutes the game on every slot switch.');
     eq('device pref ' + k + ' is never namespaced', S.resolveKey(k, 3), k);
@@ -225,11 +230,15 @@ eq('loadFromSlot reads another slot', S.loadFromSlot('lur_be', 3), 3333,
 eq('loadFromSlot did not switch the active slot', S.activeSlot('roster'), 2,
     'A picker that switched slot to draw a card would strand the save it left.');
 
-// The two families move independently.
+// The families move independently.
 S.setActiveSlot('career', 3);
 eq('career slot moved', S.activeSlot('career'), 3);
 eq('roster slot did not follow it', S.activeSlot('roster'), 2,
-    'The two gamemodes share no state; their slots must not either.');
+    'The gamemodes share no state; their slots must not either.');
+S.setActiveSlot('manager', 2);
+eq('manager slot moved', S.activeSlot('manager'), 2);
+eq('career slot did not follow the manager one', S.activeSlot('career'), 3);
+S.setActiveSlot('manager', 1);
 
 // Device prefs are shared across every slot.
 S.setActiveSlot('roster', 1);
@@ -269,11 +278,16 @@ section('the wipe button');
 //  mentioned and the player's theme.
 S.setActiveSlot('roster', 1);
 S.saveToStorage('lur_light_mode', true);
+S.setActiveSlot('manager', 1);
+S.saveToStorage('lurm_manager', { created: true, tag: 'manager-one' });
+truthy('a manager save exists before the wipe', S.slotHasData('manager', 1));
 S.clearStorage();
 
 eq('wipe cleared roster slot 1', S.loadFromSlot('lur_be', 1), null);
 eq('wipe cleared roster slot 2', S.loadFromSlot('lur_be', 2), null);
 eq('wipe cleared career slot 1', S.loadFromSlot('lurc_career', 1), null);
+eq('wipe cleared manager slots', S.loadFromSlot('lurm_manager', 1), null,
+    'clearStorage walks every slot family, including Ultimate Manager.');
 eq('wipe kept the theme', S.loadFromStorage('lur_light_mode'), true,
     'clearStorage is "wipe my game", not "wipe my browser".');
 
@@ -320,6 +334,61 @@ eq('careerSlotSummary on an empty slot is null', CAREER.careerSlotSummary(3), nu
 
 eq('careerSaveKey is the logical key', CAREER.careerSaveKey(), 'lurc_career',
     'tools/careerRender.mjs asks for this rather than hard-coding it.');
+
+// ---------------------------------------------------------------------------
+section('manager slots end to end');
+// ---------------------------------------------------------------------------
+//  Ultimate Manager switches slot in place like career: the shell remounts and
+//  initManager() reads the active slot. Same guard too: a store that holds
+//  nothing must never be written over a save.
+function makeManager(name, year) {
+    const world = MANAGER.previewManagerWorld(year, 11);
+    const teamId = Object.values(world.teams).find(t => t.region === 'LEC' && t.tier === 1).id;
+    return MANAGER.createManager(world, { name, teamId, startYear: year, seed: 11 });
+}
+S.setActiveSlot('manager', 1);
+makeManager('SlotOneBoss', 2017);
+MANAGER.flushManager();
+S.setActiveSlot('manager', 2);
+const mBlank = MANAGER.initManager();
+eq('a fresh manager slot loads empty', mBlank, null, 'Switching slot must load the new slot, not carry the old one.');
+makeManager('SlotTwoBoss', 2023);
+MANAGER.flushManager();
+S.setActiveSlot('manager', 1);
+const mBack = MANAGER.initManager();
+eq('the first manager save came back intact', mBack && mBack.manager.name, 'SlotOneBoss',
+    'Creating a manager in slot 2 overwrote slot 1.');
+eq('and kept its own start year', mBack && mBack.time.startYear, 2017);
+const ms2 = MANAGER.managerSlotSummary(2);
+truthy('managerSlotSummary reads the other slot', ms2 && ms2.name === 'SlotTwoBoss' && ms2.year === 2023);
+eq('managerSlotSummary did not switch slot', S.activeSlot('manager'), 1);
+eq('managerSlotSummary on an empty slot is null', MANAGER.managerSlotSummary(3), null);
+truthy('slotHasData sees a used manager slot', S.slotHasData('manager', 2));
+falsy('slotHasData sees an empty manager slot', S.slotHasData('manager', 3));
+
+// The guard: the menu has never loaded the manager store.
+MANAGER.manager.set(null);
+MANAGER.flushManager();
+truthy('flushManager with nothing loaded did NOT wipe the save', MANAGER.hasManagerSave(1),
+    'A null manager store means "nothing is loaded", never "no save exists".');
+MANAGER.saveManager();
+await new Promise(r => setTimeout(r, 320));   // outlast the 250ms debounce
+truthy('the debounced saveManager did NOT wipe it either', MANAGER.hasManagerSave(1));
+
+// Deliberate destruction still works, and only in its own family and slot.
+S.setActiveSlot('career', 1);
+CAREER.resetCareer();
+makeCareer('BesideAManager', 'MID');
+CAREER.flushCareer();
+S.setActiveSlot('manager', 1);
+MANAGER.initManager();
+MANAGER.resetManager();
+falsy('resetManager clears the manager slot', MANAGER.hasManagerSave(1));
+truthy('and not the other manager slot', MANAGER.hasManagerSave(2));
+truthy('and not the career save', CAREER.hasCareerSave(1),
+    'Starting a new manager career must never touch another gamemode.');
+S.clearSlot('manager', 2);
+falsy('clearSlot reaches manager slots', MANAGER.hasManagerSave(2));
 
 // ---------------------------------------------------------------------------
 section('roster slots end to end');

@@ -35,7 +35,7 @@
             <!-- Primary Stats -->
             <div class="pm-stats-primary">
                 {#each [
-                    { label: 'Achievement Score', value: player.trophies || 0, icon: '🎖️' },
+                    { label: 'Glory', value: player.trophies || 0, icon: '🎖️' },
                     { label: 'Trophies', value: titles, icon: '🏆' },
                     { label: 'Total Power', value: player.totalPower || 0, icon: '⚡' },
                     { label: 'Blue Essence', value: (player.totalBE || 0).toLocaleString(), icon: '💎' },

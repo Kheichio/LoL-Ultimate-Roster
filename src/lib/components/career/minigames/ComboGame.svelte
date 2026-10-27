@@ -30,6 +30,9 @@
     export let drill = null;
     export let onComplete = null;
     export let onQuit = null;
+    // Set by MinigameHost once it has shown its own briefing: skip this
+    // game's intro screen and start straight away.
+    export let briefed = false;
 
     const ICON = '\u{1F5B1}';
 
@@ -333,6 +336,9 @@
             seconds: Math.round(clock),
         };
         view = 'result';
+        // Briefed by MinigameHost: the training room's result panel shows the
+        // score and the gain, so hand back now instead of a second result screen.
+        if (briefed) done();
     }
 
     function done() {
@@ -389,6 +395,9 @@
     $: remaining = Math.max(0, D.targets - judged);
     $: msWindow = Math.round(D.wPerfect * 1000);
     $: accSoFar = judged > 0 ? valueSum / judged : 0;
+
+    // The host's briefing replaces the intro screen below.
+    onMount(() => { if (briefed) start(); });
 </script>
 
 <div class="cg">
@@ -520,7 +529,7 @@
             {/if}
         </p>
 
-        <button class="btn-go wide" type="button" on:click={done}>Finish Session</button>
+        <button class="btn-go wide" type="button" on:click={done}>See your gain &rarr;</button>
     </div>
 {/if}
 

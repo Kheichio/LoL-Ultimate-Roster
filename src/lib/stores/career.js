@@ -20,11 +20,12 @@ import {
     teamById, PATH_BY_ID, REGION_BY_ID, ROLE_BY_ID, PLAYSTYLE_BY_ID, CHAMPION_BY_ID,
     TRAIT_BY_ID, championsForStyle, PROFICIENCY_SIGNATURE_HEAD_START,
     LANGUAGE_IDS, LANGUAGE_MAX, languageForRegion,
+    AMATEUR_TEAMS, setAmateurLocale,
 } from '../career/constants.js';
 import {
     calcOVR, calcPotentialOVR, clamp, clampAttr, emptyAttrs, rollNewPlayer,
     gainCurve, attrCeiling, environmentCap, rankFromMMR, marketValueFor,
-    weeklySalaryFor, pick, traitsOf,
+    weeklySalaryFor, pick, traitsOf, amateurStartingStatus,
 } from '../career/ratings.js';
 import { teamsInRegion, clearTeamCaches } from '../career/teams.js';
 
@@ -104,6 +105,15 @@ export function blankCareer() {
             // activity rather than being baked into this field.
             practiceChamp: null,
 
+            // THE LEVEL SYSTEM (training.js), the default way attributes grow
+            // while the "Skip training minigames" setting is on. Practice
+            // activities pay `xp`; every XP_PER_LEVEL of it is a `level` and an
+            // attribute point banked in `points`, which the Training screen
+            // spends. Plain integers, unlike attrs: nothing here is a fraction.
+            xp: 0,
+            level: 1,
+            points: 0,
+
             form: 50,
             morale: 65,
             energy: ENERGY_MAX,
@@ -168,6 +178,12 @@ export function blankCareer() {
             champPoints: 0,
             bracket: null,           // active playoff/international bracket, engine-owned
             qualified: {},           // { msi: bool, worlds: bool }
+            // The club's brief for this split (career/objectives.js), drawn with
+            // the season and settled in closeSplit. Targets are FIXED at draw
+            // time, so they are persisted rather than re-derived. null = no brief
+            // (a free agent, or a save from before briefs existed until the next
+            // ensureSeason draws one).
+            objectives: null,
         },
 
         // 300 (Iron I) deliberately, even though no new career starts there any
@@ -251,6 +267,12 @@ export function blankCareer() {
             // truthy identically and is strictly more informative than a `true`
             // nobody can date.
             goalReached: 0,
+            // Lifetime ledger of club briefs: splits briefed, objectives met and
+            // failed, clean sweeps, and the gold they paid. `lastObjectives` is
+            // the most recent settlement in full, so the Hub can still show how
+            // the last split went after the season block has been reset.
+            briefs: { splits: 0, met: 0, failed: 0, sweeps: 0, gold: 0 },
+            lastObjectives: null,
             retired: false,
             hallOfLegends: false,
             seenIntro: false,
@@ -273,6 +295,25 @@ export const careerScreen = writable('hub');
 
 /** Transient match-in-progress state — never persisted. */
 export const matchState = writable(null);
+
+/**
+ * The training mode: true (the default) is the LEVEL SYSTEM, where practice
+ * activities earn XP and levels pay attribute points; false brings back the
+ * minigame drills. A DEVICE preference like the theme (storage.js DEVICE_KEYS),
+ * not save data, so it is read raw from localStorage rather than through a slot.
+ * engine.js and training.js read it through training.minigamesOn(); the
+ * Settings panel and the Training screen write it.
+ */
+const SKIP_MINIGAMES_KEY = 'lur_career_skip_minigames';
+function readSkipMinigames() {
+    try {
+        return typeof localStorage === 'undefined' || localStorage.getItem(SKIP_MINIGAMES_KEY) !== '0';
+    } catch (e) { return true; }
+}
+export const skipMinigames = writable(readSkipMinigames());
+skipMinigames.subscribe(v => {
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(SKIP_MINIGAMES_KEY, v ? '1' : '0'); } catch (e) { /* private mode */ }
+});
 
 /** Set by any screen that wants a full-screen career overlay (results, awards,
  *  season summary). `{ kind, payload }` or null. */
@@ -523,6 +564,18 @@ function countMap(src) {
     return clean;
 }
 
+/**
+ * A club brief (career/objectives.js), cleaned to "an object whose `key` is a
+ * list of plain objects", or null. Shallow on purpose: every reader of an item
+ * is defensive field by field, and the brief is rebuilt every split anyway.
+ */
+function cleanBrief(src, key) {
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return null;
+    const list = Array.isArray(src[key]) ? src[key].filter(i => i && typeof i === 'object' && !Array.isArray(i)) : [];
+    if (!list.length) return null;
+    return { ...src, [key]: list };
+}
+
 /** Merge a loaded save over the blank shape so new fields added in later
  *  versions never come back undefined on an old save. */
 function hydrate(raw) {
@@ -664,7 +717,27 @@ function hydrate(raw) {
                 const y = Math.round(Number(out.flags && out.flags.goalReached));
                 return Number.isFinite(y) && y > 0 ? y : 0;
             })(),
+            // Lifetime brief ledger: plain non-negative counters, rot reads as 0.
+            briefs: (() => {
+                const src = out.flags && out.flags.briefs;
+                const b = (src && typeof src === 'object' && !Array.isArray(src)) ? src : {};
+                const nn = (v) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x > 0 ? x : 0; };
+                return { splits: nn(b.splits), met: nn(b.met), failed: nn(b.failed), sweeps: nn(b.sweeps), gold: nn(b.gold) };
+            })(),
+            lastObjectives: cleanBrief(out.flags && out.flags.lastObjectives, 'items'),
         };
+    }
+    // The current brief. Its readers are defensive item by item; this only has
+    // to guarantee "an object with a list, or null".
+    out.season.objectives = cleanBrief(out.season.objectives, 'list');
+    // The level system's three counters. A save written before levels existed
+    // has none of them and the blank spread above supplies level 1 with nothing
+    // banked; rot reads the same way, never as free attribute points.
+    {
+        const int = (v, lo, hi) => { const x = Math.floor(Number(v)); return Number.isFinite(x) ? clamp(x, lo, hi) : lo; };
+        out.player.level = int(out.player.level, 1, 999);
+        out.player.xp = int(out.player.xp, 0, 100000);
+        out.player.points = int(out.player.points, 0, 999);
     }
     out.player.softCap = clamp(Math.round(Number(out.player.softCap) || 0), 0, ATTR_MAX);
     // Fractional on purpose (0.25 + 0.40), so it is clamped and not rounded.
@@ -848,6 +921,9 @@ function hydrate(raw) {
 export function initCareer() {
     const raw = loadFromStorage(SAVE_KEY);
     const state = hydrate(raw);
+    // Amateur club names follow the region this career is played in. Before the
+    // caches are cleared, so nothing derived from the old names survives.
+    setAmateurLocale(state.created ? state.player.region : '');
     clearTeamCaches();
     career.set(state);
     careerScreen.set(state.created ? 'hub' : 'create');
@@ -860,6 +936,7 @@ export function initCareer() {
 }
 
 export function resetCareer() {
+    setAmateurLocale('');
     clearTeamCaches();
     career.set(blankCareer());
     careerScreen.set('create');
@@ -902,32 +979,52 @@ export function createCareer(cfg) {
     const c = blankCareer();
     c.created = true;
 
-    // A `signed` path arrives with a club already in place. Every other module
-    // reads player.clubId, not path.signed, to decide whether a wage lands,
-    // whether scrims are available, which training multiplier applies and
-    // whether the unsigned soft cap bites, so the seat has to be real.
+    // Every career now arrives with a club in place: the Academy Debut path at
+    // an academy, the Pre-Competitive path at the AMATEUR side the player picked
+    // in the creator (cfg.clubId). Every other module reads player.clubId, not
+    // the path, to decide whether a wage lands, whether scrims are available and
+    // which training multiplier applies, so the seat has to be real.
+    //
+    // cfg.clubId: a valid id = that club; undefined = the closest fit (a
+    // hand-built cfg still starts somewhere); null = deliberately UNSIGNED, which
+    // only the test harnesses ask for, to keep the free-agent screens covered.
+    // Amateur names are localised before anything reads a team name.
+    setAmateurLocale(region.id);
+    const ovr0 = calcOVR(attrs, role.id);
     let club = null;
     let contract = null;
+    const chosen = (list) => (typeof cfg.clubId === 'string' ? list.find(t => t && t.id === cfg.clubId) || null : null);
     if (path.signed) {
         const options = teamsInRegion(region.id, 2);
-        club = options.length ? pick(options) : null;
+        club = chosen(options) || (options.length ? pick(options) : null);
+    } else if (path.amateurStart && cfg.clubId !== null) {
+        const options = AMATEUR_TEAMS.map(t => teamById(t.id)).filter(Boolean);
+        club = chosen(options)
+            || options.slice().sort((a, b) => Math.abs(a.strength - ovr0) - Math.abs(b.strength - ovr0))[0]
+            || null;
     }
     if (club) {
-        const status = 'sub';
+        const amateur = Number(club.tier) === 3;
+        const status = amateur ? amateurStartingStatus(ovr0, club.strength) : 'sub';
+        // An amateur deal runs until the player is old enough for the academies
+        // to have made their minds up -- a 13-year-old must not be released into
+        // free agency at 15 by a contract nobody would renew for a child.
+        // Leaving one for an academy is free (contracts.recordReview, eligibleClub).
+        const years = amateur ? Math.max(2, 18 - age) : 2;
         contract = {
             teamId: club.id,
             tier: club.tier,
             salary: weeklySalaryFor({
-                ovr: calcOVR(attrs, role.id),
+                ovr: ovr0,
                 clubTier: club.tier,
                 region: region.id,
                 age,
                 status,
                 potentialOVR: calcPotentialOVR(potential, role.id),
             }),
-            years: 2,
+            years,
             startYear: c.time.year,
-            endYear: c.time.year + 1,
+            endYear: c.time.year + years - 1,
             status,
             bonus: 0,
             releaseClause: 0,
@@ -957,7 +1054,7 @@ export function createCareer(cfg) {
         hype: path.startHype,
         clubId: club ? club.id : null,
         clubTier: club ? club.tier : null,
-        status: path.signed ? 'sub' : 'benched',
+        status: contract ? contract.status : (path.signed ? 'sub' : 'benched'),
         contract,
         chemistry: 50,
         // Your signature pick is the one you already have the hours on. Every
@@ -985,6 +1082,12 @@ export function createCareer(cfg) {
     c.flags.everSigned = !!club;
 
     career.set(c);
+    if (club && contract) {
+        const who = c.player.handle;
+        addNews(Number(club.tier) === 3
+            ? `${who} joins ${club.name}, an amateur side, ${contract.status === 'starter' ? 'straight into the starting five' : 'in the rotation'}. Nobody is paid much and everybody wants to be scouted.`
+            : `${who} signs for ${club.name}. An academy contract, a coach and a seat on the bench to start.`, 'transfer');
+    }
     saveCareer();
     return c;
 }

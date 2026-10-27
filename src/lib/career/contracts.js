@@ -31,6 +31,7 @@ import {
     career, matchState, absWeek, addNews, grantGold, saveCareer,
 } from '../stores/career.js';
 import { teamsInRegion, allTeamsForPlayer, teamStrength, cardTagsFor } from './teams.js';
+import { objectiveScore } from './objectives.js';
 // economy.js imports constants/ratings/stores/utils and nothing from here, so
 // this direction is the safe one. Do NOT import contracts.js from economy.js.
 import { perkEffects, lifestyleEffects, buffValue, signatureSlots } from './economy.js';
@@ -194,6 +195,9 @@ export const GOAL_CALL_RATE_BONUS = 1.6;
 /** ACADEMY (tier 2). 60 and Platinum is the floor the weakest academy asks;
  *  the strongest ask about eight points and five hundred MMR more. */
 const ACADEMY_OVR_GATE = 60;
+/** Read-only copy for the screens: the rating an academy starts calling an
+ *  amateur or unsigned prospect at. */
+export const ACADEMY_SCOUT_OVR = ACADEMY_OVR_GATE;
 const ACADEMY_MMR_GATE = 1600;          // Platinum IV (RANK_TIERS floor)
 
 /** OPEN CIRCUIT (tier 3). Deliberately BELOW the academy bar and below where it
@@ -1135,6 +1139,42 @@ export function goalProgress(c) {
  * The offers arriving this week. Pure apart from the dice -- the caller is
  * expected to append the result to c.offers.
  */
+/**
+ * Is the player a free agent still standing in the middle of a split he
+ * started playing for somebody else?
+ *
+ * That happens when a contract ends for cause mid-split (the burnout ladder's
+ * second strike can fire in any week). The season block still holds the old
+ * club's played league games, and signing anywhere now makes ensureSeason
+ * redraw the fixture list for the new club (the stamp carries the club id) and
+ * throw those games away: closeSplit then filed a played split as "0-0" under a
+ * club the player never played it for, and the new division's table started
+ * out of step with the rest of the league. It was rare until the club brief
+ * raised the number of terminations, which is what surfaced it on seed 42.
+ * Such a player signs again once that regular season is over -- the playoffs
+ * are not a drawing phase, so the old split is banked untouched.
+ *
+ * DELIBERATELY NARROW. Locking every roster for the regular season was tried
+ * and measured: it held amateur prospects in tier 3 for whole splits, where
+ * they rate far above the mode's mean, and moved careerSmoke's match-rating
+ * line +0.08 toward its 7.6 hard fail. A never-signed prospect's season holds
+ * no league rows, so the compulsory first-club ladder is unaffected either way.
+ */
+export function splitUnderway(c) {
+    if (!c || !c.player || c.player.clubId) return false;
+    const ph = phaseForWeek(num(c.time && c.time.week, 1)).id;
+    if (ph !== 'spring' && ph !== 'summer') return false;
+    const rows = Array.isArray(c.season && c.season.schedule) ? c.season.schedule : [];
+    return rows.some(f => f && f.played && f.kind !== 'bracket');
+}
+
+/** The first week a locked roster can move again: the split's playoffs. */
+export function rosterLockEnds(c) {
+    const ph = phaseForWeek(num(c && c.time && c.time.week, 1)).id;
+    const po = PHASES.find(x => x.id === (ph === 'summer' ? 'summer_po' : 'spring_po'));
+    return po ? po.from : 14;
+}
+
 export function generateOffers(c) {
     const out = [];
     if (!c || !c.created || c.flags?.retired) return out;
@@ -1160,7 +1200,9 @@ export function generateOffers(c) {
         && (unsigned ? (Number(c.soloq?.mmr) || 0) >= SCOUT_MMR_GATE : true)
         && ovr >= ACADEMY_OVR_GATE;
 
-    if (!inWindow && !scoutable) return out;
+    // ...except for a player released in the middle of a split he started
+    // playing. See splitUnderway(): signing then would zero that season.
+    if (!inWindow && (!scoutable || splitUnderway(c))) return out;
 
     const live = expireOffers(c);
     let room = MAX_ACTIVE_OFFERS - live.length;
@@ -1294,6 +1336,9 @@ export function acceptOffer(offerId) {
     if (!team) return { ok: false, msg: 'That club no longer exists.' };
 
     const renewal = !!offer.renewal && c.player.clubId === team.id;
+    if (!renewal && splitUnderway(c)) {
+        return { ok: false, msg: `Your old club's split is still being played and you are on its register until it ends. You can sign from week ${rosterLockEnds(c)}.` };
+    }
     const startYear = signingStartYear(c);
     const contract = {
         teamId: team.id,
@@ -1752,6 +1797,11 @@ export function canChangeRole(c) {
     if (c.flags?.retired) return { ok: false, reason: 'Your playing career is over.' };
 
     const p = c.player;
+    // An amateur side plays whoever turns up in whatever role is free, so the
+    // pre-comp path keeps the free role change it had while unsigned.
+    if (p.clubId && Number(p.clubTier) === 3) {
+        return { ok: true, reason: 'Amateur side. Nobody is paying you for a role, so you can still pick one.' };
+    }
     if (p.clubId) {
         const team = resolveTeam(p.clubId);
         const roleName = ROLE_BY_ID[p.role]?.name || p.role;
@@ -1872,6 +1922,9 @@ export function changeRole(newRoleId, newPlaystyleId, newChampionId) {
             extraChampions: [],
             attrs: newAttrs,
             potential,
+            // An amateur contract names a role too; keep it honest when the
+            // player moves (canChangeRole only lets a tier-3 player do this).
+            contract: x.player.contract ? { ...x.player.contract, role: to.id } : x.player.contract,
             // Nothing about you is match-sharp in a role you started last week.
             form: clamp((x.player.form ?? 50) - 12, 0, 100),
         },
@@ -2216,6 +2269,13 @@ export function clubReview(c) {
     // back toward neutral instead of hanging a career on three matches.
     if (games < 6) score = score * 0.45 + 4;
     if (p.transferRequested) score -= 12;
+    // The brief (objectives.js): settled once the split closes, "if it ended
+    // today" before that. Added AFTER the small-sample damping, because the brief
+    // does its own -- an unjudged rating weighs nothing and the live projection
+    // is scaled in by league games played.
+    let brief = 0;
+    try { brief = num(objectiveScore(c), 0); } catch (e) { brief = 0; }
+    score += brief;
 
     let verdict, statusChange;
     const deserved = capStatusForTier(deservedStatus(ovr, str), tier, ovr);
@@ -2262,6 +2322,7 @@ export function clubReview(c) {
 
     return {
         verdict, text, statusChange, score: Math.round(score),
+        brief: Math.round(brief),
         // Carried so the Club screen can render the strike chip without a
         // second call. clubReview() is PURE and is re-run on every reactive
         // render — see recordReview() for why that matters.

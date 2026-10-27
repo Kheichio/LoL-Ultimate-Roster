@@ -127,10 +127,10 @@ export const achievements = [
     { id: 'a37', cat: 'economy', desc: 'Hold 50,000 Blue Essence', type: 'be', target: 50000, reward: 5000 },
     { id: 'a38', cat: 'economy', desc: 'Hold 250,000 Blue Essence', type: 'be', target: 250000, reward: 15000 },
     // === Competitive ===
-    { id: 'a7', cat: 'competitive', desc: 'Reach  Achievement Score', type: 'trophies', target: 50, reward: 5000 },
-    { id: 'a8', cat: 'competitive', desc: 'Reach  Achievement Score', type: 'trophies', target: 200, reward: 15000 },
-    { id: 'a14', cat: 'competitive', desc: 'Reach  Achievement Score', type: 'trophies', target: 500, reward: 20000 },
-    { id: 'a15', cat: 'competitive', desc: 'Reach  Achievement Score', type: 'trophies', target: 1000, reward: 50000 },
+    { id: 'a7', cat: 'competitive', desc: 'Reach 50 Glory', type: 'trophies', target: 50, reward: 5000 },
+    { id: 'a8', cat: 'competitive', desc: 'Reach 200 Glory', type: 'trophies', target: 200, reward: 15000 },
+    { id: 'a14', cat: 'competitive', desc: 'Reach 500 Glory', type: 'trophies', target: 500, reward: 20000 },
+    { id: 'a15', cat: 'competitive', desc: 'Reach 1,000 Glory', type: 'trophies', target: 1000, reward: 50000 },
     { id: 'a24', cat: 'competitive', desc: 'Win 10 Draft Modes', type: 'draftWins', target: 10, reward: 8000 },
     { id: 'a25', cat: 'competitive', desc: 'Win 50 Draft Modes', type: 'draftWins', target: 50, reward: 20000 },
     // === Challenges ===

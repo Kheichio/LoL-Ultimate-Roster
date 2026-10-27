@@ -5,10 +5,12 @@
     import LegacyArena from '../match/LegacyArena.svelte';
     import MatchPreview from '../match/MatchPreview.svelte';
     import MatchResult from '../match/MatchResult.svelte';
+    import IntlBracket from '../match/IntlBracket.svelte';
     import { drawPlays } from '../match/matchMath.js';
     import { pressFx } from '../../utils/fx.js';
     import { club, squad, blueEssence, trackStats, unlocks, skills, teamIdentity, grantXP, grantBPXP, grantBE, saveGame, logMatch, seasonData, recordTitle } from '../../stores/game.js';
-    import { GR_STEPS, GOLDEN_ROAD_PRIZE, seasonYear, splitIndex, grFresh } from '../../utils/league.js';
+    import { ME, GR_STEPS, GOLDEN_ROAD_PRIZE, seasonYear, splitIndex, grFresh } from '../../utils/league.js';
+    import { worldOf, buildIntlBracket, intlRecord, intlMyTie, intlWinsNeeded, intlTeam, intlTeamName, realOrgs, FICTIONAL_SETS, MASTER_MIN, INTL_FIELD } from '../../utils/world.js';
     import { showToast } from '../../stores/toasts.js';
     import { switchTab, pendingChallenge } from '../../stores/ui.js';
     import { getDB, makeUniqueId, LEGACY_TIERS, AWARD_TIERS, MYTHIC_TIERS, getEffectiveStats, getEffectiveRating, getEra } from '../../utils/cards.js';
@@ -54,6 +56,25 @@
     let enemies = [];
     let currentEnemy = null;
     let matchLog = [];
+
+    // First Stand, MSI and Worlds are a real bracket (utils/world.js): `intl` is the whole draw,
+    // `enemies[round]` is filled from it one round at a time as the player advances. Every other
+    // mode leaves it null and runs the old fixed gauntlet.
+    let intl = null;
+    // Fixed when a series starts. The bracket moves on the instant the deciding game is recorded,
+    // while the arena is still revealing it, and a semi-final must not turn into a best of 5 on screen.
+    let seriesNeed = 2;
+    let seriesLabel = '';
+    // The round being drawn or played: during a series that is the player's own, between
+    // series it is the next one.
+    $: bracketRound = intl ? (intl.rounds[intl.rounds.length - 1] || {}).name || '' : '';
+    // A semi-finalist at an international takes this share of the runner-up prize.
+    const SEMI_SHARE = 0.4;
+    function intlOpponent(b, tie) {
+        if (!b || !tie) return null;
+        const t = intlTeam(b, tie.a === ME ? tie.b : tie.a);
+        return t ? { name: t.name, cards: t.cards, avgRating: t.avgRating, accent: t.accent, region: t.region, seed: t.seed, tag: t.tag || null } : null;
+    }
 
     // Tiers a CPU opponent may never be built from: award cards are reserved for the top pools and
     // mythic (Hall of Legends) cards are perfect-100s that would be unbeatable in anyone's hands.
@@ -272,6 +293,7 @@
         squad.set(builtSquad);
         activeMode = 'salarycap';
         legacyRun = false;
+        intl = null;
         enemies = [];
         for (let i = 0; i < MODES.salarycap.rounds; i++) enemies.push(generateSalaryCpuTeam(i));
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
@@ -326,6 +348,7 @@
         const rivalEnemy = { name: `${rival.teamLogo} ${rival.teamName}`, cards: cpuTeam, avgRating: enemyPower };
         activeMode = 'rival';
         legacyRun = false;
+        intl = null;
         enemies = [rivalEnemy, rivalEnemy, rivalEnemy, rivalEnemy, rivalEnemy];
         round = 0; roundResults = []; tournamentResult = null; matchLog = [];
         phase = 'bracket';
@@ -403,7 +426,8 @@
     $: conditioningBonus = $skills.conditioning || 0;
     $: chemBonus = regionChem + eraChem + teamChem + coachBonus + legacyBonus + conditioningBonus;
     $: totalPower = squadReady ? avgRating + chemBonus : 0;
-    $: matchWinsNeeded = activeMode === 'rival' ? 3 : 2;
+    // The NEXT series (the preview screen); a series being played reads `seriesNeed`.
+    $: matchWinsNeeded = intl ? intlWinsNeeded(intl) : activeMode === 'rival' ? 3 : 2;
     $: tacticsLevel = $skills.tactics || 0;
     $: powerDiff = currentEnemy ? totalPower - (currentEnemy.avgRating || 0) : 0;
 
@@ -438,9 +462,9 @@
     $: circuit = [
         { id: 'cafe',       icon: 'coffee', name: 'Gaming Cafe',        detail: '3 rounds · CPU capped at Gold · any time', unlocked: true,         hint: '',                                     wins: ts.cafeWins || 0 },
         { id: 'regional',   icon: 'flag',   name: 'Regional Trophy',    detail: 'The playoffs of every Season split',      unlocked: true, link: true, hint: '',                          wins: ts.regionalSplitWon || 0 },
-        { id: 'firststand', icon: 'flame',  name: 'First Stand',        detail: 'Qualified · 5 rounds',                     unlocked: canFirstStand, hint: 'Win the Winter split\'s Regional Trophy', wins: ts.firstStandWon || 0 },
-        { id: 'msi',        icon: 'waves',  name: 'MSI',                detail: 'Qualified · 7 rounds',                     unlocked: canMSI,        hint: 'Reach the Spring Regional Trophy final',  wins: ts.msiWon || 0 },
-        { id: 'worlds',     icon: 'trophy', name: 'World Championship', detail: 'Qualified · 7 rounds',                     unlocked: canWorlds,     hint: 'Reach the Summer Regional Trophy final',  wins: ts.worldsWon || 0 },
+        { id: 'firststand', icon: 'flame',  name: 'First Stand',        detail: `Qualified · ${INTL_FIELD.firststand.size}-team bracket`, unlocked: canFirstStand, hint: 'Win the Winter split\'s Regional Trophy', wins: ts.firstStandWon || 0 },
+        { id: 'msi',        icon: 'waves',  name: 'MSI',                detail: `Qualified · ${INTL_FIELD.msi.size}-team bracket`,        unlocked: canMSI,        hint: 'Reach the Spring Regional Trophy final',  wins: ts.msiWon || 0 },
+        { id: 'worlds',     icon: 'trophy', name: 'World Championship', detail: `Qualified · ${INTL_FIELD.worlds.size}-team bracket`,     unlocked: canWorlds,     hint: 'Reach the Summer Regional Trophy final',  wins: ts.worldsWon || 0 },
     ].map((s, i) => ({ ...s, step: i + 1, mode: MODES[s.id] }));
     // How far along the road the club is, for the progress line: the last unlocked stage.
     $: circuitReach = circuit.reduce((n, s, i) => s.unlocked ? i : n, 0);
@@ -492,6 +516,8 @@
         else if (m.pool === 'elite') pool = db.filter(p => p.role !== 'COACH' && !MYTHIC_TIERS.includes(p.quality));
         else pool = db.filter(p => p.role !== 'COACH' && !CPU_EXCLUDED_TIERS.includes(p.quality));
         pool = pool.filter(p => p.rating <= ratingCap + 3);
+        // An international side never fields a player under Master tier.
+        if (QUALIFY_EVENTS.includes(mode)) pool = pool.filter(p => p.rating >= MASTER_MIN);
         const roles = ['TOP','JNG','MID','ADC','SUP'];
         const team = {};
         const used = new Set();
@@ -525,8 +551,20 @@
                 totalAvg = Math.min(totalAvg, ramp);
             }
         }
-        const names = ['Iron Wolves','Silver Fangs','Bronze Legion','Rookie Squad','Cafe Regulars','Local Heroes','Storm Dragons','Crystal Bears','Dark Knights','Solar Flare','Frost Giants','Thunder Hawks','Crimson Vipers','Neon Tigers','Iron Phoenix'];
-        return { name: names[Math.floor(Math.random() * names.length)], cards: team, avgRating: totalAvg };
+        return { name: cpuName(mode), cards: team, avgRating: totalAvg };
+    }
+
+    // Who a gauntlet opponent is called: a team from abroad at an international, a side from
+    // your own league at a Regional, and the old local names at the Gaming Cafe.
+    const CAFE_NAMES = ['Iron Wolves','Silver Fangs','Bronze Legion','Rookie Squad','Cafe Regulars','Local Heroes','Storm Dragons','Crystal Bears','Dark Knights','Solar Flare','Frost Giants','Thunder Hawks','Crimson Vipers','Neon Tigers','Iron Phoenix'];
+    function cpuName(mode) {
+        const w = worldOf(get(seasonData));
+        if (QUALIFY_EVENTS.includes(mode)) return intlTeamName(w);
+        if (mode === 'regional' && w.chosen) {
+            const list = w.mode === 'real' ? realOrgs(w.region).map(o => o.name) : (FICTIONAL_SETS[w.region] || []);
+            if (list.length) return list[Math.floor(Math.random() * list.length)];
+        }
+        return CAFE_NAMES[Math.floor(Math.random() * CAFE_NAMES.length)];
     }
 
     function startTournament(mode, legacy = false) {
@@ -535,11 +573,26 @@
         if (mode === 'regional') { switchTab('season'); return; }
         if (QUALIFY_EVENTS.includes(mode) && get(seasonData).qualified?.event !== mode) { showToast('You have to qualify for that through the Season.', 'error'); return; }
         if (QUALIFY_EVENTS.includes(mode) && get(seasonData).qualified?.played) { showToast('You already played that event.', 'error'); return; }
+        const m = MODES[mode];
+        intl = null;
+        enemies = [];
+        if (QUALIFY_EVENTS.includes(mode)) {
+            // The bracket: your league's other top teams (captured when the spot was won) and the
+            // best of every other region, drawn in the region the spot was won in.
+            const sd = get(seasonData);
+            const q = sd.qualified || {};
+            const w = q.world && typeof q.world === 'object' ? worldOf({ world: q.world }) : worldOf(sd);
+            const ti = get(teamIdentity);
+            const b = buildIntlBracket(getDB(), mode, w, { name: ti.name, logo: ti.logo, power: totalPower }, q.field);
+            const first = intlOpponent(b, intlMyTie(b));
+            if (!b || !first) { showToast('Card database not loaded. Try refreshing.', 'error'); return; }
+            intl = b;
+            enemies = Array.from({ length: b.roundsTotal }, (_, i) => (i === 0 ? first : null));
+        } else {
+            for (let i = 0; i < m.rounds; i++) enemies.push(generateCpuTeam(mode, i));
+        }
         activeMode = mode;
         legacyRun = legacy;
-        const m = MODES[mode];
-        enemies = [];
-        for (let i = 0; i < m.rounds; i++) enemies.push(generateCpuTeam(mode, i));
         round = 0;
         roundResults = [];
         tournamentResult = null;
@@ -551,6 +604,7 @@
         if (!squadReady) { showToast('Fill all 5 positions first.', 'error'); return; }
         activeMode = 'goldenroad';
         legacyRun = legacy;
+        intl = null;
         goldenRoadStage = 0;
         const { mode: grMode0, rounds: grRounds0 } = GOLDEN_STAGES[0];
         const m = MODES[grMode0];
@@ -565,6 +619,9 @@
 
     function startMatch() {
         currentEnemy = enemies[round];
+        if (!currentEnemy) return;
+        seriesNeed = matchWinsNeeded;
+        seriesLabel = bracketRound;
         playerScore = 0;
         cpuScore = 0;
         matchLog = [];
@@ -593,11 +650,18 @@
         grantXP(25);
         rollRoundPlays();
 
-        const winsNeeded = activeMode === 'rival' ? 3 : 2;
+        const winsNeeded = seriesNeed;
         if (playerScore >= winsNeeded || cpuScore >= winsNeeded) {
             const matchWon = playerScore >= winsNeeded;
             roundResults = [...roundResults, matchWon];
-            if (activeMode === 'rival') {
+            if (intl) {
+                // Record the series; the rest of the round is simulated and the next one drawn.
+                intl = intlRecord(intl, playerScore, cpuScore, totalPower);
+                const next = intlOpponent(intl, intlMyTie(intl));
+                if (!matchWon) endTournament(false);
+                else if (intl.champion === ME || !next) endTournament(intl.champion === ME);
+                else { enemies = enemies.map((e, i) => (i === round + 1 ? next : e)); goPhase('roundEnd'); }
+            } else if (activeMode === 'rival') {
                 const mw = roundResults.filter(Boolean).length;
                 const ml = roundResults.filter(r => !r).length;
                 if (mw >= 3) { endTournament(true); }
@@ -619,7 +683,9 @@
         if (activeMode === 'salarycap' && _originalSquad) { squad.set(_originalSquad); _originalSquad = null; }
         const mode = activeMode === 'goldenroad' ? GOLDEN_STAGES[goldenRoadStage].mode : activeMode;
         const m = MODES[mode];
-        const isFinalist = !won && round >= enemies.length - 2;
+        // In a bracket the runner-up is whoever lost the final; the old gauntlet paid the last two rounds.
+        const isFinalist = intl ? (!won && intl.out === intl.roundsTotal - 1) : (!won && round >= enemies.length - 2);
+        const isSemi = !!intl && !won && intl.out === intl.roundsTotal - 2;
 
         if (activeMode === 'goldenroad') {
             if (!won) {
@@ -660,7 +726,7 @@
             return;
         }
 
-        const baseReward = won ? m.reward : isFinalist ? m.second : 0;
+        const baseReward = won ? m.reward : isFinalist ? m.second : isSemi ? Math.round(m.second * SEMI_SHARE) : 0;
         const { total: reward, bonus: rewardBonus } = grantBE(baseReward);
 
         const xpTable = { cafe: 100, regional: 200, firststand: 300, msi: 500, worlds: 800 };
@@ -702,13 +768,18 @@
             }
         }
         saveGame();
-        tournamentResult = { won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist, goldenRoadDone: !!road?.completed, roadBE: road?.be || 0 };
+        const champTeam = intl && intl.champion && intl.champion !== ME ? intlTeam(intl, intl.champion) : null;
+        tournamentResult = {
+            won, reward, bonus: rewardBonus || 0, round: round + 1, isFinalist, isSemi, goldenRoadDone: !!road?.completed, roadBE: road?.be || 0,
+            outIn: intl && intl.out !== null ? (intl.rounds[intl.out] || {}).name || null : null,
+            champion: champTeam ? champTeam.name : null,
+        };
         goPhase('result');
     }
 
     function backToLobby() {
         if (_originalSquad) { squad.set(_originalSquad); _originalSquad = null; saveGame(); }
-        phase = legacyRun ? 'legacy_lobby' : 'lobby'; activeMode = null; tournamentResult = null; enemies = []; currentEnemy = null; matchLog = [];
+        phase = legacyRun ? 'legacy_lobby' : 'lobby'; activeMode = null; tournamentResult = null; enemies = []; currentEnemy = null; matchLog = []; intl = null;
     }
 
     // Straight back into the same stage. Only the Gaming Cafe: every other tournament is earned
@@ -745,7 +816,7 @@
         const cards = Object.values(e.cards || {}).filter(c => c && c.role !== 'COACH' && c.stats);
         const stats = {};
         for (const s of ['mec', 'tmf', 'map', 'frm', 'cmp']) stats[s] = cards.length ? Math.round(cards.reduce((a, c) => a + (c.stats[s] || 0), 0) / cards.length) : 0;
-        return { name: e.name, logo: activeMode === 'rival' ? '⚔️' : '🛡️', power: e.avgRating, lineup: lineupOf(e.cards), stats };
+        return { name: e.name, logo: activeMode === 'rival' ? '⚔️' : e.tag === 'BOSS' ? '💀' : '🛡️', power: e.avgRating, lineup: lineupOf(e.cards), stats };
     })();
     $: stageIcon = activeMode === 'goldenroad' ? 'crown' : ({ cafe: 'coffee', regional: 'flag', firststand: 'flame', msi: 'waves', worlds: 'trophy', salarycap: 'coins', rival: 'swords' }[activeMode] || 'trophy');
     $: roadRounds = enemies.map((e, i) => ({
@@ -1092,7 +1163,7 @@
                 <span class="mode-icon">🟠</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canFirstStand ? MODES.firststand.color : '#334155'};">First Stand</h3>
-                    <p class="mode-sub">{canFirstStand ? 'Qualified · 5 rounds · Tough opponents' : 'Win the Winter split\'s Regional Trophy to qualify'}</p>
+                    <p class="mode-sub">{canFirstStand ? `Qualified · ${INTL_FIELD.firststand.size}-team bracket · Master tier` : 'Win the Winter split\'s Regional Trophy to qualify'}</p>
                     {#if canFirstStand}<div class="mode-prizes"><span class="mp-w">Win: {MODES.firststand.reward} BE</span><span class="mp-l">2nd: {MODES.firststand.second} BE</span></div>{/if}
                 </div>
                 {#if canFirstStand && squadReady}
@@ -1106,7 +1177,7 @@
                 <span class="mode-icon">🌊</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canMSI ? MODES.msi.color : '#334155'};">MSI</h3>
-                    <p class="mode-sub">{canMSI ? 'Qualified · 7 rounds · Elite competition' : 'Reach the Spring Regional Trophy final to qualify'}</p>
+                    <p class="mode-sub">{canMSI ? `Qualified · ${INTL_FIELD.msi.size}-team bracket · Master tier` : 'Reach the Spring Regional Trophy final to qualify'}</p>
                     {#if canMSI}<div class="mode-prizes"><span class="mp-w">Win: {MODES.msi.reward} BE</span><span class="mp-l">2nd: {MODES.msi.second} BE</span></div>{/if}
                 </div>
                 {#if canMSI && squadReady}
@@ -1120,7 +1191,7 @@
                 <span class="mode-icon">🏆</span>
                 <div class="mode-info">
                     <h3 class="mode-name" style="color: {canWorlds ? MODES.worlds.color : '#334155'};">World Championship</h3>
-                    <p class="mode-sub">{canWorlds ? 'Qualified · 7 rounds · The ultimate challenge' : 'Reach the Summer Regional Trophy final to qualify'}</p>
+                    <p class="mode-sub">{canWorlds ? `Qualified · ${INTL_FIELD.worlds.size}-team bracket · Master tier` : 'Reach the Summer Regional Trophy final to qualify'}</p>
                     {#if canWorlds}<div class="mode-prizes"><span class="mp-w">Win: {MODES.worlds.reward} BE</span><span class="mp-l">2nd: {MODES.worlds.second} BE</span></div>{/if}
                 </div>
                 {#if canWorlds && squadReady}
@@ -1169,7 +1240,7 @@
         {:else if blueSide && redSide}
             <MatchPreview
                 title={currentModeName}
-                subtitle={activeMode === 'rival' ? `Match ${round + 1} · first to 3 matches` : `Round ${round + 1} of ${enemies.length}`}
+                subtitle={intl ? `${bracketRound} · round ${round + 1} of ${enemies.length}` : activeMode === 'rival' ? `Match ${round + 1} · first to 3 matches` : `Round ${round + 1} of ${enemies.length}`}
                 accent={currentModeColor}
                 icon={stageIcon}
                 rounds={activeMode === 'rival' ? [] : roadRounds}
@@ -1181,20 +1252,21 @@
                 startLabel={round === enemies.length - 1 && activeMode !== 'rival' ? 'Play the final' : 'Start match'}
                 on:start={startMatch}
             />
+            {#if intl}<div class="intl-wrap"><IntlBracket bracket={intl} myName={$teamIdentity.name} accent={currentModeColor} /></div>{/if}
         {/if}
 
     {:else if phase === 'match' && currentEnemy && blueSide && redSide}
         {#if legacyRun}
             <LegacyArena
                 title={currentModeName}
-                subtitle={`Round ${round + 1}`}
+                subtitle={intl ? seriesLabel : `Round ${round + 1}`}
                 blue={{ ...blueSide, name: 'Your Squad' }}
                 red={redSide}
                 plays={roundPlays}
                 allPlays={PLAYS}
                 scoreBlue={playerScore}
                 scoreRed={cpuScore}
-                winsNeeded={matchWinsNeeded}
+                winsNeeded={seriesNeed}
                 log={matchLog}
                 tactics={tacticsLevel}
                 on:pick={(e) => pickPlay(e.detail)}
@@ -1203,7 +1275,7 @@
         {:else}
             <MatchArena
                 title={currentModeName}
-                subtitle={activeMode === 'rival' ? `Match ${round + 1} · series ${roundResults.filter(Boolean).length}–${roundResults.filter(r => !r).length}` : `Round ${round + 1} of ${enemies.length}`}
+                subtitle={intl ? `${seriesLabel} · round ${round + 1} of ${enemies.length}` : activeMode === 'rival' ? `Match ${round + 1} · series ${roundResults.filter(Boolean).length}–${roundResults.filter(r => !r).length}` : `Round ${round + 1} of ${enemies.length}`}
                 accent={currentModeColor}
                 icon={stageIcon}
                 blue={blueSide}
@@ -1212,10 +1284,11 @@
                 allPlays={PLAYS}
                 scoreBlue={playerScore}
                 scoreRed={cpuScore}
-                winsNeeded={matchWinsNeeded}
+                winsNeeded={seriesNeed}
                 log={matchLog}
                 tactics={tacticsLevel}
-                chips={activeMode === 'salarycap' ? [{ text: 'Flex picks play at −10% stats', tone: 'info' }] : []}
+                chips={activeMode === 'salarycap' ? [{ text: 'Flex picks play at −10% stats', tone: 'info' }]
+                    : currentEnemy.tag ? [{ text: currentEnemy.tag === 'BOSS' ? 'Boss opponent' : 'Hard opponent', tone: 'bad' }] : []}
                 on:pick={(e) => pickPlay(e.detail)}
                 on:revealed={onRevealed}
             />
@@ -1252,7 +1325,8 @@
                 outcome="win"
                 kicker={currentModeName}
                 title={`Round ${round + 1} won`}
-                subtitle={left === 1 ? 'One more win and the title is yours.' : `${left} rounds to go — and the next opponent is tougher.`}
+                subtitle={intl ? (left === 1 ? `Into the final — ${enemies[round + 1]?.name || 'TBD'}, best of 5.` : `Through to the ${bracketRound} — next up, ${enemies[round + 1]?.name || 'TBD'}.`)
+                    : left === 1 ? 'One more win and the title is yours.' : `${left} rounds to go — and the next opponent is tougher.`}
                 icon="check"
                 blueName={$teamIdentity.name}
                 redName={currentEnemy?.name || ''}
@@ -1261,6 +1335,7 @@
             >
                 <button class="mr-btn" on:click={nextRound}>{left === 1 ? 'On to the final' : 'Next round'} <Icon name="arrow" size={15} /></button>
             </MatchResult>
+            {#if intl}<div class="intl-wrap"><IntlBracket bracket={intl} myName={$teamIdentity.name} accent={currentModeColor} /></div>{/if}
         {/if}
 
     {:else if phase === 'result'}
@@ -1288,12 +1363,13 @@
             <MatchResult
                 outcome={r.goldenRoad || r.goldenRoadDone ? 'gold' : r.won ? 'win' : r.isFinalist ? 'neutral' : 'lose'}
                 kicker={activeMode === 'goldenroad' ? 'Golden Road' : currentModeName}
-                title={r.goldenRoadDone ? 'The Golden Road!' : r.goldenRoad ? 'Golden Road complete' : r.goldenRoadFailed ? 'The road ends here' : r.won ? 'Champions!' : r.isFinalist ? 'Runner-up' : 'Eliminated'}
+                title={r.goldenRoadDone ? 'The Golden Road!' : r.goldenRoad ? 'Golden Road complete' : r.goldenRoadFailed ? 'The road ends here' : r.won ? 'Champions!' : r.isFinalist ? 'Runner-up' : r.isSemi ? 'Semi-finalist' : 'Eliminated'}
                 subtitle={r.goldenRoadDone ? `You lifted the ${currentModeName} trophy — and every title of the year with it.`
                     : r.goldenRoad ? 'Nineteen games without a single loss. The Summoner\'s Cup is yours.'
                     : r.goldenRoadFailed ? `Knocked out at stage ${(r.stage || 0) + 1} of 6. The road reopens in 30 minutes.`
                     : r.won ? `You lifted the ${currentModeName} trophy.`
-                    : r.isFinalist ? 'Beaten in the final — so close.'
+                    : r.isFinalist ? `Beaten in the final — so close.${r.champion ? ` ${r.champion} take the title.` : ''}`
+                    : r.outIn ? `Knocked out in the ${r.outIn}.${r.champion ? ` ${r.champion} went on to win it.` : ''}`
                     : `Knocked out in round ${r.round || 1}.`}
                 icon={r.goldenRoad || r.goldenRoadDone ? 'crown' : r.won ? 'trophy' : r.isFinalist ? 'medal' : 'skull'}
                 blueName={$teamIdentity.name}
@@ -1311,6 +1387,7 @@
                 {/if}
                 <button class="mr-btn-ghost" on:click={backToLobby}>Back to Play</button>
             </MatchResult>
+            {#if intl}<div class="intl-wrap"><IntlBracket bracket={intl} myName={$teamIdentity.name} accent={currentModeColor} /></div>{/if}
         {/if}
     {/if}
 </section>
@@ -1320,6 +1397,7 @@
     .trn-head { margin-bottom: 20px; }
     .trn-title { font-size: 22px; font-weight: 900; color: #e2e8f0; }
     .trn-desc { font-size: 12px; color: #64748b; margin-top: 4px; }
+    .intl-wrap { margin-top: 18px; }
 
     /* ═══ PLAY MENU ═══ */
     .pl { display: flex; flex-direction: column; gap: 22px; }

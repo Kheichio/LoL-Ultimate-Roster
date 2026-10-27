@@ -626,7 +626,9 @@ console.log('  route : vite ssrLoadModule (real project svelte pipeline)');
 console.log('=========================================================');
 
 // ---- 1. brand-new PRE-COMPETITIVE, unsigned, nothing populated -------------
-newCareer(baseCfg({ handle: 'Nyx', pathId: 'precomp', age: 13 }));
+// clubId: null is the one way to start UNSIGNED now that every pre-comp career
+// begins at an amateur side -- kept so the free-agent screens stay covered.
+newCareer(baseCfg({ handle: 'Nyx', pathId: 'precomp', age: 13, clubId: null }));
 ST.career.update(c => ({
     ...c,
     news: [], history: [], offers: [], awards: [], trophies: [], sponsors: [],
@@ -634,6 +636,14 @@ ST.career.update(c => ({
     season: { ...c.season, schedule: [], standings: {}, bracket: null },
 }));
 const S_PRECOMP = pushState('1-precomp-unsigned', 'brand new, no club, no schedule, no news');
+
+// ---- 1b. brand-new PRE-COMPETITIVE at the amateur side they picked ----------
+// The real creation path: a 13-year-old on a tier-3 roster, amateur names
+// localised to the LCK, week 1 of preseason with a brief drawn.
+newCareer(baseCfg({ handle: 'Seo', pathId: 'precomp', age: 13, regionId: 'LCK', clubId: 'am_pug3' }));
+safe('ensureSeason', () => G.ensureSeason());
+safe('startCareerWeek', () => G.startCareerWeek());
+pushState('1b-precomp-amateur-w1', 'pre-comp at a picked amateur side, LCK names, week 1');
 
 // ---- 2. brand-new ACADEMY DEBUT, tier-2 club, week 1 -----------------------
 newCareer(baseCfg({ handle: 'Rune', pathId: 'debut', age: 16, roleId: 'ADC' }));
@@ -840,6 +850,19 @@ const SINGLE_ROT = [
     ['history-holds-an-empty',   c => ({ ...c, history: [{}, ...(c.history || [])] })],
     ['weekly-log-holds-a-null',  c => ({ ...c, weekly: { ...c.weekly, log: [null] } })],
     ['contract-is-null',         c => ({ ...c, player: { ...c.player, contract: null } })],
+    // The club's brief (objectives.js) is persisted save data the Hub, Training
+    // and clubReview all read. Every shape below must render, and the junk-list
+    // one must still show the one item that is real.
+    ['brief-is-a-string',        c => ({ ...c, season: { ...c.season, objectives: 'met everything' } })],
+    ['brief-list-holds-junk',    c => ({ ...c, season: { ...c.season, objectives: {
+        stamp: 'x', year: c.time.year, split: 'spring', clubId: c.player.clubId,
+        list: [null, 7, 'x', { kind: 'nope', title: 5 }, { id: 'personal', kind: 'rating', group: 'Personal', title: 'Average a 7.0 match rating', target: 7, bonus: 150 }],
+        result: null } } })],
+    ['brief-result-is-rotten',   c => ({ ...c, season: { ...c.season, objectives: c.season && c.season.objectives && typeof c.season.objectives === 'object'
+        ? { ...c.season.objectives, result: 'settled' } : c.season && c.season.objectives } })],
+    ['brief-for-another-club',   c => ({ ...c, season: { ...c.season, objectives: c.season && c.season.objectives && typeof c.season.objectives === 'object'
+        ? { ...c.season.objectives, clubId: 'org_somebody_else' } : c.season && c.season.objectives } })],
+    ['last-objectives-is-junk',  c => ({ ...c, flags: { ...c.flags, lastObjectives: { items: 'x', gold: 'lots' }, briefs: 'many' } })],
     ['club-id-is-dead',          c => ({ ...c, player: { ...c.player, clubId: 'org_deleted_in_a_patch' } })],
     ['role-is-unknown',          c => ({ ...c, player: { ...c.player, role: 'NOT_A_ROLE' } })],
     ['region-is-unknown',        c => ({ ...c, player: { ...c.player, region: 'NOT_A_REGION' } })],
@@ -1212,10 +1235,51 @@ console.log('---- TRAINING: THE MAINTENANCE DRILL ---------------------');
             return x;
         })()],
     ];
-    for (const [label, snapx] of MAINT) {
-        applyState(snapx);
-        await render('Training', TRN, {}, label, { minText: 120 });
+    // Both training modes: with the minigames on these are the maintenance DRILL
+    // cards this block was written for; in the level system (the default) they
+    // are the spend panel's "protect with a point" arm.
+    for (const [mode, skip] of [['drills', false], ['levels', true]]) {
+        ST.skipMinigames.set(skip);
+        for (const [label, snapx] of MAINT) {
+            applyState(snapx);
+            await render('Training', TRN, {}, label + '-' + mode, { minText: 120 });
+        }
     }
+    ST.skipMinigames.set(true);
+}
+
+// ---------------------------------------------------------------------------
+//  TRAINING MODES
+//  The level system is the default (stores/career.js skipMinigames), so every
+//  Hub and Training render above is the LEVEL SYSTEM. These cover the other half
+//  -- the minigame drills, now behind the setting -- plus a career holding banked
+//  points in each mode, which no driven fixture reaches (the level card's points
+//  state and the spend panel shown beside the drills), and rotten counters.
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('---- TRAINING MODES --------------------------------------');
+{
+    const TRN = COMPONENT_DIR + 'Training.svelte';
+    const HUB = COMPONENT_DIR + 'Hub.svelte';
+    const withLevel = (patch) => {
+        const x = clone(S_MID.snap);
+        x.player = { ...x.player, ...patch };
+        return x;
+    };
+    const MODES = [
+        ['modes-levels-banked-points', true, withLevel({ points: 7, level: 23, xp: 140 })],
+        ['modes-levels-rotten-counters', true, withLevel({ points: 'lots', level: -4, xp: NaN })],
+        ['modes-minigames', false, withLevel({})],
+        ['modes-minigames-banked-points', false, withLevel({ points: 4, level: 9, xp: 60 })],
+    ];
+    for (const [label, skip, snapx] of MODES) {
+        ST.skipMinigames.set(skip);
+        for (const [name, rel] of [['Training', TRN], ['Hub', HUB]]) {
+            applyState(snapx);
+            await render(name, rel, {}, label, { minText: 120 });
+        }
+    }
+    ST.skipMinigames.set(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -2396,6 +2460,31 @@ function overlayPayloads() {
         year: c.time.year, split: 'spring', record: { w: 12, l: 6 }, placement: 3, teams: 10,
         avgRating: 7.12, awards, headline: 'A third place finish and a playoff run.',
     }]);
+    // The club's brief, as engine.settleBrief() writes it into the season review.
+    // No ordinary fixture reaches a split close with a payload in hand, so without
+    // these the brief block has zero occurrences in --dump while the harness is green.
+    const briefItems = [
+        { id: 'team', kind: 'table', title: 'Finish in the top 3', state: 'met', detail: 'Finished 2nd of 10.', bonus: 450, stretch: false },
+        { id: 'personal', kind: 'rating', title: 'Average a 7.3 match rating', state: 'failed', detail: '6.94 across 17 games.', bonus: 450, stretch: false },
+        { id: 'develop', kind: 'drills', title: 'Complete 8 training drills', state: 'met', detail: '11 drills this split.', bonus: 450, stretch: false },
+        { id: 'stretch', kind: 'stretch', title: 'Reach the playoff final', state: 'missed', detail: 'Knocked out short of it.', bonus: 900, stretch: true },
+    ];
+    const seasonBase = { year: c.time.year, split: 'summer', w: 11, l: 7, placement: 2, teamId: c.player.clubId };
+    out.push(['season-brief-mixed', 'season', {
+        ...seasonBase,
+        brief: { items: briefItems, met: 2, failed: 1, total: 3, gold: 900, morale: 0, sweep: false },
+        notes: [
+            { label: 'Club verdict', text: 'Concerned. The numbers are not there and your minutes are under review.', accent: '#f59e0b' },
+            { label: 'Warning', text: 'Warning 1 of 3 on your file. A third and the contract is torn up.', accent: '#ef4444' },
+        ],
+    }]);
+    out.push(['season-brief-sweep', 'season', {
+        ...seasonBase,
+        brief: { items: briefItems.map(i => ({ ...i, state: 'met' })), met: 4, failed: 0, total: 3, gold: 3263, morale: 8, sweep: true },
+    }]);
+    out.push(['season-brief-items-rotten', 'season', { ...seasonBase, brief: { items: [null, 7, 'x', { state: 42 }, {}], met: 'a', gold: -5 } }]);
+    out.push(['season-brief-is-a-string', 'season', { ...seasonBase, brief: 'all met' }]);
+    out.push(['season-brief-empty-items', 'season', { ...seasonBase, brief: { items: [] } }]);
 
     out.push(['retire-valid', 'retire', null]);
 

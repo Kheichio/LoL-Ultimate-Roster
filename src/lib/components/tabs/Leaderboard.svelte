@@ -6,9 +6,9 @@
     import ProfileModal from '../modals/ProfileModal.svelte';
     import Icon from '../ui/Icon.svelte';
     import RoadPips from '../ui/RoadPips.svelte';
-    import { teamIdentity, saveGame, squad, club } from '../../stores/game.js';
+    import { teamIdentity, squad, club } from '../../stores/game.js';
     import { currentUser } from '../../stores/auth.js';
-    import { openSettings } from '../../stores/ui.js';
+    import { openSettings, switchTab } from '../../stores/ui.js';
     import { lbRows, lbState, lbSync, fetchBoard, publishNow, myRow, LB_COLUMNS, TITLE_KINDS, GR_STEPS, goldenRoadLine } from '../../stores/leaderboard.js';
 
     const REFRESH_MS = 60 * 1000;
@@ -80,10 +80,6 @@
     $: problem = ($lbState.status === 'error' || $lbState.status === 'offline') ? $lbState.error
         : ($lbSync.status === 'error' || $lbSync.status === 'offline') ? $lbSync.error : '';
 
-    function setFav(field, value) {
-        teamIdentity.update(t => ({ ...t, [field]: value.slice(0, 40) }));
-        saveGame();
-    }
     async function retry() {
         if ($currentUser) await publishNow({ force: true });
         fetchBoard(sort);
@@ -232,22 +228,14 @@
         {/if}
     </div>
 
-    <!-- ── Your public profile ── -->
+    <!-- ── Your public profile ── (edited on Home, with the rest of the club's identity) -->
     <div class="profile">
         <div class="pf-head">
             <span class="pf-title">Your public profile</span>
-            <span class="pf-sub">Shown when other managers open your club. Your squad and Club showcase are included automatically.</span>
+            <span class="pf-sub">Shown when other managers open your club, with your squad and Club showcase.
+                {#if $teamIdentity.favouriteTeam || $teamIdentity.favouritePlayer}Favourite{$teamIdentity.favouriteTeam ? ` team: ${$teamIdentity.favouriteTeam}` : ''}{$teamIdentity.favouriteTeam && $teamIdentity.favouritePlayer ? ' ·' : ''}{$teamIdentity.favouritePlayer ? ` player: ${$teamIdentity.favouritePlayer}` : ''}.{/if}</span>
         </div>
-        <div class="pf-fields">
-            <label class="pf-field">
-                <span>Favourite team</span>
-                <input type="text" maxlength="40" value={$teamIdentity.favouriteTeam || ''} placeholder="e.g. T1" on:change={(e) => setFav('favouriteTeam', e.target.value)}>
-            </label>
-            <label class="pf-field">
-                <span>Favourite player</span>
-                <input type="text" maxlength="40" value={$teamIdentity.favouritePlayer || ''} placeholder="e.g. Faker" on:change={(e) => setFav('favouritePlayer', e.target.value)}>
-            </label>
-        </div>
+        <button class="pf-go" on:click={() => switchTab('home')}>Edit on Home <Icon name="arrow" size={13} /></button>
     </div>
 </section>
 
@@ -378,11 +366,8 @@
     .pf-head { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 3px; }
     .pf-title { font-size: 14px; font-weight: 900; color: #e2e8f0; }
     .pf-sub { font-size: 12px; color: #64748b; line-height: 1.5; }
-    .pf-fields { display: flex; gap: 10px; flex-wrap: wrap; }
-    .pf-field { display: flex; flex-direction: column; gap: 5px; min-width: 170px; }
-    .pf-field span { font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
-    .pf-field input { padding: 9px 12px; border-radius: 10px; background: rgba(2,6,23,0.55); border: 1px solid rgba(71,85,105,0.35); color: #e2e8f0; font-size: 13px; font-weight: 700; font-family: inherit; outline: none; }
-    .pf-field input:focus { border-color: rgba(56,189,248,0.6); }
+    .pf-go { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 11px; font-size: 12.5px; font-weight: 800; color: #e0f2fe; cursor: pointer; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.35); }
+    .pf-go:hover { background: rgba(56,189,248,0.2); }
 
     @media (max-width: 860px) {
         .row { grid-template-columns: 36px minmax(0, 1fr) 84px; }

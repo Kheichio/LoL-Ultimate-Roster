@@ -20,20 +20,25 @@
     // =====================================================================
 
     import { onDestroy } from 'svelte';
+    import { get } from 'svelte/store';
 
     import {
-        career, careerScreen, careerOVR, saveCareer,
+        career, careerScreen, careerOVR, saveCareer, skipMinigames,
     } from '../../stores/career.js';
     import {
-        ATTRS, ROLE_BY_ID, ATTR_MAX, UNSIGNED_SOFT_CAP, ENERGY_MAX,
+        ATTRS, ROLE_BY_ID, ATTR_MAX, UNSIGNED_SOFT_CAP, ENERGY_MAX, ACTIVITY_BY_ID,
     } from '../../career/constants.js';
     import {
         DRILLS, DRILL_TIERS, drillsForAttr, expectedGain, canTrain, runDrill,
         trainingMultiplier, trainingMultiplierBreakdown, weeklyTrainingSlots,
-        trainingOverview, trainingBlurb, completeDrill,
+        trainingOverview, trainingBlurb, completeDrill, quickDrill, QUICK_SCORE,
+        levelOf, ACTIVITY_XP, XP_PER_LEVEL, POINTS_PER_LEVEL, pointGainPreview,
+        canSpendPoint, spendPoint, POINT_LOG_LABEL,
     } from '../../career/training.js';
     import { energyLabel, fmtGold, clamp } from '../../career/ratings.js';
     import { unsignedCapFor } from '../../career/economy.js';
+    import { objectiveProgress } from '../../career/objectives.js';
+    import { MINIGAME_GUIDES } from './minigames/guides.js';
     import { showToast } from '../../stores/toasts.js';
     import { playSound } from '../../utils/sound.js';
 
@@ -58,6 +63,7 @@
     let lastScore = 0;
     let lastMeta = {};
     let lastDrillName = '';
+    let lastDrill = null;        // the drill the result panel is about, for "again"
     let flashAttr = '';
     let flashTimer = null;
 
@@ -72,8 +78,34 @@
         return best;
     }
 
-    // Open on whatever the player's role actually cares about most.
-    let selectedAttr = highestWeightAttr($career.player.role);
+    // Opens on the recommended attribute (see pickRecommended); the role's
+    // heaviest attribute is only the fallback for a save nothing can be read from.
+    let selectedAttr = '';
+
+    // What each drill makes you DO, from the same table the drill's briefing
+    // reads, so the card and the briefing can never describe it differently.
+    const DRILL_GAME = ATTRS.reduce((m, x) => {
+        const g = MINIGAME_GUIDES[x.game];
+        m[x.key] = g ? g.goal : '';
+        return m;
+    }, {});
+
+    /** The attribute a drill helps most right now: biggest rating gain per
+     *  session (OVR weight x room left, capped so a far-off ceiling does not
+     *  dominate), with a nudge toward one not yet drilled this split. Once
+     *  nothing can grow, the heaviest attribute still exposed to decline. */
+    function pickRecommended(rows, roleObj) {
+        if (!Array.isArray(rows) || !rows.length) return '';
+        const w = (k) => (roleObj && roleObj.weights && roleObj.weights[k]) || 0;
+        const grow = rows.filter(r => r.headroom >= 1 && !r.throttled);
+        if (grow.length) {
+            const score = (r) => w(r.key) * Math.min(r.headroom, 15) + (r.held ? 0 : 0.6);
+            return grow.slice().sort((a, b) => score(b) - score(a))[0].key;
+        }
+        const exposedRows = rows.filter(r => !r.held);
+        const pool = exposedRows.length ? exposedRows : rows;
+        return pool.slice().sort((a, b) => w(b.key) - w(a.key))[0].key;
+    }
 
     onDestroy(() => { if (flashTimer) clearTimeout(flashTimer); flashTimer = null; });
 
@@ -87,11 +119,27 @@
     // ONE attribute instead of the whole split. It changes no arithmetic: that
     // row's mult is a neutral 1.0 so the column still multiplies out to `mult`.
     $: breakdown = safeBreakdown(c, selectedAttr);
+    // The factors actually moving the number, biggest first, for the summary
+    // chips. The full table is one click away (showFactors).
+    $: topFactors = breakdown
+        .filter(r => r && r.key !== 'maintenance' && Number.isFinite(r.mult) && Math.abs(r.mult - 1) >= 0.005)
+        .sort((a, b) => Math.abs(b.mult - 1) - Math.abs(a.mult - 1))
+        .slice(0, 4);
+    let showFactors = false;
+    // The development half of the club's brief, which drills are the only way to meet.
+    $: devObjective = (() => {
+        try {
+            const b = objectiveProgress(c);
+            return b ? (b.items.find(i => i.kind === 'drills' || i.kind === 'ovr') || null) : null;
+        } catch (e) { return null; }
+    })();
     $: slots = weeklyTrainingSlots(c);
     $: slotsUnlimited = !Number.isFinite(slots.max);
     $: slotsFull = !slotsUnlimited && slots.used >= slots.max;
 
     $: overview = safeOverview(c);
+    $: recommendKey = pickRecommended(overview, role);
+    $: if (!selectedAttr) selectedAttr = recommendKey || highestWeightAttr(p.role);
     $: energy = Math.round(p.energy || 0);
     $: energyInfo = energyLabel(energy);
 
@@ -228,17 +276,94 @@
         return { energyCost: Number(d && d.energy) || 0, injuryRisk: 0 };
     }
 
+    // ---- the level system (training.js) -----------------------------------
+    // The default mode, while "Skip training minigames" is on: practice activities
+    // on the Hub pay XP, levels pay points, and this screen spends them. Points
+    // banked in that mode stay spendable here with the minigames on, too.
+    $: levelMode = $skipMinigames;
+    $: lv = safeLevel(c);
+    $: xpRows = Object.keys(ACTIVITY_XP).map(id => ({
+        id,
+        name: id === 'train' ? 'Practice Block' : ((ACTIVITY_BY_ID[id] && ACTIVITY_BY_ID[id].name) || id),
+        xp: Math.max(1, Math.round((Number(ACTIVITY_XP[id]) || 0) * mult)),
+    })).sort((a, b) => b.xp - a.xp);
+    $: spendGate = selectedAttr ? safeSpendGate(c, selectedAttr) : { ok: false, maintenance: false, reason: '' };
+    $: spendPreview = selectedAttr ? safePreview(c, selectedAttr) : { gain: 0, capped: true };
+    let spendNote = '';
+
+    function safeLevel(career_) {
+        try {
+            const l = levelOf(career_);
+            if (l && typeof l === 'object') return l;
+        } catch (e) { /* fall through */ }
+        return { level: 1, xp: 0, need: XP_PER_LEVEL, pct: 0, points: 0 };
+    }
+    function safeSpendGate(career_, key) {
+        try {
+            const g = canSpendPoint(career_, key);
+            if (g && typeof g === 'object') return { ok: g.ok === true, maintenance: g.maintenance === true, reason: typeof g.reason === 'string' ? g.reason : '' };
+        } catch (e) { /* fall through */ }
+        return { ok: false, maintenance: false, reason: 'Unavailable.' };
+    }
+    function safePreview(career_, key) {
+        try {
+            const r = pointGainPreview(career_, key);
+            if (r && typeof r === 'object') return { gain: Number(r.gain) || 0, capped: r.capped === true };
+        } catch (e) { /* fall through */ }
+        return { gain: 0, capped: true };
+    }
+
+    /** Spend up to `n` points on the selected attribute, stopping the moment one is
+     *  refused (out of points, or an attribute that has just reached its ceiling). */
+    function spend(n) {
+        const key = selectedAttr;
+        if (!key) return;
+        let gained = 0, spent = 0, last = null;
+        for (let i = 0; i < Math.max(1, n); i++) {
+            // The store, not `c`: the reactive copy does not refresh mid-loop.
+            if (!safeSpendGate(get(career), key).ok) break;
+            let res = null;
+            try { res = spendPoint(key); } catch (e) { res = null; }
+            if (!res || !res.ok) break;
+            spent += 1;
+            gained += Number(res.gain) || 0;
+            last = res;
+        }
+        if (!spent) {
+            showToast(safeSpendGate(get(career), key).reason || 'That point could not be spent.', 'error');
+            return;
+        }
+        const name = last.attrName || key;
+        spendNote = last.maintenance
+            ? `${name} protected from this split's decline.`
+            : `+${(Math.round(gained * 100) / 100).toFixed(2)} ${name} from ${spent} point${spent === 1 ? '' : 's'}`
+                + (last.levelUp ? ` - overall rating ${last.ovrAfter}.` : '.');
+        playSound(last.levelUp ? 'rare' : 'claim');
+        if (last.levelUp) showToast(`Overall rating up to ${last.ovrAfter}.`, 'success');
+        flash(key);
+        saveCareer();
+    }
+
+    function setMinigames(on) {
+        if (!!on === !levelMode) return;
+        playSound('click');
+        skipMinigames.set(!on);
+    }
+
     // ---- week log ------------------------------------------------------
     // logWeek() writes a drill's own name as the entry label, so matching the
     // drill table is a reliable way to pull training out of a mixed week log.
-    const DRILL_NAMES = new Set(DRILLS.map(d => d.name));
+    // The level system files a spent point and a practice block by fixed labels.
+    const DRILL_NAMES = new Set([...DRILLS.map(d => d.name), POINT_LOG_LABEL, 'Practice Block']);
     $: weekLog = Array.isArray(c.weekly.log) ? c.weekly.log : [];
     $: sessionLog = weekLog.filter(e => e && DRILL_NAMES.has(e.label)).slice(-5).reverse();
+    // Drills, practice blocks and spent points alike, counted off the log rather
+    // than weekly.trained, which only the drills write.
+    $: weekSessions = weekLog.filter(e => e && DRILL_NAMES.has(e.label)).length;
     $: trainedMap = (c.weekly && c.weekly.trained) || {};
     $: trainedChips = ATTRS
         .filter(a => (trainedMap[a.key] || 0) > 0)
         .map(a => ({ key: a.key, abbr: a.abbr, name: a.name, color: a.color, n: trainedMap[a.key] }));
-    $: sessionsThisWeek = trainedChips.reduce((s, x) => s + x.n, 0);
 
     // ---------------------------------------------------------------- helpers
     function pct(v) { return clamp((Number(v) || 0) / ATTR_MAX * 100, 0, 100); }
@@ -267,8 +392,9 @@
     }
 
     function selectAttr(key) {
+        if (selectedAttr === key) return;
         playSound('click');
-        selectedAttr = selectedAttr === key ? '' : key;
+        selectedAttr = key;
     }
 
     function flash(key) {
@@ -298,7 +424,35 @@
         result = null;
         lastMeta = {};
         lastDrillName = d.name;
+        lastDrill = d;
         activeDrill = d;
+    }
+
+    // The same session without the minigame (training.quickDrill): scored at a
+    // fixed QUICK_SCORE, a little under a normal run, so it is the fast way
+    // through a week rather than the best one.
+    function quick(d) {
+        const gate = safeGate(c, d);
+        if (!gate.ok) {
+            playSound('click');
+            showToast(gate.reason || 'That session could not be run.', 'error');
+            return;
+        }
+        let res = null;
+        try { res = quickDrill(d); } catch (e) { res = null; }
+        res = res || { ok: false, message: 'That session could not be run.' };
+        lastScore = QUICK_SCORE;
+        lastMeta = { detail: 'Quick session: no minigame, scored as a ' + Math.round(QUICK_SCORE * 100) + '% run.' };
+        lastDrillName = d.name;
+        lastDrill = d;
+        result = res;
+        if (res.ok) {
+            selectedAttr = d.attr;
+            flash(d.attr);
+        } else {
+            showToast(res.message || 'That session could not be run.', 'error');
+        }
+        saveCareer();
     }
 
     function handleComplete(score01, meta) {
@@ -312,6 +466,7 @@
         lastScore = score;
         lastMeta = meta || {};
         lastDrillName = d.name;
+        lastDrill = d;
         result = res;
 
         if (res.ok) {
@@ -334,6 +489,31 @@
         playSound('click');
         saveCareer();
     }
+
+    // The result panel is `position: fixed`, but this screen renders inside
+    // CareerShell's .cscreen, whose transform animation makes it the containing
+    // block for fixed descendants -- so the panel centred on the whole (tall)
+    // page instead of the window and opened half off-screen. Same fix as
+    // MinigameHost: re-parent the overlay to <body>.
+    function portal(node) {
+        if (typeof document === 'undefined') return {};
+        document.body.appendChild(node);
+        return {
+            destroy() {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            },
+        };
+    }
+
+    // Straight into the same drill again from the result panel, played or quick.
+    function again(useQuick) {
+        const d = lastDrill;
+        closeResult();
+        if (!d) return;
+        if (useQuick) quick(d);
+        else start(d);
+    }
+    $: againOk = !!(result && result.ok && lastDrill && safeGate(c, lastDrill).ok);
 
     function onWindowKey(e) {
         if (!result) return;
@@ -364,15 +544,401 @@
     <div class="tr-top">
         <div>
             <h2 class="tr-h">Training</h2>
-            <p class="tr-sub">
-                Drills are the only place your attributes rise on purpose - and the only thing
-                that keeps them where they are. Anything you go a whole split without drilling
-                loses points at the split close, ceiling or no ceiling.
-            </p>
+            {#if levelMode}
+                <ol class="tr-steps" aria-label="How training works">
+                    <li><span class="tr-n">1</span><span><b>Earn XP</b> on the Hub: a Practice Block, scrims, solo queue, VOD review, the coach and champion practice all pay it.</span></li>
+                    <li><span class="tr-n">2</span><span><b>Level up.</b> Every {XP_PER_LEVEL} XP is a level and {POINTS_PER_LEVEL} attribute points.</span></li>
+                    <li><span class="tr-n">3</span><span><b>Spend points</b> on the attribute you want. "Best pick" raises your rating the most.</span></li>
+                </ol>
+                <p class="tr-sub">
+                    A point spent on an attribute also protects it: an attribute nobody trains for a
+                    whole split can lose points when the split closes.
+                </p>
+            {:else}
+                <ol class="tr-steps" aria-label="How training works">
+                    <li><span class="tr-n">1</span><span><b>Pick an attribute.</b> "Best pick" raises your rating the most.</span></li>
+                    <li><span class="tr-n">2</span><span><b>Pick a drill.</b> Harder drills give more and cost more energy.</span></li>
+                    <li><span class="tr-n">3</span><span><b>Play it</b> (about a minute at most) or take a <b>Quick</b> session with no minigame. Your score decides the gain; 50% is a normal session, Quick counts as {Math.round(QUICK_SCORE * 100)}%.</span></li>
+                </ol>
+                <p class="tr-sub">
+                    Each drill uses one activity slot. An attribute you go a whole split without
+                    drilling can lose points when the split closes.
+                </p>
+            {/if}
         </div>
-        <div class="tr-role" style="--rc:{role.accent}">
-            <span class="tr-role-l">Rated as</span>
-            <span class="tr-role-n">{role.name}</span>
+        <div class="tr-side">
+            <div class="tr-role" style="--rc:{role.accent}">
+                <span class="tr-role-l">Rated as</span>
+                <span class="tr-role-n">{role.name}</span>
+            </div>
+            <!-- The training-mode setting, also in Settings. Device-wide, like the theme. -->
+            <div class="tr-mode" role="radiogroup" aria-label="How you train">
+                <button role="radio" aria-checked={levelMode} class:on={levelMode} on:click={() => setMinigames(false)}>Level system</button>
+                <button role="radio" aria-checked={!levelMode} class:on={!levelMode} on:click={() => setMinigames(true)}>Minigames</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================== LEVEL ========================== -->
+    {#if levelMode || lv.points > 0}
+        <section class="lvl" class:lvl-has={lv.points > 0} aria-label="Training level">
+            <div class="lvl-badge">
+                <span class="lvl-k">Level</span>
+                <span class="lvl-n">{lv.level}</span>
+            </div>
+            <div class="lvl-main">
+                <div class="lvl-top">
+                    <span class="lvl-t">{levelMode ? 'XP to the next level' : 'Level system paused while the minigames are on'}</span>
+                    <span class="lvl-x">{lv.xp} / {lv.need} XP</span>
+                </div>
+                <div class="lvl-bar"><div class="lvl-fill" style="width:{Math.round(lv.pct * 100)}%"></div></div>
+                {#if levelMode}
+                    <div class="lvl-earn" aria-label="XP per activity at your current training effectiveness">
+                        {#each xpRows as r (r.id)}<span class="xp-chip">{r.name} <b>+{r.xp}</b></span>{/each}
+                    </div>
+                {/if}
+            </div>
+            <div class="lvl-pts">
+                <span class="lvl-pts-n">{lv.points}</span>
+                <span class="lvl-pts-l">point{lv.points === 1 ? '' : 's'} to spend</span>
+            </div>
+        </section>
+    {/if}
+
+    <!-- ========================== WARNINGS =========================== -->
+    <div class="warns">
+        {#if energy < 25}
+            <div class="warn warn-bad">
+                <span class="warn-ico" aria-hidden="true">{BOLT}</span>
+                <span class="warn-t">
+                    <strong>Exhausted.</strong> Below 25 energy everything you train pays half of what it
+                    should, and the injury roll is at its worst. Rest first - the week is not going anywhere.
+                </span>
+            </div>
+        {:else if energy < 40}
+            <div class="warn warn-warn">
+                <span class="warn-ico" aria-hidden="true">{BOLT}</span>
+                <span class="warn-t">
+                    <strong>Running low.</strong> Under 40 energy the injury chance on every session climbs,
+                    and at 25 gains are halved outright.
+                </span>
+            </div>
+        {/if}
+
+        {#if throttled.length}
+            <div class="warn warn-warn">
+                <span class="warn-ico" aria-hidden="true">&#x1F512;</span>
+                <span class="warn-t">
+                    <strong>{throttled.length} attribute{throttled.length === 1 ? '' : 's'} past the unsigned ceiling of {unsignedCap}.</strong>
+                    {throttled.map(a => a.abbr).join(', ')} still move, at roughly a seventh of the
+                    normal rate. Training alone gets you scouted; it does not get you good. Sign for a club.
+                </span>
+                <button class="warn-btn" on:click={() => goto('transfers')}>Transfers</button>
+            </div>
+        {:else if unsigned}
+            <div class="warn warn-info">
+                <span class="warn-ico" aria-hidden="true">&#x2139;</span>
+                <span class="warn-t">
+                    <strong>Unsigned.</strong> Training alone runs at 0.9x, and past {unsignedCap} every
+                    attribute crawls. Good enough to get scouted, never good enough to be great.
+                </span>
+            </div>
+        {/if}
+
+        {#if declinedLast.length}
+            <div class="warn warn-warn">
+                <span class="warn-ico" aria-hidden="true">&#x1F4C9;</span>
+                <span class="warn-t">
+                    <strong>The last split close took {fmtNum(declinedTotal)} points off you.</strong>
+                    {declinedLast.map(a => a.abbr + ' -' + fmtNum(a.declined)).join(', ')}. An attribute
+                    that goes a whole split without a single drill loses ground at the close, whether it
+                    is at your ceiling or nowhere near it. One session anywhere in the split is the whole
+                    requirement.
+                </span>
+            </div>
+        {/if}
+
+        {#if slotsFull}
+            <div class="warn warn-info">
+                <span class="warn-ico" aria-hidden="true">&#x1F4C5;</span>
+                <span class="warn-t">
+                    <strong>Practice block is full.</strong> Your club schedules {slots.max} session{slots.max === 1 ? '' : 's'} a
+                    week at this tier. Anything else this week has to be scrims, solo queue or rest.
+                </span>
+            </div>
+        {:else if actionsLeft <= 0}
+            <div class="warn warn-info">
+                <span class="warn-ico" aria-hidden="true">&#x1F4C5;</span>
+                <span class="warn-t">
+                    <strong>No activity slots left.</strong> The week is spent. Advance it from the Hub
+                    to get your slots and energy back.
+                </span>
+                <button class="warn-btn" on:click={() => goto('hub')}>Hub</button>
+            </div>
+        {/if}
+    </div>
+
+    <!-- ========================= ATTRIBUTES ========================== -->
+    <div class="side-label attr-title">
+        Attributes
+        <span class="attr-title-n">{maxedOut.length} of {ATTRS.length} at ceiling</span>
+        {#if exposed.length}
+            <span class="attr-title-n attr-title-warn">
+                {exposed.length} undrilled this split - exposed to decline
+            </span>
+        {:else if overview.length}
+            <!-- Only claimable when there are rows to have claimed it about: an
+                 empty overview is a save we could not read, not a clean sheet. -->
+            <span class="attr-title-n attr-title-ok">
+                All {overview.length} drilled this split - nothing can decline
+            </span>
+        {/if}
+    </div>
+
+    <!-- Two panes: every attribute on the left (pick one), its three drills on
+         the right. Opens on the recommended attribute, which is the biggest
+         rating gain per drill, or the attribute most at risk of decline once
+         everything is at its ceiling. -->
+    <div class="train">
+        <div class="attrs" role="group" aria-label="Attributes">
+            {#each overview as a (a.key)}
+                {@const w = weightPct(a.key)}
+                <button
+                    class="attr"
+                    class:attr-open={selectedAttr === a.key}
+                    class:attr-flash={flashAttr === a.key}
+                    style="--ac:{a.color}"
+                    on:click={() => selectAttr(a.key)}
+                    aria-pressed={selectedAttr === a.key}
+                >
+                    <span class="attr-abbr">{a.abbr}</span>
+
+                    <span class="attr-main">
+                        <span class="attr-line">
+                            <span class="attr-name">{a.name}</span>
+                            {#if recommendKey === a.key}
+                                <span class="tag tag-rec">Best pick</span>
+                            {/if}
+                            {#if a.headroom <= 0}
+                                <span class="tag tag-max" title="At your ceiling. A drill no longer adds points to it - it is what stops it losing them.">At ceiling</span>
+                            {:else if a.throttled}
+                                <span class="tag tag-cap">{unsigned ? 'Unsigned cap' : 'Amateur cap'}</span>
+                            {/if}
+                            {#if a.held}
+                                <span class="tag tag-held" title={a.note}>
+                                    Held{a.heldCount > 1 ? ' x' + a.heldCount : ''}
+                                </span>
+                            {:else}
+                                <span class="tag tag-slip" title={a.note || (a.name + ' has not been drilled this split - exposed to decline')}>Exposed</span>
+                            {/if}
+                            {#if a.trainedThisWeek > 0}
+                                <span class="tag tag-rep">{a.trainedThisWeek} this week</span>
+                            {/if}
+                        </span>
+                        <span class="attr-bar">
+                            <span class="bar-ghost" style="width:{pct(a.ceiling)}%"></span>
+                            <span class="bar-fill" style="width:{pct(a.value)}%"></span>
+                        </span>
+                    </span>
+
+                    <span class="attr-nums" title="Current value and your potential ceiling">
+                        <span class="attr-cur">{Math.round(a.value)}</span>
+                        <span class="attr-slash">/</span>
+                        <span class="attr-pot">{Math.round(a.ceiling)}</span>
+                        {#if a.declined > 0}
+                            <span class="attr-loss" title="The last split close took {fmtNum(a.declined)} off {a.name} because it went the split undrilled">
+                                -{fmtNum(a.declined)}
+                            </span>
+                        {/if}
+                    </span>
+
+                    <span
+                        class="attr-w"
+                        class:attr-w-key={w >= 16}
+                        title="{a.name} is {w}% of a {role.short}'s overall rating"
+                    >
+                        <span class="attr-w-n">{w}%</span>
+                        <span class="attr-w-l">of OVR</span>
+                    </span>
+                </button>
+            {/each}
+        </div>
+
+        <div class="pane" aria-live="polite">
+            {#if selectedRow}
+                {@const a = selectedRow}
+                <div class="pane-head" style="--ac:{a.color}">
+                    <span class="attr-abbr">{a.abbr}</span>
+                    <div class="pane-t">
+                        <h3 class="pane-name">{a.name}</h3>
+                        <p class="pane-desc">{a.desc}</p>
+                    </div>
+                    <div class="pane-val">
+                        <span class="pane-cur">{Math.round(a.value)}</span>
+                        <span class="pane-of">of {Math.round(a.ceiling)}</span>
+                    </div>
+                </div>
+                {#if levelMode || lv.points > 0}
+                    <!-- THE LEVEL SYSTEM: points earned on the Hub, spent here. -->
+                    <div class="spend" class:spend-solo={levelMode}>
+                        <div class="spend-head">
+                            <span class="spend-k">{spendGate.maintenance ? 'A point here buys' : 'Each point adds'}</span>
+                            <span class="spend-v">{spendGate.maintenance ? 'protection' : '+' + spendPreview.gain.toFixed(2)}</span>
+                            <span class="spend-s">
+                                {#if spendGate.maintenance}{a.name} is at your ceiling: no points, but safe from this split's decline.
+                                {:else if spendPreview.capped}{a.name} is at your ceiling of {Math.round(a.ceiling)}.
+                                {:else}{a.name} right now. Less as it nears your ceiling of {Math.round(a.ceiling)}.{/if}
+                            </span>
+                        </div>
+                        <div class="spend-btns">
+                            <button class="spend-go" disabled={!spendGate.ok} on:click={() => spend(1)}>
+                                {spendGate.maintenance ? 'Protect with 1 point' : 'Spend 1 point'}
+                            </button>
+                            {#if spendGate.ok && !spendGate.maintenance && lv.points > 1}
+                                <button class="spend-all" on:click={() => spend(lv.points)}>Spend all {lv.points}</button>
+                            {/if}
+                        </div>
+                        {#if !spendGate.ok && spendGate.reason}<p class="spend-why">{spendGate.reason}</p>{/if}
+                        {#if spendNote}<p class="spend-note" role="status">{spendNote}</p>{/if}
+                    </div>
+                {/if}
+
+                {#if !levelMode}
+                <p class="pane-how">
+                    Pick a drill. It uses one activity slot and the energy shown, then you play it:
+                    the better you score, the more {a.name} goes up.
+                </p>
+
+                <div class="drills" id={'drills-' + a.key}>
+                    {#if a.headroom <= 0}
+                        <p class="drills-note" class:drills-note-warn={!a.held}>
+                            {a.name} is at your ceiling of {Math.round(a.ceiling)}, so a drill adds no
+                            points to it. It is not finished with: an attribute that goes a whole split
+                            without one loses ground at the split close, and a session is the only thing
+                            that stops it.
+                            {#if a.held}
+                                Drilled {a.heldCount}{a.heldCount === 1 ? ' time' : ' times'} this split,
+                                so it is already safe until the close.
+                            {:else}
+                                Not drilled this split yet - one maintenance session anywhere in the
+                                split is the whole requirement.
+                            {/if}
+                            Raising the roof itself is a separate job: a breakthrough split, the
+                            Evergreen legacy perk or a performance camp.
+                        </p>
+                    {/if}
+
+                    <div class="drill-grid">
+                        {#each drillRows as row (row.d.id)}
+                            <article class="drill" class:drill-off={!row.gate.ok} class:drill-maint={row.maint} style="--dc:{row.tier.accent}">
+                                <header class="drill-head">
+                                    <span class="drill-tier">{row.tier.name}</span>
+                                    {#if row.maint}
+                                        <span class="drill-flag">Maintenance</span>
+                                    {/if}
+                                    <span class="pips" role="img" aria-label={'Difficulty ' + row.d.difficulty + ' of 3'}>
+                                        <span class="pip" class:on={row.d.difficulty >= 1}></span>
+                                        <span class="pip" class:on={row.d.difficulty >= 2}></span>
+                                        <span class="pip" class:on={row.d.difficulty >= 3}></span>
+                                    </span>
+                                </header>
+
+                                <h4 class="drill-name">{row.d.name}</h4>
+                                <p class="drill-desc">{row.d.desc}</p>
+                                {#if DRILL_GAME[a.key]}
+                                    <p class="drill-game"><b>You play:</b> {DRILL_GAME[a.key]}</p>
+                                {/if}
+
+                                <dl class="drill-stats">
+                                    <div class="ds">
+                                        <dt>Energy</dt>
+                                        <dd class:ds-bad={energy < row.energyCost}>{BOLT} {row.energyCost}</dd>
+                                    </div>
+                                    <div class="ds">
+                                        <dt>Fee</dt>
+                                        <dd class:ds-bad={row.d.goldCost > 0 && c.money.gold < row.d.goldCost}>
+                                            {row.d.goldCost > 0 ? COIN + ' ' + fmtGold(row.d.goldCost) : 'Free'}
+                                        </dd>
+                                    </div>
+                                    <div class="ds">
+                                        <dt>Requires</dt>
+                                        <dd class:ds-bad={row.locked}>
+                                            {row.d.reqOVR > 0 ? row.d.reqOVR + ' OVR' : 'Open'}
+                                        </dd>
+                                    </div>
+                                    <div class="ds">
+                                        <dt>Injury risk</dt>
+                                        <dd>{Math.round(row.risk * 100)}%</dd>
+                                    </div>
+                                </dl>
+
+                                <div
+                                    class="gain"
+                                    class:gain-capped={row.gain.capped && !row.maint}
+                                    class:gain-hold={row.maint}
+                                >
+                                    <span class="gain-l">{row.maint ? 'Holds the line' : 'You will gain'}</span>
+                                    <span class="gain-v">
+                                        {#if row.maint}
+                                            +0.00, on purpose
+                                        {:else if row.gain.capped}
+                                            Ceiling reached
+                                        {:else}
+                                            +{row.gain.min.toFixed(2)} to +{row.gain.max.toFixed(2)}
+                                        {/if}
+                                    </span>
+                                    <span class="gain-sub">
+                                        {#if row.maint}
+                                            buys {a.abbr} protection, not points
+                                        {:else if row.gain.capped}
+                                            Tops out at {Math.min(row.d.attrCap, Math.round(a.ceiling))}
+                                        {:else}
+                                            bad session {ARROW} perfect run
+                                        {/if}
+                                    </span>
+                                </div>
+
+                                <div class="drill-btns">
+                                    <button
+                                        class="drill-go"
+                                        class:drill-go-maint={row.maint}
+                                        disabled={!row.gate.ok}
+                                        on:click={() => start(row.d)}
+                                        aria-label={(row.maint ? 'Run maintenance session: ' : 'Play ') + row.d.name}
+                                    >
+                                        {#if row.maint}
+                                            Play Maintenance
+                                        {:else if row.gate.ok}
+                                            Play Drill
+                                        {:else}
+                                            Unavailable
+                                        {/if}
+                                    </button>
+                                    {#if row.gate.ok}
+                                        <button
+                                            class="drill-quick"
+                                            on:click={() => quick(row.d)}
+                                            title="Skip the minigame. Scored as a {Math.round(QUICK_SCORE * 100)}% run, a little under a normal session."
+                                            aria-label="Quick session: {row.d.name}"
+                                        >
+                                            Quick
+                                        </button>
+                                    {/if}
+                                </div>
+
+                                {#if row.maint}
+                                    <p class="drill-hold">{row.gate.reason}</p>
+                                {:else if !row.gate.ok}
+                                    <p class="drill-block">{row.gate.reason}</p>
+                                {/if}
+                            </article>
+                        {/each}
+                    </div>
+                </div>
+                {/if}
+            {:else}
+                <p class="pane-empty">Pick an attribute on the left to {levelMode ? 'put points into it' : 'see its drills'}.</p>
+            {/if}
         </div>
     </div>
 
@@ -381,7 +947,7 @@
         <div class="eff-main">
             <div class="side-label eff-label">
                 Training Effectiveness
-                {#if selectedRow}
+                {#if selectedRow && showFactors}
                     <span class="eff-scope" style="--sc:{selectedRow.color}">
                         Maintenance row: {selectedRow.abbr}
                     </span>
@@ -392,15 +958,28 @@
                 <div class="eff-big" style="color:{multColor(mult)}">
                     {mult.toFixed(2)}<span class="eff-x">x</span>
                 </div>
-                <p class="eff-note">
-                    Every point a drill would pay out is multiplied by this before the
-                    potential ceiling gets its say. Each factor below stacks. The
-                    maintenance row is a status rather than a rate, so it is a flat
-                    1.00x by design - it decides whether points stay, not how fast they arrive.
-                </p>
+                <div class="eff-sum">
+                    <p class="eff-note">
+                        {levelMode
+                            ? 'Every XP you earn is multiplied by this, so it decides how fast the points come.'
+                            : 'Every point a drill pays out is multiplied by this before your ceiling gets its say.'}
+                    </p>
+                    <div class="eff-chips">
+                        {#each topFactors as row (row.key)}
+                            <span class="eff-chip" style="--fc:{rowColor(row.mult)}">{row.label} <b>{row.mult.toFixed(2)}x</b></span>
+                        {:else}
+                            <span class="eff-chip eff-chip-flat">Every factor is neutral right now</span>
+                        {/each}
+                        <button class="eff-toggle" on:click={() => { showFactors = !showFactors; }} aria-expanded={showFactors}>
+                            {showFactors ? 'Hide' : 'Show'} all {breakdown.length} factors
+                        </button>
+                    </div>
+                </div>
             </div>
 
-            <ul class="fac">
+            <!-- Collapsed with CSS rather than {#if}, so careerRender's SSR pass
+                 still renders every row of the breakdown it has always covered. -->
+            <ul class="fac" class:fac-collapsed={!showFactors}>
                 {#each breakdown as row (row.key)}
                     {#if row.key === 'maintenance'}
                         <!-- A STATUS row, not a rate. Its 1.00x is deliberate and
@@ -455,7 +1034,7 @@
                 <div class="tile-bar">
                     <div class="tile-fill" style="width:{actionsMax ? (actionsLeft / actionsMax) * 100 : 0}%; background:#a78bfa"></div>
                 </div>
-                <p class="tile-p">Every drill costs one slot, same as any other weekly activity.</p>
+                <p class="tile-p">{levelMode ? 'Every practice session' : 'Every drill'} costs one slot, same as any other weekly activity.</p>
             </div>
 
             <div class="tile">
@@ -493,87 +1072,29 @@
                 </div>
                 <p class="tile-p">The marker at 25 is the cliff. Below it, training pays half.</p>
             </div>
+
+            {#if devObjective}
+                <div class="tile">
+                    <div class="tile-top">
+                        <span class="tile-l">Club brief</span>
+                        <span class="tile-v" style="color:{devObjective.state === 'met' ? '#22c55e' : '#38bdf8'}">
+                            {devObjective.value}
+                        </span>
+                    </div>
+                    <div class="tile-bar">
+                        <div class="tile-fill" style="width:{clamp(devObjective.progress * 100, 0, 100)}%; background:{devObjective.state === 'met' ? '#22c55e' : '#38bdf8'}"></div>
+                    </div>
+                    <p class="tile-p">{devObjective.title}. {devObjective.state === 'met' ? 'Done for this split.' : devObjective.detail}</p>
+                </div>
+            {/if}
         </div>
-    </div>
-
-    <!-- ========================== WARNINGS =========================== -->
-    <div class="warns">
-        {#if energy < 25}
-            <div class="warn warn-bad">
-                <span class="warn-ico" aria-hidden="true">{BOLT}</span>
-                <span class="warn-t">
-                    <strong>Exhausted.</strong> Below 25 energy every drill pays half of what it should,
-                    and the injury roll is at its worst. Rest first - the week is not going anywhere.
-                </span>
-            </div>
-        {:else if energy < 40}
-            <div class="warn warn-warn">
-                <span class="warn-ico" aria-hidden="true">{BOLT}</span>
-                <span class="warn-t">
-                    <strong>Running low.</strong> Under 40 energy the injury chance on every drill climbs,
-                    and at 25 gains are halved outright.
-                </span>
-            </div>
-        {/if}
-
-        {#if throttled.length}
-            <div class="warn warn-warn">
-                <span class="warn-ico" aria-hidden="true">&#x1F512;</span>
-                <span class="warn-t">
-                    <strong>{throttled.length} attribute{throttled.length === 1 ? '' : 's'} past the unsigned ceiling of {unsignedCap}.</strong>
-                    {throttled.map(a => a.abbr).join(', ')} still move, at roughly a seventh of the
-                    normal rate. Training alone gets you scouted; it does not get you good. Sign for a club.
-                </span>
-                <button class="warn-btn" on:click={() => goto('transfers')}>Transfers</button>
-            </div>
-        {:else if unsigned}
-            <div class="warn warn-info">
-                <span class="warn-ico" aria-hidden="true">&#x2139;</span>
-                <span class="warn-t">
-                    <strong>Unsigned.</strong> Training alone runs at 0.9x, and past {unsignedCap} every
-                    attribute crawls. Good enough to get scouted, never good enough to be great.
-                </span>
-            </div>
-        {/if}
-
-        {#if declinedLast.length}
-            <div class="warn warn-warn">
-                <span class="warn-ico" aria-hidden="true">&#x1F4C9;</span>
-                <span class="warn-t">
-                    <strong>The last split close took {fmtNum(declinedTotal)} points off you.</strong>
-                    {declinedLast.map(a => a.abbr + ' -' + fmtNum(a.declined)).join(', ')}. An attribute
-                    that goes a whole split without a single drill loses ground at the close, whether it
-                    is at your ceiling or nowhere near it. One session anywhere in the split is the whole
-                    requirement.
-                </span>
-            </div>
-        {/if}
-
-        {#if slotsFull}
-            <div class="warn warn-info">
-                <span class="warn-ico" aria-hidden="true">&#x1F4C5;</span>
-                <span class="warn-t">
-                    <strong>Practice block is full.</strong> Your club schedules {slots.max} session{slots.max === 1 ? '' : 's'} a
-                    week at this tier. Anything else this week has to be scrims, solo queue or rest.
-                </span>
-            </div>
-        {:else if actionsLeft <= 0}
-            <div class="warn warn-info">
-                <span class="warn-ico" aria-hidden="true">&#x1F4C5;</span>
-                <span class="warn-t">
-                    <strong>No activity slots left.</strong> The week is spent. Advance it from the calendar
-                    to get your slots and energy back.
-                </span>
-                <button class="warn-btn" on:click={() => goto('calendar')}>Calendar</button>
-            </div>
-        {/if}
     </div>
 
     <!-- ======================= WEEK LOG STRIP ======================== -->
     <div class="strip">
         <div class="strip-head">
             <span class="side-label strip-l">Last Five Sessions</span>
-            <span class="strip-ct">{sessionsThisWeek} this week</span>
+            <span class="strip-ct">{weekSessions} this week</span>
             {#if trainedChips.length}
                 <span class="strip-chips">
                     {#each trainedChips as ch (ch.key)}
@@ -599,211 +1120,12 @@
             </div>
         {:else}
             <p class="strip-empty">
-                Nothing logged yet this week. Every drill you finish lands here, so you can see
-                a week's worth of work at a glance instead of guessing.
+                Nothing logged yet this week. Every {levelMode ? 'practice block and point you spend' : 'drill you finish'}
+                lands here, so you can see a week's worth of work at a glance instead of guessing.
             </p>
         {/if}
     </div>
 
-    <!-- ========================= ATTRIBUTES ========================== -->
-    <div class="side-label attr-title">
-        Attributes
-        <span class="attr-title-n">{maxedOut.length} of {ATTRS.length} at ceiling</span>
-        {#if exposed.length}
-            <span class="attr-title-n attr-title-warn">
-                {exposed.length} undrilled this split - exposed to decline
-            </span>
-        {:else if overview.length}
-            <!-- Only claimable when there are rows to have claimed it about: an
-                 empty overview is a save we could not read, not a clean sheet. -->
-            <span class="attr-title-n attr-title-ok">
-                All {overview.length} drilled this split - nothing can decline
-            </span>
-        {/if}
-    </div>
-
-    <div class="attrs">
-        {#each overview as a (a.key)}
-            {@const open = selectedAttr === a.key}
-            {@const w = weightPct(a.key)}
-            <div class="attr" class:attr-open={open} class:attr-flash={flashAttr === a.key} style="--ac:{a.color}">
-                <button
-                    class="attr-head"
-                    on:click={() => selectAttr(a.key)}
-                    aria-expanded={open}
-                    aria-controls={'drills-' + a.key}
-                >
-                    <span class="attr-abbr">{a.abbr}</span>
-
-                    <span class="attr-main">
-                        <span class="attr-line">
-                            <span class="attr-name">{a.name}</span>
-                            {#if a.headroom <= 0}
-                                <span class="tag tag-max" title="At your ceiling. A drill no longer adds points to it - it is what stops it losing them.">At ceiling</span>
-                            {:else if a.throttled}
-                                <span class="tag tag-cap">Unsigned cap</span>
-                            {/if}
-                            {#if a.held}
-                                <span class="tag tag-held" title={a.note}>
-                                    Held{a.heldCount > 1 ? ' x' + a.heldCount : ''}
-                                </span>
-                            {:else}
-                                <span class="tag tag-slip" title={a.note || (a.name + ' has not been drilled this split - exposed to decline')}>Exposed</span>
-                            {/if}
-                            {#if a.trainedThisWeek > 0}
-                                <span class="tag tag-rep">{a.trainedThisWeek} this week</span>
-                            {/if}
-                        </span>
-                        <span class="attr-desc">{a.desc}</span>
-                        <span class="attr-bar">
-                            <span class="bar-ghost" style="width:{pct(a.ceiling)}%"></span>
-                            <span class="bar-fill" style="width:{pct(a.value)}%"></span>
-                        </span>
-                    </span>
-
-                    <span class="attr-nums" title="Current value and your potential ceiling">
-                        <span class="attr-cur">{Math.round(a.value)}</span>
-                        <span class="attr-slash">/</span>
-                        <span class="attr-pot">{Math.round(a.ceiling)}</span>
-                        {#if a.declined > 0}
-                            <span class="attr-loss" title="The last split close took {fmtNum(a.declined)} off {a.name} because it went the split undrilled">
-                                -{fmtNum(a.declined)}
-                            </span>
-                        {/if}
-                    </span>
-
-                    <span
-                        class="attr-w"
-                        class:attr-w-key={w >= 16}
-                        title="{a.name} is {w}% of a {role.short}'s overall rating"
-                    >
-                        <span class="attr-w-n">{w}%</span>
-                        <span class="attr-w-l">of OVR</span>
-                    </span>
-
-                    <span class="attr-chev" aria-hidden="true">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M4 6l4 4 4-4" />
-                        </svg>
-                    </span>
-                </button>
-
-                {#if open}
-                    <div class="drills" id={'drills-' + a.key}>
-                        {#if selectedRow && selectedRow.headroom <= 0}
-                            <p class="drills-note" class:drills-note-warn={!a.held}>
-                                {a.name} is at your ceiling of {Math.round(a.ceiling)}, so a drill adds no
-                                points to it. It is not finished with: an attribute that goes a whole split
-                                without one loses ground at the split close, and a session is the only thing
-                                that stops it.
-                                {#if a.held}
-                                    Drilled {a.heldCount}{a.heldCount === 1 ? ' time' : ' times'} this split,
-                                    so it is already safe until the close.
-                                {:else}
-                                    Not drilled this split yet - one maintenance session anywhere in the
-                                    split is the whole requirement.
-                                {/if}
-                                Raising the roof itself is a separate job: a breakthrough split, the
-                                Evergreen legacy perk or a performance camp.
-                            </p>
-                        {/if}
-
-                        <div class="drill-grid">
-                            {#each drillRows as row (row.d.id)}
-                                <article class="drill" class:drill-off={!row.gate.ok} class:drill-maint={row.maint} style="--dc:{row.tier.accent}">
-                                    <header class="drill-head">
-                                        <span class="drill-tier">{row.tier.name}</span>
-                                        {#if row.maint}
-                                            <span class="drill-flag">Maintenance</span>
-                                        {/if}
-                                        <span class="pips" role="img" aria-label={'Difficulty ' + row.d.difficulty + ' of 3'}>
-                                            <span class="pip" class:on={row.d.difficulty >= 1}></span>
-                                            <span class="pip" class:on={row.d.difficulty >= 2}></span>
-                                            <span class="pip" class:on={row.d.difficulty >= 3}></span>
-                                        </span>
-                                    </header>
-
-                                    <h4 class="drill-name">{row.d.name}</h4>
-                                    <p class="drill-desc">{row.d.desc}</p>
-
-                                    <dl class="drill-stats">
-                                        <div class="ds">
-                                            <dt>Energy</dt>
-                                            <dd class:ds-bad={energy < row.energyCost}>{BOLT} {row.energyCost}</dd>
-                                        </div>
-                                        <div class="ds">
-                                            <dt>Fee</dt>
-                                            <dd class:ds-bad={row.d.goldCost > 0 && c.money.gold < row.d.goldCost}>
-                                                {row.d.goldCost > 0 ? COIN + ' ' + fmtGold(row.d.goldCost) : 'Free'}
-                                            </dd>
-                                        </div>
-                                        <div class="ds">
-                                            <dt>Requires</dt>
-                                            <dd class:ds-bad={row.locked}>
-                                                {row.d.reqOVR > 0 ? row.d.reqOVR + ' OVR' : 'Open'}
-                                            </dd>
-                                        </div>
-                                        <div class="ds">
-                                            <dt>Risk</dt>
-                                            <dd>{Math.round(row.risk * 100)}%</dd>
-                                        </div>
-                                    </dl>
-
-                                    <div
-                                        class="gain"
-                                        class:gain-capped={row.gain.capped && !row.maint}
-                                        class:gain-hold={row.maint}
-                                    >
-                                        <span class="gain-l">{row.maint ? 'Holds the line' : 'Expected gain'}</span>
-                                        <span class="gain-v">
-                                            {#if row.maint}
-                                                +0.00, on purpose
-                                            {:else if row.gain.capped}
-                                                Ceiling reached
-                                            {:else}
-                                                +{row.gain.min.toFixed(2)} to +{row.gain.max.toFixed(2)}
-                                            {/if}
-                                        </span>
-                                        <span class="gain-sub">
-                                            {#if row.maint}
-                                                buys {a.abbr} protection, not points
-                                            {:else if row.gain.capped}
-                                                Tops out at {Math.min(row.d.attrCap, Math.round(a.ceiling))}
-                                            {:else}
-                                                bad session {ARROW} perfect run
-                                            {/if}
-                                        </span>
-                                    </div>
-
-                                    <button
-                                        class="drill-go"
-                                        class:drill-go-maint={row.maint}
-                                        disabled={!row.gate.ok}
-                                        on:click={() => start(row.d)}
-                                        aria-label={(row.maint ? 'Run maintenance session: ' : 'Start ') + row.d.name}
-                                    >
-                                        {#if row.maint}
-                                            Run Maintenance
-                                        {:else if row.gate.ok}
-                                            Start Drill
-                                        {:else}
-                                            Unavailable
-                                        {/if}
-                                    </button>
-
-                                    {#if row.maint}
-                                        <p class="drill-hold">{row.gate.reason}</p>
-                                    {:else if !row.gate.ok}
-                                        <p class="drill-block">{row.gate.reason}</p>
-                                    {/if}
-                                </article>
-                            {/each}
-                        </div>
-                    </div>
-                {/if}
-            </div>
-        {/each}
-    </div>
 </section>
 
 <!-- =========================== MINIGAME =========================== -->
@@ -817,7 +1139,7 @@
 
 <!-- ============================ RESULT ============================ -->
 {#if result}
-    <div class="res-over" role="dialog" aria-modal="true" aria-label="Training session result">
+    <div class="res-over" use:portal role="dialog" aria-modal="true" aria-label="Training session result">
         <div class="res-bg" aria-hidden="true"></div>
         <div class="res" style="--rc:{result.ok ? resColor : '#ef4444'}">
 
@@ -911,8 +1233,14 @@
                 <p class="res-fine">Nothing was spent - no slot, no energy, no gold.</p>
             {/if}
 
-            <!-- svelte-ignore a11y-autofocus -->
-            <button class="res-done" on:click={closeResult} autofocus>Done</button>
+            <div class="res-btns">
+                <!-- svelte-ignore a11y-autofocus -->
+                <button class="res-done" on:click={closeResult} autofocus>Done</button>
+                {#if againOk}
+                    <button class="res-again" on:click={() => again(false)}>Play again</button>
+                    <button class="res-again" on:click={() => again(true)}>Quick again</button>
+                {/if}
+            </div>
         </div>
     </div>
 {/if}
@@ -935,8 +1263,54 @@
         background: rgba(12, 16, 28, 0.5);
         border: 1px solid color-mix(in srgb, var(--rc) 26%, transparent);
     }
-    .tr-role-l { font-size: 8px; font-weight: 900; letter-spacing: 1.3px; text-transform: uppercase; color: #3f5069; }
+    .tr-role-l { font-size: 8px; font-weight: 900; letter-spacing: 1.3px; text-transform: uppercase; color: #94a3b8; }
     .tr-role-n { font-size: 13px; font-weight: 800; color: var(--rc); }
+    .tr-side { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .tr-mode { display: inline-flex; padding: 3px; border-radius: 11px; background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(100, 116, 139, 0.3); }
+    .tr-mode button { padding: 6px 12px; border-radius: 8px; border: none; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 800; color: #94a3b8; background: none; }
+    .tr-mode button.on { color: #0b1020; background: #a78bfa; }
+    .tr-mode button:not(.on):hover { color: #e2e8f0; }
+
+    /* ---------------- the level system ---------------- */
+    .lvl {
+        display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px;
+        margin-bottom: 16px; padding: 14px 16px; border-radius: 18px;
+        background: linear-gradient(135deg, rgba(124, 58, 237, 0.14), rgba(11, 15, 28, 0.78) 55%);
+        border: 1px solid rgba(167, 139, 250, 0.3);
+    }
+    .lvl-badge { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 18px; color: #fff; background: radial-gradient(circle at 35% 30%, #a78bfa, #6d28d9); box-shadow: 0 8px 22px rgba(124, 58, 237, 0.35); }
+    .lvl-k { font-size: 9px; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; opacity: 0.85; }
+    .lvl-n { font-size: 24px; font-weight: 900; line-height: 1; }
+    .lvl-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .lvl-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .lvl-t { font-size: 12.5px; font-weight: 800; color: #e2e8f0; }
+    .lvl-x { font-size: 12px; font-weight: 900; color: #c4b5fd; font-variant-numeric: tabular-nums; }
+    .lvl-bar { height: 8px; border-radius: 8px; background: rgba(15, 23, 42, 0.85); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05); }
+    .lvl-fill { height: 100%; border-radius: 8px; background: linear-gradient(90deg, #7c3aed, #c4b5fd); transition: width 0.4s ease; }
+    .lvl-earn { display: flex; flex-wrap: wrap; gap: 5px; }
+    .xp-chip { font-size: 10.5px; font-weight: 700; color: #cbd5e1; padding: 2px 8px; border-radius: 999px; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(100, 116, 139, 0.3); }
+    .xp-chip b { color: #c4b5fd; }
+    .lvl-pts { display: flex; flex-direction: column; align-items: center; min-width: 84px; padding: 8px 12px; border-radius: 14px; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(100, 116, 139, 0.25); }
+    .lvl-pts-n { font-size: 24px; font-weight: 900; color: #94a3b8; line-height: 1.05; font-variant-numeric: tabular-nums; }
+    .lvl-pts-l { font-size: 9.5px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #94a3b8; white-space: nowrap; }
+    .lvl-has .lvl-pts { border-color: rgba(250, 204, 21, 0.55); background: rgba(250, 204, 21, 0.08); }
+    .lvl-has .lvl-pts-n { color: #fde047; }
+
+    .spend { margin-top: 12px; padding: 14px; border-radius: 14px; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(167, 139, 250, 0.28); }
+    .spend-solo { margin-top: 14px; }
+    .spend-head { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: baseline; }
+    .spend-k { grid-column: 1 / -1; font-size: 10px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; }
+    .spend-v { font-size: 26px; font-weight: 900; color: #c4b5fd; font-variant-numeric: tabular-nums; }
+    .spend-s { font-size: 12px; line-height: 1.5; color: #cbd5e1; }
+    .spend-btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .spend-go, .spend-all { padding: 11px 16px; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 900; }
+    .spend-go { flex: 1 1 160px; color: #fff; border: 1px solid rgba(196, 181, 253, 0.45); background: linear-gradient(135deg, #6d28d9, #8b5cf6); box-shadow: 0 8px 20px rgba(124, 58, 237, 0.3); }
+    .spend-go:hover:not(:disabled) { filter: brightness(1.08); }
+    .spend-go:disabled { cursor: not-allowed; opacity: 0.45; box-shadow: none; }
+    .spend-all { color: #e2e8f0; background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(100, 116, 139, 0.45); }
+    .spend-all:hover { border-color: rgba(167, 139, 250, 0.6); }
+    .spend-why { margin: 8px 0 0; font-size: 11.5px; line-height: 1.5; color: #fbbf24; }
+    .spend-note { margin: 8px 0 0; font-size: 12px; font-weight: 700; color: #86efac; }
 
     /* ---------------- effectiveness ---------------- */
     .eff { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; margin-bottom: 16px; }
@@ -962,9 +1336,25 @@
         font-size: 46px; font-weight: 800; line-height: 1; letter-spacing: -0.03em;
     }
     .eff-x { font-size: 20px; opacity: 0.55; margin-left: 2px; }
-    .eff-note { flex: 1; min-width: 200px; font-size: 11.5px; line-height: 1.65; color: #64748b; }
+    .eff-note { margin: 0; font-size: 11.5px; line-height: 1.65; color: #64748b; }
+    .eff-sum { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 8px; }
+    .eff-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .eff-chip {
+        font-size: 10.5px; font-weight: 700; color: #94a3b8;
+        padding: 4px 9px; border-radius: 999px;
+        background: color-mix(in srgb, var(--fc, #64748b) 10%, rgba(15, 23, 42, 0.6));
+        border: 1px solid color-mix(in srgb, var(--fc, #64748b) 32%, transparent);
+    }
+    .eff-chip b { color: var(--fc, #94a3b8); font-family: ui-monospace, 'SF Mono', Menlo, monospace; margin-left: 3px; }
+    .eff-chip-flat { --fc: #64748b; }
+    .eff-toggle {
+        background: none; border: none; cursor: pointer; padding: 4px 6px;
+        font-family: inherit; font-size: 10.5px; font-weight: 800; color: #a78bfa;
+    }
+    .eff-toggle:hover { color: #c4b5fd; text-decoration: underline; }
 
     .fac { display: flex; flex-direction: column; gap: 2px; }
+    .fac-collapsed { display: none; }
     .fac-row {
         display: grid;
         grid-template-columns: minmax(84px, 130px) minmax(0, 1fr) 76px 56px;
@@ -1084,30 +1474,72 @@
     .attr-title-n { font-size: 9px; font-weight: 800; letter-spacing: 0.8px; color: #2c3a52; }
     .attr-title-warn { color: #a1741f; }
     .attr-title-ok { color: #2f7048; }
-    .attrs { display: flex; flex-direction: column; gap: 8px; }
+    /* Two panes: the attribute list (pick one) and its drills. */
+    .train {
+        display: grid;
+        grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
+        gap: 14px; align-items: start;
+        margin-top: 10px; margin-bottom: 18px;
+    }
+    .attrs { display: flex; flex-direction: column; gap: 6px; }
 
     .attr {
-        border-radius: 14px; overflow: hidden;
+        width: 100%; display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto auto;
+        align-items: center; gap: 12px;
+        padding: 10px 12px; text-align: left;
+        border-radius: 12px; cursor: pointer; font-family: inherit;
         background: rgba(12, 16, 28, 0.5);
         border: 1px solid rgba(51, 65, 85, 0.24);
-        transition: border-color 0.15s ease;
+        border-left: 3px solid color-mix(in srgb, var(--ac) 35%, transparent);
+        transition: border-color 0.15s ease, background 0.15s ease;
     }
-    .attr-open { border-color: color-mix(in srgb, var(--ac) 32%, transparent); }
+    .attr:hover { background: rgba(30, 41, 59, 0.5); }
+    .attr:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+    .attr-open {
+        border-color: color-mix(in srgb, var(--ac) 45%, transparent);
+        border-left-color: var(--ac);
+        background: color-mix(in srgb, var(--ac) 8%, rgba(12, 16, 28, 0.6));
+    }
     .attr-flash { animation: attrFlash 1.7s ease-out; }
     @keyframes attrFlash {
         0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ac) 55%, transparent); }
         100% { box-shadow: 0 0 0 14px rgba(0, 0, 0, 0); }
     }
+    .tag-rec { color: #c4b5fd; background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(139, 92, 246, 0.4); }
 
-    .attr-head {
-        width: 100%; display: grid;
-        grid-template-columns: 46px minmax(0, 1fr) auto auto 22px;
-        align-items: center; gap: 14px;
-        padding: 12px 14px; text-align: left;
-        background: none; border: none; cursor: pointer; font-family: inherit;
+    .pane {
+        position: sticky; top: 130px;
+        padding: 16px; border-radius: 16px;
+        background: rgba(12, 16, 28, 0.55);
+        border: 1px solid rgba(51, 65, 85, 0.3);
     }
-    .attr-head:hover { background: rgba(148, 163, 184, 0.04); }
-    .attr-head:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+    .pane-head { display: flex; align-items: center; gap: 12px; }
+    .pane-head .attr-abbr { width: 46px; flex-shrink: 0; }
+    .pane-t { flex: 1; min-width: 0; }
+    .pane-name { margin: 0; font-size: 17px; font-weight: 900; color: #f1f5f9; }
+    .pane-desc { margin: 2px 0 0; font-size: 11.5px; line-height: 1.5; color: #6a7d9d; }
+    .pane-val { display: flex; flex-direction: column; align-items: flex-end; }
+    .pane-cur { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 24px; font-weight: 800; color: var(--ac); line-height: 1; }
+    .pane-of { font-size: 10px; font-weight: 700; color: #56688a; }
+    .pane-how { margin: 12px 0 0; font-size: 11.5px; line-height: 1.55; color: #8b9cbc; }
+    .pane-empty { margin: 0; font-size: 12px; color: #64748b; text-align: center; padding: 30px 10px; }
+    .drill-game { margin: 0 0 10px; font-size: 11px; line-height: 1.5; color: #a5b4d0; }
+    .drill-game b { color: #e2e8f0; }
+
+    .tr-steps { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+    .tr-steps li {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 11px; border-radius: 10px;
+        font-size: 11.5px; color: #94a3b8;
+        background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(51, 65, 85, 0.3);
+    }
+    .tr-steps b { color: #e2e8f0; }
+    .tr-n {
+        flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
+        display: grid; place-items: center;
+        font-size: 10.5px; font-weight: 900; color: #0b1120; background: #a78bfa;
+    }
 
     .attr-abbr {
         display: grid; place-items: center; height: 30px; border-radius: 8px;
@@ -1130,10 +1562,6 @@
        attribute is out of range of the split-close decline, otherwise it is not. */
     .tag-held { color: #7dd3fc; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.26); }
     .tag-slip { color: #fbbf24; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.26); }
-    .attr-desc {
-        font-size: 10.5px; line-height: 1.5; color: #4a5b76;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
     .attr-bar { position: relative; display: block; height: 5px; border-radius: 5px; background: rgba(148, 163, 184, 0.08); overflow: hidden; }
     .bar-ghost { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: 5px; background: color-mix(in srgb, var(--ac) 22%, transparent); }
     .bar-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: 5px; background: var(--ac); transition: width 0.3s ease; }
@@ -1149,12 +1577,8 @@
     .attr-w-l { font-size: 7.5px; font-weight: 800; letter-spacing: 0.9px; text-transform: uppercase; color: #334155; }
     .attr-w-key .attr-w-n { color: #a78bfa; }
 
-    .attr-chev { display: grid; place-items: center; color: #3f5069; transition: transform 0.18s ease; }
-    .attr-chev svg { width: 14px; height: 14px; }
-    .attr-open .attr-chev { transform: rotate(180deg); color: var(--ac); }
-
     /* ---------------- drills ---------------- */
-    .drills { padding: 4px 14px 16px; border-top: 1px solid rgba(51, 65, 85, 0.2); }
+    .drills { padding-top: 2px; }
     .drills-note {
         font-size: 11px; line-height: 1.6; color: #64748b;
         padding: 10px 12px; margin: 12px 0 0;
@@ -1212,8 +1636,9 @@
     .gain-hold .gain-l { color: #3f6a86; }
     .gain-sub { font-size: 9px; color: #475569; }
 
+    .drill-btns { margin-top: auto; display: flex; gap: 6px; }
     .drill-go {
-        margin-top: auto; width: 100%; padding: 9px; border-radius: 10px; cursor: pointer;
+        flex: 1; min-width: 0; padding: 9px; border-radius: 10px; cursor: pointer;
         font-family: inherit; font-size: 11px; font-weight: 900;
         letter-spacing: 1px; text-transform: uppercase;
         color: #f5f3ff; border: 1px solid rgba(139, 92, 246, 0.4);
@@ -1227,6 +1652,14 @@
         background: linear-gradient(135deg, rgba(2, 132, 199, 0.85), rgba(56, 189, 248, 0.62));
     }
     .drill-go-maint:hover:not(:disabled) { box-shadow: 0 6px 18px rgba(56, 189, 248, 0.28); }
+    /* The quick session sits beside the play button, quieter: it is the fast
+       way through a week, not the best one. */
+    .drill-quick {
+        flex-shrink: 0; padding: 9px 12px; border-radius: 10px; cursor: pointer;
+        font-family: inherit; font-size: 11px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
+        color: #e2e8f0; background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(100, 116, 139, 0.45);
+    }
+    .drill-quick:hover { border-color: rgba(167, 139, 250, 0.6); color: #f5f3ff; }
     .drill-block { font-size: 10px; line-height: 1.5; color: #64748b; margin-top: 8px; }
     .drill-hold { font-size: 10px; line-height: 1.5; color: #6ea8c6; margin-top: 8px; }
 
@@ -1287,14 +1720,25 @@
     .res-up strong { color: #c4b5fd; }
     .res-fine { font-size: 10.5px; color: #475569; margin-bottom: 14px; }
 
+    .res-btns { display: flex; flex-wrap: wrap; gap: 8px; }
     .res-done {
-        width: 100%; padding: 11px; border-radius: 12px; cursor: pointer;
+        flex: 1 1 100%; padding: 11px; border-radius: 12px; cursor: pointer;
         font-family: inherit; font-size: 12px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
         color: #0b1020; background: var(--rc); border: none;
     }
     .res-done:hover { filter: brightness(1.08); }
+    .res-again {
+        flex: 1 1 0; padding: 10px; border-radius: 12px; cursor: pointer;
+        font-family: inherit; font-size: 11.5px; font-weight: 900; letter-spacing: 0.6px; text-transform: uppercase;
+        color: #e2e8f0; background: rgba(30, 41, 59, 0.75); border: 1px solid color-mix(in srgb, var(--rc) 40%, rgba(100, 116, 139, 0.4));
+    }
+    .res-again:hover { color: #fff; border-color: var(--rc); }
 
     /* ---------------- responsive ---------------- */
+    @media (max-width: 1100px) {
+        .train { grid-template-columns: minmax(0, 1fr); }
+        .pane { position: static; }
+    }
     @media (max-width: 980px) {
         .eff { grid-template-columns: 1fr; }
     }
@@ -1306,14 +1750,15 @@
         .fac-flag { display: none; }
         .fac-row.fac-maint .fac-val { grid-row: 1; grid-column: 2; }
         .fac-row.fac-maint .fac-note-full { display: block; grid-column: 1 / -1; grid-row: 2; }
-        .attr-head { grid-template-columns: 40px minmax(0, 1fr) auto 18px; gap: 10px; padding: 11px 12px; }
+        .attr { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; padding: 10px 11px; }
         .attr-w { display: none; }
-        .attr-desc { display: none; }
         .eff-big { font-size: 38px; }
         .drill-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 420px) {
         .tr-role { display: none; }
+        .lvl { grid-template-columns: auto minmax(0, 1fr); }
+        .lvl-pts { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 8px; }
         .attr-cur { font-size: 17px; }
         .sess { width: 152px; }
         .res { padding: 18px; }

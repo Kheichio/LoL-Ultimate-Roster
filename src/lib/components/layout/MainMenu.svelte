@@ -2,9 +2,11 @@
     import { onDestroy } from 'svelte';
     import {
         menuScreen, selectedMode, GAMEMODES, MORE_GAMES, STUDIO, GAME_STATUS, openMenu, openStudio,
-        setBootIntent, takeBootIntent, currentSlot,
+        setBootIntent, takeBootIntent, currentSlot, screenForMode, familyForMode,
         openUpdates, closeUpdates, updatesReturn,
     } from '../../stores/menu.js';
+    import { managerSlotSummary } from '../../stores/manager.js';
+    import { START_YEARS } from '../../manager/data.js';
     import UpdateLog from './UpdateLog.svelte';
     import Card from '../card/Card.svelte';
     import { UPDATES } from '../../utils/updates.js';
@@ -53,6 +55,11 @@
             `${CHAMPIONS.length} champions and ${allTeams().length} clubs across six regions`,
             'Train, sign contracts, win titles, retire a legend',
         ],
+        manager: [
+            `Start in ${START_YEARS.map(s => s.year).join(', ')} with that year's real rosters`,
+            'Tactics, the draft, transfers, a budget and a board',
+            'Two tiers per region: win promotion or fight relegation',
+        ],
     };
     // The Hall of Legends — every inductee, Faker in the middle. Missing ones (no DB) are skipped.
     const SHOWCASE = [13001, 13000, 13002].map(id => getCardById(id)).filter(c => c && typeof c.name === 'string');
@@ -73,7 +80,7 @@
         const mode = GAMEMODES.find(m => m.id === bootIntent);
         if (mode && mode.available) {
             selectedMode.set(mode.id);
-            menuScreen.set(mode.id === 'career' ? 'career' : 'game');
+            menuScreen.set(screenForMode(mode.id));
         }
     }
 
@@ -100,7 +107,8 @@
     let slotMode = null;      // the GAMEMODES entry whose slots are showing
     let slotRefresh = 0;      // bumped to re-read the previews after a delete
 
-    const summaryFor = (modeId, n) => (modeId === 'career' ? careerSlotSummary(n) : rosterSlotSummary(n));
+    const summaryFor = (modeId, n) => (modeId === 'career' ? careerSlotSummary(n)
+        : modeId === 'manager' ? managerSlotSummary(n) : rosterSlotSummary(n));
 
     $: slotCards = (slotMode && slotRefresh >= 0)
         ? SLOT_IDS.map(n => ({
@@ -108,12 +116,19 @@
             active: n === currentSlot(slotMode.id),
             career: slotMode.id === 'career' ? careerSlotSummary(n) : null,
             roster: slotMode.id === 'roster' ? rosterSlotSummary(n) : null,
+            manager: slotMode.id === 'manager' ? managerSlotSummary(n) : null,
         }))
         : [];
-    $: usedSlots = slotCards.filter(s => s.career || s.roster).length;
+    $: usedSlots = slotCards.filter(s => s.career || s.roster || s.manager).length;
+    const NEW_LABEL = { roster: 'Start a club', career: 'Create a player', manager: 'Take a job' };
+    const EMPTY_LABEL = { roster: 'No club yet', career: 'No player yet', manager: 'No manager yet' };
 
     // The save each mode card offers to continue: whichever slot that mode is pointed at.
-    $: modeSaves = ($menuScreen, slotRefresh, Object.fromEntries(GAMEMODES.map(m => {
+    // Playable modes get the big cards; anything still in development gets a strip under them.
+    const PLAYABLE = GAMEMODES.filter(m => m.available);
+    const IN_DEV = GAMEMODES.filter(m => !m.available);
+
+    $: modeSaves = ($menuScreen, slotRefresh, Object.fromEntries(PLAYABLE.map(m => {
         const n = currentSlot(m.id);
         return [m.id, { n, summary: m.available ? summaryFor(m.id, n) : null }];
     })));
@@ -144,7 +159,7 @@
 
     function chooseSlot(n) {
         if (!slotMode) return;
-        const family = slotMode.id === 'career' ? 'career' : 'roster';
+        const family = familyForMode(slotMode.id);
 
         // Drain any debounced write BEFORE the active slot moves, or the save in
         // flight lands under the slot the player is switching TO.
@@ -174,7 +189,7 @@
 
     function wipeSlot(n) {
         if (!slotMode) return;
-        const family = slotMode.id === 'career' ? 'career' : 'roster';
+        const family = familyForMode(slotMode.id);
         playSound('click');
         openConfirmModal(
             `Delete ${slotMode.name} slot ${n}? Everything in it goes, and it does not come back.`,
@@ -234,7 +249,7 @@
             handoff = null;
             if (!loadingMode || !loadingMode.available) { openMenu(); return; }
             playSound('win');
-            menuScreen.set(loadingMode.id === 'career' ? 'career' : 'game');
+            menuScreen.set(screenForMode(loadingMode.id));
         }, REDUCED ? 0 : 300);
     }
 
@@ -321,7 +336,7 @@
 
             <!-- ── Gamemodes ── -->
             <div class="modes">
-                {#each GAMEMODES as mode (mode.id)}
+                {#each PLAYABLE as mode (mode.id)}
                     {@const save = modeSaves[mode.id]}
                     {@const s = save && save.summary}
                     <div class="mode" class:mode-soon={!mode.available} style="--accent: {mode.accent};">
@@ -333,6 +348,13 @@
                                         <rect x="18" y="9" width="10" height="15" rx="2" transform="rotate(9 23 16.5)" />
                                         <rect x="11" y="7" width="10" height="18" rx="2" fill="#0b1120" />
                                         <path d="M16 12.5v7M12.5 16h7" stroke-linecap="round" />
+                                    </svg>
+                                {:else if mode.id === 'manager'}
+                                    <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="5" y="8" width="22" height="17" rx="3" />
+                                        <path d="M12 8V6.2c0-.7.6-1.2 1.2-1.2h5.6c.7 0 1.2.5 1.2 1.2V8" />
+                                        <path d="M10 15.5h5M10 19.5h8" />
+                                        <circle cx="22" cy="17" r="2.4" />
                                     </svg>
                                 {:else}
                                     <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
@@ -366,10 +388,16 @@
                                     <span class="ms-name">{s.handle}</span>
                                     <span class="ms-meta">Slot {save.n} · {s.retired ? 'Retired' : s.team} · {s.year}</span>
                                 </span>
+                            {:else if s && mode.id === 'manager'}
+                                <span class="ms-ovr ms-team" style="--k: {s.color};">{s.short}</span>
+                                <span class="ms-text">
+                                    <span class="ms-name">{s.team}</span>
+                                    <span class="ms-meta">Slot {save.n} · {s.name} · {s.year} {s.stage}</span>
+                                </span>
                             {:else}
                                 <span class="ms-empty"><Icon name="sparkle" size={14} stroke={2.2} /></span>
                                 <span class="ms-text">
-                                    <span class="ms-name">{mode.id === 'career' ? 'No player yet' : 'No club yet'}</span>
+                                    <span class="ms-name">{EMPTY_LABEL[mode.id] || 'Nothing yet'}</span>
                                     <span class="ms-meta">Slot {save ? save.n : 1} is empty — start fresh here</span>
                                 </span>
                             {/if}
@@ -378,7 +406,7 @@
                         <div class="mode-btns">
                             <button class="mode-play" on:click={() => continueMode(mode)}>
                                 <Icon name="play" size={14} stroke={2.2} />
-                                {s ? 'Continue' : mode.id === 'career' ? 'Create a player' : 'Start a club'}
+                                {s ? 'Continue' : NEW_LABEL[mode.id] || 'Start'}
                             </button>
                             {#if mode.available}
                                 <button class="mode-slots" on:click={() => openSlots(mode)}>
@@ -386,6 +414,36 @@
                                 </button>
                             {/if}
                         </div>
+                    </div>
+                {/each}
+
+                <!-- Modes still being built: shown so players know they are coming, never enterable. -->
+                {#each IN_DEV as mode (mode.id)}
+                    <div class="wip" style="--accent: {mode.accent};">
+                        <span class="mode-ico" aria-hidden="true">
+                            <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="5" y="8" width="22" height="17" rx="3" />
+                                <path d="M12 8V6.2c0-.7.6-1.2 1.2-1.2h5.6c.7 0 1.2.5 1.2 1.2V8" />
+                                <path d="M10 15.5h5M10 19.5h8" />
+                                <circle cx="22" cy="17" r="2.4" />
+                            </svg>
+                        </span>
+                        <div class="wip-body">
+                            <div class="wip-top">
+                                <span class="mode-name">{mode.name}</span>
+                                <span class="wip-chip"><Icon name="clock" size={11} stroke={2.4} /> In development</span>
+                            </div>
+                            <span class="mode-tag">{mode.tagline}</span>
+                            <p class="mode-desc">{mode.desc}</p>
+                            {#if mode.planned?.length}
+                                <ul class="wip-plan">
+                                    {#each mode.planned as f}<li>{f}</li>{/each}
+                                </ul>
+                            {/if}
+                        </div>
+                        <button class="wip-btn" disabled title="Not playable yet">
+                            <Icon name="lock" size={13} stroke={2.2} /> Coming soon
+                        </button>
                     </div>
                 {/each}
             </div>
@@ -442,7 +500,7 @@
 
             <div class="slots">
                 {#each slotCards as s (s.n)}
-                    {@const used = !!(s.career || s.roster)}
+                    {@const used = !!(s.career || s.roster || s.manager)}
                     <div class="slot" class:slot-empty={!used} class:slot-active={s.active}>
                         <div class="slot-band">
                             <span class="slot-n">Slot {s.n}</span>
@@ -478,18 +536,32 @@
                                     <span><b>{s.roster.be >= 100000 ? Math.floor(s.roster.be / 1000) + 'K' : s.roster.be.toLocaleString()}</b>BE</span>
                                 </div>
                                 <span class="slot-foot">{s.roster.season}{s.roster.seasonLive ? ' · in progress' : ''}</span>
+                            {:else if s.manager}
+                                <div class="slot-id">
+                                    <span class="slot-ovr slot-team" style="--k: {s.manager.color};">{s.manager.short}</span>
+                                    <span class="slot-names">
+                                        <span class="slot-name">{s.manager.team}</span>
+                                        <span class="slot-meta">{s.manager.name}{s.manager.region ? ` · ${s.manager.region}${s.manager.tier === 2 ? ' tier 2' : ''}` : ''}</span>
+                                    </span>
+                                </div>
+                                <div class="slot-stats">
+                                    <span><b>{s.manager.level}</b>level</span>
+                                    <span><b>{s.manager.trophies}</b>trophies</span>
+                                    <span><b>{s.manager.year}</b>season</span>
+                                </div>
+                                <span class="slot-foot">{s.manager.stage} · started in {s.manager.startYear}</span>
                             {:else}
                                 <div class="slot-new">
                                     <span class="slot-plus"><Icon name="sparkle" size={22} stroke={2} /></span>
                                     <span class="slot-name slot-name-empty">Empty slot</span>
-                                    <span class="slot-meta">{slotMode.id === 'career' ? 'Create a new player here' : 'Start a new club here'}</span>
+                                    <span class="slot-meta">{slotMode.id === 'career' ? 'Create a new player here' : slotMode.id === 'manager' ? 'Take charge of a club here' : 'Start a new club here'}</span>
                                 </div>
                             {/if}
                         </div>
 
                         <div class="slot-actions">
                             <button class="slot-go" on:click={() => chooseSlot(s.n)}>
-                                {used ? (s.active ? 'Continue' : 'Load this save') : (slotMode.id === 'career' ? 'Create player' : 'Start club')}
+                                {used ? (s.active ? 'Continue' : 'Load this save') : (slotMode.id === 'career' ? 'Create player' : slotMode.id === 'manager' ? 'Take a job' : 'Start club')}
                             </button>
                             {#if used}
                                 <button class="slot-del" on:click={() => wipeSlot(s.n)} aria-label="Delete slot {s.n}" title="Delete this save">
@@ -506,6 +578,8 @@
                 <span>
                     {#if slotMode.id === 'career'}
                         Career saves live on this device. Sign in and every career slot is backed up to the cloud with your account.
+                    {:else if slotMode.id === 'manager'}
+                        Manager saves live on this device only; they are not part of the cloud backup yet.
                     {:else}
                         Cloud backup follows whichever slot is loaded. Sign in on another device and it restores into the slot you have open there.
                     {/if}
@@ -783,7 +857,7 @@
     .fan:hover .fan-card { transform: translateX(calc(-50% + var(--i) * 108px)) rotate(calc(var(--i) * 12deg)) translateY(calc(var(--i) * var(--i) * 18px)); }
 
     /* ═══════════ MODES ═══════════ */
-    .modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 100%; margin-bottom: 18px; text-align: left; }
+    .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; width: 100%; margin-bottom: 18px; text-align: left; }
     .mode {
         position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 14px; padding: 22px;
         border-radius: 20px;
@@ -807,6 +881,8 @@
     .mode-save { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(2,6,23,0.55); border: 1px solid rgba(71,85,105,0.3); margin-top: auto; }
     .ms-logo { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; font-size: 21px; background: rgba(15,23,42,0.8); flex-shrink: 0; }
     .ms-ovr { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; font-size: 16px; font-weight: 900; color: var(--k); background: rgba(15,23,42,0.8); border: 1px solid color-mix(in srgb, var(--k) 45%, transparent); flex-shrink: 0; }
+    .ms-team, .slot-team { font-size: 11px; letter-spacing: -0.02em; color: #f8fafc; background: color-mix(in srgb, var(--k) 30%, rgba(15,23,42,0.85)); overflow: hidden; }
+    .slot-team { font-size: 13px; }
     .ms-empty { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); flex-shrink: 0; }
     .ms-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .ms-name { font-size: 14px; font-weight: 800; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -817,6 +893,38 @@
     .mode-play:hover { transform: translateY(-1px); filter: brightness(1.08); }
     .mode-slots { display: inline-flex; align-items: center; gap: 7px; padding: 13px 16px; border-radius: 13px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700; color: #cbd5e1; background: rgba(15,23,42,0.6); border: 1px solid rgba(71,85,105,0.45); }
     .mode-slots:hover { color: #fff; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+
+    /* A mode in development: one quiet strip across both columns, never a third big card. */
+    .wip {
+        grid-column: 1 / -1;
+        display: flex; align-items: center; gap: 18px; padding: 18px 22px;
+        border-radius: 18px;
+        background: repeating-linear-gradient(135deg, rgba(148,163,184,0.035) 0 10px, transparent 10px 20px), rgba(15, 23, 42, 0.45);
+        border: 1px dashed color-mix(in srgb, var(--accent) 38%, rgba(71,85,105,0.5));
+    }
+    .wip .mode-ico { opacity: 0.85; }
+    .wip-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+    .wip-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .wip .mode-name { font-size: 17px; }
+    .wip .mode-desc { font-size: 12.5px; line-height: 1.6; }
+    .wip-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        font-size: 9px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase;
+        padding: 3px 8px; border-radius: 6px;
+        color: #fbbf24; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+    .wip-plan { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+    .wip-plan li {
+        font-size: 11px; font-weight: 600; color: #94a3b8;
+        padding: 3px 9px; border-radius: 999px;
+        background: rgba(2, 6, 23, 0.5); border: 1px solid rgba(71, 85, 105, 0.35);
+    }
+    .wip-btn {
+        flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
+        padding: 11px 16px; border-radius: 12px; font-family: inherit; font-size: 12.5px; font-weight: 700;
+        color: #64748b; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(71, 85, 105, 0.4);
+        cursor: not-allowed;
+    }
 
     /* ═══════════ TILES ═══════════ */
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; width: 100%; margin-bottom: 26px; text-align: left; }
@@ -979,6 +1087,8 @@
     @media (max-width: 760px) {
         .menu { padding: 0 16px; }
         .modes { grid-template-columns: 1fr; }
+        .wip { flex-wrap: wrap; align-items: flex-start; padding: 16px; }
+        .wip-btn { width: 100%; justify-content: center; }
         .mark { width: 52px; height: 52px; margin-bottom: 18px; }
         .stage { padding: 22px 0 40px; }
         .mode { padding: 18px; }

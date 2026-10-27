@@ -61,39 +61,92 @@ export function roundRobin(ids) {
     return rounds;
 }
 
-// ── CPU sides ──
-const TEAM_NAMES = ['Shadow Wolves', 'Storm Dragons', 'Iron Phoenix', 'Crystal Bears', 'Neon Tigers',
-    'Dark Knights', 'Solar Flare', 'Frost Giants', 'Thunder Hawks', 'Crimson Vipers'];
+// ── Scaling to your Power ──
+// The league is drawn against the Power you start the split with (the Squad page's number:
+// rating plus chemistry, coach and skills), so a strong club stops meeting Bronze rosters.
+// Below 90 nothing changes: the split-number curve alone decides, exactly as before.
+//   hard / boss  how many of the nine sides are tagged HARD / BOSS (at least; the year
+//                curve can add more), as [min, max]
+//   floor        an ordinary side is drawn at your Power minus this, rising a point per
+//                matchday, so even the "easy" sides are your level, not your past.
+// A HARD side plays 3-9 under your Power, a BOSS side 0-6 over it (and never under the old
+// 110-120). Matchday one is always an ordinary side: a split never opens on a wall.
+export const POWER_BANDS = [
+    { min: 110, name: 'Elite',     hard: [5, 6], boss: [2, 3], floor: 16 },
+    { min: 100, name: 'Contender', hard: [4, 5], boss: [1, 2], floor: 20 },
+    { min: 90,  name: 'Rising',    hard: [2, 3], boss: [0, 0], floor: 24 },
+];
+export function powerBand(power) {
+    const p = Number(power) || 0;
+    return POWER_BANDS.find(b => p >= b.min) || null;
+}
 
-/** Nine CPU sides for a split, ordered from the one you meet first (weakest) to the last
- *  (strongest) — the same difficulty curve the old ten-opponent split used. */
-export function buildCpuTeams(db, splitNum, rng = Math.random, count = MATCHDAYS) {
-    const regularPool = db.filter(p => p.role !== 'COACH' && !ALL_SPECIAL.includes(p.quality));
-    // Mythic cards are perfect 100s — an unbeatable CPU roster, so keep them out even of BOSS sides.
-    const elitePool = db.filter(p => p.role !== 'COACH' && !MYTHIC_TIERS.includes(p.quality));
-    const roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
+/** Which of `count` slots are BOSS and HARD, from the year curve and (when given) your Power.
+ *  With no band the draws are exactly the ones the year curve has always made. */
+export function drawTags(splitNum, count, rng, power = 0) {
     const yr = difficultyLevel(splitNum);
-
+    const band = powerBand(power);
     // BOSS sides live in the back stretch; the count is clamped to the slots that exist there
     // (see the old Season.svelte note: an unclamped count once froze the page in a loop).
     const bossStart = Math.max(4, count - 4), bossEnd = count - 1;
     const bossMax = Math.min(Math.floor(yr / 2), 3, bossEnd - bossStart + 1);
     const bossMin = Math.min(Math.max(0, yr - 1), bossMax);
-    const bossCount = yr <= 1 ? 0 : randInt(rng, bossMin, bossMax);
+    let bossCount = yr <= 1 ? 0 : randInt(rng, bossMin, bossMax);
+    if (band) bossCount = Math.min(bossEnd - bossStart + 1, Math.max(bossCount, randInt(rng, band.boss[0], band.boss[1])));
     const boss = new Set();
     for (let g = 0; boss.size < bossCount && g < 100; g++) boss.add(randInt(rng, bossStart, bossEnd));
-    const hardCount = yr === 0 ? 0 : Math.min(randInt(rng, Math.min(yr, 4), Math.min(1 + yr * 2, 7)), count - 3 - boss.size);
+    // HARD sides from matchday 4 under the year curve alone; from matchday 2 once your Power
+    // asks for more of them than the back stretch can hold.
+    const hardStart = band ? 1 : 3;
+    let hardCount = yr === 0 ? 0 : Math.min(randInt(rng, Math.min(yr, 4), Math.min(1 + yr * 2, 7)), count - 3 - boss.size);
+    if (band) hardCount = Math.min(Math.max(hardCount, randInt(rng, band.hard[0], band.hard[1])), count - hardStart - boss.size);
     const hard = new Set();
-    for (let g = 0; hard.size < hardCount && g < 100; g++) { const s = randInt(rng, 3, count - 1); if (!boss.has(s)) hard.add(s); }
+    for (let g = 0; hard.size < hardCount && g < 200; g++) { const s = randInt(rng, hardStart, count - 1); if (!boss.has(s)) hard.add(s); }
+    return { yr, band, boss, hard };
+}
 
-    const names = [...TEAM_NAMES];
+/** The headline power of a side: its card average, lifted for HARD and BOSS sides. */
+export function sidePower(cardAvg, tag, band, power, rng) {
+    let avg = cardAvg;
+    if (tag === 'BOSS') {
+        avg = Math.max(avg, randInt(rng, 110, 120));
+        if (band && band.boss[1] > 0) avg = Math.max(avg, Math.round(power) + randInt(rng, 0, 6));
+    } else if (tag === 'HARD' && band) {
+        avg = Math.max(avg, Math.round(power) - randInt(rng, 3, 9));
+    }
+    return avg;
+}
+
+/** The rating an ordinary side is drawn around on matchday `i`. */
+export function ordinaryTarget(i, yr, band, power) {
+    const curve = Math.min(95, 60 + i * 3 + yr * 4);
+    return band ? Math.max(curve, Math.min(97, Math.round(power) - band.floor + i)) : curve;
+}
+
+// ── CPU sides ──
+const TEAM_NAMES = ['Shadow Wolves', 'Storm Dragons', 'Iron Phoenix', 'Crystal Bears', 'Neon Tigers',
+    'Dark Knights', 'Solar Flare', 'Frost Giants', 'Thunder Hawks', 'Crimson Vipers'];
+
+/** Nine CPU sides for a split, ordered from the one you meet first (weakest) to the last
+ *  (strongest) — the same difficulty curve the old ten-opponent split used, raised to your
+ *  `power` when it is 90 or more (POWER_BANDS). `nameList` is the fictional set to name them
+ *  from (utils/world.js themes one per region); the default is the original generic ten. */
+export function buildCpuTeams(db, splitNum, rng = Math.random, count = MATCHDAYS, nameList = TEAM_NAMES, power = 0) {
+    const regularPool = db.filter(p => p.role !== 'COACH' && !ALL_SPECIAL.includes(p.quality));
+    // Mythic cards are perfect 100s — an unbeatable CPU roster, so keep them out even of BOSS sides.
+    const elitePool = db.filter(p => p.role !== 'COACH' && !MYTHIC_TIERS.includes(p.quality));
+    const roles = ['TOP', 'JNG', 'MID', 'ADC', 'SUP'];
+    const { yr, band, boss, hard } = drawTags(splitNum, count, rng, power);
+
+    const names = [...(Array.isArray(nameList) && nameList.length >= count ? nameList : TEAM_NAMES)];
     for (let i = names.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [names[i], names[j]] = [names[j], names[i]]; }
 
     const teams = [];
     for (let i = 0; i < count; i++) {
         const isBoss = boss.has(i), isHard = hard.has(i);
-        const difficulty = isBoss ? randInt(rng, 110, 120) : isHard ? randInt(rng, 88, 100) : Math.min(95, 60 + i * 3 + yr * 4);
-        const pool = isBoss || isHard || yr >= 3 ? elitePool : regularPool;
+        const difficulty = isBoss ? randInt(rng, 110, 120) : isHard ? randInt(rng, 88, 100) : ordinaryTarget(i, yr, band, power);
+        // A side drawn up to a strong club's Power may need the elite pool to reach it.
+        const pool = isBoss || isHard || yr >= 3 || (band && difficulty >= 88) ? elitePool : regularPool;
         const team = {};
         const used = new Set();
         for (const role of roles) {
@@ -114,9 +167,10 @@ export function buildCpuTeams(db, splitNum, rng = Math.random, count = MATCHDAYS
             if (pick) { team[role] = pick; used.add(pick.id); }
         }
         const cards = Object.values(team);
-        let avg = cards.length ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : difficulty;
-        if (isBoss) avg = Math.max(avg, randInt(rng, 110, 120));
-        teams.push({ name: names[i % names.length], cards: team, avgRating: avg, tag: isBoss ? 'BOSS' : isHard ? 'HARD' : null });
+        const tag = isBoss ? 'BOSS' : isHard ? 'HARD' : null;
+        const cardAvg = cards.length ? Math.round(cards.reduce((s, c) => s + c.rating, 0) / cards.length) : difficulty;
+        const avg = sidePower(cardAvg, tag, band, power, rng);
+        teams.push({ name: names[i % names.length], cards: team, avgRating: avg, tag });
     }
     return teams;
 }
@@ -131,7 +185,12 @@ export function createLeague(cpuTeams) {
     const idOf = { 0: ME };
     slotForRound.forEach((slot, r) => { idOf[slot] = `t${r + 1}`; });
     const teams = [{ id: ME }];
-    cpuTeams.slice(0, MATCHDAYS).forEach((t, r) => teams.push({ id: `t${r + 1}`, name: t.name, cards: t.cards, avgRating: t.avgRating, tag: t.tag || null }));
+    // org / accent / region are carried for real-team leagues (utils/world.js); a fictional
+    // side simply has none, and every reader treats them as optional.
+    cpuTeams.slice(0, MATCHDAYS).forEach((t, r) => teams.push({
+        id: `t${r + 1}`, name: t.name, cards: t.cards, avgRating: t.avgRating, tag: t.tag || null,
+        ...(t.org ? { org: t.org } : {}), ...(t.accent ? { accent: t.accent } : {}), ...(t.region ? { region: t.region } : {}),
+    }));
     return {
         teams,
         rounds: rounds.map(pairs => pairs.map(([a, b]) => [idOf[a], idOf[b]])),

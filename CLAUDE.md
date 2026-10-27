@@ -32,20 +32,137 @@ src/
 ```
 
 ## Gamemodes
-The main menu (`stores/menu.js` → `menuScreen`) picks between two independent shells:
+The main menu (`stores/menu.js` → `menuScreen`) picks between three independent shells:
 - **Ultimate Roster** (`menuScreen === 'game'`) — the original card-collection game. Header + TabContent.
 - **Ultimate Career** (`menuScreen === 'career'`) — a single-player pro career. `CareerShell` replaces the whole shell.
+- **Ultimate Manager** (`menuScreen === 'manager'`) — run an org from the front office. `ManagerShell` replaces the
+  whole shell; see the Ultimate Manager section below.
+`screenForMode()` / `familyForMode()` in `stores/menu.js` are the one mapping from a mode id to its screen and its
+storage family; MainMenu and the boot intent go through them, so a fourth mode is one entry in each.
+
+### Roster season format (`seasonData.format === 2`)
+- **`src/lib/utils/league.js`** is the whole competition, pure and seeded: three splits a year
+  (Winter → First Stand, Spring → MSI, Summer → Worlds), a 10-team single round robin (9 matchdays,
+  Bo5, other games simulated), a top-4 Regional Trophy, qualification (Winter champion; Spring and
+  Summer finalists), prizes, and the Golden Road state machine (six titles of one year, in order).
+  `node tools/leagueCheck.mjs` covers it (120 checks).
+- **Opponents scale with the club's Power** (`POWER_BANDS` in league.js; Power is the Squad page's
+  number, captured when the split starts). Under 90 nothing changes and the RNG draws are exactly the
+  old ones. 90+: 2-3 HARD sides and ordinary sides drawn at Power−24 rising a point a matchday; 100+:
+  4-5 HARD and 1-2 BOSS, floor Power−20; 110+: 5-6 HARD and 2-3 BOSS, floor Power−16. Bands are
+  MINIMUMS on top of the year curve (`drawTags`). A HARD side's headline is Power−3..−9, a BOSS's
+  Power+0..6 and never under the old 110-120 (`sidePower`). Slot 0 (matchday one) is never tagged.
+  `buildIntlBracket` applies the same band to the field scaled from nine sides to its size, tagging the
+  strongest entrants so they seed at the top. The Gaming Cafe and the legacy gauntlet modes are not
+  scaled. leagueCheck (120) and worldCheck (885) assert every band, both directions.
+- First Stand, MSI and Worlds are playable only on a live, unplayed `seasonData.qualified`; only
+  the Gaming Cafe and the side modes are free. `recordTitle()` in `stores/game.js` is the one writer
+  of Golden Road progress, called from both Season (Regional) and Tournament (the internationals).
+- Older saves are migrated on load by `migrateSeason()`. Pass it the **raw** save when
+  `format !== 2` — merging over the defaults first stamps `format: 2` and skips the migration.
+- **Season.svelte advances the split only from event handlers or onMount, never from `$:`.** A
+  store update made inside a reactive statement lands after that flush's declarations have run, and
+  the first cut opened an empty bracket that way.
+- **Player photos:** `node tools/buildPlayerPictures.mjs` matches `PlayerPictures/*.webp` to card
+  ids (same player; the card's own year, else the nearest year; same team or team-less before any
+  other team's jersey). "Same team" means the same ORG: `ORG_GROUPS` in the script lists every name
+  an org has played under (SSG/KSV/Gen.G, DWG/DK, SKTK/SKT/T1…), because the card DB spells a team
+  the way it was called that year and a photo is named however its source named it — add a group
+  there when a new player's history crosses a rename. It copies the used files to
+  `public/players/`, prunes the rest, and regenerates `src/lib/data/playerPictures.js`. Re-run it
+  after adding pictures or cards; never hand-edit the generated file. Photos only show when the
+  **Player photos** setting (`playerPhotos` in stores/ui.js) is on, and it is OFF by default while
+  the set is small. A card showing a photo is **exactly as tall as one without**: the photo is a
+  portrait tile (`.card-photo` in Card.svelte), and both it and the initials circle are bigger
+  than the rating row only by borrowing the existing gaps above and below it through negative
+  margins — nothing on the card moves. Growing the avatar instead made photo cards longer than the
+  rest of the row, which is what this replaced.
+
+### Roster world: real teams and international brackets (`utils/world.js`)
+- **`seasonData.world = { mode: 'real' | 'fictional', region }`** is optional. `worldOf(sd)` reads it; a save
+  without one (every save before 1.8.3) is the classic fictional league, byte-for-byte the old path
+  (`buildCpuTeams` with `TEAM_NAMES`). The Season page's "Your league" card writes it **only while
+  `stage === 'idle'`**, so a league drawn under one setting keeps it to the end.
+- **Real mode** (`buildRealTeams`) takes the region's top nine orgs from Career's `LEAGUES[region].tier1`
+  and fields each from its own cards (`teams.orgAliases`, every name the org played under, any year),
+  on the SAME BOSS/HARD/target plan as `buildCpuTeams` — that is what keeps split 1 beatable while
+  every name stays real. A role the org cannot fill near the target borrows a real player of the region.
+- **Internationals are brackets** for First Stand, MSI and Worlds (`buildIntlBracket` / `intlRecord`):
+  `INTL_FIELD` sets 8 / 8 / 16 teams and the per-region slots. The home region's entrants are
+  `qualified.field`, captured by `claimSplit()` from the league **at claim time** (the same line
+  clears `league`), together with `qualified.world`, so changing region afterwards cannot move a spot
+  already won. `buildIntlBracket` re-shapes `home` because it comes back out of a save. Only the
+  player's tie is played; the rest are `simulateSeries`. Rounds are Bo3, the final Bo5.
+- **Master tier only (rating >= `MASTER_MIN`, 94) at every international**, no player in two teams of
+  one field. `masterRosters()` fills ROLE BY ROLE, scarcest first: the DB has only 15 distinct
+  Master-tier top laners and a Worlds needs 15, so filling team by team forced repeats. Tournament's
+  gauntlet `generateCpuTeam` applies the same floor for intl modes.
+- Tournament.svelte: `intl` is the live bracket and `enemies[round]` is filled from it one round at a
+  time. **`seriesNeed` is frozen in `startMatch()`** — the bracket advances the instant the deciding
+  game is recorded, while the arena is still revealing it, and reading the live round would turn a
+  semi into a Bo5 on screen. Runner-up = lost the final; a semi-final pays `SEMI_SHARE` (0.4) of it.
+- `node tools/worldCheck.mjs [--seed=N]` covers all of it (885 checks): every region's real league,
+  the fictional sets, every event x home region x mode (field size, slots, Master-only, no repeats,
+  a full first round, win-every-tie → champion, first-round exit → still crowned), a rotten saved
+  `field`, and `teamFullName`.
+- **Public profile** (favourite team/player) is edited in Home's team-identity dialog as dropdowns
+  built from the card DB (`teamFullName` spells out a current org abbreviation); the Ranking page
+  only shows it and links there. A value that matches nothing in the DB is offered as "(current)"
+  so opening the editor never drops it.
+
+### Roster leaderboard, Transfer Market, menu
+- **`stores/leaderboard.js` is the ONLY publisher and reader of `/leaderboard`.** App.svelte calls
+  `startLeaderboardSync()` once; the club re-publishes itself (throttled to one write per 45s, and
+  skipped when a signature of the payload is unchanged) whenever the stores it is built from change.
+  Power comes from `squadPower()`, the Squad page's formula. **The document shape is frozen by
+  `validLeaderboardEntry` in firestore.rules** (pasted by hand): every field is clamped to those
+  bounds before sending, and `updatedAt` is stamped 15s early because the rule wants it `<=` server
+  time. A widened RANGE on a checked field is a two-stage deploy, rules first; a NEW field is not —
+  the rule only requires four keys and never caps the key set, which is how `titles`, `grYear`,
+  `grDone` and `grBroken` (1.8.1) shipped client-only. Remote rows are re-validated on read
+  (`sanitizeRow`) — `teamColor` reaches a `style=` attribute.
+- **Naming:** the `trophies` field is the WEIGHTED score (`weightedTrophies`) and keeps that field
+  name because the rules require it, but every screen calls it **Glory** (it was "Achievement Score"
+  until 1.8.7; only the old changelog entries still say that). "Trophies" in
+  the UI means `titles`: Worlds + MSI + First Stand + domestic Regional Trophies won, one each.
+  `sanitizeRow` and ProfileModal sum it from the four counts for a document published before 1.8.1;
+  `orderBy('titles')` simply omits such a document until its owner's game publishes again.
+- **Transfer Market** (`tabs/Trade.svelte`): both boards are seeded per 15-minute window. Signings'
+  seed also takes `tradeMarket.rerolls`, so a re-roll is a new seed, not a reshuffle; club requests
+  have their own seed and survive a re-roll. `tradeMarket` is `{ window, claimed, sold, rerolls }` and
+  all three ledgers reset together when the window flips. Requests pay `getSellValue × mult`, which
+  already includes the Transfer Network skill; they do NOT go through `grantBE` (no Wealth bonus).
+- **Main menu**: a mode card's Continue goes through `chooseSlot(currentSlot(mode))`, so it inherits
+  the roster flush/reload rules below — never add a shortcut that enters a mode around it. The
+  Studio8Heads page reads `STUDIO` in `stores/menu.js` (`web` and `downloads` games, each with a
+  `GAME_STATUS` of active / beta / retired); an empty `team`/`links` list hides its section.
+  Every line of it was supplied by the studio — do not embellish it. The main menu's game tiles
+  (`MORE_GAMES`) are derived from it: featured, active, and not the game you are in.
+- **Region logos** are drawn by `components/ui/RegionIcon.svelte` from `data/regionIcons.js`, in
+  both gamemodes. Serve them from `public/regions/`, never from `/Icons` (the originals as
+  supplied): the PNGs there were trimmed to their visible edges, and LCP's opaque white background
+  was keyed out. `mono` draws a logo in the text colour (cards use it so it reads on every tier);
+  LCK and CBLOL are black artwork and are always mono. 'Legacy' and the amateur 'ALL' have no
+  logo and fall back to the caller's flag.
+- **Hall of Legends cards** (Faker 2024, Uzi 2025, Caps 2026 — one per real inductee) are kept out
+  of every CPU pool, career rosters included (`teams.orgCards` filters `MYTHIC_TIERS`): matched on
+  team alias alone, the HoL Faker had taken T1's 2024 mid seat.
+- **The Guide's "Recent Updates" reads `utils/updates.js`.** Never paste release notes into
+  Guide.svelte again — the hard-coded copy stopped at 1.6.8.1 and nobody noticed.
 
 ## Save slots
 Three slots per gamemode, entirely independent, chosen from the main menu
 (`menuScreen === 'slots'`). All of it lives in **`src/lib/utils/storage.js`**, which namespaces
-every key by family — `lur_` → roster slot, `lurc_` → career slot — so no caller has to know
-slots exist.
+every key by family — `lur_` → roster slot, `lurc_` → career slot, `lurm_` → manager slot — so no
+caller has to know slots exist. `familyOf()` must test `lurc_` and `lurm_` BEFORE `lur_`, or those saves
+land in the roster family; slotCheck asserts both.
 
 - **Slot 1 is the bare key.** Every save that predates slots is already slot 1; nothing was
   migrated and nothing can be lost migrating it. Slots 2 and 3 append `@2` / `@3`.
-- `lur_sound_muted`, `lur_light_mode`, `lur_display_scale`, `lur_match_cards` are DEVICE preferences and are never
-  namespaced. Namespacing them would reset the player's theme on every switch.
+- `lur_sound_muted`, `lur_sound_volume`, `lur_light_mode`, `lur_display_scale`, `lur_match_cards`,
+  `lur_player_photos`, `lur_drill_briefs`, `lur_career_skip_minigames` are DEVICE preferences (the Settings panel, `modals/AuthPanel.svelte`) and are never
+  namespaced. Namespacing them would reset the player's theme on every switch. A new setting is added to
+  `DEVICE_KEYS` in storage.js and to slotCheck's list.
 - `clearStorage()` is prefix-scoped, not `localStorage.clear()`: it erases every slot in both
   gamemodes and keeps device preferences.
 - **Career** switches slot in place — `CareerShell` remounts and re-hydrates. **Roster does not**:
@@ -75,6 +192,219 @@ back. **It destroyed real player saves.** A blank store means "nothing is loaded
 exists". Deliberate destruction still works: `resetCareer()` writes through `saveToStorage` directly.
 The regression lives in `slotCheck` and was verified to fail without the guard.
 
+### Ultimate Manager
+Take a real org in 2013, 2017, 2020, 2023 or 2026 (`START_YEARS`) and run it: lineup, tactics, the draft,
+training, transfers, contracts, money and a board that sacks you — or found a club of your own, which has no board
+until you sell a stake. No minigames; growth is levels and attributes.
+
+```
+src/lib/manager/
+  data.js     — every table: start years, regions, attributes + ROLE_WEIGHTS, 12 personalities, 5 tactics in a
+                counter circle, training, calendar (33 steps), prizes, perks, champion release years, team names
+  util.js     — seeded rng helpers, money formatting
+  people.js   — a player: real (from a card) or random; OVR, potential, wages, value, XP/levels, ageing, retiring
+  world.js    — the persons index over the card DB, building a world for a start year, yearly debuts, prospects
+  match.js    — the match engine (phases, tactics, draft, the 20-minute call, box scores, play-by-play)
+  season.js   — fixtures, tables, playoffs, MSI, Worlds, promotion/relegation, championship points
+  market.js   — asking prices, willingness, bids, free agents, renewals, releases, the AI clubs' market
+  engine.js   — advance() one step for the whole world, the week, the board, the offseason, inbox events,
+                stakes, sessions, bootcamps, the development forecast
+  history.js  — club history: the record book kept in the save, real history from the card DB, legends
+  ui.js       — display helpers
+src/lib/stores/manager.js        — the save (`lurm_manager`), hydrate, mutate/playStep/goNext, slot summaries
+src/lib/components/manager/      — ManagerShell + NewManager, Home, Squad, Tactics, Training, League, Transfers,
+                                   History, Trophies, Club, Inbox, MatchFlow, PlayerModal, TeamModal, StepReport,
+                                   OffseasonReport, StageFx (the full-screen cards), Bracket
+```
+
+- **Standard cards only.** `personsIndex()` takes `TIER_ORDER` qualities (Bronze..Challenger) and the six regions;
+  never a Champion/MVP/legacy/award/Hall of Legends print. A person is every standard card of one name; two people
+  who share a name are split by holding cards in the same year (`r:ninja#2`). managerSmoke asserts every real
+  player's `cid` is a standard card.
+- **Random players are always labelled.** `real: false`, named by `makeHandle()` against every name on any card
+  (coaches and special prints included), and drawn through `PName.svelte` with a "Random" chip; PlayerModal adds a
+  "Random player: generated for this save" banner and TeamBadge dashes a random team's border. Never render a
+  player's name outside PName in a list.
+- **The world for a year.** Each region uses its own cards if it has 6+ teams that year, else the nearest year
+  (`DATA_LOOKBACK` 4 back, `DATA_LOOKAHEAD` 2 ahead); a borrowed year is held `BORROWED_REGION_GAP` under the two
+  strongest regions, because 2015's NA cards otherwise made NA the best league of 2013. Tier 1 is the ten strongest
+  real teams (`TIER1_SIZE`), tier 2 the next eight (`TIER2_SIZE`, two bye weeks a split); random teams from
+  `FICTIONAL_SETS` fill any shortfall, and every team carries two young random subs.
+- **Ages are estimated** (no birthdays in the data): 20 at a first card (22 for 2011-12 pros), younger for a long
+  career, never past 33 at a last card. Mean real age measures 19.7 in 2013 and 22.8 in 2026.
+- **History drives the AI world, you drive yours.** Each new year: pros whose cards begin that year debut into
+  their real org if it exists (sameOrg over `ORG_GROUPS`, certain rebrands only) or free agency; one debuting into
+  the manager's own org arrives as an inbox prospect held for them through the preseason. AI clubs make the moves
+  that really happened (85%), and every real player is pulled toward that year's card (`HISTORY_PULL`: 0.6 at AI
+  clubs, 0.3 at yours). A pro with a card next year does not retire before 34. Without these, the 2015 SKT roster
+  stayed together for ever and won 9 Worlds in 12.
+- **Development.** XP from matches and weekly training, multiplied by age (1.3 at 19 and under, down to 0.06 at
+  28+), personality, coach and the Player Developer perk; 300 XP is a level and 2 attribute points on the player's
+  focus, a quarter of a point past potential. Decline from 25. After 2026 there are no more real rookies, so each
+  offseason tops every region's free agency up to `FREE_AGENT_FLOOR` with prospects built around `REGION_LEVEL`;
+  before that change the world deflated from ~85 to ~75 OVR by 2037 and free agency hit zero.
+- **The match engine.** Three phases (early MEC+FRM, mid MAP+LDR, late TMF+CMP), weighted by the AVERAGE of both
+  tactics' phase weights, so a plan steers the game toward what your five do best. A counter (`TACTIC_BEATS`, a
+  five-way circle) is `COUNTER_EDGE` 2.5; fit to the five's attributes up to ±2; chemistry diff /15; morale ±3/-4.
+  `WIN_SCALE` 6: a 6-point edge is ~73%. AI clubs pick their best-fit plan 75% of the time and adapt after losing a
+  game. Units matter: a SEAT bonus (comfort, meta, matchup) is in rating points on one seat, worth about a fifth of
+  that in team edge; synergy is TEAM edge directly. `EDGE_TO_SEAT` (5) converts when the draft weighs a pick.
+- **The draft is the tournament order** (`DRAFT_ORDER`, 20 actions: bans B R B R B R, picks B · R R · B B · R, bans
+  R B R B, picks R · B B · R), driven one action at a time by `newDraft` / `draftTurn` / `applyDraft`. A pick's value:
+  signature (`favs`, `FAV_BONUS` 3) or pool (`pool`, 4 champions, `POOL_BONUS` 1.5), the split meta (±2), and the
+  LANE MATCHUP against the champion across from it (`championMatchup` from career × `MATCHUP_STEP` 1.5, symmetric).
+  Team synergy is `teamSynergy()`: up to two `DUO_SYNERGIES`, the best `COMP_STYLES` match (+`COMP_TACTIC_BONUS` when
+  the style is the plan being played) and `NO_FRONTLINE_PENALTY`. The AI (`aiDraftAction`) scores bans off the
+  enemy's comfort × how good the player is, what he played lately (`p.recent`) and counters to picks already
+  locked, minus what its own players want; it scores picks off value + counter-pick or blind-pick risk + synergy,
+  and chooses among the top few with `softPick` so the same two teams do not ban the same five every game
+  (managerSmoke asserts ≥6 distinct ban sets in 24 drafts). `pickInfo()` is what champion select shows per tile.
+- **Fearless** (`fearlessOn`: a setting, compulsory from `FEARLESS_FROM` 2024) is a WORLD rule: `matchContext`
+  carries it and every series, AI ones included, locks every champion played for the rest of the series.
+  `quickSeries` starts game 1 on `ctx.blue` (the tie's `a`, the higher seed) and gives the loser blue after that;
+  MatchFlow lets a beaten manager choose. Games keep `picks`/`bans`, and `applySeries` writes `p.recent`.
+- **A game is up to four decisions** (`CALL_STAGES`: plan at 0:00, mid at 14:00, the 20-minute call, and the late
+  call at 27:00 only while `|D| ≤ LATE_CLOSE`). `startGame` → `gameSituation(st, side)` → `resolveStage(st, ...,
+  {callA, callB})` until `st.done`; `quickGame` runs it with `bestCall` for both. Every option carries an `edge`
+  (an attribute gap, a lane's perf gap, +`STYLE_EDGE` when the comp suits the call); null edge = safe, always
+  works. Each stage writes its own feed segment from the gold curve, so a call that worked shows in the game after
+  it; the end segment is written once the winner is known. The Shotcaller perk adds 4%/rank to the user's chances.
+  `resolveStage` MUTATES `st`: a component must reassign (`st = st`) or the template never sees the change.
+- **A hand-played series and a simmed one take the same road.** MatchFlow writes nothing until the series is over,
+  then hands the whole result to `playStep(series)` → `advance()`, exactly as the Sim button does with `null`.
+- **The flow rules.** `blockInfo(save)` returns `{ msg, go }` for anything that needs the manager: an unanswered
+  inbox decision, a WINDOW step without a full five, a fixture without a full five, and at the OFFSEASON step any
+  contract ending this year that nobody decided (`undecidedContracts`: not renewed, not `leaving`, not `retiring`).
+  `goNext()` only advances from the Home screen (elsewhere it goes Home first), and the step report's only exit is
+  "Back to Home" (`closeReport`) — the user asked that matches never chain from the result screen. Retirements of
+  the manager's players are rolled and announced at the mid-season break (`p.retiring`) and nobody else of theirs
+  retires; the offseason report lists why each player left.
+- **Transfers.** Bids for the manager's players arrive when a window OPENS (`openWindow`, also called by
+  `runOffseason`) and lapse when it closes (`expireOffers`); before this they arrived as the window closed and could
+  be accepted all split. `p.listed` is the transfer list: `listingOffers` finds clubs with room, wages and a reason
+  (he starts for them, or he is young with a ceiling); a price over 1.6× value draws nothing. One emergency signing a
+  season outside a window (`save.emergency`, `EMERGENCY_PREMIUM` 1.2, no haggling; two with Board Diplomat 3).
+  Renewals are `negotiateRenewal` against `renewalDemand(years, status)`: youngsters want short deals, veterans long
+  ones, the ambitious take less to be a key player; `renewalOdds` is the shown chance; one attempt per player per
+  week (`p.negot`). `p.status` (key/regular/rotation, `SQUAD_STATUS`) sets what the bench costs in morale.
+- **A founded club** (`finalizeSave(world, { custom })` → `foundClub`) takes the place of the weakest side of that
+  tier, whose players go to free agency, plus every real pro of that league-year without a roster place and 15
+  random prospects. `team.custom` keeps it out of debuts and history transfers whatever its tag.
+- **Ownership** (1.8.9). A founded club carries `team.stake` (undefined reads as 100, so every 1.8.8 founded save
+  is owner-run; `hydrate` clears its objectives). market.js owns the predicates and everything reads them:
+  `soleOwner` (stake 100: no board, `setObjectives` returns none, `boardMove`/`yearReview` do nothing, `wageBudget`
+  is `Infinity`, never sacked), `hasBoard`, `boardCanSack` (stake under 50). The sole owner's one rule is in
+  `signingCheck`: no new wages while the balance is negative, checked BEFORE the fee test (a fee of 0 is more than a
+  negative balance, and that message hid the real reason). `sellStake` sells `STAKE_TRANCHES` (10/25) at
+  `clubValuation` × pct and never below `MIN_STAKE` 10; `buyStake` pays `BUYBACK_PREMIUM` 1.15 and is capped at
+  100 − stake so 95% can be bought back; at 100 the board and its objectives are gone. An owner is never poached
+  by unsolicited job offers (a sacked minority owner gets the usual list). Every `Infinity` wage limit must be
+  formatted at the reader (Club, Transfers) — managerRender flags it.
+- **The wage limit follows results** for the manager's club only: `wageBoost` = 1 + (confidence − 60)/100 clamped
+  0..0.4, + 0.08 per title this year or last (max 0.25). AI clubs use `baseWageBudget`, so the boost never inflates
+  the AI market.
+- **The economy grows with the game** (1.8.10). Wages are priced on OVR (`wageCurve`: `WAGE_STEP` 1.118 a point to
+  `WAGE_KNEE` 88, `WAGE_TOP_STEP` 1.08 above), and the card ratings rise from 2013 to 2026, so the median wage
+  triples. Club income used to be flat in time and nearly flat in reputation, and 9 of 60 tier-1 clubs started a
+  2026 save over their own limit (BLG 2.1x, T1 1.6x — the user's report). Now: `save.econ = { year, level }` is the
+  mean OVR of every tier-1 starter, taken by `refreshEconomy` at `finalizeSave` and each new season (never weekly, so
+  a limit never moves with a transfer); `econIndex` = `WAGE_STEP^(level − ECON_REF_LEVEL 80)` scales sponsors, the
+  limit's constant, prizes (`prizeMoney`) and the valuation's constants. Income is `(SPONSOR_BASE + SPONSOR_REP ×
+  rep²) × REGION_MONEY × econIndex`. `applyPrestige` adds `PRESTIGE` rep for an org's real Worlds/MSI/First Stand
+  titles before the start year (T1 2026 82 → 92; `t.prestige` marks it done). An early-era superteam far above its
+  league (SKT 2013, DWG 2020) still overshoots, so `settleInvestment` gives any club over its limit at world build
+  `t.invest` (bill × `INVEST_ROOM` 1.08 / limit), which `baseWageBudget` multiplies, `ownerFunding` PAYS into the
+  weekly income (a limit above income would only drain the balance) and `fadeInvestment` shrinks by `INVEST_DECAY`
+  0.8 a year. Measured at world build: 0 of 60 tier-1 clubs over the limit in every start year, mean bill/limit
+  0.45-0.49, worst 0.93. During play AI renewals ignore the limit (a star is always kept), so 0-5 clubs drift to
+  ~1.3x; that only stops their own signings. `negotiateRenewal` lets any club renew at the same money or less while
+  over its limit. A save without `econ` is migrated once in `hydrate`: wages above the knee repriced by
+  `(WAGE_TOP_STEP/WAGE_STEP)^(ovr − 88)`, prestige, `refreshEconomy`, `settleInvestment` — and `initManager` flushes it
+  straight back, so the stored save is the new shape from that load on. NewManager's stand-in save
+  carries `world.econ`, or the wizard would price clubs at index 1.
+- **Club history** (`history.js`). `team.hist[pid] = { n, r, real, y0, y1, s, ly, g, w, mvp, t: {league, tier2,
+  msi, worlds}, aw }` exists only on clubs the manager has run (`trackClub`, at `finalizeSave`, `acceptJob` and in
+  `hydrate`), so the save does not carry a ledger for 100 AI clubs. Names are stored, because a retired player's id
+  must still read. Hooks: `applySeries` → `histGame`, `crownLeague`/`crownIntl` → `histTitle` (the five plus anyone
+  who PLAYED for the club that year — a sub with no games gets no medal), `yearAwards` → `histAward`, and
+  `runOffseason` → `histYearEnd` before contracts expire. The years before the save come from `realHistory()`:
+  standard cards matched by `sameOrg`, and special prints for titles (Champion → Worlds, MSI, FirstStand, Finalist =
+  a lost Worlds final). Those prints are region "Legacy", so they match by org tag and are CONFIRMED by their names
+  holding the org's standard cards; memoised per club and year. `legendScore` (seasons 12, games 0.12, Worlds 45, MSI
+  25, league 18, First Stand 15, tier-2 6, awards 12, MVP 0.4) → `legendTier`: ≥120 Club legend, ≥70 Club great, ≥40
+  Servant. History.svelte takes `initialTeam` (and `mgrHistTeam`, set by TeamModal) to open on any club.
+- **Training is something you run** (1.8.9, the Training screen; Tactics only links to it). Per player `p.intensity`
+  (`INTENSITY`: light ×0.6 XP +1 morale, intense ×1.5 −1.5 morale), applied in `weekly`. `team.bench`
+  (`BENCH_PROGRAMS`: reserve +20 XP, academy +40 XP +1 morale) for everyone outside the five, costing a share of
+  sponsor income (`benchCost`). `SESSIONS_PER_WEEK` 2 (`runSession`: coach, vod, pool — adds a strong-meta champion,
+  pool max 6 — and mental), stamped `year*100+step`. `BOOTCAMPS` once each per split (`save.camps[id] =
+  'year:split'`). `devForecast(save, p)` is the one forecast reader (Training and PlayerModal): XP a week, weeks to
+  the next level, levels/weeks to +1 OVR through the focus attribute's role weight, `ovrDelta` since `p.ovr0` and
+  `p.xpy` (both reset in `runOffseason`, `grantXP` writes `xpy`).
+- **Contracts in the UI**: a player with `p.until > year` shows a "Under contract" panel and NO negotiation; talks
+  open in the contract's final year. Home and Squad list the expiring ones with one-click Renew (`renewContract` at
+  his ask, 2 years) and "Renew all at their asks" (`renewAllExpiring` → `{ ok, msg, done, failed }`). PlayerModal's
+  `justSigned` turns the panel to "Signed" the moment a renewal lands.
+- **Achievements** (`ACHIEVEMENTS`, ids are save data) are counted by `recordAch` in `manager.ach[id] = { n, years,
+  first, last }`; `once` ones count a single time, a first unlock with `point` gives a perk point. Trophies carry
+  `split`, `teamId` and `teamName`, which is what Golden Road reads. Titles, promotions and achievements push a
+  celebration into `save._fx` → `summary.fx` → the `mgrFx` store → `StageFx`; a new stage of the year is a card
+  too (`phaseCard`), shown after the report closes. `summary.msgFrom` marks which inbox messages are new.
+- **Perks** are five `PERK_BRANCHES`, 16 perks, 45 ranks; every `rank()` line must stay true to its reader
+  (`sideFor` for drafter/poolmaster/analyst/shotcaller/psychologist, `weekly` for teambuilder and status, `applySeries`
+  for mentor, `runOffseason` for youth, `listingOffers` for agent, `boardMove` and `emergencyAllowance` for
+  boardroom). `spendPoint` spends a point on a `POINT_ACTIONS` one-off.
+- **Season**: Spring (9 weeks, Bo3) → top-4 playoffs (Bo5) → MSI (6 spring champions + runners-up of the two
+  strongest regions) → mid-season window → Summer → playoffs → promotion (tier-1 last down, tier-2 summer champion
+  up, tier-1 ninth vs tier-2 runner-up Bo5) → Worlds (16; slots 4/4/3/2/2/1 by region strength: summer champion,
+  runner-up, then championship points) → offseason. Transfers between clubs only in the two windows; free agents
+  any time.
+- **Money and the board.** Sponsors scale with club reputation and region (`REGION_MONEY`); the board caps the wage
+  bill (`wageBudget`). Objectives come from the preseason expected rank; met +14, missed -18; at ≤15% at year end
+  (or ≤5% after the spring) you are sacked and choose from job offers. Prize money from playoffs, MSI, Worlds.
+- **The store**: `manager` is null until ManagerShell calls `initManager()`; `saveManager`/`flushManager` refuse to
+  write a null or uncreated save over a created one (the career rule). `mutate(fn)` changes the live save and
+  saves; `goNext()` is the one Continue (jobless → Club, not on Home → Home, `blockInfo` → its screen, a fixture →
+  MatchFlow, else `playStep`). `hydrate()` gives a save from before 1.8.8 champion pools (`ensurePool`, seeded per
+  player so a pool is stable across loads), `recent`, `ach`, `tier2Clubs`, `emergency` and `settings.fearless`;
+  and from before 1.8.9 `p.ovr0`, the manager's club's record book (`trackClub`) and an owner-run founded club.
+  Local only, not in the cloud save.
+- **Two Svelte traps that shipped in the first cut.** A template call like `{#each optionsFor(r)}` only re-runs for
+  the variables named IN the expression, so pass the reactive inputs as arguments (`optionsFor(r, myPicks, myBans)`,
+  `candidates(role, roster)`). And a `$:` value is stale inside a handler that runs in the same tick as the change
+  that feeds it: the draft's lock-in read the bans through `$: banned` and the AI happily picked a banned champion.
+- **Verifying** — `node tools/managerSmoke.mjs [--years N] [--start YEAR] [--seed N] [--nohand] [--nomarket]`:
+  builds every start year's world and plays N seasons through `advance()`, playing every third match of the
+  manager's by hand (a step-by-step draft and every call, with the detailed feed) and committing it, and asserting
+  rosters/free agency agree, leagues keep their sizes, MSI is 8 and Worlds 16 with no repeats, attributes and money
+  stay finite, standard cards only, random names never collide, every draft obeys the order (20 actions, 5 bans and
+  5 picks a side, ten distinct champions, none banned, fearless never repeats one), the feed stops at each decision
+  and ends on the winner's Nexus, the save survives `hydrate` (and an old-shape save gets stable pools), bids lapse
+  with the window, one emergency signing goes through and a second is refused, the transfer list draws offers, the
+  offseason waits for contract decisions, announced retirements happen and unannounced ones do not, and two
+  founded clubs (tier 1 and tier 2) start empty, are blocked until they sign five, and play two seasons. The
+  ownership block asserts a founded club is owner-run (no objectives, no limit, the debt rule), the stake flow both
+  ways and the 50% sack line, an old founded save loading owner-run, the wage boost (and its floor), SKT 2017's real
+  history (Faker with ≥2 Worlds, ≥3 Worlds and an MSI in the honours, none for a founded club), sessions, bootcamps,
+  intensity and bench settings, finite forecasts, the record book after a season, titles only for players who
+  played, and `renewAllExpiring`. The economy block asserts, for every start year, that no club starts over its
+  limit, that investment exists only where needed and is paid, a sane mean bill/limit, T1 2026's prestige and room,
+  money rising 2013 → 2026, the wage curve's knee, investment fading to nothing, renewing over the limit at the same
+  money (and not for more), and an old save repriced exactly once; each simulated year prints the economy level,
+  the index and the tier-1 bill/limit spread. It prints
+  the in-game calls (~3.3 a game, the late call in ~30%), AI ban variety, the market, contracts and achievements.
+  "Passive manager vs board expectation" is the smoke's SCRIPTED manager (best-fit plan every week, rotating
+  training, buying upgrades) and reads +1 to +2 places a split between runs; a truly do-nothing club measures ~+0.2 (chemistry it
+  keeps by never changing the five is the whole of it). `node tools/managerRender.mjs [--dump]`: SSR-renders every
+  screen and modal against 21 states, every MatchFlow phase (`initialPhase`: draft, pick, drafted, live, post, end),
+  every Transfers tab (`initialTab`), the wizard's later steps (`initialYear`/`initialStage`), every StageFx card, a
+  contract deadline with every contract shape, a full trophy cabinet, a founded club (sole owner, a stake sold, the
+  majority sold, an owner in debt with every training setting moved), History for a rival and for a club after a
+  full season, and a signed and an expiring PlayerModal: 650 renders, 0 crashes.
+  Those props exist for the harness only. The dump goes to `tools/.render-dump-manager/`; delete it afterwards.
+- **Svelte drops the whitespace at the edges of an `{#if}` block**, so `{a}{#if b} · {c}{/if}` renders "a· c". Write
+  the separator as an expression: `{#if b}{' · '}{c}{/if}`. Twelve of them had shipped.
+
 ### Ultimate Career
 Create one pro and live their career: pick region, role, playstyle and signature champion, then
 either start **Pre-Competitive at 13** (unsigned, weak, highest ceiling, unlimited training) or
@@ -99,6 +429,7 @@ src/lib/career/
   contracts.js    — scouting, offers, negotiation, transfers, role changes, promotion
   awards.js       — awards, milestones, legacy score, retirement
   events.js       — random weekly events and press interviews
+  objectives.js   — the club's brief: split objectives, pure (drawn/settled by engine, scored by clubReview)
   engine.js       — the week/season orchestrator (advanceWeek, doActivity, playoffs, rollover,
                     club momentum and offseason roster churn)
 src/lib/stores/career.js          — the whole career state; saves to `lurc_career` (LOCAL ONLY,
@@ -111,6 +442,124 @@ src/lib/components/career/minigames/ — 8 training minigames + MinigameHost
 throttles hard near the ceiling, so rounding on write or on save-load stalls a career several
 points short of its potential. Round at display time only. `potential` is the opposite — integral,
 written only through `raisePotential()`, which clamps via `clampAttr`.
+
+### The first club, the Hub and the drill briefing
+- **A career starts at a club.** `createCareer(cfg.clubId)`: a string is the club chosen on
+  CreatePlayer's Team step, `undefined` the closest amateur side, `null` unsigned. Pre-Competitive picks
+  one of six amateur sides whose names are localised per region (`AMATEUR_LOCAL` +
+  `setAmateurLocale()`, which RENAMES the shared `AMATEUR_TEAMS` entries in place — ids never change,
+  so saves are safe; `initCareer`/`resetCareer` set the locale). Academy Debut picks a region academy.
+  Squad status comes from `amateurStartingStatus` (`AMATEUR_ROTATION_GAP`). Amateur and unsigned
+  players get unlimited training (`weeklyTrainingSlots`) and may change role at tier 3.
+- **Every minigame mounts through `MinigameHost`'s briefing** (`minigames/guides.js`: goal, steps,
+  controls, score note), then a 3-2-1 countdown, then the game with `briefed={true}`, which starts
+  it from `onMount`. A new drill needs a `MINIGAME_GUIDES` entry and the `briefed` prop.
+  - A drill this DEVICE has started before opens COMPACT (steps and score note hidden with CSS
+    behind "How to play", still rendered for careerRender). Seen games live in `lur_drill_briefs`,
+    a device key in `storage.js DEVICE_KEYS` and slotCheck's list.
+  - **Briefed games hand back on their own**: the last line of each game's finish function is
+    `if (briefed) <its done handler>()`, so the training room's result panel follows the last rep
+    with no in-game result screen between. It must stay the LAST statement — the parent tears the
+    game down inside the callback.
+- **Drill length.** Shotcall, ChampPool, Knowledge, WardMemory and FocusFire were cut to 4-7 reps
+  (ChampPool's BANK cut in the same proportion). That is safe ONLY because each one scores a
+  per-rep MEAN. Combo, Wave and Clutch were deliberately left alone: Combo's score includes
+  `bestCombo / n` and Clutch's zone shrinks per landed rep, so fewer reps would make them easier,
+  and their sims (`comboSim`, `clutchSim`, `waveSim`) calibrate the counts as they are.
+- **Quick session** (`training.quickDrill`) runs a drill through `completeDrill` at a fixed
+  `QUICK_SCORE` of 0.45 (`scoreFactor` 0.84x): slot, energy, fee, injury roll and decline
+  protection are all real. It must stay under 0.50 or skipping the minigame pays more than playing.
+- Training's result panel is portaled to `<body>` like MinigameHost: inside CareerShell's animated
+  `.cscreen` a `position: fixed` overlay centres on the whole page, not the window.
+- **The Hub follows the Roster home's layout**: a hero (phase, four numbers, one `nextAction`
+  button: play, then activities, then advance), "Needs your attention" cards from `buildAlerts`
+  (`label` + `sub` + optional `go`), then a "do" column (tournament banner, next match, bracket,
+  ALL activity groups — never tabbed again, the player could not find them — week log, sticky
+  advance bar) and a "where you stand" column (brief, contract, season, last match, meta, news).
+  Condition is NOT repeated on the Hub: the shell header shows all four meters on every screen.
+- The CreatePlayer Team step is component-local state that SSR never reaches — careerRender cannot
+  see it; check it in a browser.
+
+### The level system (training without minigames)
+The minigames are OPTIONAL since 1.8.5. `skipMinigames` (stores/career.js) is a DEVICE preference,
+stored raw as `lur_career_skip_minigames` (`'1'`/`'0'`, absent = skip), in `DEVICE_KEYS` and
+slotCheck's list, and toggled from Settings → Display or the Training page's "Level system /
+Minigames" switch. **Default is ON = level system.** `training.minigamesOn()` is the one reader the
+model layer uses (a `get` of the store, so careerSmoke and careerRender flip it by setting the store).
+
+- **XP is earned by practice activities** (`ACTIVITY_XP`: train 45, scrim 30, soloq 25, vod 20,
+  coach1on1 25, champ_lab 15), `XP_PER_LEVEL` 300, `POINTS_PER_LEVEL` 3. `doActivity` calls
+  `grantActivityXP(before, id)` on the PRE-activity snapshot, so the XP carries the
+  `trainingMultiplier` the player had when they started, before the activity spent energy.
+  XP is paid ONLY in level mode; banked points stay spendable in either mode, so a switch never
+  strands them.
+- **`'train'` is the Practice Block in level mode** (`engine.doPractice`, form +1, logged as
+  "Practice Block"). It books a club slot through `weekly.counts.train`, which
+  `weeklyTrainingSlots` adds to `used`, and `activityGate` refuses it when the slots are full — the
+  same club gate a drill hits. In minigame mode `doActivity('train')` refuses and the Hub routes to
+  Training instead.
+- **A point is a drill without the minigame**: `spendPoint(key)` writes `applyAttrGain(key,
+  POINT_GAIN)` (1.4, so the gain curve, the ceiling and the unsigned environment cap all apply) and
+  books `flags.splitTrained[key]`, so it protects against decline and counts towards the brief's
+  development target exactly like a drill. At the ceiling it buys maintenance only, once a split,
+  mirroring `canTrain`. Points/level/xp are integers, clamped in `hydrate()`.
+- **Calibrated against the drill economy, not by feel.** `careerSmoke --drills` runs the old drill
+  economy as the control (same RNG consumption in both modes). The first cut paid ~1,160 levels per
+  career and pushed the mean match rating to 7.59 against the 7.6 hard fail; at the shipped numbers
+  seeds 42/1234/99 measure **7.58/7.53/7.53 in level mode against 7.51/7.57/7.54 with drills**, with
+  about as many points spent as drills played. Seed 42 sits closest to the line, so **anything
+  that raises XP or `POINT_GAIN` must be re-measured across several seeds first.** careerSmoke fails
+  a level-mode run that never levels (`nolevels`) or never spends a point (`nopoints`);
+  `zerogain` is a drill-mode check.
+- careerRender renders Training and the Hub in BOTH modes (the MAINT loop runs twice; the
+  `modes-*` states cover banked points, rotten counters and minigame mode with points banked).
+
+### The club's brief (split objectives)
+`career/objectives.js` gives every split a stated purpose. When `ensureSeason()` draws a fixture list for a
+signed player it also draws `season.objectives`: a TEAM target (finish at the club's expected rank by strength in
+its own division; the favourite gets top two, a minnow only "not last"), a PERSONAL match-rating standard by squad
+status (`RATING_BY_STATUS`, judged on >= `OBJ_MIN_GAMES`), a DEVELOPMENT target (drills this split off
+`flags.splitTrained`, or "reach OVR X" for a young player with headroom) and, for a tier-1 contender, an optional
+STRETCH goal read off `season.results`. **Targets are fixed at draw time and persisted** — a target re-derived
+from today's numbers would move under the player. `ensureBrief()` also draws one lazily for a save that predates
+briefs; it never overwrites an unsettled brief from another club, which closeSplit still owes a settlement.
+
+- **Settled in `closeSplit()` FIRST, off the entry snapshot** (`engine.settleBrief`), because it reads
+  `flags.splitTrained`, which is emptied later in the same function, and the review must see the settled score.
+  Pays gold (`BONUS_WEEKS` of wage per objective, stretch double, `CLEAN_SWEEP_MULT` on a clean sweep), morale
+  (asymmetric, suppressed while `burnoutBenched`) and chemistry; writes `flags.briefs` (lifetime ledger) and
+  `flags.lastObjectives`; adds a compact `brief` to the history row. The season-review overlay is now pushed at the
+  END of closeSplit with the brief, the verdict and any strike change in it.
+- **`contracts.clubReview()` adds `objectiveScore(c)`** after its small-sample damping: settled score once the
+  split closes, "if it ended today" (scaled in by league games played) before that. Open cumulative objectives
+  weigh nothing until met or settled. It is pure, so the Hub calls it on every render exactly like the Club screen.
+- **Meeting the brief is worth 0 to the review (`OBJ_MET = 0`); missing one is -8.** This is measured, not
+  stylistic: the smoke careers meet ~86% of their briefs, and at +5/-7 the brief pushed them into 'untouchable',
+  star status raised club strength through `teamStrengthWithPlayer`'s playChance share, and the mean match rating
+  climbed toward the 7.6 hard fail. 6 weeks of wage per objective paid 20M gold, about a second salary, and gear
+  bought with it applies in matches. Final: seeds 42/1234/99 measure 7.48/7.56/7.51 against a no-brief baseline of
+  7.43/7.51/7.54 — the shipped game already sits that close to the line. **careerSmoke shares one RNG stream across
+  careers, so any behaviour change re-rolls careers 2-8: compare a change across several seeds and against a
+  control with the feature switched off, never one run against one run.**
+- careerSmoke prints `club briefs` (settlements, sweeps, gold, met/failed per kind) and fails if no brief is ever
+  settled, if nothing is ever met, if nothing is ever failed, if a settled item is not in a final state, or if more
+  than 5% of signed regular-season weeks have no brief.
+
+**A player released mid-split cannot sign again until that regular season ends** (`contracts.splitUnderway()`,
+checked in `generateOffers` and `acceptOffer`). His season block still holds the old club's played games, and a
+signing makes `ensureSeason` redraw for the new club and wipe them — `histclub`, `histempty` and the table-spread
+check all fired on seed 42 once the brief raised terminations. It is deliberately narrow: locking EVERY roster for
+the regular season was measured and kept amateur prospects in tier 3 for whole splits, moving the rating mean
++0.08.
+
+**A mid-split move files the old club's games instead of wiping them** (1.8.5). The tier-3 call-up path
+(an academy signing an amateur mid-season) still redraws, but `ensureSeason` first checks the old stamp: same
+year and split, a different club, and played league rows means `bankPartialSplit()` pushes a history row
+`{ ..., placement: null, leftMidSplit: true }` for the old club before the redraw, and the new block carries
+`joinedMidSplit`, which `closeSplit` copies onto its row. careerSmoke tracks every club a split was played for
+(`SPLIT_CLUBS`), exempts both flagged rows from `histclub`/`histempty` (a same-week call-up is invisible to a
+weekly sampler) and asserts them through its own `midsplit` invariant instead: a left-mid-split row must hold
+games and be filed under a club other than the one joined.
 
 ### The ceiling
 `player.potential` is the ONE number that means "ceiling". Everything that raises the roof writes
@@ -1004,7 +1453,7 @@ exactly the two moments the ranked fields move furthest.
   each other, so it is the only safe compile check while several components are being edited at
   once. It proves a component PARSES; it does not prove it RENDERS, which is careerRender's job.
   A new `css-unused-selector` warning means a rule nothing uses or a misspelled class. Baseline is
-  55 components, 0 failed, 39 pre-existing warnings.
+  68 components, 0 failed, 28 pre-existing warnings (all in Tournament.svelte's old salary-cap CSS).
 - `node tools/careerSmoke.mjs --seed 42` — plays full 12-24 year careers headlessly with ~30
   invariants asserted every week. Seeded, so failures reproduce. Also asserts the trait system
   (exactly one, never before its reveal age, never a dead id), both ceiling budgets, and that
@@ -1082,6 +1531,8 @@ exactly the two moments the ranked fields move furthest.
   predates slots is still there. Also isolation both ways, device prefs staying global, scoped
   delete and wipe, both stores round-tripping across a switch (which is what proves
   `resetGameStores()` actually resets), and that the picker's summary readers never switch slot.
+  It covers all three families (111 checks), including Ultimate Manager's slot isolation, its summary reader, the
+  never-persist-an-unloaded-store guard and `resetManager()` touching nothing but its own slot.
 - `node tools/boardCheck.mjs` — the global career leaderboard (`career/board.js`,
   `stores/careerBoard.js`, `CareerBoard.svelte`, `CareerDossier.svelte`), which nothing else covers.
   Seeded; `--seed` reproduces. Seven sections, and the first is the one that matters most:
@@ -1104,7 +1555,8 @@ exactly the two moments the ranked fields move furthest.
   because a lint that matches nothing looks exactly like a clean codebase.
 - `node tools/careerRender.mjs` — Vite SSR-renders every career component against the game-state
   matrix (unsigned rookie, null bracket, retired, damaged save, and one rot per field). The only
-  check that exercises the Svelte templates. **1207 renders, 0 crashes.**
+  check that exercises the Svelte templates. **1441 renders, 0 crashes** (including five `brief-*` rot
+  states and five season-review payloads carrying a club brief, which no driven fixture reaches).
   A third loop joined the two below: **ClubScout is driven directly**, because it is a child with
   three required props mounted only behind `scoutId !== null`, which no SSR pass sets — exactly
   BracketView's position. Its card-database-unloaded arm needs a second, throwaway Vite graph built

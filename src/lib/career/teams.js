@@ -317,6 +317,14 @@ function trimCache(map, limit) {
  *  Hall of Legends cards are commemorative, not a season's roster, and every one is a perfect
  *  100: matched on team alias alone, the HoL Faker took T1's 2024 mid seat from his season card
  *  and the HoL Caps took G2's from 2026. The roster game's CPU pools exclude them too. */
+/** Every card-database team code an org has played under (a copy). Read by
+ *  Ultimate Roster's real-team leagues (utils/world.js), so both modes agree on
+ *  which cards belong to which org. Empty for an unknown id. */
+export function orgAliases(teamId) {
+    const a = TEAM_ALIASES[teamId];
+    return Array.isArray(a) ? a.slice() : [];
+}
+
 function orgCards(team, year) {
     const db = getDB();
     if (!db) return [];
