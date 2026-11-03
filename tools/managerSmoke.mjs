@@ -296,9 +296,16 @@ function emergencyTest(save0) {
     const save = JSON.parse(JSON.stringify(save0));
     const me = E.myTeam(save);
     save.finance.balance = 1e9;
-    for (const id of me.roster.slice(5)) W.release(save, save.players[id]);
-    const cheap = Object.values(save.players).filter(p => p.team && p.team !== me.id && !PE.fx(p).hardToBuy && PE.ovrOf(p) < 72)
-        .filter(p => MK.willingness(save, p, me).ok).slice(0, 2);
+    const five = new Set(Object.values(M.lineupOf(me, save.players)).map(p => p.id));
+    for (const id of me.roster.filter(id => !five.has(id))) W.release(save, save.players[id]);
+    // Two targets in different roles, so the two-a-role cap is never what refuses them.
+    const cheap = [];
+    for (const p of Object.values(save.players)) {
+        if (cheap.length >= 2) break;
+        if (!p.team || p.team === me.id || PE.fx(p).hardToBuy || PE.ovrOf(p) >= 72 || !MK.willingness(save, p, me).ok) continue;
+        if (cheap.some(x => x.role === p.role) || MK.roleCount(save, me, p.role) >= D.ROLE_MAX) continue;
+        cheap.push(p);
+    }
     if (cheap.length < 2) return 'skipped';
     check('outside a window a signing is an emergency', MK.isEmergency(save, cheap[0]));
     check('one emergency signing is available', MK.emergencyLeft(save) === 1, `${MK.emergencyLeft(save)}`);
@@ -332,6 +339,8 @@ function oldShape(save) {
 
 // ---- ownership, history, training, renewals ------------------------------------------
 const H = await load('lib/manager/history.js');
+const SP = await load('lib/manager/sponsors.js');
+const STATS = {};
 function ownershipHistoryTraining() {
     // A founded club is owned outright: no board, no limit, no sack.
     const fw = E.previewWorld(db, 2017, SEED + 3);
@@ -343,8 +352,13 @@ function ownershipHistoryTraining() {
     check('AI clubs keep their wage limit', Number.isFinite(MK.wageBudget(f, Object.values(f.teams).find(t => t.id !== ft.id))));
     const debt = JSON.parse(JSON.stringify(f));
     debt.finance.balance = -1000;
-    const fa = debt.freeAgents.map(id => debt.players[id])[0];
-    check('an owner in debt cannot add wages', /debt/.test(MK.signingCheck(debt, fa, { fee: 0, wage: 10000 })));
+    const fas = debt.freeAgents.map(id => debt.players[id]);
+    const fa = fas[0];
+    check('an owner in debt may still fill an empty role', !/debt/.test(MK.signingCheck(debt, fa, { fee: 0, wage: 10000 })));
+    const dt = E.myTeam(debt);
+    const twin = fas.find(x => x.id !== fa.id && x.role === fa.role);
+    fa.team = dt.id; dt.roster.push(fa.id);
+    check('an owner in debt cannot add wages', !!twin && /debt/.test(MK.signingCheck(debt, twin, { fee: 0, wage: 10000 })));
     const bal = f.finance.balance;
     const r1 = E.sellStake(f, 10);
     check('selling a stake pays', r1.ok && f.finance.balance > bal, r1.msg);
@@ -433,6 +447,56 @@ function ownershipHistoryTraining() {
     console.log(`  SKT legends: ${ch.players.slice(0, 3).map(e => `${e.n} (${Math.round(e.score)})`).join(', ')}; real honours ${real.honours.map(x => x.kind + ' ' + x.year).join(', ')}`);
 }
 
+// ---- the world's record book, stakes, styles, rosters ----------------------------
+function worldRecords() {
+    const w = E.previewWorld(db, 2017, SEED + 9);
+    const kt = Object.values(w.teams).find(t => t.region === 'LCK' && t.tier === 1);
+    const s = E.finalizeSave(w, { name: 'Rec', teamId: kt.id, startYear: 2017, seed: SEED + 9 });
+    check('every club has a personality', Object.values(s.teams).every(t => D.CLUB_STYLE_BY_ID[t.style]));
+    check('random players have a nationality', Object.values(s.players).filter(p => !p.real).every(p => p.cc && p.flag));
+    for (let i = 0; i < 40 && s.time.year === 2017; i++) {
+        E.autoLineup(s);
+        for (const m of s.inbox) if (m.options && !m.answered && !E.answerEvent(s, m.id, m.options[0].id).ok) E.answerEvent(s, m.id, m.options[m.options.length - 1].id);
+        const me = E.myTeam(s);
+        for (const p of me.roster.map(id => s.players[id])) if (p.until <= s.time.year && !p.leaving) p.leaving = s.time.year;
+        E.advance(s);
+    }
+    check('the year completed', s.time.year === 2018, `${s.time.year}`);
+    // Clubs that arrived with the new year (the living league) have no 2017 rows.
+    const clubs = Object.values(s.teams).filter(t => (t.sh || []).length);
+    check('every club has its two splits on record', clubs.every(t => (t.sh || []).filter(r => r.y === 2017).length === 2), clubs.filter(t => (t.sh || []).filter(r => r.y === 2017).length !== 2).map(t => t.short).join(','));
+    const folded = Object.values(s.defunct || {});
+    check('the living league folds clubs and keeps their history', folded.every(t => t.defunct === 2018 && !t.roster.length && !s.teams[t.id]), folded.map(t => t.short).join(','));
+    check('leagues keep their sizes after new clubs arrive', D.REGION_IDS.every(r => Object.values(s.teams).filter(t => t.region === r && t.tier === 1).length === 10 && Object.values(s.teams).filter(t => t.region === r && t.tier === 2).length === 8));
+    check('every split row has five starters', clubs.every(t => (t.sh || []).every(r => H.unpackFive(r.f).filter(x => x.id).length === 5)));
+    const worlds = clubs.filter(t => (t.sh || []).some(r => r.w.includes('worlds')));
+    check('one world champion on record', worlds.length === 1, worlds.map(t => t.short).join(','));
+    check('Worlds placings are on record', clubs.filter(t => (t.sh || []).some(r => r.wp)).length === 16);
+    const moved = clubs.filter(t => (t.sh || []).some(r => r.w.includes('up') || r.w.includes('down')));
+    check('promotions and relegations are on record', moved.length >= 6, `${moved.length}`);
+    const rival = clubs.find(t => t.id !== kt.id && t.tier === 1);
+    const ch = H.clubHistory(s, db, rival);
+    check('club history works for any club', ch.players.some(e => e.inSave && e.s >= 1) && ch.seasons.length === 1, `${ch.players.length} / ${ch.seasons.length}`);
+    const champ = worlds[0];
+    const star = H.unpackFive(champ.sh.find(r => r.w.includes('worlds')).f)[2];
+    const career = H.playerCareer(s, db, star.id);
+    check('a player career shows his title', career.titles.some(t => t.kind === 'worlds' && t.y === 2017), JSON.stringify(career.titles));
+    check('a player career shows his year', career.years.some(y => y.y === 2017));
+    const gone = Object.keys(s.retired || {});
+    check('retired players are archived', gone.length > 0 && gone.every(id => !s.players[id] && s.retired[id].name), `${gone.length}`);
+    // Stakes at a hired club, with perk points.
+    s.manager.points = 12;
+    for (let i = 0; i < 10; i++) E.spendPoint(s, 'stake');
+    check('perk points buy a hired club outright', MK.ownerStake(s) === 100 && MK.soleOwner(s) && s.board.objectives.length === 0, `${MK.ownerStake(s)}`);
+    check('a stake can not go past 100', !E.spendPoint(s, 'stake').ok);
+    // The roster rules.
+    const me = E.myTeam(s);
+    check('nobody has more than two of a role', clubs.filter(t => t.id !== me.id).every(t => D.ROLE_IDS.every(r => MK.roleCount(s, t, r) <= D.ROLE_MAX)),
+        clubs.filter(t => D.ROLE_IDS.some(r => MK.roleCount(s, t, r) > D.ROLE_MAX)).map(t => t.short).join(','));
+    const size = JSON.stringify(s).length;
+    console.log(`  records: ${clubs.reduce((n, t) => n + (t.sh || []).length, 0)} split rows, ${gone.length} archived players, save ${Math.round(size / 1024)}kb; world champion ${champ.short}, ${star.n || star.id} career titles ${career.titles.length}`);
+}
+
 // ---- the economy: wage limits that fit the wages of their era --------------------
 function economy() {
     const idx = {};
@@ -518,6 +582,18 @@ function manage(save, step, guard, year) {
     const me = E.myTeam(save);
     if (!me) return;
     E.autoLineup(save);
+    // Sponsors: pitch for an empty slot and sign the best offer, as a player would.
+    SP.ensureSponsors(save);
+    for (const slot of D.SPONSOR_SLOTS) {
+        if (save.sponsors.deals.some(d => d.slot === slot.id)) continue;
+        if (!save.sponsors.offers.some(o => o.slot === slot.id)) {
+            const r = SP.pitchSponsor(save, slot.id);
+            STATS.pitches = (STATS.pitches || 0) + 1;
+            if (r.ok) STATS.pitchHits = (STATS.pitchHits || 0) + 1;
+        }
+        const best = save.sponsors.offers.filter(o => o.slot === slot.id).sort((a, b) => b.value - a.value)[0];
+        if (best && SP.acceptSponsor(save, best.id).ok) STATS.deals = (STATS.deals || 0) + 1;
+    }
     me.tactic = M.bestTactic(M.lineupOf(me, save.players));
     me.training = ['balanced', 'individual', 'scrims', 'draft', 'rest'][guard % 5];
     for (const m of save.inbox) if (m.options && !m.answered && !E.answerEvent(save, m.id, m.options[0].id).ok) E.answerEvent(save, m.id, m.options[m.options.length - 1].id);
@@ -621,7 +697,13 @@ function runSave(save, label, years, measure = true) {
             const step = E.currentStep(save);
             manage(save, step, guard, year);
             const block = E.blockInfo(save);
-            if (block) { check('never blocked after managing', false, `${label} ${year} ${step.id}: ${block.msg}`); break; }
+            if (block) {
+                const me = E.myTeam(save);
+                const roles = me ? me.roster.map(id => save.players[id].role + ':' + PE.ovrOf(save.players[id])).join(' ') : '-';
+                const fas = D.ROLE_IDS.map(r => r + ' ' + save.freeAgents.filter(id => save.players[id].role === r).length).join(', ');
+                check('never blocked after managing', false, `${label} ${year} ${step.id}: ${block.msg} | roster ${roles} | FA ${fas} | balance ${Math.round(save.finance.balance / 1000)}K`);
+                break;
+            }
             // Who is announced to retire, and who of mine should still be here after the offseason.
             const me = E.myTeam(save);
             const flagged = step.kind === 'offseason' && me ? me.roster.filter(id => save.players[id] && save.players[id].retiring === year) : [];
@@ -749,7 +831,11 @@ for (const start of STARTS) {
     runSave(save, String(start), YEARS);
     // The emergency signing, mid-split, on a copy.
     {
-        while (E.currentStep(save).kind !== 'league' && save.time.step < 5) { manage(save, E.currentStep(save), 0, save.time.year); E.advance(save); }
+        // A sacked manager has no club and never reaches a league step: skip the test.
+        for (let g = 0; E.myTeam(save) && E.currentStep(save).kind !== 'league' && save.time.step < 5; g++) {
+            if (g > 30) { check('reaching the league never stalls', false, `${E.currentStep(save).id} ${JSON.stringify(E.blockInfo(save))}`); break; }
+            manage(save, E.currentStep(save), 0, save.time.year); E.advance(save);
+        }
         if (E.myTeam(save)) check('the emergency signing test ran', emergencyTest(save) !== 'failed');
     }
     const size = JSON.stringify(save).length;
@@ -763,6 +849,9 @@ ownershipHistoryTraining();
 console.log('');
 console.log(`=== the economy ${'='.repeat(63)}`);
 economy();
+console.log('');
+console.log(`=== records, stakes, styles ${'='.repeat(51)}`);
+worldRecords();
 
 // ---- a club built from nothing ------------------------------------------------------
 {
@@ -813,6 +902,7 @@ if (overPerf.n) {
 }
 if (upsets.games) {
     console.log(`  manager's series won by the weaker side: ${upsets.upset} of ${upsets.games} (${Math.round(100 * upsets.upset / upsets.games)}%)`);
+    console.log(`  sponsors: ${STATS.pitches || 0} pitches, ${STATS.pitchHits || 0} landed, ${STATS.deals || 0} deals signed`);
     check('upsets happen', upsets.upset > 0);
 }
 console.log(`ran ${STARTS.length} start(s) x ${YEARS} year(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);

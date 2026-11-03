@@ -16,7 +16,7 @@
     import { careerSlotCount } from '../../stores/career.js';
     import { showToast } from '../../stores/toasts.js';
     import { toggleMute, getVolume, setVolume, playSound } from '../../utils/sound.js';
-    import { club, collectionRegistry, blueEssence, freePacks, saveGame } from '../../stores/game.js';
+    import { club, collectionRegistry, blueEssence, freePacks, saveGame, managerLevel, skillPoints } from '../../stores/game.js';
     import { clearStorage, saveToStorage, loadFromStorage } from '../../utils/storage.js';
     import { getDB, makeUniqueId } from '../../utils/cards.js';
     import { trapFocus } from '../../utils/a11y.js';
@@ -114,8 +114,13 @@
 
     // A code grants any mix of: one card (`card`), Blue Essence (`be`) and free Store packs
     // (`packs`, keyed by Store pack id — they land in the Store's Free Packs row exactly like
-    // RBC rewards). Codes never expire; redeeming is once per save.
+    // RBC rewards). Codes never expire; redeeming is once per save, unless the code is
+    // `reusable`, which pays every time and is never recorded as redeemed.
     const CODES = {
+        'ESSENCE10K': { label: '10,000 Blue Essence', be: 10000, reusable: true },
+        'ESSENCE100K': { label: '100,000 Blue Essence', be: 100000, reusable: true },
+        // `levels` adds manager levels and one skill point per level, as levelling up does.
+        'LEVELS100K': { label: '100,000 manager levels', levels: 100000, reusable: true },
         'MSISIG2024': { label: 'MSI Signature Card', card: { quality: 'MSI', signature: true } },
         'MSI2026': { label: 'MSI 2026 Signature Card', card: { quality: 'MSI', signature: true } },
         'WELCOMEBACK': { label: '5,000 Blue Essence', be: 5000 },
@@ -125,8 +130,8 @@
     function redeemCodeFn() {
         const code = redeemCode.trim().toUpperCase();
         if (!code) { showToast('Enter a code.', 'error'); return; }
-        if (redeemedCodes[code]) { showToast('Code already redeemed.', 'error'); return; }
         const reward = CODES[code];
+        if (redeemedCodes[code] && !(reward && reward.reusable)) { showToast('Code already redeemed.', 'error'); return; }
         if (!reward) { showToast('Invalid code.', 'error'); return; }
 
         // Resolve the card BEFORE granting anything, so a missing database refuses the whole
@@ -151,6 +156,11 @@
             blueEssence.update(v => v + reward.be);
             got.push(`+${reward.be.toLocaleString()} BE`);
         }
+        if (reward.levels) {
+            managerLevel.update(v => Math.min(1_000_000, v + reward.levels));
+            skillPoints.update(v => Math.min(1_000_000, v + reward.levels));
+            got.push(`+${reward.levels.toLocaleString()} levels and skill points`);
+        }
         if (reward.packs) {
             freePacks.update(fp => {
                 const next = { ...fp };
@@ -162,8 +172,10 @@
         playSound(card ? 'rare' : 'claim');
         showToast(`Redeemed ${reward.label}! ${got.join(' · ')}`, 'success');
 
-        redeemedCodes[code] = true;
-        saveToStorage('lur_redeemed_codes', redeemedCodes);
+        if (!reward.reusable) {
+            redeemedCodes[code] = true;
+            saveToStorage('lur_redeemed_codes', redeemedCodes);
+        }
         redeemCode = '';
         saveGame();
     }
@@ -374,7 +386,7 @@
                         <div class="row row-stack">
                             <div class="row-text">
                                 <div class="row-label">Code</div>
-                                <div class="row-desc">Each code can be redeemed once per save slot. Codes are not case sensitive.</div>
+                                <div class="row-desc">Most codes can be redeemed once per save slot; a few can be used again and again. Codes are not case sensitive.</div>
                             </div>
                             <form class="code-row" on:submit|preventDefault={redeemCodeFn}>
                                 <input type="text" class="code-input" bind:value={redeemCode} placeholder="Enter code" aria-label="Code" autocomplete="off" spellcheck="false">

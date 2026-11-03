@@ -6,10 +6,11 @@
     import { manager, mgrModal, mgrHistTeam } from '../../stores/manager.js';
     import { myTeam, leagueName } from '../../manager/engine.js';
     import { REGIONS, ROLE_IDS } from '../../manager/data.js';
-    import { clubHistory } from '../../manager/history.js';
+    import { clubHistory, anyTeam } from '../../manager/history.js';
     import { getDB } from '../../utils/cards.js';
     import { ageOf } from '../../manager/people.js';
-    import { TROPHY_META } from '../../manager/ui.js';
+    import { ovrColor } from '../../manager/ui.js';
+    import { clubStyle } from '../../manager/market.js';
     import Icon from '../ui/Icon.svelte';
     import RegionIcon from '../ui/RegionIcon.svelte';
     import TeamBadge from './TeamBadge.svelte';
@@ -21,8 +22,9 @@
     $: me = myTeam(s);
     let teamId = initialTeam || get(mgrHistTeam);
     mgrHistTeam.set(null);
-    $: if (!teamId || !s.teams[teamId]) teamId = me ? me.id : Object.keys(s.teams)[0];
-    $: team = s.teams[teamId];
+    $: if (!teamId || !anyTeam(s, teamId)) teamId = me ? me.id : Object.keys(s.teams)[0];
+    $: team = anyTeam(s, teamId);
+    $: folded = Object.values(s.defunct || {}).slice().sort((a, b) => (b.defunct || 0) - (a.defunct || 0));
     $: db = getDB();
     $: hist = team ? clubHistory(s, db, team) : null;
     $: players = hist ? withRoster(hist.players, team, s) : [];
@@ -59,12 +61,33 @@
         league: { name: 'League titles', one: 'League title', icon: 'trophy', color: '#fbbf24' },
         tier2: { name: 'Second-tier titles', one: 'Second-tier title', icon: 'trophy', color: '#cbd5e1' },
         promotion: { name: 'Promotions', one: 'Promotion', icon: 'upgrade', color: '#a78bfa' },
+        relegation: { name: 'Relegations', one: 'Relegation', icon: 'trend', color: '#f87171' },
         worldsfinal: { name: 'Worlds finals lost', one: 'Worlds final lost', icon: 'medal', color: '#94a3b8' },
     };
+    const MEDAL = { worlds: ['Worlds', '#facc15'], msi: ['MSI', '#38bdf8'], league: ['League', '#fbbf24'], tier2: ['Tier 2', '#cbd5e1'], firststand: ['First Stand', '#f472b6'] };
+    $: winners = players.filter(p => p.titles > 0).sort((a, b) => ((b.t.worlds || 0) - (a.t.worlds || 0)) || ((b.t.msi || 0) - (a.t.msi || 0)) || b.titles - a.titles);
+    $: seasons = hist ? hist.seasons : [];
+    let showYears = 6;
+    function splitResult(r) {
+        if (!r) return [];
+        const out = [];
+        if (r.w.includes('worlds')) out.push(['World champions', '#facc15', 'crown']);
+        else if (r.w.includes('worlds2')) out.push(['Worlds final', '#e2e8f0', 'medal']);
+        else if (r.wp) out.push([`Worlds top ${r.wp <= 4 ? 4 : r.wp <= 8 ? 8 : 16}`, '#a5b4fc', 'globe']);
+        if (r.w.includes('msi')) out.push(['MSI champions', '#38bdf8', 'globe']);
+        else if (r.w.includes('msi2')) out.push(['MSI final', '#e2e8f0', 'medal']);
+        else if (r.mp) out.push([`MSI top ${r.mp <= 4 ? 4 : 8}`, '#7dd3fc', 'globe']);
+        if (r.w.includes('league') || r.w.includes('tier2')) out.push(['Champions', '#fbbf24', 'trophy']);
+        else if (r.w.includes('final') || r.w.includes('final2')) out.push(['Runners-up', '#e2e8f0', 'medal']);
+        if (r.w.includes('up')) out.push(['Promoted', '#a78bfa', 'upgrade']);
+        if (r.w.includes('down')) out.push(['Relegated', '#f87171', 'trend']);
+        return out;
+    }
     const titleLine = (t) => Object.entries(t || {}).filter(([k, n]) => n && k !== 'worldsfinal')
         .map(([k, n]) => `${n > 1 ? n + '× ' : ''}${k === 'worlds' ? 'Worlds' : k === 'msi' ? 'MSI' : k === 'firststand' ? 'First Stand' : k === 'league' ? 'League' : 'Tier 2'}`).join(', ');
     const years = (p) => (p.y0 === p.y1 ? `${p.y0}` : `${p.y0}–${p.y1}`);
-    function open(p) { if (s.players[p.id]) mgrModal.set({ kind: 'player', id: p.id }); }
+    const known = (id) => !!(id && (s.players[id] || (s.retired && s.retired[id])));
+    function open(p) { if (known(p.id)) mgrModal.set({ kind: 'player', id: p.id }); }
 </script>
 
 {#if team && hist}
@@ -81,14 +104,19 @@
                     {#each clubs.filter(c => c.region === r.id && (!me || c.id !== me.id)) as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
                 </optgroup>
             {/each}
+            {#if folded.length}
+                <optgroup label="Folded clubs">
+                    {#each folded as c (c.id)}<option value={c.id}>{c.name} ({c.region}, folded {c.defunct})</option>{/each}
+                </optgroup>
+            {/if}
         </select>
     </div>
 
     <section class="panel hero" style="--c:{team.color}">
         <TeamBadge {team} size={64} />
         <div class="hero-t">
-            <h2>{team.name}</h2>
-            <span class="dim"><RegionIcon region={team.region} size={13} /> {leagueName(team.region, team.tier)}
+            <h2>{team.name}<span class="chip" style="--c:{clubStyle(team).color}" title={clubStyle(team).blurb}>{clubStyle(team).name}</span></h2>
+            <span class="dim"><RegionIcon region={team.region} size={13} /> {#if team.defunct}<b class="gone">Folded in {team.defunct}</b>{' · last in '}{/if}{leagueName(team.region, team.tier)}
                 {#if team.custom} · founded {team.histFrom || s.time.startYear}{#if s.manager.founded === team.id} by {s.manager.name}{/if}{:else if hist.players.some(p => p.pre)} · on record since {Math.min(...hist.players.filter(p => p.pre).map(p => p.y0))}{/if}</span>
             <span class="muted small">{players.length} player{players.length === 1 ? '' : 's'} on record{#if hist.tracked && hist.trackedFrom}{' · '}the record book kept since {hist.trackedFrom}{/if}</span>
         </div>
@@ -109,7 +137,7 @@
                         <button class="lg" class:top={i === 0} style="--tc:{p.tier.color}" on:click={() => open(p)}>
                             <span class="lg-rank num">{i + 1}</span>
                             <span class="lg-main">
-                                <span class="lg-n">{p.n}{#if !p.real}<span class="rnd">Random</span>{/if}{#if p.current}<span class="chip" style="--c:#34d399">Current</span>{/if}</span>
+                                <span class="lg-n">{p.n}{#if p.current}<span class="chip" style="--c:#34d399">Current</span>{:else if p.retired}<span class="chip" style="--c:#94a3b8">Retired</span>{/if}</span>
                                 <span class="muted small">{p.r} · {years(p)} · {p.s} season{p.s === 1 ? '' : 's'}{p.g ? ` · ${p.g} games` : ''}</span>
                                 {#if titleLine(p.t) || (p.aw && p.aw.length)}<span class="lg-t">{titleLine(p.t)}{titleLine(p.t) && p.aw && p.aw.length ? ' · ' : ''}{p.aw && p.aw.length ? `${p.aw.length} award${p.aw.length === 1 ? '' : 's'}` : ''}</span>{/if}
                             </span>
@@ -127,12 +155,65 @@
             {#if honours.length}
                 <ul class="hon">
                     {#each honours.slice().reverse() as h, i (i)}
-                        <li style="--k:{(KIND[h.kind] || KIND.league).color}"><Icon name={(KIND[h.kind] || KIND.league).icon} size={14} /><b class="num">{h.year}</b><span>{h.kind === 'league' || h.kind === 'tier2' ? `${h.name} ${leagueName(team.region, h.kind === 'league' ? 1 : 2)} title` : h.kind === 'worldsfinal' ? 'Worlds final (lost)' : h.kind === 'firststand' ? 'First Stand' : h.kind === 'promotion' ? 'Promotion' : h.name || (h.kind === 'worlds' ? 'Worlds' : 'MSI')}</span>{#if h.pre}<span class="pre">real history</span>{/if}</li>
+                        <li style="--k:{(KIND[h.kind] || KIND.league).color}"><Icon name={(KIND[h.kind] || KIND.league).icon} size={14} /><b class="num">{h.year}</b><span>{h.kind === 'league' || h.kind === 'tier2' ? `${h.name} ${leagueName(team.region, h.kind === 'league' ? 1 : 2)} title` : h.kind === 'worldsfinal' ? 'Worlds final (lost)' : h.kind === 'firststand' ? 'First Stand' : h.kind === 'promotion' ? `Promoted to ${leagueName(team.region, 1)}` : h.kind === 'relegation' ? `Relegated to ${leagueName(team.region, 2)}` : h.name || (h.kind === 'worlds' ? 'Worlds' : 'MSI')}</span>{#if h.pre}<span class="pre">real history</span>{/if}</li>
                     {/each}
                 </ul>
             {:else}<div class="empty">Nothing in the cabinet yet.</div>{/if}
         </section>
     </div>
+
+    {#if winners.length}
+        <section class="panel">
+            <div class="ph"><h3><Icon name="medal" size={15} /> Trophy winners</h3><span class="muted small">Who won what for {team.short}</span></div>
+            <div class="winners">
+                {#each winners as p (p.id)}
+                    <button class="wn" class:click={known(p.id)} on:click={() => open(p)}>
+                        <span class="wn-n">{p.n}<span class="dim small">{p.r}</span></span>
+                        <span class="wn-t">{#each Object.keys(MEDAL) as k}{#if p.t[k]}<span class="chip" style="--c:{MEDAL[k][1]}">{p.t[k] > 1 ? p.t[k] + '× ' : ''}{MEDAL[k][0]}</span>{/if}{/each}</span>
+                    </button>
+                {/each}
+            </div>
+        </section>
+    {/if}
+
+    {#if seasons.length}
+        <section class="panel">
+            <div class="ph"><h3><Icon name="calendar" size={15} /> Season by season</h3><span class="muted small">The five who started each split, their ratings, and how it ended</span></div>
+            <div class="timeline">
+                {#each seasons.slice(0, showYears) as yr (yr.y)}
+                    <div class="yr">
+                        <div class="yr-h num">{yr.y}</div>
+                        <div class="yr-splits">
+                            {#each [['sp', 'Spring'], ['su', 'Summer']] as [k, label] (k)}
+                                {@const r = yr[k]}
+                                <div class="sp" class:won={r && (r.w.includes('league') || r.w.includes('tier2') || r.w.includes('msi') || r.w.includes('worlds'))} class:down={r && r.w.includes('down')}>
+                                    {#if r}
+                                        <div class="sp-h">
+                                            <b>{label}</b>
+                                            <span class="dim small">{leagueName(team.region, r.t)}{r.p ? ` · ${r.p}${r.p === 1 ? 'st' : r.p === 2 ? 'nd' : r.p === 3 ? 'rd' : 'th'}` : ''}</span>
+                                        </div>
+                                        <div class="sp-res">{#each splitResult(r) as [txt, col, ic], j (j)}<span class="chip" style="--c:{col}"><Icon name={ic} size={11} /> {txt}</span>{/each}</div>
+                                        <div class="five">
+                                            {#each r.five as x (x.role)}
+                                                <button class="f-row" disabled={!x.known} on:click={() => open({ id: x.id })}>
+                                                    <span class="f-role">{x.role}</span>
+                                                    <span class="f-n">{x.n || '—'}</span>
+                                                    {#if x.ovr}<span class="ovr" style="--c:{ovrColor(x.ovr)}">{x.ovr}</span>{/if}
+                                                </button>
+                                            {/each}
+                                        </div>
+                                    {:else}
+                                        <div class="sp-h"><b>{label}</b><span class="dim small">not played yet</span></div>
+                                    {/if}
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                {/each}
+            </div>
+            {#if seasons.length > showYears}<button class="btn btn-sm more" on:click={() => (showYears += 6)}>Show earlier seasons ({seasons.length - showYears} more)</button>{/if}
+        </section>
+    {/if}
 
     <section class="panel">
         <div class="ph">
@@ -148,22 +229,22 @@
                 <thead><tr><th>Player</th><th>Role</th><th>Years</th><th class="c">Seasons</th><th class="c">Games</th><th class="c">Won</th><th>Titles</th><th></th></tr></thead>
                 <tbody>
                     {#each shown as p (p.id)}
-                        <tr class:click={!!s.players[p.id]} on:click={() => open(p)}>
-                            <td><span class="pn"><b>{p.n}</b>{#if !p.real}<span class="rnd">Random</span>{/if}</span></td>
+                        <tr class:click={known(p.id)} on:click={() => open(p)}>
+                            <td><span class="pn"><b>{p.n}</b></span></td>
                             <td class="dim">{p.r}</td>
                             <td class="num">{years(p)}</td>
                             <td class="c num">{p.s}</td>
                             <td class="c num">{p.g || (p.pre && !p.inSave ? '—' : 0)}</td>
                             <td class="c num">{p.g ? Math.round((p.w / p.g) * 100) + '%' : '—'}</td>
                             <td class="dim small">{titleLine(p.t) || '—'}</td>
-                            <td>{#if p.current}<span class="chip" style="--c:#34d399">Current</span>{:else if p.pre && !p.inSave}<span class="chip" style="--c:#94a3b8">Before your save</span>{/if}{#if p.tier}<span class="chip" style="--c:{p.tier.color}">{p.tier.name}</span>{/if}</td>
+                            <td>{#if p.current}<span class="chip" style="--c:#34d399">Current</span>{:else if p.retired}<span class="chip" style="--c:#94a3b8">Retired</span>{:else if p.pre && !p.inSave}<span class="chip" style="--c:#94a3b8">Before your save</span>{/if}{#if p.tier}<span class="chip" style="--c:{p.tier.color}">{p.tier.name}</span>{/if}</td>
                         </tr>
                     {/each}
                 </tbody>
             </table>
             {#if !shown.length}<div class="empty">Nobody here.</div>{/if}
         </div>
-        <p class="muted small">{team.hist ? 'Games, wins, titles and awards are counted for every season you manage the club.' : 'Your record book is only kept for clubs you manage: here you see the real history and the current roster.'}</p>
+        <p class="muted small">Seasons and titles are counted for every club from the five who started each split. {team.hist ? 'For a club you manage, games, wins, awards and the bench are counted too.' : 'Games, wins and awards are counted only for clubs you manage.'}</p>
     </section>
 </div>
 {:else}
@@ -192,7 +273,31 @@
     .lg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .lg-n { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-weight: 800; color: #fff; font-size: 15px; }
     .lg-t { font-size: 12px; font-weight: 700; color: #fde68a; }
-    .rnd { font-size: 9px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; color: #fcd34d; background: rgba(251, 191, 36, 0.1); border: 1px dashed rgba(251, 191, 36, 0.45); }
+    .gone { color: #f87171; }
+    .winners { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+    .wn { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; text-align: left; font-family: inherit; color: #e2e8f0; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(250, 204, 21, 0.25); cursor: default; }
+    .wn.click { cursor: pointer; }
+    .wn.click:hover { border-color: #facc15; }
+    .wn-n { display: flex; align-items: center; gap: 8px; font-weight: 800; color: #fff; }
+    .wn-t { display: flex; gap: 4px; flex-wrap: wrap; }
+    .timeline { display: flex; flex-direction: column; gap: 12px; }
+    .yr { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; }
+    .yr-h { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 22px; font-weight: 700; color: #fff; padding-top: 8px; border-right: 2px solid color-mix(in srgb, var(--c, #34d399) 60%, transparent); }
+    .yr-splits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .sp { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; border-radius: 12px; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(51, 65, 85, 0.5); }
+    .sp.won { border-color: rgba(250, 204, 21, 0.6); background: linear-gradient(160deg, rgba(250, 204, 21, 0.1), rgba(2, 6, 23, 0.45) 60%); }
+    .sp.down { border-color: rgba(248, 113, 113, 0.5); }
+    .sp-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .sp-h b { color: #fff; }
+    .sp-res { display: flex; gap: 4px; flex-wrap: wrap; min-height: 4px; }
+    .five { display: flex; flex-direction: column; gap: 3px; }
+    .f-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 6px; font: inherit; font-size: 13px; color: #e2e8f0; background: none; border: none; text-align: left; cursor: pointer; }
+    .f-row:hover:not(:disabled) { background: rgba(51, 65, 85, 0.4); }
+    .f-row:disabled { cursor: default; }
+    .f-role { width: 32px; font-size: 10px; font-weight: 900; color: #6ee7b7; }
+    .f-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+    .more { align-self: flex-start; margin-top: 10px; }
+    @media (max-width: 700px) { .yr { grid-template-columns: 1fr; } .yr-h { border-right: none; } .yr-splits { grid-template-columns: 1fr; } }
     .hon { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; max-height: 420px; overflow-y: auto; }
     .hon li { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 9px; font-size: 13.5px; color: #e2e8f0; background: rgba(2, 6, 23, 0.4); border-left: 3px solid var(--k); }
     .hon li :global(.ico) { color: var(--k); flex-shrink: 0; }

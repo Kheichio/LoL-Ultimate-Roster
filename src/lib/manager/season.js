@@ -258,22 +258,30 @@ export function buildWorlds(save) {
 }
 
 // ---------------------------------------------------------------- promotion
+/**
+ * Two up and two down each year, and a play-off: the last two of the top league
+ * swap with the second tier's summer champion and runner-up, and the eighth plays
+ * the second tier's best semi-finalist (Bo5) for the last place.
+ */
 export function buildPromotion(save) {
     const S = save.season;
     for (const region of REGION_IDS) {
         const L1 = S.leagues[leagueKey(region, 1)];
         const b2 = S.playoffs[leagueKey(region, 2) + ':summer'];
         const annual = annualRows(L1, save);
-        const down = annual[annual.length - 1] ? annual[annual.length - 1].id : null;
-        const ninth = annual[annual.length - 2] ? annual[annual.length - 2].id : null;
-        const up = b2 ? b2.champion : null;
-        const challenger = b2 ? b2.runnerUp : null;
+        const at = (k) => (annual[annual.length - k] ? annual[annual.length - k].id : null);
+        const third = b2 ? (b2.teams || []).find(id => id !== b2.champion && id !== b2.runnerUp && (b2.places || {})[id] === 3) || null : null;
+        const eighth = at(3);
         S.promo[region] = {
-            down, up,
-            tie: ninth && challenger ? newTie(ninth, challenger, KNOCKOUT_BEST_OF) : null,
+            down: at(1), down2: at(2),
+            up: b2 ? b2.champion : null, up2: b2 ? b2.runnerUp : null,
+            tie: eighth && third ? newTie(eighth, third, KNOCKOUT_BEST_OF) : null,
         };
     }
 }
+/** Who goes up and who goes down straight away (not the play-off). */
+export const promoUps = (pr) => (pr ? [pr.up, pr.up2].filter(Boolean) : []);
+export const promoDowns = (pr) => (pr ? [pr.down, pr.down2].filter(Boolean) : []);
 
 /** Apply the year's promotions and relegations to the teams' tiers. */
 export function applyPromotion(save) {
@@ -290,6 +298,7 @@ export function applyPromotion(save) {
             moves.push({ region, down: downId, up: upId });
         };
         swap(pr.down, pr.up);
+        swap(pr.down2, pr.up2);
         if (pr.tie && pr.tie.winner && pr.tie.winner === pr.tie.b) swap(pr.tie.a, pr.tie.b);
     }
     return moves;

@@ -5,7 +5,7 @@
     import { openMenu } from '../../stores/menu.js';
     import { playSound } from '../../utils/sound.js';
     import { previewManagerWorld, createManager } from '../../stores/manager.js';
-    import { START_YEARS, REGIONS, REGION_BY_ID, TIER2_NAME, ROLE_IDS, CLUB_COLORS } from '../../manager/data.js';
+    import { START_YEARS, REGIONS, REGION_BY_ID, TIER2_NAME, ROLE_IDS, CLUB_COLORS, TEAM_EMBLEMS, FEARLESS_FROM } from '../../manager/data.js';
     import { teamStrength, lineupOf } from '../../manager/match.js';
     import { sponsorIncome } from '../../manager/market.js';
     import { ovrOf } from '../../manager/people.js';
@@ -38,6 +38,7 @@
     let cName = '';
     let cShort = '';
     let cColor = CLUB_COLORS[0];
+    let cEmblem = null;            // null: the tag in the badge
     let cRegion = 'LCK';
     let cTier = 2;
     $: cTag = String(cShort || '').replace(/[^A-Za-z0-9.]/g, '').slice(0, 4).toUpperCase();
@@ -49,7 +50,7 @@
     function found() {
         if (foundErr) return;
         playSound('win');
-        createManager(world, { name: name.trim() || 'Manager', startYear: year, seed, custom: { name: cName.trim(), short: cTag, color: cColor, region: cRegion, tier: cTier } });
+        createManager(world, { name: name.trim() || 'Manager', startYear: year, seed, custom: { name: cName.trim(), short: cTag, color: cColor, emblem: cEmblem, region: cRegion, tier: cTier }, fearless });
     }
 
     function pickRegion(r) {
@@ -90,8 +91,10 @@
     function start() {
         if (!chosen) return;
         playSound('win');
-        createManager(world, { name: name.trim() || 'Manager', teamId, startYear: year, seed });
+        createManager(world, { name: name.trim() || 'Manager', teamId, startYear: year, seed, fearless });
     }
+    // Fearless draft: a choice before 2024, compulsory from then on.
+    let fearless = false;
 
     const DIFF = ['', 'Contender', 'Playoff side', 'Mid-table', 'Underdog'];
 
@@ -168,6 +171,14 @@
                 <div class="fl"><span>Colour</span>
                     <div class="swatches">{#each CLUB_COLORS as c}<button class="sw" class:on={cColor === c} style="--sw:{c}" on:click={() => (cColor = c)} aria-label="Colour {c}"></button>{/each}</div>
                 </div>
+                <div class="fl"><span>Badge</span>
+                    <div class="emblems">
+                        <button class="em em-tag" class:on={!cEmblem} style="--sw:{cColor}" on:click={() => (cEmblem = null)} title="Your tag">{cTag || 'TAG'}</button>
+                        {#each TEAM_EMBLEMS as e (e.id)}
+                            <button class="em" class:on={cEmblem === e.id} style="--sw:{cColor}" on:click={() => (cEmblem = e.id)} title={e.name} aria-label="Emblem {e.name}"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d={e.d} fill="currentColor" fill-rule="evenodd" /></svg></button>
+                        {/each}
+                    </div>
+                </div>
                 <div class="fl"><span>Region</span>
                     <div class="seg">{#each REGIONS as r}<button class:on={cRegion === r.id} on:click={() => (cRegion = r.id)}>{r.league}</button>{/each}</div>
                 </div>
@@ -180,7 +191,7 @@
             </section>
             <aside class="panel fprev" style="--fc:{cColor}">
                 <div class="fp-top">
-                    <TeamBadge team={{ short: cTag || '?', name: cName || 'Your club', color: cColor, real: true }} size={56} />
+                    <TeamBadge team={{ short: cTag || '?', name: cName || 'Your club', color: cColor, emblem: cEmblem, real: true }} size={56} />
                     <div><div class="pick-name">{cName.trim() || 'Your club'}</div><div class="dim pick-sub"><RegionIcon region={cRegion} size={12} /> {cTier === 1 ? REGION_BY_ID[cRegion].league : TIER2_NAME[cRegion]}</div></div>
                 </div>
                 <ul class="fp-facts">
@@ -190,6 +201,9 @@
                     <li><Icon name="briefcase" size={14} /> Board objective: {cTier === 1 ? 'avoid relegation' : 'finish in the top half'}. A bigger starting budget than a club you take over.</li>
                 </ul>
                 {#if foundErr}<p class="err small">{foundErr}</p>{/if}
+                {#if year < FEARLESS_FROM}
+                    <label class="fear"><input type="checkbox" bind:checked={fearless} /> <span><b>Play fearless draft</b><span class="muted small">Compulsory from {FEARLESS_FROM}; you can switch it on any time on the Club screen.</span></span></label>
+                {/if}
                 <button class="btn btn-p big" disabled={!!foundErr} on:click={found}><Icon name="sparkle" size={15} /> Found {cName.trim() || 'the club'}</button>
             </aside>
         </div>
@@ -261,6 +275,9 @@
                         {/each}
                     </div>
                     <p class="dim small">Board objective: <b>{teamRows.find(r => r.t.id === chosen.id)?.goal}</b>. Meet it and the board backs you; keep missing it and they will sack you.</p>
+                    {#if year < FEARLESS_FROM}
+                        <label class="fear"><input type="checkbox" bind:checked={fearless} /> <span><b>Play fearless draft</b><span class="muted small">A champion played in a series cannot be picked again in it. Compulsory from {FEARLESS_FROM}; you can switch it on any time on the Club screen.</span></span></label>
+                    {/if}
                     <button class="btn btn-p big" on:click={start}><Icon name="play" size={15} stroke={2.4} /> Start as {name.trim() || 'Manager'}, {year}</button>
                 {:else}
                     <div class="empty">Pick a club to see its starting five.</div>
@@ -325,6 +342,14 @@
     .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
     .sw { width: 32px; height: 32px; border-radius: 10px; cursor: pointer; background: var(--sw); border: 2px solid transparent; box-shadow: inset 0 0 0 2px rgba(2, 6, 23, 0.5); }
     .sw.on { border-color: #fff; transform: scale(1.1); }
+    .emblems { display: flex; gap: 6px; flex-wrap: wrap; }
+    .fear { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin: 4px 0 10px; border-radius: 10px; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(51, 65, 85, 0.55); cursor: pointer; }
+    .fear > span { display: flex; flex-direction: column; gap: 2px; }
+    .fear input { margin-top: 3px; }
+    .em { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; cursor: pointer; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 10px; font-weight: 800; color: color-mix(in srgb, var(--sw) 55%, #ffffff); background: color-mix(in srgb, var(--sw) 30%, rgba(15, 23, 42, 0.92)); border: 2px solid transparent; }
+    .em-tag { width: auto; min-width: 36px; padding: 0 6px; }
+    .em:hover { border-color: color-mix(in srgb, var(--sw) 60%, transparent); }
+    .em.on { border-color: #fff; }
     .fprev { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 14px; border-top: 4px solid var(--fc); }
     .fp-top { display: flex; align-items: center; gap: 12px; }
     .fp-facts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.5; color: #dbe4f0; }

@@ -1,14 +1,16 @@
 <script>
-    import { manager, mutate, mgrScreen, resetManager } from '../../stores/manager.js';
-    import { openConfirmModal } from '../../stores/ui.js';
+    import { manager, mutate, mgrScreen, resetManager, copyManagerToSlot } from '../../stores/manager.js';
+    import { openConfirmModal, openSettings } from '../../stores/ui.js';
+    import { activeSlot, slotHasData } from '../../utils/storage.js';
     import { showToast } from '../../stores/toasts.js';
     import {
         myTeam, buyPerk, spendPoint, acceptJob, leagueName, fearlessOn, ownerStake, hasBoard, boardCanSack, clubValuation,
         sellStake, buyStake, stakePrice,
     } from '../../manager/engine.js';
-    import { PERKS, PERK_BRANCHES, POINT_ACTIONS, MGR_XP_PER_LEVEL, STEPS_PER_YEAR, FEARLESS_FROM, STAKE_TRANCHES, MIN_STAKE } from '../../manager/data.js';
+    import { PERKS, PERK_BRANCHES, POINT_ACTIONS, MGR_XP_PER_LEVEL, STEPS_PER_YEAR, FEARLESS_FROM, STAKE_TRANCHES, MIN_STAKE, CLUB_COLORS, TEAM_EMBLEMS } from '../../manager/data.js';
     import { sponsorIncome, wageBill, wageBudget, baseWageBudget, wageBoost, emergencyLeft, emergencyAllowance, ownerFunding, ownerInvestment } from '../../manager/market.js';
     import { teamStrength } from '../../manager/match.js';
+    import { clubIncome } from '../../manager/sponsors.js';
     import { fmtMoney } from '../../manager/ui.js';
     import { ordinal } from '../../manager/util.js';
     import Icon from '../ui/Icon.svelte';
@@ -17,7 +19,7 @@
     $: s = $manager;
     $: team = myTeam(s);
     $: m = s.manager;
-    $: income = team ? sponsorIncome(s, team) : 0;
+    $: income = team ? clubIncome(s, team) : 0;
     $: bill = team ? wageBill(s, team) : 0;
     $: budget = team ? wageBudget(s, team) : 0;
     $: funding = team ? ownerFunding(s, team) : 0;
@@ -28,7 +30,7 @@
     $: stake = ownerStake(s);
     $: board = hasBoard(s);
     $: founder = !!(team && team.custom && m.founded === team.id);
-    $: valuation = founder ? clubValuation(s) : 0;
+    $: valuation = team ? clubValuation(s) : 0;
     $: boost = team && board ? wageBoost(s) : 1;
 
     function sell(pct) {
@@ -42,6 +44,17 @@
     function buy(pct) {
         const r = mutate(s => buyStake(s, pct));
         if (r) showToast(r.msg, r.ok ? 'success' : 'error', 5000);
+    }
+
+    function saveTo(n) {
+        const go = () => { const r = copyManagerToSlot(n); showToast(r.msg, r.ok ? 'success' : 'error', 3000); };
+        if (n !== activeSlot('manager') && slotHasData('manager', n)) openConfirmModal(`Slot ${n} already holds a manager save. Overwrite it with a copy of this one?`, go);
+        else go();
+    }
+
+    /** A founded club's colour and emblem can change at any time. */
+    function setBadge(v) {
+        mutate(sv => { const t = sv.teams[sv.manager.teamId]; if (t && t.custom) Object.assign(t, v); });
     }
 
     function perk(id) {
@@ -133,27 +146,48 @@
         </div>
     </section>
 
-    {#if founder}
+    {#if team}
         <section class="panel own">
             <div class="ph"><h3><Icon name="crown" size={15} /> Ownership</h3><span class="chip" style="--c:#fbbf24">You own {stake}%</span></div>
             <div class="own-top">
-                <div class="stake"><span class="stake-ring" style="--p:{stake}"><b>{stake}%</b></span><span class="muted small">{stake >= 100 ? 'All of it' : `${100 - stake}% with investors`}</span></div>
+                <div class="stake"><span class="stake-ring" style="--p:{stake}"><b>{stake}%</b></span><span class="muted small">{stake >= 100 ? 'All of it' : `${100 - stake}% with ${founder ? 'investors' : 'the owners'}`}</span></div>
                 <div class="own-t">
-                    <p>{#if stake >= 100}<b>{team.name} is yours.</b> No board, no objectives, no wage limit and nobody who can sack you. The only limit is the balance: you cannot add wages while the club is in debt.{:else if stake >= 50}<b>You hold a majority.</b> The investors sit on a board with objectives and a wage limit, but they cannot sack you.{:else}<b>The investors hold a majority.</b> The board can sack you from your own club if it loses confidence.{/if}</p>
+                    <p>{#if stake >= 100}<b>{team.name} is yours.</b> No board, no objectives, no wage limit and nobody who can sack you. The only limit is the balance: you cannot add wages while the club is in debt.{:else if stake >= 50}<b>You hold a majority.</b> The {founder ? 'investors sit' : 'owners sit'} on a board with objectives and a wage limit, but they cannot sack you.{:else if stake > 0}<b>The {founder ? 'investors' : 'owners'} hold a majority.</b> The board can sack you if it loses confidence.{:else}<b>You were hired to run {team.name}.</b> Earn a stake with perk points (Ownership Stake, 10% a point) or buy one with the club's money: own half and the board cannot sack you, own it all and the board is gone.{/if}</p>
                     <p class="muted small">The club is valued at <b class="num">{fmtMoney(valuation)}</b>: sponsor income, the squad's market value and the titles it has won.</p>
                 </div>
             </div>
             <div class="own-acts">
-                {#each STAKE_TRANCHES as pct}
-                    <button class="btn" disabled={stake - pct < MIN_STAKE} on:click={() => sell(pct)}><Icon name="coins" size={14} /> Sell {pct}% · {fmtMoney(stakePrice(s, pct))}</button>
-                {/each}
+                {#if stake > 0}
+                    {#each STAKE_TRANCHES as pct}
+                        <button class="btn" disabled={stake - pct < (founder ? MIN_STAKE : 0)} on:click={() => sell(pct)}><Icon name="coins" size={14} /> Sell {pct}% · {fmtMoney(stakePrice(s, pct))}</button>
+                    {/each}
+                {/if}
                 {#if stake < 100}
                     {#each STAKE_TRANCHES as pct}
-                        <button class="btn" disabled={stakePrice(s, Math.min(pct, 100 - stake), true) > s.finance.balance} on:click={() => buy(pct)}><Icon name="upgrade" size={14} /> Buy back {Math.min(pct, 100 - stake)}% · {fmtMoney(stakePrice(s, Math.min(pct, 100 - stake), true))}</button>
+                        <button class="btn" disabled={stakePrice(s, Math.min(pct, 100 - stake), true) > s.finance.balance} on:click={() => buy(pct)}><Icon name="upgrade" size={14} /> {founder ? 'Buy back' : 'Buy'} {Math.min(pct, 100 - stake)}% · {fmtMoney(stakePrice(s, Math.min(pct, 100 - stake), true))}</button>
                     {/each}
                 {/if}
             </div>
-            <p class="muted small">You always keep at least {MIN_STAKE}%. Buying back costs 15% more than selling. Back at 100%, the board is dissolved.</p>
+            <p class="muted small">{founder ? `You always keep at least ${MIN_STAKE}% of a club you founded. ` : ''}Buying costs 15% more than selling. At 100%, the board is dissolved.</p>
+        </section>
+    {/if}
+
+    {#if founder}
+        <section class="panel">
+            <div class="ph"><h3><Icon name="sparkle" size={15} /> Club badge</h3><TeamBadge {team} size={40} /></div>
+            <div class="badge-row">
+                <span class="muted small">Colour</span>
+                <div class="swatches">{#each CLUB_COLORS as c}<button class="sw" class:on={team.color === c} style="--sw:{c}" on:click={() => setBadge({ color: c })} aria-label="Colour {c}"></button>{/each}</div>
+            </div>
+            <div class="badge-row">
+                <span class="muted small">Badge</span>
+                <div class="swatches">
+                    <button class="em em-tag" class:on={!team.emblem} style="--sw:{team.color}" on:click={() => setBadge({ emblem: null })}>{team.short}</button>
+                    {#each TEAM_EMBLEMS as e (e.id)}
+                        <button class="em" class:on={team.emblem === e.id} style="--sw:{team.color}" on:click={() => setBadge({ emblem: e.id })} title={e.name} aria-label="Emblem {e.name}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d={e.d} fill="currentColor" fill-rule="evenodd" /></svg></button>
+                    {/each}
+                </div>
+            </div>
         </section>
     {/if}
 
@@ -180,14 +214,14 @@
             <section class="panel">
                 <div class="ph"><h3><Icon name="coins" size={15} /> Finances</h3><b class="num" class:bad={s.finance.balance < 0}>{fmtMoney(s.finance.balance)}</b></div>
                 <div class="fin">
-                    <div><span class="muted small">Sponsors per year</span><b class="num good">{fmtMoney(income)}</b></div>
+                    <div><span class="muted small">Base revenue and sponsors per year</span><b class="num good">{fmtMoney(income)}</b><button class="btn btn-sm" on:click={() => mgrScreen.set('sponsors')}><Icon name="coins" size={12} /> Sponsors</button></div>
                     {#if funding > 0}<div><span class="muted small">Owner investment per year</span><b class="num good">{fmtMoney(funding)}</b><span class="muted small">+{Math.round((ownerInvestment(team) - 1) * 100)}% on the wage limit, fading each year</span></div>{/if}
                     <div><span class="muted small">Wages per year</span><b class="num bad">{fmtMoney(bill)}</b></div>
                     <div><span class="muted small">Wage limit</span><b class="num">{Number.isFinite(budget) ? fmtMoney(budget) : 'No limit'}</b>{#if Number.isFinite(budget) && boost > 1.001}<span class="good small">+{Math.round((boost - 1) * 100)}% for results (base {fmtMoney(baseWageBudget(s, team))})</span>{/if}</div>
                     <div><span class="muted small">Net per week</span><b class="num" class:good={income + funding >= bill} class:bad={income + funding < bill}>{fmtMoney((income + funding - bill) / STEPS_PER_YEAR)}</b></div>
                     <div><span class="muted small">Emergency signings left</span><b class="num">{emergencyLeft(s)} / {emergencyAllowance(s)}</b></div>
                 </div>
-                <p class="muted small">Sponsors grow with your club's reputation, which grows with titles, and with the game itself: club income and prize money rise from era to era as wages do. Prize money comes from playoffs, MSI and Worlds.</p>
+                <p class="muted small">Half of a club's commercial income is base revenue that grows with its reputation and with the game itself; the rest comes from the sponsors you land on the Sponsors screen, and brands only sign a club that wins. Prize money comes from playoffs, MSI and Worlds.</p>
                 {#if s.finance.log.length}
                     <ul class="ledger">
                         {#each s.finance.log.slice(0, 10) as e, i (i)}
@@ -223,6 +257,14 @@
             </label>
             <label class="tog"><input type="checkbox" checked={!!s.settings.autoDraft} on:change={(e) => setting('autoDraft', e.currentTarget.checked)} /> <span><b>Auto draft</b><br /><span class="muted small">The coach does champion select for you.</span></span></label>
             <label class="tog"><input type="checkbox" checked={!!s.settings.autoCalls} on:change={(e) => setting('autoCalls', e.currentTarget.checked)} /> <span><b>Coach makes the in-game calls</b><br /><span class="muted small">Level one, 14 minutes, 20 minutes and the late game.</span></span></label>
+            <label class="tog"><input type="checkbox" checked={!s.settings.boardHidden} on:change={(e) => setting('boardHidden', !e.currentTarget.checked)} /> <span><b>Show this save on the manager board</b><br /><span class="muted small">On by default for players who are signed in.</span></span></label>
+            <div class="saves">
+                <span class="muted small">Save · you are on slot {activeSlot('manager')}</span>
+                <div class="save-btns">
+                    {#each [1, 2, 3] as n}<button class="btn btn-sm" on:click={() => saveTo(n)}><Icon name="check" size={12} /> {n === activeSlot('manager') ? `Save (slot ${n})` : `Copy to slot ${n}`}</button>{/each}
+                    <button class="btn btn-sm" on:click={() => openSettings('display')}><Icon name="settings" size={12} /> Game settings</button>
+                </div>
+            </div>
             <button class="btn btn-danger btn-sm newg" on:click={newGame}><Icon name="close" size={13} /> Delete save and start over</button>
         </section>
     </div>
@@ -284,6 +326,15 @@
     .own-t p { margin: 0 0 6px; font-size: 13.5px; line-height: 1.55; color: #dbe4f0; }
     .own-t b { color: #fff; }
     .own-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .saves { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+    .save-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+    .sw { width: 26px; height: 26px; border-radius: 8px; cursor: pointer; background: var(--sw); border: 2px solid transparent; box-shadow: inset 0 0 0 2px rgba(2, 6, 23, 0.5); }
+    .sw.on { border-color: #fff; }
+    .em { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; cursor: pointer; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 10px; font-weight: 800; color: color-mix(in srgb, var(--sw) 55%, #ffffff); background: color-mix(in srgb, var(--sw) 30%, rgba(15, 23, 42, 0.92)); border: 2px solid transparent; }
+    .em-tag { width: auto; min-width: 32px; padding: 0 6px; }
+    .em.on { border-color: #fff; }
     .objs { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 7px; }
     .objs li { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: #f1f5f9; }
     .o-dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex-shrink: 0; }

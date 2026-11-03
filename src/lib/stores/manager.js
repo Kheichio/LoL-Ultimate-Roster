@@ -13,15 +13,18 @@
 //  Local only: Ultimate Manager is not part of the Firebase cloud save.
 // ===========================================================================
 import { writable, get } from 'svelte/store';
-import { saveToStorage, loadFromStorage, loadFromSlot, removeFromStorage } from '../utils/storage.js';
+import { saveToStorage, loadFromStorage, loadFromSlot, removeFromStorage, saveToSlot, activeSlot } from '../utils/storage.js';
 import { getDB } from '../utils/cards.js';
 import { setDB, previewWorld, finalizeSave, advance, userFixture, blockInfo, currentStep, phaseCard, applyPrestige } from '../manager/engine.js';
 import { showToast } from './toasts.js';
 import { MANAGER_SAVE_VERSION, CALENDAR, ROLE_IDS, phaseOfStep, WAGE_KNEE, WAGE_STEP, WAGE_TOP_STEP } from '../manager/data.js';
 import { teamName } from '../manager/world.js';
-import { ensurePool, ovrOf } from '../manager/people.js';
+import { ensurePool, ovrOf, randomNation } from '../manager/people.js';
+import { rngFor } from '../manager/util.js';
+import { flagOf, REGION_LANGUAGE } from '../manager/data.js';
 import { trackClub } from '../manager/history.js';
-import { soleOwner, refreshEconomy, settleInvestment } from '../manager/market.js';
+import { soleOwner, refreshEconomy, settleInvestment, assignStyles } from '../manager/market.js';
+import { ensureSponsors } from '../manager/sponsors.js';
 
 const SAVE_KEY = 'lurm_manager';
 
@@ -173,12 +176,24 @@ export function hydrate(raw) {
         ensurePool(p, s.time.year);
         if (!Array.isArray(p.recent)) p.recent = [];
         if (!Number.isFinite(Number(p.ovr0))) p.ovr0 = ovrOf(p);
+        // Saves from before 1.8.13 have no languages: a player already at a club has
+        // obviously been talking to it, so he speaks its language as well as his own.
+        if (!p.lang) {
+            const here = p.team && s.teams[p.team] ? REGION_LANGUAGE[s.teams[p.team].region] : null;
+            p.lang = here ? { [here]: 100 } : {};
+        }
+        // Generated players from before 1.8.11 get a nationality, stable per player.
+        if (!p.real && !p.cc) { p.cc = randomNation(rngFor('nat:' + p.id), p.nat); p.flag = flagOf(p.cc); }
     }
     s.freeAgents = s.freeAgents.filter(id => s.players[id] && !s.players[id].team);
     s.offers = s.offers.filter(o => o && s.players[o.pid] && s.teams[o.from]);
     // Saves from before club history: start the record book now.
     const mine = m.teamId ? s.teams[m.teamId] : null;
     if (mine && (!mine.hist || typeof mine.hist !== 'object')) trackClub(s, mine);
+    // Saves from before 1.8.11: every club gets its personality.
+    assignStyles(s);
+    // Saves from before 1.8.12: the club's current partners until the end of the year.
+    if (m.teamId && s.teams[m.teamId]) ensureSponsors(s);
     // A club founded before ownership existed is owned outright: no board.
     if (soleOwner(s) && s.board.objectives.length) s.board.objectives = [];
     // Saves from before 1.8.10's economy: wages above WAGE_KNEE are repriced to the gentler
@@ -241,6 +256,16 @@ export function createManager(world, cfg) {
     saveToStorage(SAVE_KEY, s);
     pushFx({ kind: 'phase', ...phaseCard(s), newYear: true });
     return s;
+}
+
+/** Copy the live save into another slot (a backup or a branch to try something). */
+export function copyManagerToSlot(slot) {
+    const s = get(manager);
+    if (!s || !s.created) return { ok: false, msg: 'Nothing to save.' };
+    if (slot === activeSlot('manager')) { flushManager(); return { ok: true, msg: 'Saved.' }; }
+    flushManager();
+    saveToSlot(SAVE_KEY, s, slot);
+    return { ok: true, msg: `Saved a copy to slot ${slot}.` };
 }
 
 export function managerSaveKey() {

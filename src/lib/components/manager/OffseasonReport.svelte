@@ -12,7 +12,7 @@
     $: s = $manager;
     $: h = s.history.find(x => x.year === report.year) || null;
     $: leftWhy = report.leftWhy && report.leftWhy.length ? report.leftWhy : (report.left || []).map(n => ({ name: n, why: 'contract ended' }));
-    const name = (id) => (s.teams[id] ? s.teams[id].name : '—');
+    const name = (id) => (s.teams[id] ? s.teams[id].name : s.defunct && s.defunct[id] ? s.defunct[id].name : '—');
     function close() { closeReport(summary); }
     function onKey(e) { if (e.key === 'Escape') close(); }
 </script>
@@ -66,6 +66,24 @@
                 <ul class="mv">
                     {#each report.promoted as m}
                         <li><span class="good">↑ {name(m.up)}</span> · <span class="bad">↓ {name(m.down)}</span> <span class="muted">({leagueName(m.region, 1)})</span></li>
+                    {/each}
+                </ul>
+            </div>
+        {/if}
+
+        {#if report.sponsors && report.sponsors.length}
+            <div class="sec">
+                <div class="sec-h"><Icon name="coins" size={14} /> Sponsors</div>
+                <ul class="why">{#each report.sponsors as l}<li><b>{l.brand}</b> <span class="muted">· {l.text}</span></li>{/each}</ul>
+            </div>
+        {/if}
+
+        {#if report.newClubs && report.newClubs.length}
+            <div class="sec">
+                <div class="sec-h"><Icon name="sparkle" size={14} /> New clubs</div>
+                <ul class="mv">
+                    {#each report.newClubs as c}
+                        <li><span class="good">+ {c.in}</span> · <span class="bad">− {c.out}</span> <span class="muted">({leagueName(c.region, c.tier)})</span></li>
                     {/each}
                 </ul>
             </div>

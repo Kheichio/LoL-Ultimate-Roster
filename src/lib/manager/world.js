@@ -382,6 +382,39 @@ export function debutsFor(save, db, year, userTeamId, rng) {
     return out;
 }
 
+/**
+ * A real org arriving in the world mid-save (the living league): built from its
+ * cards of `year`. Its pros are signed from wherever they are (free agency or an
+ * AI club, never the manager's), and one who has not debuted yet debuts here.
+ */
+export function makeOrg(save, db, region, tag, tier, year, list, rng, userTeamId) {
+    let id = region + ':' + tag;
+    while (save.teams[id] || (save.defunct && save.defunct[id])) id += '+';
+    const team = newTeam({ id, short: tag, name: teamName(region, tag), region, tier, real: true });
+    const seen = new Set(save.seen || []);
+    for (const { person, card } of list.slice().sort((a, b) => b.card.rating - a.card.rating)) {
+        if (team.roster.length >= 7) break;
+        let p = save.players[person.key];
+        if (p && p.team && p.team === userTeamId) continue;
+        if (!p) {
+            if (seen.has(person.key)) continue;           // retired or pruned from this world
+            p = makeRealPlayer(person, card, year, rngFor('p:' + save.seed + ':' + person.key));
+            p.born = Math.min(p.born, year - 17);
+            save.players[p.id] = p;
+            seen.add(person.key);
+            save.freeAgents.push(p.id);
+        }
+        if (!p.team && !save.freeAgents.includes(p.id)) save.freeAgents.push(p.id);
+        signTo(save, p, team, { rng });
+        p.reg = region;
+    }
+    save.seen = [...seen];
+    const lvl = team.roster.length ? team.roster.map(pid => ovrOf(save.players[pid])).reduce((s, v) => s + v, 0) / team.roster.length : (REGION_LEVEL[region] || 78) - 4;
+    team.coach = randomCoach(rng, lvl - 2);
+    save.teams[team.id] = team;
+    return team;
+}
+
 /** Random prospects for a region's free agency, built around the region's level:
  *  raw now, with the potential to reach its best teams. */
 export function regensFor(save, region, n, year, rng, taken) {

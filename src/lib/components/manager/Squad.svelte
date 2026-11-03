@@ -1,10 +1,11 @@
 <script>
     import { manager, mutate, mgrModal } from '../../stores/manager.js';
     import { showToast } from '../../stores/toasts.js';
-    import { myTeam, setLineup, autoLineup, isScouted, undecidedContracts, currentStep } from '../../manager/engine.js';
-    import { ROLE_IDS, ROLE_BY_ID, XP_PER_LEVEL, SQUAD_STATUS_BY_ID } from '../../manager/data.js';
+    import { myTeam, setLineup, autoLineup, isScouted, undecidedContracts, currentStep, teamComms } from '../../manager/engine.js';
+    import { ROLE_IDS, ROLE_BY_ID, XP_PER_LEVEL, SQUAD_STATUS_BY_ID, REGION_LANGUAGE, LANGUAGE_NAMES } from '../../manager/data.js';
     import { lineupOf, teamStrength, OFF_ROLE_PENALTY } from '../../manager/match.js';
-    import { ovrOf, ovrAs, ageOf, potentialView } from '../../manager/people.js';
+    import { ovrOf, ovrAs, ageOf, potentialView, langLevel } from '../../manager/people.js';
+    const langColor = (v) => (v >= 90 ? '#34d399' : v >= 60 ? '#fbbf24' : '#f87171');
     import { renewalDemand, letContractRun, renewContract, renewAllExpiring, renewalBlock } from '../../manager/market.js';
     import { ovrColor, fmtMoney, moraleWord, formWord, persona, champName, contractWord } from '../../manager/ui.js';
     import Icon from '../ui/Icon.svelte';
@@ -13,6 +14,8 @@
 
     $: s = $manager;
     $: team = myTeam(s);
+    $: tongue = team ? REGION_LANGUAGE[team.region] : 'en';
+    $: comms = team ? teamComms(team, s.players) : 100;
     $: year = s.time.year;
     $: roster = team ? team.roster.map(id => s.players[id]).filter(Boolean) : [];
     $: expiring = roster.filter(p => p.until <= year);
@@ -67,6 +70,7 @@
         <div class="top-r">
             <div class="str"><span class="muted">Team OVR</span><span class="ovr" style="--c:{ovrColor(teamStrength(team, s.players))}">{Math.round(teamStrength(team, s.players))}</span></div>
             <div class="str"><span class="muted">Chemistry</span><b class="num">{Math.round(team.chem)}</b></div>
+            <div class="str" title="How well your five can talk in {LANGUAGE_NAMES[tongue]}. Below 100% it costs edge in every game; players learn by living here, and faster with Language lessons on the Training screen."><span class="muted">Comms</span><b class="num" style="color:{langColor(comms)}">{comms}%</b></div>
             <button class="btn" on:click={auto}><Icon name="sparkle" size={14} /> Best five</button>
         </div>
     </div>
@@ -150,7 +154,7 @@
         <div class="tbl-wrap">
             <table class="tbl">
                 <thead>
-                    <tr><th>Role</th><th>Player</th><th class="c">Age</th><th class="c">OVR</th><th class="c">Pot</th><th>Level</th><th>Personality</th><th>Morale</th><th>Form</th><th>Contract</th><th></th></tr>
+                    <tr><th>Role</th><th>Player</th><th class="c">Age</th><th class="c">OVR</th><th class="c">Pot</th><th>Level</th><th class="c" title="Level in {LANGUAGE_NAMES[tongue]}, the language of your league">{LANGUAGE_NAMES[tongue] || 'Lang'}</th><th>Personality</th><th>Morale</th><th>Form</th><th>Contract</th><th></th></tr>
                 </thead>
                 <tbody>
                     {#each sorted as p (p.id)}
@@ -163,6 +167,7 @@
                             <td class="c"><span class="ovr" style="--c:{ovrColor(ovrOf(p))}">{ovrOf(p)}</span></td>
                             <td class="c num dim">{pv.lo}</td>
                             <td><span class="lv">Lv {p.lv}<span class="bar lvbar"><i style="width:{(p.xp / XP_PER_LEVEL) * 100}%"></i></span></span></td>
+                            <td class="c num" style="color:{langColor(langLevel(p, tongue))}">{Math.round(langLevel(p, tongue))}%</td>
                             <td><span class="chip" style="--c:{persona(p).color}">{persona(p).name}</span></td>
                             <td style="color:{moraleWord(p.mor).color}">{moraleWord(p.mor).word}</td>
                             <td style="color:{formWord(p.form).color}">{formWord(p.form).arrow}</td>

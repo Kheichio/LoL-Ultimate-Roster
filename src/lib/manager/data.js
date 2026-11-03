@@ -304,6 +304,17 @@ export const COMP_STYLES = [
       test: (n, top) => ['Duelist', 'Skirmisher', 'Juggernaut'].includes(top) && (n.Duelist + n.Skirmisher + n.Juggernaut) >= 2 },
 ];
 export const COMP_STYLE_BY_ID = Object.fromEntries(COMP_STYLES.map(c => [c.id, c]));
+/**
+ * Which archetypes each plan wants, read off the comp styles that pay `COMP_TACTIC_BONUS`
+ * for it: the draft tags a champion with the plans its archetype fits.
+ */
+export const TACTIC_ARCHETYPES = {
+    early: ['Diver', 'Assassin', 'Skirmisher'],
+    scaling: ['Hypercarry', 'Marksman', 'Enchanter', 'Warden', 'Utility'],
+    split: ['Duelist', 'Skirmisher', 'Juggernaut'],
+    vision: ['Poke', 'Catcher', 'Assassin', 'Mage'],
+    teamfight: ['Vanguard', 'Catcher', 'Mage', 'Battlemage'],
+};
 /** Extra edge when the comp's style is the plan you are playing. */
 export const COMP_TACTIC_BONUS = 0.3;
 /** A five with no tank at all is easy to dive and impossible to engage with. */
@@ -408,6 +419,7 @@ export const POINT_ACTIONS = [
     { id: 'board', name: 'Board Meeting', icon: 'briefcase', blurb: 'Talk the board round: +10 board confidence.' },
     { id: 'sponsor', name: 'Sponsor Drive', icon: 'coins', blurb: 'A new partner: 12% of a year\'s sponsor income, now.' },
     { id: 'scouting', name: 'Scouting Trip', icon: 'search', blurb: 'Every free agent in your region is scouted: exact potential.' },
+    { id: 'stake', name: 'Ownership Stake', icon: 'crown', blurb: 'The owners reward you with 10% of the club. Own half and the board cannot sack you; own all of it and the board is gone.' },
 ];
 
 // ---------------------------------------------------------------- achievements
@@ -474,6 +486,7 @@ export const SESSIONS = [
     { id: 'vod', name: 'VOD review', icon: 'video', target: 'team', xp: 35, chem: 2, cost: 0.004, blurb: 'The whole team goes through last week together. Everyone learns, and they learn it together.' },
     { id: 'pool', name: 'Champion practice', icon: 'cards', target: 'player', cost: 0.005, blurb: 'One player drills a strong champion of this split until it is in his pool. Made for fearless.' },
     { id: 'mental', name: 'Mental coaching', icon: 'heart', target: 'player', morale: 8, cost: 0.004, blurb: 'A session with the sports psychologist: +8 morale, and a cold streak is forgotten.' },
+    { id: 'language', name: 'Language lessons', icon: 'chat', target: 'player', cost: 0.003, blurb: 'A week with a tutor in the club\'s language. Players who cannot talk to their team cost it in every fight.' },
 ];
 export const SESSION_BY_ID = Object.fromEntries(SESSIONS.map(x => [x.id, x]));
 
@@ -492,6 +505,71 @@ export const BOOTCAMP_BY_ID = Object.fromEntries(BOOTCAMPS.map(x => [x.id, x]));
 export const STAKE_TRANCHES = [10, 25];
 /** The manager never sells below this. */
 export const MIN_STAKE = 10;
+/**
+ * Club personalities: how a club behaves in the market (ids are save data). Drawn
+ * once per club, stable per club id. `money` scales its sponsor income.
+ */
+export const CLUB_STYLES = [
+    { id: 'balanced', name: 'Balanced', color: '#94a3b8', weight: 34, money: 1, blurb: 'No strong habits: signs who it needs.' },
+    { id: 'youth', name: 'Youth academy', color: '#34d399', weight: 18, money: 0.95, blurb: 'Builds around young prospects and keeps its teenagers.' },
+    { id: 'rich', name: 'Big spender', color: '#fbbf24', weight: 14, money: 1.25, blurb: 'Sponsors pour money in: a bigger wage budget than its size.' },
+    { id: 'loyal', name: 'Loyal', color: '#60a5fa', weight: 17, money: 1, blurb: 'Keeps its veterans and renews almost everyone.' },
+    { id: 'stars', name: 'Star hunter', color: '#f472b6', weight: 17, money: 1.05, blurb: 'Buys the best player it can afford from smaller clubs.' },
+];
+export const CLUB_STYLE_BY_ID = Object.fromEntries(CLUB_STYLES.map(x => [x.id, x]));
+
+// ---------------------------------------------------------------- languages
+// A team has to talk. Every league plays in one language; a player is fluent in his own
+// and in the language of every region he held a card in. The five's mean level in the
+// club's language is its communication; a five that cannot talk at all loses
+// LANG_EDGE_MAX of team edge. Living there teaches it (LANG_IMMERSION a week at level 0,
+// slowing as it rises), and Language lessons teach it faster. Codes are save data.
+export const REGION_LANGUAGE = { LCK: 'ko', LPL: 'zh', LEC: 'en', LCS: 'en', LCP: 'en', CBLOL: 'pt' };
+export const LANGUAGE_NAMES = { ko: 'Korean', zh: 'Chinese', en: 'English', pt: 'Portuguese' };
+export const COUNTRY_LANGUAGE = { KR: 'ko', CN: 'zh', TW: 'zh', HK: 'zh', BR: 'pt', PT: 'pt' };
+export const LANG_IMMERSION = 5;
+export const LANG_EDGE_MAX = 1.5;
+export const LANG_LESSON = 22;
+
+// ---------------------------------------------------------------- sponsors
+// The manager's club earns a base revenue (streaming, merchandise, its league share)
+// of SPONSOR_BASE_SHARE of its market income, plus the sponsor deals it lands. `share`
+// is a slot's value as a share of the market income at average appeal; `diff` is how
+// much harder that brand is to convince. Brand names are invented.
+export const SPONSOR_BASE_SHARE = 0.5;
+export const SPONSOR_PITCHES_PER_WEEK = 2;
+export const SPONSOR_SLOTS = [
+    { id: 'shirt', name: 'Shirt sponsor', icon: 'crown', share: 0.22, diff: 0.35, blurb: 'The name on the front of the jersey. The biggest deal, and the pickiest brands.' },
+    { id: 'hardware', name: 'Hardware partner', icon: 'bolt', share: 0.12, diff: 0.2, blurb: 'Mice, keyboards, headsets and monitors.' },
+    { id: 'drink', name: 'Energy drink', icon: 'flame', share: 0.1, diff: 0.15, blurb: 'Cans on the desk and in every stream.' },
+    { id: 'apparel', name: 'Apparel and streaming', icon: 'sparkle', share: 0.08, diff: 0.1, blurb: 'Merchandise, chairs and a streaming platform.' },
+];
+export const SPONSOR_SLOT_BY_ID = Object.fromEntries(SPONSOR_SLOTS.map(x => [x.id, x]));
+export const SPONSOR_BRANDS = {
+    shirt: ['Nightfall Telecom', 'Apex Motors', 'Helix Bank', 'Orbit Airlines', 'Kairo Mobile', 'Vanta Insurance', 'Meridian Group', 'Stellar Logistics', 'Northstar Energy', 'Quanta Cloud'],
+    hardware: ['Zephyr Peripherals', 'Pulse Gear', 'Kite Mice', 'Lumen Displays', 'Ion Headsets', 'Hexa Boards', 'Vector Labs', 'Prism Monitors'],
+    drink: ['Volt Energy', 'Rush Cola', 'Blaze Drinks', 'Frost Fizz', 'Surge Shot', 'Nitro Brew', 'Spark Soda'],
+    apparel: ['Northwind Apparel', 'Stride Wear', 'Glint Streaming', 'Echo Stream', 'Vertex Jerseys', 'Comfy Chairs Co.', 'Driftline'],
+};
+// What a sponsor asks of the club in return (board objective ids, see objectiveMet).
+export const SPONSOR_GOALS = {
+    1: [
+        { id: 'tophalf', text: 'Finish in the top half of the league', tier: 0 },
+        { id: 'playoffs1', text: 'Reach the playoffs at least once', tier: 0 },
+        { id: 'playoffs2', text: 'Reach the playoffs in both splits', tier: 1 },
+        { id: 'worlds', text: 'Qualify for Worlds', tier: 1 },
+        { id: 'title', text: 'Win a domestic title', tier: 2 },
+    ],
+    2: [
+        { id: 'tophalf', text: 'Finish in the top half of the league', tier: 0 },
+        { id: 'playoffs1', text: 'Reach the playoffs at least once', tier: 0 },
+        { id: 'playoffs2', text: 'Reach the playoffs in both splits', tier: 1 },
+        { id: 'promote', text: 'Win promotion', tier: 2 },
+    ],
+};
+
+/** The stake one perk point buys in the manager's club (POINT_ACTIONS 'stake'). */
+export const STAKE_PER_POINT = 10;
 /** Buying a stake back costs this much more than selling it. */
 export const BUYBACK_PREMIUM = 1.15;
 
@@ -499,7 +577,34 @@ export const BUYBACK_PREMIUM = 1.15;
 /** Clubs sell outside a window only once a season, at a premium. */
 export const EMERGENCY_PREMIUM = 1.2;
 /** Colours a custom club can take. */
-export const CLUB_COLORS = ['#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#a855f7', '#ec4899', '#22d3ee', '#84cc16', '#f97316', '#e2e8f0', '#facc15', '#6366f1'];
+export const CLUB_COLORS = [
+    '#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#a855f7', '#ec4899', '#22d3ee', '#84cc16', '#f97316', '#e2e8f0', '#facc15', '#6366f1',
+    '#14b8a6', '#dc2626', '#0ea5e9', '#d97706', '#7c3aed', '#db2777', '#06b6d4', '#65a30d', '#ea580c', '#94a3b8', '#eab308', '#4f46e5',
+    '#b91c1c', '#1d4ed8', '#047857', '#be185d', '#a16207', '#0f766e', '#c026d3', '#f43f5e', '#78716c', '#1e293b',
+];
+/**
+ * Club emblems (24x24, filled), for random teams and for a club the manager founds.
+ * Real orgs keep their tag until real logos are added. Ids are save data.
+ */
+export const TEAM_EMBLEMS = [
+    { id: 'star', name: 'Star', d: 'M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7L12 17.3 5.8 20.9l1.6-7L2 9.2l7.1-.6z' },
+    { id: 'bolt', name: 'Bolt', d: 'M13 2L4 14h7l-1 8 9-12h-7z' },
+    { id: 'crown', name: 'Crown', d: 'M3 18h18l-1.5-10-4.5 4-3-7-3 7-4.5-4zM3 20h18v2H3z' },
+    { id: 'flame', name: 'Flame', d: 'M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-4 2.5-5-.2 2 .8 3.5 2 3.8C11 8.5 13 6 12 2z' },
+    { id: 'shield', name: 'Shield', d: 'M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z' },
+    { id: 'diamond', name: 'Diamond', d: 'M12 2l8 10-8 10-8-10z' },
+    { id: 'moon', name: 'Moon', d: 'M15 3a9 9 0 1 0 6 15A7.5 7.5 0 0 1 15 3z' },
+    { id: 'sun', name: 'Sun', d: 'M12 7a5 5 0 1 1 0 10 5 5 0 1 1 0-10zM11 1h2v4h-2zM11 19h2v4h-2zM1 11h4v2H1zM19 11h4v2h-4z' },
+    { id: 'peak', name: 'Peak', d: 'M2 20l7-12 4 6 3-4 6 10z' },
+    { id: 'hex', name: 'Hexagon', d: 'M12 2l8.7 5v10L12 22l-8.7-5V7z' },
+    { id: 'chevron', name: 'Chevrons', d: 'M4 3l8 6 8-6v4l-8 6-8-6zM4 11l8 6 8-6v4l-8 6-8-6z' },
+    { id: 'blade', name: 'Blade', d: 'M14 2h8v8l-9 9 2 2-2 2-3-3-3 3-2-2 3-3-3-3 2-2 2 2z' },
+    { id: 'eye', name: 'Eye', d: 'M12 5c5 0 9 4 10 7-1 3-5 7-10 7S3 15 2 12c1-3 5-7 10-7zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z' },
+    { id: 'target', name: 'Target', d: 'M12 2a10 10 0 1 1 0 20 10 10 0 1 1 0-20zm0 4a6 6 0 1 0 0 12 6 6 0 1 0 0-12zm0 3a3 3 0 1 1 0 6 3 3 0 1 1 0-6z' },
+    { id: 'wave', name: 'Wave', d: 'M2 13c3-4 5-4 7 0s4 4 7 0 4-4 6-2v9H2z' },
+    { id: 'paw', name: 'Paw', d: 'M7 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM4 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm16 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 11c3 0 6 4 6 7a3 3 0 0 1-3 3c-1 0-2-.6-3-.6s-2 .6-3 .6a3 3 0 0 1-3-3c0-3 3-7 6-7z' },
+];
+export const TEAM_EMBLEM_BY_ID = Object.fromEntries(TEAM_EMBLEMS.map(e => [e.id, e]));
 
 // ---------------------------------------------------------------- team talks
 export const TALKS = [
@@ -567,7 +672,9 @@ export const KNOCKOUT_BEST_OF = 5;
 export const TIER1_SIZE = 10;
 export const TIER2_SIZE = 8;
 export const ROSTER_MIN = 6;
-export const ROSTER_MAX = 9;
+export const ROSTER_MAX = 10;
+/** At most two players of a role: a starter and a sub. */
+export const ROLE_MAX = 2;
 
 // Championship points, the order every region's Worlds field is filled in after
 // the summer champion and runner-up. Placement is the playoff finish where there
@@ -585,7 +692,11 @@ export const PRIZES = {
     tier2:  { 1: 60000, 2: 30000 },
     msi:    { 1: 600000, 2: 300000, 3: 150000, 4: 150000, 5: 70000 },
     worlds: { 1: 2000000, 2: 900000, 3: 450000, 4: 450000, 5: 220000, 9: 100000 },
+    cup:    { 1: 120000, 2: 50000 },
 };
+/** The Regional Cup: tier 1 and tier 2 of a region, 16 clubs, a round on these spring weeks (md). */
+export const CUP_WEEKS = [1, 3, 5, 7];
+export const CUP_SIZE = 16;
 
 // ---------------------------------------------------------------- champion release years
 // Champions released in 2013 or later; anything not listed predates 2013. A
@@ -744,6 +855,38 @@ export const HANDLE_REGIONAL = {
     CBLOL: ['Tatu', 'Brasa', 'Caju', 'Jabuti', 'Saci', 'Boto', 'Pipoca', 'Faisca', 'Raio', 'Trovao', 'Guri', 'Moleque', 'Pitbull', 'Coruja', 'Tucano', 'Onca', 'Vento', 'Fumaca', 'Lampiao', 'Mandacaru'],
 };
 export const HANDLE_SUFFIX = ['', '', '', '', '', 'x', 'z', 'o', 'y', 'ie', 'er', '7', '99', 'XD', 'jr'];
+// Generated players' ceilings: above HIGH_POT a potential is squeezed (x HIGH_POT_SQUEEZE of the
+// excess) unless the player rolled as a wonderkid (WONDERKID_CHANCE, 20 and under).
+export const HIGH_POT = 86;
+export const HIGH_POT_SQUEEZE = 0.35;
+export const WONDERKID_CHANCE = 0.025;
+// The ceiling clubs scout free agency for (youth academies most of all).
+export const ELITE_PROSPECT = 88;
+// More words, and syllables the generator joins into new handles (Kazaro, Velix, Shiren...).
+export const HANDLE_WORDS_EXTRA = [
+    'Abyss', 'Blaze', 'Crux', 'Dagger', 'Envy', 'Fang', 'Glacier', 'Harbor', 'Icarus', 'Jinxed', 'Kraken', 'Lotus',
+    'Maverick', 'Nomad', 'Outlaw', 'Pilot', 'Quartz', 'Ronin', 'Saber', 'Tiger', 'Unity', 'Viper', 'Whisper', 'Yeti',
+    'Anchor', 'Bishop', 'Caster', 'Dynamo', 'Eclipse', 'Falcon', 'Golem', 'Hermit', 'Indigo', 'Jester', 'Kodiak',
+    'Lancer', 'Monk', 'Nebula', 'Omen', 'Paladin', 'Ripple', 'Scout', 'Titan', 'Vortex', 'Wolfie', 'Zero', 'Atlas',
+    'Breeze', 'Cobalt', 'Domino', 'Ether', 'Fizzy', 'Granite', 'Hollow', 'Ivory', 'Kumo', 'Mochi', 'Pebble', 'Sonic',
+];
+export const HANDLE_SYL_START = ['Ka', 'Ze', 'Ry', 'Mo', 'Ta', 'Vi', 'Lu', 'No', 'Shi', 'Ar', 'El', 'Gra', 'Dra', 'Fen', 'Ko', 'Sy', 'Xa', 'Qui', 'Ba', 'Tor', 'Yu', 'Ha', 'Ri', 'Ve', 'Za', 'Mi', 'Jo', 'Ky', 'Pa', 'Sa'];
+export const HANDLE_SYL_MID = ['', '', 'ra', 'li', 'ne', 'ko', 'va', 'mi', 'ze', 'ro', 'ta', 'ki'];
+export const HANDLE_SYL_END = ['ro', 'x', 'n', 'ra', 'ki', 'th', 'vo', 'zy', 'mi', 'ux', 'or', 'en', 'is', 'ka', 'el', 'on', 'ix', 'us', 'ar', 'yn'];
+// Where a generated player of each league comes from: [country code, weight, country name].
+export const NATIONS_BY_REGION = {
+    LCK: [['KR', 100, 'South Korea']],
+    LPL: [['CN', 88, 'China'], ['KR', 9, 'South Korea'], ['TW', 3, 'Taiwan']],
+    LEC: [['DE', 14, 'Germany'], ['FR', 14, 'France'], ['ES', 12, 'Spain'], ['PL', 10, 'Poland'], ['DK', 10, 'Denmark'], ['SE', 8, 'Sweden'], ['GB', 7, 'United Kingdom'], ['CZ', 5, 'Czechia'], ['BE', 5, 'Belgium'], ['NL', 4, 'Netherlands'], ['GR', 3, 'Greece'], ['SI', 3, 'Slovenia'], ['TR', 4, 'Turkey'], ['IT', 3, 'Italy'], ['PT', 3, 'Portugal']],
+    LCS: [['US', 70, 'United States'], ['CA', 15, 'Canada'], ['KR', 8, 'South Korea'], ['DK', 3, 'Denmark'], ['MX', 4, 'Mexico']],
+    LCP: [['VN', 30, 'Vietnam'], ['TW', 22, 'Taiwan'], ['JP', 20, 'Japan'], ['PH', 9, 'Philippines'], ['TH', 7, 'Thailand'], ['AU', 7, 'Australia'], ['HK', 5, 'Hong Kong']],
+    CBLOL: [['BR', 100, 'Brazil']],
+};
+export const COUNTRY_NAME = Object.fromEntries(Object.values(NATIONS_BY_REGION).flat().map(([c, , n]) => [c, n]));
+/** A flag emoji from a two-letter country code. */
+export function flagOf(cc) {
+    return /^[A-Z]{2}$/.test(String(cc || '')) ? String.fromCodePoint(...[...cc].map(ch => 0x1F1E6 + ch.charCodeAt(0) - 65)) : null;
+}
 
 /** A stable colour for anything without a brand colour. */
 export function colorFromName(s) {

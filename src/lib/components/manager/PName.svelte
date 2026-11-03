@@ -1,11 +1,11 @@
 <script>
-    // A player's name, flag and -- for a generated player -- the "Random" chip.
-    // Every list in the mode draws names through this, so a random player is
-    // never mistaken for a real pro.
+    // A player's name and flag. Generated players carry a nationality like real
+    // ones; that they are generated is said in their overview (PlayerModal's
+    // banner), and a list shows the "Random" chip only when asked with `chip`.
     import { mgrModal } from '../../stores/manager.js';
     export let p;
     export let link = true;
-    export let chip = true;
+    export let chip = false;
 
     function open(e) {
         if (!link || !p) return;
@@ -23,6 +23,8 @@
         {/if}
         {#if p.flag}<span class="pn-flag" aria-hidden="true">{p.flag}</span>{/if}
         {#if chip && !p.real}<span class="pn-rand" title="Random player: generated for this save, not a real pro">Random</span>{/if}
+        {#if p.inj > 0}<span class="pn-inj" title="Injured: out for {p.inj} week{p.inj === 1 ? '' : 's'}">+{p.inj}w</span>{/if}
+        {#if p.loanFrom}<span class="pn-loan" title="On loan">Loan</span>{/if}
     </span>
 {:else}
     <span class="pn pn-gone">—</span>
@@ -45,4 +47,7 @@
         color: #fcd34d; background: rgba(251, 191, 36, 0.1); border: 1px dashed rgba(251, 191, 36, 0.45);
     }
     .pn-gone { color: #64748b; }
+    .pn-inj, .pn-loan { flex-shrink: 0; font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 5px; }
+    .pn-inj { color: #fca5a5; background: rgba(248, 113, 113, 0.15); border: 1px solid rgba(248, 113, 113, 0.5); }
+    .pn-loan { color: #7dd3fc; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.45); letter-spacing: 0.5px; text-transform: uppercase; }
 </style>

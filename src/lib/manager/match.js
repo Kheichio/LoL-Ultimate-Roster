@@ -52,7 +52,10 @@ export { FAV_BONUS, POOL_BONUS, META_BONUS, MATCHUP_STEP };
 /** The five who play: the team's saved lineup where it is valid, otherwise the
  *  best available player per role (off-role as a last resort). */
 export function lineupOf(team, P) {
-    const roster = (team.roster || []).map(id => P[id]).filter(Boolean);
+    const all = (team.roster || []).map(id => P[id]).filter(Boolean);
+    // An injured player (p.inj steps left) sits out while anyone healthy can cover;
+    // if nobody can, he plays rather than leave a seat empty.
+    const roster = all.filter(p => !(p.inj > 0));
     const used = new Set();
     const out = {};
     for (const role of ROLE_IDS) {
@@ -60,12 +63,14 @@ export function lineupOf(team, P) {
         const p = id && P[id];
         if (p && roster.includes(p) && !used.has(p.id)) { out[role] = p; used.add(p.id); }
     }
-    for (const role of ROLE_IDS) {
-        if (out[role]) continue;
-        const cands = roster.filter(p => !used.has(p.id))
-            .map(p => ({ p, v: ovrAs(p, role) - (p.roles.includes(role) || p.role === role ? 0 : OFF_ROLE) }))
-            .sort((x, y) => y.v - x.v);
-        if (cands.length) { out[role] = cands[0].p; used.add(cands[0].p.id); }
+    for (const pool of [roster, all]) {
+        for (const role of ROLE_IDS) {
+            if (out[role]) continue;
+            const cands = pool.filter(p => !used.has(p.id))
+                .map(p => ({ p, v: ovrAs(p, role) - (p.roles.includes(role) || p.role === role ? 0 : OFF_ROLE) }))
+                .sort((x, y) => y.v - x.v);
+            if (cands.length) { out[role] = cands[0].p; used.add(cands[0].p.id); }
+        }
     }
     return out;
 }

@@ -277,8 +277,7 @@
         <!-- ══════════════ MAIN MENU ══════════════ -->
         <div class="topbar">
             <button class="studio-link" on:click={() => { playSound('click'); openStudio(); }}>
-                <span class="s8" aria-hidden="true">S8</span>
-                <span class="studio-name">Studio8Heads</span>
+                <img class="s8-logo" src="/studio/s8h-horizontal-logo-white.svg" alt="Studio8Heads" />
             </button>
             <div class="tb-right">
                 <button class="pill" on:click={() => { playSound('click'); openUpdates('menu'); }}>
@@ -596,7 +595,7 @@
             </div>
 
             <div class="st-hero">
-                <span class="st-mark" aria-hidden="true">S8</span>
+                <img class="st-mark" src="/studio/s8h-totem-animated.svg" alt="" aria-hidden="true" />
                 <p class="eyebrow">About us</p>
                 <h2 class="page-h">{STUDIO.name}</h2>
                 <p class="st-tag">{STUDIO.tagline}</p>
@@ -820,8 +819,7 @@
     .tb-right { display: flex; gap: 8px; align-items: center; }
     .studio-link { display: inline-flex; align-items: center; gap: 9px; padding: 6px 12px 6px 6px; border-radius: 12px; cursor: pointer; font-family: inherit; background: transparent; border: 1px solid transparent; color: #94a3b8; }
     .studio-link:hover { border-color: rgba(167,139,250,0.35); background: rgba(15,23,42,0.5); color: #e2e8f0; }
-    .s8 { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 12px; font-weight: 700; color: #ede9fe; background: linear-gradient(135deg, #4c1d95, #1e1b4b); border: 1px solid rgba(167,139,250,0.4); }
-    .studio-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 12.5px; font-weight: 600; letter-spacing: 0.3px; }
+    .s8-logo { height: 28px; width: auto; display: block; }
     .pill {
         display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 10px;
         font-family: inherit; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: #94a3b8;
@@ -997,7 +995,7 @@
     /* ═══════════ STUDIO ═══════════ */
     .stage-studio { max-width: 900px; }
     .st-hero { display: flex; flex-direction: column; align-items: center; margin-bottom: 26px; }
-    .st-mark { width: 76px; height: 76px; border-radius: 22px; display: grid; place-items: center; margin-bottom: 20px; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 28px; font-weight: 700; color: #ede9fe; background: linear-gradient(135deg, #5b21b6, #1e1b4b); border: 1px solid rgba(167,139,250,0.5); box-shadow: 0 16px 40px rgba(91,33,182,0.35); }
+    .st-mark { width: 150px; height: 150px; border-radius: 28px; margin-bottom: 20px; box-shadow: 0 16px 40px rgba(255,90,54,0.3); }
     .st-tag { margin-top: 10px; font-size: 15px; font-weight: 600; color: #c4b5fd; }
     .st-intro { margin-top: 12px; max-width: 620px; font-size: 14px; line-height: 1.7; color: #8a9bb8; }
     .st-discord { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; padding: 11px 20px; border-radius: 13px; text-decoration: none; font-size: 14px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #6d74f5, #5865f2); box-shadow: 0 8px 24px rgba(88,101,242,0.35); transition: transform 0.12s, filter 0.12s; }
@@ -1092,7 +1090,8 @@
         .mark { width: 52px; height: 52px; margin-bottom: 18px; }
         .stage { padding: 22px 0 40px; }
         .mode { padding: 18px; }
-        .pill-hide, .studio-name { display: none; }
+        .pill-hide { display: none; }
+        .s8-logo { height: 22px; }
         .pill { padding: 9px 11px; }
         .st-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .partner { flex-wrap: wrap; }

@@ -13,9 +13,136 @@
 //                     (trackClub), written by the engine on every series, title
 //                     and award. Names are stored with ids: a player can retire
 //                     and the record must still read.
+//    EVERY CLUB       `team.sh`, one compact row per split for every club in the
+//                     world (recordSplits): tier, final place, the five starters
+//                     with their OVR, and what the split won or cost (league,
+//                     MSI, Worlds, finals, promotion, relegation). A player's
+//                     club career is read back out of these rows (playerCareer),
+//                     and a retired player is kept in `save.retired` so his
+//                     name and career still read after he leaves the world.
 // ===========================================================================
-import { sameOrg } from './data.js';
+import { sameOrg, ROLE_IDS } from './data.js';
 import { personsIndex } from './world.js';
+import { lineupOf } from './match.js';
+import { ovrOf } from './people.js';
+
+// ---------------------------------------------------------------- every club, every split
+/** A split row's starters: 'pid~ovr,pid~ovr,...' in role order. */
+function packFive(save, team) {
+    const lu = lineupOf(team, save.players);
+    return ROLE_IDS.map(r => (lu[r] ? lu[r].id + '~' + ovrOf(lu[r]) : '')).join(',');
+}
+export function unpackFive(f) {
+    return String(f || '').split(',').map((x, i) => {
+        if (!x) return { role: ROLE_IDS[i], id: null, ovr: null };
+        const k = x.lastIndexOf('~');
+        return { role: ROLE_IDS[i], id: x.slice(0, k), ovr: Number(x.slice(k + 1)) || null };
+    });
+}
+function splitRow(team, year, split) {
+    const s = split === 'spring' || split === 'sp' ? 'sp' : 'su';
+    return (team.sh || []).find(r => r.y === year && r.s === s) || null;
+}
+/** After a split's playoffs: a row for every club in every league. */
+export function recordSplits(save, split) {
+    const S = save.season;
+    if (!S) return;
+    for (const [key, L] of Object.entries(S.leagues)) {
+        const b = S.playoffs[key + ':' + split];
+        for (const id of L.teams) {
+            const t = save.teams[id];
+            if (!t) continue;
+            if (!Array.isArray(t.sh)) t.sh = [];
+            if (splitRow(t, S.year, split)) continue;
+            const w = [];
+            if (b && b.champion === id) w.push(L.tier === 1 ? 'league' : 'tier2');
+            else if (b && b.runnerUp === id) w.push(L.tier === 1 ? 'final' : 'final2');
+            t.sh.push({ y: S.year, s: split === 'spring' ? 'sp' : 'su', t: L.tier, p: (S.places[id] || {})[split] || null, f: packFive(save, t), w });
+        }
+    }
+}
+/** Something more happened to a club's split: an international, a promotion. */
+export function markSplit(team, year, split, tag, extra) {
+    const r = team && splitRow(team, year, split);
+    if (!r) return;
+    if (tag && !r.w.includes(tag)) r.w.push(tag);
+    if (extra) Object.assign(r, extra);
+}
+
+/** A player who retires or leaves the world keeps a slim record, so his name and career still read. */
+export function archivePlayer(save, p, year) {
+    // Only someone who played in the save can appear in a club's history; the rest
+    // (an unsigned prospect, a free agent nobody wanted) leave no trace, which keeps
+    // the archive to a few hundred names over a decade.
+    if (!p || !(p.car && p.car.g > 0)) return;
+    if (!save.retired || typeof save.retired !== 'object') save.retired = {};
+    save.retired[p.id] = {
+        name: p.name, role: p.role, real: !!p.real, cc: p.cc || null, flag: p.flag || null,
+        y: year, peak: Math.max(ovrOf(p), ...(p.cy || []).map(x => x[2] || 0)),
+        cy: (p.cy || []).slice(), car: { titles: (p.car && p.car.titles) || 0 },
+    };
+}
+/** The end of a year: where every player was and how good he was. */
+export function recordYear(save, year) {
+    for (const p of Object.values(save.players)) {
+        if (!p) continue;
+        if (!Array.isArray(p.cy)) p.cy = [];
+        if (p.cy.some(x => x[0] === year)) continue;
+        p.cy.push([year, p.team || null, ovrOf(p)]);
+    }
+}
+/** A club, alive or folded (the living league moves a folded club to `save.defunct`). */
+export function anyTeam(save, id) {
+    return (save.teams && save.teams[id]) || (save.defunct && save.defunct[id]) || null;
+}
+/** A player, alive or retired: what the modal and the history lists can show. */
+export function personOf(save, id) {
+    return (save.players && save.players[id]) || (save.retired && save.retired[id]) || null;
+}
+
+const TAG_TITLE = { league: 'league', tier2: 'tier2', msi: 'msi', worlds: 'worlds', firststand: 'firststand' };
+/**
+ * A player's whole club career: real cards before the save, then every split he
+ * started in the save (club, tier, place, his OVR, what it won), and his year-end
+ * club and rating. { pre, splits, years, titles }.
+ */
+export function playerCareer(save, db, id) {
+    const out = { pre: [], splits: [], years: [], titles: [] };
+    const person = personOf(save, id);
+    if (!person) return out;
+    const start = Number(save.time.startYear) || save.time.year;
+    if (person.real && db) {
+        const idx = personsIndex(db);
+        const rec = idx.persons.get(id);
+        if (rec) {
+            const seen = new Set();
+            for (const c of rec.cards.filter(c => c.year < start).sort((a, b) => a.year - b.year)) {
+                const k = c.year + ':' + c.team;
+                if (seen.has(k)) continue;
+                seen.add(k);
+                out.pre.push({ y: c.year, team: c.team, region: c.region, ovr: c.rating });
+            }
+            for (const c of db) {
+                const kind = PRINT_KIND[c.quality];
+                if (!kind || kind === 'worldsfinal' || c.year >= start) continue;
+                if (String(c.name).toLowerCase() !== String(person.name).toLowerCase()) continue;
+                out.titles.push({ y: c.year, kind, team: c.team, pre: true });
+            }
+        }
+    }
+    for (const t of [...Object.values(save.teams), ...Object.values(save.defunct || {})]) {
+        for (const r of t.sh || []) {
+            const me = unpackFive(r.f).find(x => x.id === id);
+            if (!me) continue;
+            out.splits.push({ y: r.y, s: r.s, teamId: t.id, tier: r.t, p: r.p, ovr: me.ovr, w: r.w || [], wp: r.wp, mp: r.mp });
+            for (const tag of r.w || []) if (TAG_TITLE[tag]) out.titles.push({ y: r.y, kind: TAG_TITLE[tag], teamId: t.id });
+        }
+    }
+    out.splits.sort((a, b) => a.y - b.y || (a.s === 'sp' ? -1 : 1));
+    out.years = (person.cy || []).map(([y, teamId, ovr]) => ({ y, teamId, ovr }));
+    out.titles.sort((a, b) => a.y - b.y);
+    return out;
+}
 
 // ---------------------------------------------------------------- in the save
 function histEntry(team, p, year) {
@@ -186,6 +313,33 @@ export function clubHistory(save, db, team) {
     const real = realHistory(db, team, before);
     const merged = new Map();
     for (const e of real.players) merged.set(e.id, { ...e, t: { ...e.t }, aw: [...e.aw] });
+    // Every split this club played in the save: its starters, from the split rows.
+    // A club the manager runs also has `team.hist` (games, wins, awards, the bench),
+    // which is preferred for any player it holds.
+    const fromRows = new Map();
+    for (const r of team.sh || []) {
+        for (const x of unpackFive(r.f)) {
+            if (!x.id || (team.hist && team.hist[x.id])) continue;
+            const who = personOf(save, x.id);
+            let e = fromRows.get(x.id);
+            if (!e) {
+                e = { id: x.id, n: who ? who.name : x.id.replace(/^[rg]:/, ''), r: x.role, real: !!(who && who.real), y0: r.y, y1: r.y, s: 0, ly: 0, g: 0, w: 0, mvp: 0, t: {}, aw: [], best: 0 };
+                fromRows.set(x.id, e);
+            }
+            if (e.ly !== r.y) { e.ly = r.y; e.s++; }
+            e.y0 = Math.min(e.y0, r.y); e.y1 = Math.max(e.y1, r.y);
+            e.best = Math.max(e.best, x.ovr || 0);
+            for (const tag of r.w || []) if (TAG_TITLE[tag]) e.t[TAG_TITLE[tag]] = (e.t[TAG_TITLE[tag]] || 0) + 1;
+        }
+    }
+    for (const [id, h] of fromRows) {
+        const cur = merged.get(id);
+        if (cur) {
+            cur.s += h.s; cur.y0 = Math.min(cur.y0, h.y0); cur.y1 = Math.max(cur.y1, h.y1);
+            for (const [k, n] of Object.entries(h.t)) cur.t[k] = (cur.t[k] || 0) + n;
+            cur.inSave = true;
+        } else merged.set(id, { ...h, inSave: true, pre: false });
+    }
     for (const [id, h] of Object.entries(team.hist || {})) {
         const cur = merged.get(id);
         if (cur) {
@@ -201,8 +355,22 @@ export function clubHistory(save, db, team) {
     const roster = new Set(team.roster);
     const players = [...merged.values()].map(e => {
         const score = legendScore(e);
-        return { ...e, current: roster.has(e.id), score, tier: legendTier(score), titles: titleCount(e) };
+        return { ...e, current: roster.has(e.id), retired: !!(save.retired && save.retired[e.id] && !save.players[e.id]), score, tier: legendTier(score), titles: titleCount(e) };
     }).sort((a, b) => b.score - a.score || b.y1 - a.y1);
     const honours = [...real.honours.map(h => ({ ...h, pre: true })), ...saveHonours(save, team)];
-    return { players, honours, tracked: !!team.hist, trackedFrom: team.histFrom || null, before };
+    // Promotions and relegations of any club, from its split rows (the manager's own
+    // promotions are already in saveHonours from the trophy cabinet).
+    for (const r of team.sh || []) {
+        if (r.w.includes('up') && !honours.some(h => h.kind === 'promotion' && h.year === r.y)) honours.push({ year: r.y, kind: 'promotion', name: 'Promotion' });
+        if (r.w.includes('down')) honours.push({ year: r.y, kind: 'relegation', name: 'Relegation' });
+    }
+    honours.sort((a, b) => a.year - b.year);
+    // The season-by-season story, newest first: both splits of each year with the five who started.
+    const years = new Map();
+    for (const r of team.sh || []) {
+        if (!years.has(r.y)) years.set(r.y, { y: r.y, sp: null, su: null });
+        years.get(r.y)[r.s] = { ...r, five: unpackFive(r.f).map(x => ({ ...x, n: x.id ? (personOf(save, x.id) || {}).name || x.id.replace(/^[rg]:/, '') : null, alive: !!(x.id && save.players[x.id]), known: !!(x.id && personOf(save, x.id)) })) };
+    }
+    const seasons = [...years.values()].sort((a, b) => b.y - a.y);
+    return { players, honours, seasons, tracked: !!team.hist, trackedFrom: team.histFrom || null, before };
 }

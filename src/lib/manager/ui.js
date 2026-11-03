@@ -98,6 +98,7 @@ const MSG_KIND = {
     offer: { icon: 'coins', color: '#fbbf24', label: 'Transfers' },
     event: { icon: 'chat', color: '#f472b6', label: 'Decision' },
     prospect: { icon: 'sparkle', color: '#a3e635', label: 'Prospect' },
+    sponsor: { icon: 'coins', color: '#fbbf24', label: 'Sponsor' },
     level: { icon: 'star', color: '#c084fc', label: 'Level up' },
     job: { icon: 'briefcase', color: '#22d3ee', label: 'Job offer' },
     contract: { icon: 'quests', color: '#fb923c', label: 'Contracts' },
@@ -114,6 +115,7 @@ export const TROPHY_META = {
     league: { name: 'League title', short: 'League', icon: 'trophy', color: '#fbbf24' },
     tier2: { name: 'Second-tier title', short: 'Tier 2', icon: 'trophy', color: '#cbd5e1' },
     promotion: { name: 'Promotion', short: 'Promotion', icon: 'upgrade', color: '#a78bfa' },
+    cup: { name: 'Regional Cup', short: 'Cup', icon: 'shield', color: '#fb923c' },
 };
 
 /** The stage of the year the calendar is in, for banners and the header pill. */

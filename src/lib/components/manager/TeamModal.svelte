@@ -1,9 +1,11 @@
 <script>
     // Any club in the world: its five, its bench, its coach and how it plays.
     import { manager, mgrModal, mgrScreen, mgrHistTeam } from '../../stores/manager.js';
-    import { leagueName, scoutReport, isScouted } from '../../manager/engine.js';
+    import { leagueName, scoutReport, isScouted, teamComms } from '../../manager/engine.js';
     import { ROLE_IDS, TACTIC_BY_ID } from '../../manager/data.js';
     import { lineupOf, teamStrength } from '../../manager/match.js';
+    import { clubStyle } from '../../manager/market.js';
+    import { isRival } from '../../manager/clublife.js';
     import { ovrOf, ageOf, potentialView } from '../../manager/people.js';
     import { ovrColor, fmtMoney, persona, champName } from '../../manager/ui.js';
     import Icon from '../ui/Icon.svelte';
@@ -34,8 +36,8 @@
         <div class="tm-top">
             <TeamBadge team={t} size={56} />
             <div>
-                <h2>{t.name}{#if mine}<span class="chip" style="--c:#34d399">Your club</span>{/if}{#if !t.real}<span class="chip" style="--c:#fbbf24">Random team</span>{/if}</h2>
-                <p class="dim"><RegionIcon region={t.region} size={12} /> {leagueName(t.region, t.tier)} · reputation {t.rep} · coach {t.coach ? `${t.coach.name} (${t.coach.rating})` : 'none'}</p>
+                <h2>{t.name}{#if mine}<span class="chip" style="--c:#34d399">Your club</span>{/if}{#if !t.real}<span class="chip" style="--c:#fbbf24">Random team</span>{/if}{#if !mine && isRival(s, t.id)}<span class="chip" style="--c:#f87171">Rival</span>{/if}<span class="chip" style="--c:{clubStyle(t).color}" title={clubStyle(t).blurb}>{clubStyle(t).name}</span></h2>
+                <p class="dim"><RegionIcon region={t.region} size={12} /> {leagueName(t.region, t.tier)} · reputation {t.rep} · comms {teamComms(t, s.players)}% · {clubStyle(t).blurb} · coach {t.coach ? `${t.coach.name} (${t.coach.rating})` : 'none'}</p>
             </div>
             <div class="tm-k">
                 <span class="muted small">Team OVR</span>

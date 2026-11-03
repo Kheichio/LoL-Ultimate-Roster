@@ -11,7 +11,7 @@
     $: m = s.manager;
     $: team = myTeam(s);
     $: trophies = (m.trophies || []).slice().reverse();
-    $: byKind = ['worlds', 'msi', 'league', 'tier2', 'promotion'].map(k => ({ k, meta: TROPHY_META[k], list: trophies.filter(t => t.kind === k) }));
+    $: byKind = ['worlds', 'msi', 'league', 'cup', 'tier2', 'promotion'].map(k => ({ k, meta: TROPHY_META[k], list: trophies.filter(t => t.kind === k) }));
     $: ach = m.ach || {};
     $: unlocked = ACHIEVEMENTS.filter(a => ach[a.id]).length;
     $: seasons = Math.max(1, s.time.year - s.time.startYear + (s.time.step > 0 ? 1 : 0));

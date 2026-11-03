@@ -12,7 +12,9 @@
 import {
     ATTR_KEYS, ATTR_MAX, ATTR_MIN, ROLE_WEIGHTS, PERSONALITIES, PERSONALITY_BY_ID,
     XP_PER_LEVEL, POINTS_PER_LEVEL, PAST_CEILING_FACTOR, REGION_MONEY, WAGE_STEP, WAGE_KNEE, WAGE_TOP_STEP, champsFor,
-    HANDLE_WORDS, HANDLE_REGIONAL, HANDLE_SUFFIX, ROLE_IDS,
+    HANDLE_WORDS, HANDLE_REGIONAL, HANDLE_SUFFIX, ROLE_IDS, HANDLE_WORDS_EXTRA, HANDLE_SYL_START, HANDLE_SYL_MID,
+    HANDLE_SYL_END, NATIONS_BY_REGION, flagOf, HIGH_POT, HIGH_POT_SQUEEZE, WONDERKID_CHANCE,
+    REGION_LANGUAGE, COUNTRY_LANGUAGE,
 } from './data.js';
 import { clamp, pick, weightedPick, normal, randInt, shuffle, rngFor } from './util.js';
 
@@ -143,6 +145,8 @@ export function makeRealPlayer(person, card, year, rng) {
         roles: roles.includes(role) ? roles : [role, ...roles],
         nat: person.nat,
         flag: person.flag,
+        // Fluent in the language of every region he held a card in up to this year.
+        lang: Object.fromEntries([...new Set(person.cards.filter(c => c.year <= year).map(c => REGION_LANGUAGE[c.region]).filter(Boolean))].map(l => [l, 100])),
         born: Math.min(born, year - 17),
         a, adj: Math.round(adj * 10) / 10, pot,
         xp: 0, lv: 1 + Math.max(0, Math.floor((card.rating - 60) / 4)),
@@ -181,12 +185,18 @@ export function makeRandomPlayer({ id, role, region, year, target, age, takenNam
     else if (ag <= 19) gap = randInt(rng, 3, 17);
     else if (ag <= 22) gap = randInt(rng, 1, 10);
     else gap = randInt(rng, 0, 4);
-    if (ag <= 20 && rng() < 0.05) gap += randInt(rng, 6, 12);       // a wonderkid
-    const pot = clamp(ovr + gap, ovr, 97);
+    const wonder = ag <= 20 && rng() < WONDERKID_CHANCE;
+    if (wonder) gap += randInt(rng, 6, 12);                          // a wonderkid
+    let pot = clamp(ovr + gap, ovr, 97);
+    // An elite ceiling is rare: past HIGH_POT an ordinary prospect's potential is
+    // squeezed toward it (a soft cap players can still train past), so only the
+    // occasional wonderkid really carries a 90+ ceiling.
+    if (!wonder && pot > HIGH_POT) pot = Math.max(ovr, Math.round(HIGH_POT + (pot - HIGH_POT) * HIGH_POT_SQUEEZE));
     const name = makeHandle(rng, region, takenNames);
     const xp = randInt(rng, 0, 200);
     const pers = pickPersonality(rng);
     const favs = pickFavs(rng, r, year);
+    const cc = randomNation(rng, region);
     return {
         id,
         name,
@@ -195,7 +205,8 @@ export function makeRandomPlayer({ id, role, region, year, target, age, takenNam
         role: r,
         roles: [r],
         nat: region,
-        flag: null,
+        cc,
+        flag: flagOf(cc),
         born: year - ag,
         a, adj: 0, pot,
         xp, lv: 1 + Math.max(0, Math.floor((ovr - 55) / 4)),
@@ -217,11 +228,48 @@ export function blankStats() {
     return { g: 0, w: 0, k: 0, d: 0, as: 0, rs: 0, mvp: 0 };
 }
 
+// ---------------------------------------------------------------- languages
+/** The language a player grew up with. */
+export function nativeLanguage(p) {
+    if (p && p.cc && COUNTRY_LANGUAGE[p.cc]) return COUNTRY_LANGUAGE[p.cc];
+    if (p && p.cc) return 'en';
+    return REGION_LANGUAGE[p && p.nat] || 'en';
+}
+/** How well a player speaks a language, 0..100 (fractional while learning). */
+export function langLevel(p, code) {
+    if (!p || !code) return 100;
+    if (p.lang && Number.isFinite(Number(p.lang[code]))) return Number(p.lang[code]);
+    return nativeLanguage(p) === code ? 100 : 0;
+}
+/** A week in a country teaches its language, faster when there is more to learn. */
+export function immerse(p, code, amount) {
+    const now = langLevel(p, code);
+    if (now >= 100) return;
+    p.lang = { ...(p.lang || {}), [code]: Math.min(100, now + amount * (1 - now / 100)) };
+}
+
+/** A random player's nationality, drawn from the realistic mix of his league. */
+export function randomNation(rng, region) {
+    const list = NATIONS_BY_REGION[region] || [['KR', 1, 'South Korea']];
+    const total = list.reduce((s, x) => s + x[1], 0);
+    let r = rng() * total;
+    for (const [cc, w] of list) { r -= w; if (r <= 0) return cc; }
+    return list[0][0];
+}
+
+/** A made-up handle built from syllables: Kazaro, Velix, Shiren. */
+function syllableHandle(rng) {
+    return pick(rng, HANDLE_SYL_START) + pick(rng, HANDLE_SYL_MID) + pick(rng, HANDLE_SYL_END);
+}
+
 /** A handle nobody in the card database or this save already uses. */
 export function makeHandle(rng, region, taken) {
     const regional = HANDLE_REGIONAL[region] || [];
     for (let i = 0; i < 40; i++) {
-        const base = rng() < 0.45 && regional.length ? pick(rng, regional) : pick(rng, HANDLE_WORDS);
+        const roll = rng();
+        const base = roll < 0.35 && regional.length ? pick(rng, regional)
+            : roll < 0.6 ? syllableHandle(rng)
+            : pick(rng, rng() < 0.6 ? HANDLE_WORDS : HANDLE_WORDS_EXTRA);
         const name = base + pick(rng, HANDLE_SUFFIX);
         const key = name.toLowerCase();
         if (!taken || !taken.has(key)) {

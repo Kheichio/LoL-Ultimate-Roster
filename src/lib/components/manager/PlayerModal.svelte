@@ -3,22 +3,26 @@
     import { openConfirmModal } from '../../stores/ui.js';
     import { showToast } from '../../stores/toasts.js';
     import { myTeam, teamTalk, scoutPlayer, scoutCost, isScouted, setFocus, currentStep, devForecast } from '../../manager/engine.js';
-    import { ATTRS, TALKS, XP_PER_LEVEL, ROLE_BY_ID, SQUAD_STATUS, EMERGENCY_PREMIUM } from '../../manager/data.js';
+    import { ATTRS, TALKS, XP_PER_LEVEL, ROLE_BY_ID, SQUAD_STATUS, EMERGENCY_PREMIUM, COUNTRY_NAME, REGION_LANGUAGE, LANGUAGE_NAMES } from '../../manager/data.js';
     import {
         askingPrice, wageAsk, signingCheck, bidForPlayer, signFreeAgent, releasePlayer, releaseCost, windowOpen,
         renewalDemand, renewalOdds, negotiateRenewal, letContractRun, listPlayer, unlistPlayer, isEmergency, emergencyLeft,
     } from '../../manager/market.js';
-    import { ovrOf, ageOf, potentialView, focusAttr, marketValue } from '../../manager/people.js';
+    import { ovrOf, ageOf, potentialView, focusAttr, marketValue, langLevel } from '../../manager/people.js';
     import { ovrColor, fmtMoney, moraleWord, formWord, persona, champName, metaTag, cardFor, avgRating, kda, contractWord } from '../../manager/ui.js';
     import Card from '../card/Card.svelte';
     import Icon from '../ui/Icon.svelte';
     import TeamBadge from './TeamBadge.svelte';
+    import PlayerCareer from './PlayerCareer.svelte';
+    import { toAcademy, loanOut, loanIn, loanInCheck } from '../../manager/academy.js';
+    import { injuryName } from '../../manager/clublife.js';
 
     export let id;
     const noop = () => {};
 
     $: s = $manager;
     $: p = s.players[id];
+    $: ret = !p && s.retired ? s.retired[id] || null : null;
     $: me = myTeam(s);
     $: team = p && p.team ? s.teams[p.team] : null;
     $: mine = !!(p && me && p.team === me.id);
@@ -71,6 +75,12 @@
     function list() {
         const r = mutate(s => listPlayer(s, p.id, Number(listPrice) || 0));
         if (r) showToast(r.msg, r.ok ? 'success' : 'error', 5000);
+    }
+    /** Academy and loan moves: close the overview if he left the squad. */
+    function act(fn) {
+        const r = mutate(sv => fn(sv, p.id));
+        if (r) showToast(r.msg, r.ok ? 'success' : 'error', 4500);
+        if (r && r.ok) close();
     }
     function unlist() {
         const r = mutate(s => unlistPlayer(s, p.id));
@@ -128,7 +138,13 @@
                     <span class="chip" style="--c:{ROLE_BY_ID[p.role].accent}">{ROLE_BY_ID[p.role].name}</span>
                     {#if p.roles.length > 1}<span class="chip">Also {p.roles.filter(r => r !== p.role).join(', ')}</span>{/if}
                     <span class="chip">Age {ageOf(p, year)}</span>
+                    {#if p.cc && COUNTRY_NAME[p.cc]}<span class="chip">{p.flag || ''} {COUNTRY_NAME[p.cc]}</span>{/if}
+                    {#if team && REGION_LANGUAGE[team.region]}<span class="chip" style="--c:{langLevel(p, REGION_LANGUAGE[team.region]) >= 90 ? '#34d399' : langLevel(p, REGION_LANGUAGE[team.region]) >= 60 ? '#fbbf24' : '#f87171'}" title="His level in the language of his league">{LANGUAGE_NAMES[REGION_LANGUAGE[team.region]]} {Math.round(langLevel(p, REGION_LANGUAGE[team.region]))}%</span>{/if}
                     {#if team}<span class="chip tm"><TeamBadge {team} size={16} /> {team.name}</span>{:else}<span class="chip" style="--c:#fbbf24">Free agent</span>{/if}
+                    {#if p.inj > 0}<span class="chip" style="--c:#f87171"><Icon name="alert" size={12} /> {injuryName(p)} · {p.inj} week{p.inj === 1 ? '' : 's'}</span>{/if}
+                    {#if p.loanFrom && s.teams[p.loanFrom]}<span class="chip" style="--c:#38bdf8">On loan from {s.teams[p.loanFrom].short || s.teams[p.loanFrom].name}</span>{/if}
+                    {#if p.aca}<span class="chip" style="--c:#a78bfa">Academy</span>{/if}
+                    {#if p.allStar}<span class="chip" style="--c:#facc15"><Icon name="star" size={12} /> All-Star{p.allStar > 1 ? ` ×${p.allStar}` : ''}</span>{/if}
                 </div>
                 <div class="keyrow">
                     <div class="kv"><span class="muted">OVR</span><span class="ovr big" style="--c:{ovrColor(ovrOf(p))}">{ovrOf(p)}</span></div>
@@ -236,7 +252,20 @@
             </section>
         </div>
 
-        {#if mine}
+        {#if mine && p.loanFrom}
+            <section class="panel neg">
+                <div class="ph"><h3><Icon name="trade" size={14} /> On loan</h3><span class="chip" style="--c:#38bdf8">Until the offseason</span></div>
+                <p class="muted small">On loan from {s.teams[p.loanFrom] ? s.teams[p.loanFrom].name : 'his club'}. You pay his wages ({fmtMoney(p.wage)} a year) and pick him like anyone else; he goes back when the season ends. He cannot be sold, released or renewed.</p>
+            </section>
+        {:else if !mine && team && me && !p.loanFrom}
+            {@const lc = loanInCheck(s, p.id)}
+            <section class="panel neg">
+                <div class="ph"><h3><Icon name="trade" size={14} /> Borrow him</h3>{#if lc.ok}<span class="chip" style="--c:#34d399">Fee {fmtMoney(lc.fee)}</span>{/if}</div>
+                <p class="muted small">A loan until the offseason: a fee to {team.name} and you pay his wages ({fmtMoney(p.wage)} a year). Clubs lend in a transfer window, or any time as cover when one of your players in his role is injured. They will not lend a starter older than 21.</p>
+                {#if lc.ok}<button class="btn btn-sm btn-p" on:click={() => act(loanIn)}><Icon name="trade" size={13} /> Take him on loan</button>{:else}<p class="why"><Icon name="alert" size={13} /> {lc.msg}</p>{/if}
+            </section>
+        {/if}
+        {#if mine && !p.loanFrom}
             <div class="deal">
                 {#if p.until > year}
                 <section class="panel neg signed" class:fresh={justSigned}>
@@ -287,6 +316,13 @@
                         <label class="fee">Asking price <input class="inp num" type="number" min="10000" step="5000" bind:value={listPrice} /></label>
                         <p class="muted tiny">Worth about {fmtMoney(marketValue(p, year))}. Ask much more and nobody bites; ask less and clubs compete.</p>
                         <button class="btn btn-sm btn-p" on:click={list}><Icon name="coins" size={13} /> Put him on the transfer list</button>
+                        {#if ageOf(p, year) <= 23}
+                            <div class="moves">
+                                {#if ageOf(p, year) <= 21}<button class="btn btn-sm" on:click={() => act(toAcademy)}><Icon name="academy" size={13} /> Send to the academy</button>{/if}
+                                <button class="btn btn-sm" on:click={() => act(loanOut)}><Icon name="trade" size={13} /> Loan him out for the season</button>
+                            </div>
+                            <p class="muted tiny">Only in a transfer window. A loan sends him to a club in your region that pays his wages and plays him; he comes back at the offseason.</p>
+                        {/if}
                     {/if}
                     {#if p.until <= year && p.retiring !== year}
                         {#if p.leaving === year}
@@ -300,12 +336,31 @@
                 </section>
             </div>
         {/if}
+        <div class="career"><PlayerCareer id={p.id} /></div>
+    </div>
+</div>
+{:else if ret}
+<div class="modal-back" on:click|self={close} role="presentation">
+    <div class="modal pm" role="dialog" aria-modal="true" aria-label={ret.name}>
+        <button class="modal-x" on:click={close} aria-label="Close"><Icon name="close" size={16} /></button>
+        <div class="nm-row"><h2>{ret.name}</h2>{#if ret.flag}<span class="flag">{ret.flag}</span>{/if}</div>
+        {#if !ret.real}<div class="rand"><Icon name="sparkle" size={14} /> Random player: generated for this save, not a real pro.</div>{/if}
+        <div class="tags">
+            <span class="chip" style="--c:#94a3b8">Retired {ret.y}</span>
+            {#if ROLE_BY_ID[ret.role]}<span class="chip" style="--c:{ROLE_BY_ID[ret.role].accent}">{ROLE_BY_ID[ret.role].name}</span>{/if}
+            {#if ret.cc && COUNTRY_NAME[ret.cc]}<span class="chip">{COUNTRY_NAME[ret.cc]}</span>{/if}
+            <span class="chip">Peak OVR {ret.peak}</span>
+            {#if ret.car && ret.car.titles}<span class="chip" style="--c:#fbbf24">{ret.car.titles} title{ret.car.titles === 1 ? '' : 's'}</span>{/if}
+        </div>
+        <div class="career"><PlayerCareer {id} /></div>
     </div>
 </div>
 {/if}
 
 <style>
     .pm { max-width: 1020px; }
+    .career { margin-top: 14px; }
+    .moves { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
     .pm-top { display: flex; gap: 22px; margin-bottom: 16px; flex-wrap: wrap; }
     .pm-card { flex-shrink: 0; }
     .pm-id { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 10px; }

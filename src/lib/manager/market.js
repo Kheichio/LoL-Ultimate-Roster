@@ -18,7 +18,7 @@
 //  Money is only tracked for the manager's club (save.finance). The AI clubs
 //  spend within their reputation, which keeps them from hoarding every star.
 // ===========================================================================
-import { ROLE_IDS, ROSTER_MAX, ROSTER_MIN, REGION_MONEY, CALENDAR, STEPS_PER_YEAR, EMERGENCY_PREMIUM, SQUAD_STATUS_BY_ID, WAGE_STEP, ECON_REF_LEVEL, SPONSOR_BASE, SPONSOR_REP, INVEST_ROOM, INVEST_DECAY } from './data.js';
+import { ROLE_IDS, ROSTER_MAX, ROSTER_MIN, ROLE_MAX, REGION_MONEY, CALENDAR, STEPS_PER_YEAR, EMERGENCY_PREMIUM, SQUAD_STATUS_BY_ID, WAGE_STEP, ECON_REF_LEVEL, SPONSOR_BASE, SPONSOR_REP, INVEST_ROOM, INVEST_DECAY, CLUB_STYLES, CLUB_STYLE_BY_ID, ELITE_PROSPECT } from './data.js';
 import { ovrOf, ovrAs, wageDemand, marketValue, fx, ageOf } from './people.js';
 import { bestLineup, lineupOf, bestTactic, teamStrength } from './match.js';
 
@@ -49,11 +49,26 @@ export function econIndex(save) {
     return Number.isFinite(lv) ? clamp(Math.pow(WAGE_STEP, lv - ECON_REF_LEVEL), 0.3, 4) : 1;
 }
 
+/** A club's personality (CLUB_STYLES), drawn once and stable per club id. */
+export function clubStyle(team) {
+    if (!team) return CLUB_STYLE_BY_ID.balanced;
+    if (team.style && CLUB_STYLE_BY_ID[team.style]) return CLUB_STYLE_BY_ID[team.style];
+    const rng = rngFor('style:' + team.id);
+    const total = CLUB_STYLES.reduce((s, x) => s + x.weight, 0);
+    let r = rng() * total;
+    for (const st of CLUB_STYLES) { r -= st.weight; if (r <= 0) return st; }
+    return CLUB_STYLE_BY_ID.balanced;
+}
+/** Give every club its personality (world build and old saves). A founded club is the manager's: balanced. */
+export function assignStyles(save) {
+    for (const t of Object.values(save.teams || {})) if (!t.style) t.style = t.custom ? 'balanced' : clubStyle(t).id;
+}
+
 export function sponsorIncome(save, team) {
     const mine = save.manager && team.id === save.manager.teamId;
     const perk = mine && save.manager.perks ? (save.manager.perks.commercial || 0) : 0;
     const rep = clamp(Number(team.rep) || 30, 0, 100) / 100;
-    const base = (SPONSOR_BASE + SPONSOR_REP * rep * rep) * (REGION_MONEY[team.region] || 1) * econIndex(save);
+    const base = (SPONSOR_BASE + SPONSOR_REP * rep * rep) * (REGION_MONEY[team.region] || 1) * econIndex(save) * clubStyle(team).money;
     return Math.round(base * (1 + perk * 0.08) / 1000) * 1000;
 }
 
@@ -67,9 +82,22 @@ export function wageBill(save, team) {
 export function ownerStake(save) {
     const m = save.manager || {};
     const t = m.teamId ? save.teams[m.teamId] : null;
-    if (!t || !t.custom || m.founded !== t.id) return 0;
-    const v = Number(t.stake);
-    return Number.isFinite(v) ? clamp(v, 0, 100) : 100;
+    if (!t) return 0;
+    if (t.custom && m.founded === t.id) {
+        const v = Number(t.stake);
+        return Number.isFinite(v) ? clamp(v, 0, 100) : 100;
+    }
+    // A club the manager was hired by: the stake he has earned or bought (`mstake`).
+    const v = Number(t.mstake);
+    return Number.isFinite(v) ? clamp(v, 0, 100) : 0;
+}
+/** Write the manager's stake in his club, founded or hired. */
+export function setOwnerStake(save, v) {
+    const m = save.manager || {};
+    const t = m.teamId ? save.teams[m.teamId] : null;
+    if (!t) return;
+    if (t.custom && m.founded === t.id) t.stake = clamp(v, 0, 100);
+    else t.mstake = clamp(v, 0, 100);
 }
 /** The sole owner answers to nobody: no board, no objectives, no wage limit. */
 export const soleOwner = (save) => ownerStake(save) >= 100;
@@ -232,14 +260,22 @@ export function earn(save, amount, label) {
     save.finance.log.length = Math.min(save.finance.log.length, 60);
 }
 
+/** How many players of a role a club has. */
+export function roleCount(save, t, role) {
+    return t.roster.reduce((n, id) => n + (save.players[id] && save.players[id].role === role ? 1 : 0), 0);
+}
+
 /** Every check a signing must pass, so the screen and the action agree. */
 export function signingCheck(save, p, { fee = 0, wage }) {
     const t = userTeam(save);
     if (!t) return 'No club.';
     if (p.team === t.id) return `${p.name} is already yours.`;
+    if (p.loanFrom) return p.loanFrom === t.id ? `${p.name} is yours, out on loan until the end of the season.` : `${p.name} is on loan here and goes back to his club at the end of the season.`;
     if (p.team && !windowOpen(save) && emergencyLeft(save) <= 0) return `The transfer window is closed, and you have used your emergency signing for ${save.time.year}. Clubs sell again in the next window.`;
     if (t.roster.length >= ROSTER_MAX) return `Your roster is full (${ROSTER_MAX}). Release or sell someone first.`;
-    if (soleOwner(save) && save.finance.balance < 0) return 'Your club is in debt. As the owner you cannot add wages until the balance is positive again.';
+    if (roleCount(save, t, p.role) >= ROLE_MAX) return `You already have ${ROLE_MAX} ${p.role} players, a starter and a sub. Release or sell one first.`;
+    // An owner in debt adds no wages, except to field a five: a free agent for a role nobody plays.
+    if (soleOwner(save) && save.finance.balance < 0 && !(!p.team && roleCount(save, t, p.role) === 0)) return 'Your club is in debt. As the owner you cannot add wages until the balance is positive again (only a player for an empty role).';
     if (fee > save.finance.balance) return 'You cannot afford the fee.';
     const bill = wageBill(save, t) + wage;
     if (bill > wageBudget(save, t)) return `The board caps your wage bill at ${Math.round(wageBudget(save, t) / 1000)}K a year.`;
@@ -319,6 +355,7 @@ export function renewalTerms(save, p) {
 export function renewalBlock(save, p) {
     const t = userTeam(save);
     if (!p || !t || p.team !== t.id) return 'Not your player.';
+    if (p.loanFrom) return `${p.name} is on loan; his contract is his parent club's business.`;
     if ((p.mor || 0) < 35 && !fx(p).renewMult) return `${p.name} is unhappy and will not talk about a new contract. Raise his morale first.`;
     if (fx(p).wantsContender && (t.rep || 0) < 55 && ovrOf(p) >= 80) return `${p.name} wants to play for a contender and will not sign a new deal here.`;
     if (p.retiring === save.time.year) return `${p.name} has decided to retire at the end of the season.`;
@@ -419,6 +456,7 @@ export function releasePlayer(save, pid) {
     const p = save.players[pid];
     const t = userTeam(save);
     if (!p || p.team !== t.id) return { ok: false, msg: 'Not your player.' };
+    if (p.loanFrom) return { ok: false, msg: `${p.name} is on loan and goes back at the offseason.` };
     const cost = releaseCost(save, p);
     if (cost > save.finance.balance) return { ok: false, msg: 'You cannot afford the payout.' };
     if (cost) spend(save, cost, `Released ${p.name}`);
@@ -467,6 +505,7 @@ export function listPlayer(save, pid, price, rng = Math.random) {
     const p = save.players[pid];
     const t = userTeam(save);
     if (!p || !t || p.team !== t.id) return { ok: false, msg: 'Not your player.', offers: 0 };
+    if (p.loanFrom) return { ok: false, msg: `${p.name} is on loan: he is not yours to sell.`, offers: 0 };
     p.listed = Math.max(10000, Math.round((Number(price) || marketValue(p, save.time.year)) / 5000) * 5000);
     let made = 0;
     if (windowOpen(save)) made = listingOffers(save, rng, [p.id]).length;
@@ -491,7 +530,7 @@ function buyersFor(save, p) {
     const year = save.time.year;
     const out = [];
     for (const t of Object.values(save.teams)) {
-        if (t.id === me || t.roster.length >= ROSTER_MAX) continue;
+        if (t.id === me || t.roster.length >= ROSTER_MAX || roleCount(save, t, p.role) >= ROLE_MAX) continue;
         if (wageBill(save, t) + wageDemand(p, year, t.region) > wageBudget(save, t)) continue;
         if (t.tier === 2 && ovrOf(p) >= 88) continue;
         const lu = lineupOf(t, save.players);
@@ -547,6 +586,26 @@ function regionOf(save, p) {
 }
 
 /** AI clubs fill holes, upgrade weak seats and occasionally buy from a smaller club. */
+/**
+ * Every region's free agency keeps at least FA_ROLE_FLOOR players of each role, so a
+ * club that loses its only bot laner mid-season can always field five. Topped up
+ * with prospects when the AI clubs have emptied a role.
+ */
+const FA_ROLE_FLOOR = 2;
+export function freeAgentFloor(save, rng, taken = new Set()) {
+    const year = save.time.year;
+    const regions = new Set(Object.values(save.teams).map(t => t.region));
+    for (const region of regions) {
+        for (const role of ROLE_IDS) {
+            const have = save.freeAgents.filter(id => { const p = save.players[id]; return p && p.role === role && regionOf(save, p) === region && !p.prospectFor; }).length;
+            for (let i = have; i < FA_ROLE_FLOOR; i++) {
+                const p = regensFor(save, region, 1, year, rng, taken)[0];
+                if (p) { p.role = role; p.roles = [role]; p.reg = region; }
+            }
+        }
+    }
+}
+
 export function aiWindow(save, rng, { poach = true, taken = new Set() } = {}) {
     const me = save.manager.teamId;
     const year = save.time.year;
@@ -576,24 +635,42 @@ export function aiWindow(save, rng, { poach = true, taken = new Set() } = {}) {
             if (!fa) break;
             signTo(save, fa, t, { rng });
         }
-        // 2. Upgrade a weak starter from free agency.
+        // 2. Upgrade a weak starter from free agency. A youth club also signs a teenager
+        //    with a ceiling as its sub, and looks at prospects before proven players.
+        const style = clubStyle(t).id;
         const lu = lineupOf(t, save.players);
         for (const role of ROLE_IDS) {
             const cur = lu[role];
             const curV = cur ? ovrAs(cur, role) : 50;
-            const fa = faBy(t.region).filter(p => p.role === role && ovrOf(p) >= curV + 3 && affordable(t, p)).sort((a, b) => ovrOf(b) - ovrOf(a))[0];
-            if (fa && rng() < 0.6) {
+            const young = (p) => ageOf(p, year) <= 20 && p.pot >= curV + 4;
+            const fa = faBy(t.region).filter(p => p.role === role && affordable(t, p) && roleCount(save, t, role) < ROLE_MAX + (cur ? 1 : 0)
+                && (ovrOf(p) >= curV + 3 || (style === 'youth' && young(p) && roleCount(save, t, role) < ROLE_MAX)))
+                .sort((a, b) => (style === 'youth' ? (b.pot - a.pot) : (ovrOf(b) - ovrOf(a))))[0];
+            if (fa && rng() < (style === 'youth' ? 0.7 : 0.6)) {
                 signTo(save, fa, t, { rng });
                 if (t.tier === 1 && ovrOf(fa) >= 80) news.push(`${t.name} sign free agent ${fa.name}.`);
             }
         }
-        // 3. A tier-1 contender buys a star from a smaller club in its region.
-        if (poach && t.tier === 1 && (t.rep || 0) >= 65 && (leagueRank[t.id] || 1) >= 2 && (leagueRank[t.id] || 1) <= 6 && rng() < 0.18) {
+        // 2b. Scouting: an elite teenager in free agency (a rare ceiling) is snapped up,
+        //     by youth academies above all, then big spenders; anyone else now and then.
+        const scoutRate = style === 'youth' ? 0.85 : style === 'rich' ? 0.4 : 0.12;
+        if (t.roster.length < ROSTER_MAX && rng() < scoutRate) {
+            const gem = faBy(t.region).filter(p => p.pot >= ELITE_PROSPECT && ageOf(p, year) <= 20 && !p.prospectFor
+                && roleCount(save, t, p.role) < ROLE_MAX && affordable(t, p)).sort((a, b) => b.pot - a.pot)[0];
+            if (gem) {
+                signTo(save, gem, t, { years: 3, rng });
+                if (t.tier === 1 || style === 'youth') news.push(`${t.name} sign prospect ${gem.name} (${gem.role}, ${ageOf(gem, year)}).`);
+            }
+        }
+        // 3. A tier-1 contender buys a star from a smaller club in its region; a star
+        //    hunter goes shopping more often, and further up the table.
+        const hunt = style === 'stars' ? 0.38 : style === 'youth' || style === 'loyal' ? 0.1 : 0.18;
+        if (poach && t.tier === 1 && (t.rep || 0) >= (style === 'stars' ? 55 : 65) && (leagueRank[t.id] || 1) >= (style === 'stars' ? 1 : 2) && (leagueRank[t.id] || 1) <= 6 && rng() < hunt) {
             const lu2 = lineupOf(t, save.players);
             const weakest = ROLE_IDS.slice().sort((a, b) => (lu2[a] ? ovrAs(lu2[a], a) : 0) - (lu2[b] ? ovrAs(lu2[b], b) : 0))[0];
             const curV = lu2[weakest] ? ovrAs(lu2[weakest], weakest) : 50;
             const target = Object.values(save.players)
-                .filter(p => p.team && p.team !== t.id && p.team !== me && p.role === weakest
+                .filter(p => p.team && p.team !== t.id && p.team !== me && !p.loanFrom && !p.aca && p.role === weakest
                     && save.teams[p.team].region === t.region && (save.teams[p.team].rep || 0) < (t.rep || 0) - 8
                     && ovrOf(p) >= curV + 4 && affordable(t, p) && !(fx(p).hardToBuy && rng() < 0.7))
                 .sort((a, b) => ovrOf(b) - ovrOf(a))[0];
@@ -604,10 +681,15 @@ export function aiWindow(save, rng, { poach = true, taken = new Set() } = {}) {
                 news.push(`${t.name} buy ${target.name} from ${from.name}.`);
             }
         }
-        // 4. Trim to the roster limit: release the weakest who is not in the five.
-        while (t.roster.length > ROSTER_MAX) {
+        // 4. Trim to the roster limit and two a role: release the weakest who is not in the five.
+        for (let guard = 0; guard < 20; guard++) {
             const five = new Set(Object.values(bestLineup(t, save.players)));
-            const out = t.roster.map(id => save.players[id]).filter(p => !five.has(p.id)).sort((a, b) => ovrOf(a) - ovrOf(b))[0];
+            const over = t.roster.length > ROSTER_MAX;
+            const crowded = ROLE_IDS.find(r => roleCount(save, t, r) > ROLE_MAX);
+            if (!over && !crowded) break;
+            const out = t.roster.map(id => save.players[id])
+                .filter(p => p && !five.has(p.id) && !p.loanFrom && (!crowded || over || p.role === crowded))
+                .sort((a, b) => ovrOf(a) - ovrOf(b))[0];
             if (!out) break;
             release(save, out);
             out.reg = t.region;
@@ -615,6 +697,7 @@ export function aiWindow(save, rng, { poach = true, taken = new Set() } = {}) {
         t.lineup = bestLineup(t, save.players);
         t.pref = bestTactic(lineupOf(t, save.players));
     }
+    freeAgentFloor(save, rng, taken);
     return news;
 }
 
@@ -628,9 +711,12 @@ export function aiRenewals(save, rng) {
         const avg = t.roster.reduce((s, id) => s + ovrOf(save.players[id]), 0) / Math.max(1, t.roster.length);
         for (const id of t.roster.slice()) {
             const p = save.players[id];
-            if (!p || (p.until || 0) > year) continue;
-            const keep = five.has(p.id) || ovrOf(p) >= avg - 3 || (ageOf(p, year) <= 20 && p.pot >= avg);
-            if (keep && rng() < 0.9) {
+            if (!p || (p.until || 0) > year || p.loanFrom) continue;
+            // A loyal club keeps its veterans; a youth club keeps every teenager with a future.
+            const style = clubStyle(t).id;
+            const keep = five.has(p.id) || ovrOf(p) >= avg - (style === 'loyal' ? 7 : 3)
+                || (ageOf(p, year) <= (style === 'youth' ? 22 : 20) && p.pot >= avg - (style === 'youth' ? 3 : 0));
+            if (keep && rng() < (style === 'loyal' ? 0.98 : 0.9)) {
                 p.until = year + randInt(rng, 1, 2);
                 p.wage = Math.round(wageDemand(p, year + 1, t.region, { renewal: true }) * (0.9 + rng() * 0.1) / 1000) * 1000;
             } else {
@@ -648,9 +734,9 @@ export function aiBidsForUser(save, rng) {
     const out = [];
     const mine = me.roster.map(id => save.players[id]).filter(Boolean);
     for (const p of mine) {
-        if (rng() > 0.16) continue;
+        if (rng() > 0.16 || p.loanFrom) continue;
         const buyers = Object.values(save.teams).filter(t => t.id !== me.id && t.tier === 1 && (t.rep || 0) >= (me.rep || 0) - 5
-            && t.roster.length < ROSTER_MAX);
+            && t.roster.length < ROSTER_MAX && roleCount(save, t, p.role) < ROLE_MAX);
         if (!buyers.length) continue;
         const b = pick(rng, buyers);
         const fee = Math.round(askingPrice(save, p) * (0.8 + rng() * 0.45) / 5000) * 5000;

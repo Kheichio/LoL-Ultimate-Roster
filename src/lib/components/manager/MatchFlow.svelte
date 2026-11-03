@@ -12,15 +12,17 @@
     import { onDestroy } from 'svelte';
     import { get } from 'svelte/store';
     import { manager, mgrMatch, playStep, mutate } from '../../stores/manager.js';
-    import { userFixture, myTeam, sideFor, matchContext, scoutReport, winChance, setTactic } from '../../manager/engine.js';
+    import { userFixture, myTeam, sideFor, matchContext, scoutReport, winChance, setTactic, setLineup, scoutOpponent } from '../../manager/engine.js';
+    import { oppScouted, scoutCostFor } from '../../manager/clublife.js';
+    import { showToast } from '../../stores/toasts.js';
     import {
         startGame, resolveStage, gameSituation, gameStage, bestCall, callChance, edgeWord, tacticFit, quickGame,
         newDraft, draftTurn, draftDone, applyDraft, aiDraftAction, autoDraft, banScores, pickScores, pickInfo, blockedSet,
         rankedPool, teamSynergy, matchupValue, matchupWord, comfortOf, STAGE_T, STAGE_NAME, FAV_BONUS, POOL_BONUS, MATCHUP_STEP,
     } from '../../manager/match.js';
-    import { TACTICS, TACTIC_BY_ID, TACTIC_BEATS, ROLE_IDS, ROLE_BY_ID, DRAFT_ORDER, tacticEdge, champReleased } from '../../manager/data.js';
+    import { TACTICS, TACTIC_BY_ID, TACTIC_BEATS, ROLE_IDS, ROLE_BY_ID, DRAFT_ORDER, tacticEdge, champReleased, TACTIC_ARCHETYPES } from '../../manager/data.js';
     import { ovrOf, ovrAs } from '../../manager/people.js';
-    import { ovrColor, champName, metaTag, pct, compLook } from '../../manager/ui.js';
+    import { ovrColor, champName, metaTag, pct, compLook, fmtMoney } from '../../manager/ui.js';
     import { CHAMPION_BY_ID } from '../../career/constants.js';
     import { playSound } from '../../utils/sound.js';
     import Icon from '../ui/Icon.svelte';
@@ -44,7 +46,13 @@
     const year = baseCtx.year, split = baseCtx.split;
     const fearless = !!baseCtx.fearless;
     const rng = Math.random;
-    const A0 = fixture ? sideFor(s, me, rng) : null;
+    let A0 = fixture ? sideFor(s, me, rng) : null;
+    // Between games the manager can change the five: a sub comes in, or two swap seats.
+    $: roster = team ? team.roster.map(id => get(manager).players[id]).filter(Boolean).sort((a, b) => ROLE_IDS.indexOf(a.role) - ROLE_IDS.indexOf(b.role) || ovrOf(b) - ovrOf(a)) : [];
+    function swapIn(role, pid) {
+        mutate(sv => setLineup(sv, role, pid));
+        A0 = { ...sideFor(get(manager), me, rng), tactic: A0.tactic };
+    }
     const B0 = fixture ? sideFor(s, oppId, rng) : null;
     const report = oppId ? scoutReport(s, oppId) : null;
     const odds = fixture ? winChance(s) : null;
@@ -100,7 +108,14 @@
     function back() { mgrMatch.set(null); }
     $: theirUsual = report ? TACTIC_BY_ID[report.tactic] : null;
     // What they will probably ban against you (the Video Analyst perk).
-    $: predicted = analyst >= 1 && A0 && B0 ? banScores(newDraft('a'), 'b', B0, A0, { ...baseCtx, blue: 'a' }).slice(0, 5) : [];
+    // A paid scouting report shows what the Video Analyst perk does, and more.
+    let scouted = !!(oppId && oppScouted(s, oppId));
+    function scoutThem() {
+        const r = mutate(sv => scoutOpponent(sv));
+        if (r) showToast(r.msg, r.ok ? 'success' : 'error', 3500);
+        if (r && r.ok) scouted = true;
+    }
+    $: predicted = (analyst >= 1 || scouted) && A0 && B0 ? banScores(newDraft('a'), 'b', B0, A0, { ...baseCtx, blue: 'a' }).slice(0, 5) : [];
 
     // ── draft ──
     const sideA = () => ({ ...A0, tactic: myTactic });
@@ -190,6 +205,12 @@
             .sort((x, y) => (x.info ? 0 : 1) - (y.info ? 0 : 1) || (y.info ? y.info.value : 0) - (x.info ? x.info.value : 0));
     }
     $: tiles = ds && myTurn ? tilesFor(ds, turn.type, turn.type === 'ban' ? banTab : roleTab, sugg, blocked, myTactic) : [];
+    /** A plan's tooltip: what it does, what it beats, and the champions it wants. */
+    const tacticTip = (t) => `${t.name}: ${t.blurb} Beats ${TACTIC_BEATS[t.id].map(id => TACTIC_BY_ID[id].name).join(' and ')}. Wants ${TACTIC_ARCHETYPES[t.id].join(', ').toLowerCase()} champions.`;
+    /** Does a champion's archetype suit a plan (TACTIC_ARCHETYPES)? */
+    const fitsPlan = (id, tactic) => !!(CHAMPION_BY_ID[id] && (TACTIC_ARCHETYPES[tactic] || []).includes(CHAMPION_BY_ID[id].archetype));
+    /** The enemy player whose signature champion this is, for the ban screen. */
+    const theirSignature = (id) => ROLE_IDS.map(r => B0 && B0.lineup[r]).find(p => p && (p.favs || []).includes(id)) || null;
     const lockedReason = (id) => (ds && ds.locked.includes(id) ? 'Fearless' : ds && (ds.bans.a.includes(id) || ds.bans.b.includes(id)) ? 'Banned' : 'Picked');
     const sideName = (k) => (k === blue ? 'Blue' : 'Red');
     const slotsFor = (dsv, k) => {
@@ -405,9 +426,18 @@
                     {/each}
                 </div>
                 {#if predicted.length}
-                    <div class="pred"><span class="muted small"><Icon name="video" size={12} /> Video analyst: they will probably ban</span>
+                    <div class="pred"><span class="muted small"><Icon name="video" size={12} /> {scouted ? 'Scouting report' : 'Video analyst'}: they will probably ban</span>
                         <span class="pred-c">{#each predicted as b}<span class="champ ban-them" title="{b.pname}">{champName(b.id)}</span>{/each}</span>
                     </div>
+                {/if}
+                {#if scouted}
+                    {@const seats = ROLE_IDS.map(r => ({ r, p: B0.lineup[r] })).filter(x => x.p).sort((a, b) => ovrAs(a.p, a.r) - ovrAs(b.p, b.r))}
+                    <div class="pred rep">
+                        <span class="muted small"><Icon name="search" size={12} /> Scouting report on {opp.short}</span>
+                        <span>Plan this split: <b style="color:{TACTIC_BY_ID[aiTactic].color}">{TACTIC_BY_ID[aiTactic].name}</b>{' · '}strongest seat <b>{seats[seats.length - 1].r} {seats[seats.length - 1].p.name}</b> ({ovrAs(seats[seats.length - 1].p, seats[seats.length - 1].r)}){' · '}weakest seat <b>{seats[0].r} {seats[0].p.name}</b> ({ovrAs(seats[0].p, seats[0].r)}): target that lane.</span>
+                    </div>
+                {:else}
+                    <button class="btn btn-sm scoutb" on:click={scoutThem}><Icon name="search" size={13} /> Scout {opp.short} · {fmtMoney(scoutCostFor(s))}</button>
                 {/if}
                 <div class="pre-btns">
                     <button class="btn btn-p big" on:click={startSeries}><Icon name="play" size={15} stroke={2.4} /> Start the series</button>
@@ -445,10 +475,15 @@
                 {/each}
             </div>
             <div class="d-tools">
-                <span class="seg tac-seg">{#each TACTICS as t}<button class:on={myTactic === t.id} on:click={() => chooseTactic(t.id)} title={t.name}>{t.short}</button>{/each}</span>
+                <span class="seg tac-seg">{#each TACTICS as t}<button class:on={myTactic === t.id} on:click={() => chooseTactic(t.id)} title={tacticTip(t)}>{t.short}</button>{/each}</span>
                 <label class="fastt"><input type="checkbox" bind:checked={fast} /> Fast</label>
                 {#if !done}<button class="btn btn-sm" on:click={autoMine}><Icon name="sparkle" size={13} /> Let the coach finish</button>{/if}
             </div>
+        </div>
+
+        <div class="plan-info" style="--c:{TACTIC_BY_ID[myTactic].color}">
+            <b>{TACTIC_BY_ID[myTactic].name}:</b> {TACTIC_BY_ID[myTactic].blurb}
+            <span class="muted">Wants {TACTIC_ARCHETYPES[myTactic].join(', ').toLowerCase()} champions, tagged <span class="tag tg-plan">Fits {TACTIC_BY_ID[myTactic].short}</span>. Beats {TACTIC_BEATS[myTactic].map(id => TACTIC_BY_ID[id].short).join(' and ')}.</span>
         </div>
 
         <div class="dgrid">
@@ -468,7 +503,7 @@
                             {@const mu = muOf(ds.picks[k], ds.picks[k === 'a' ? 'b' : 'a'], r)}
                             <div class="dpick" class:filled={!!c}>
                                 <span class="dp-r">{r}</span>
-                                <span class="dp-n">{p ? p.name : '—'}</span>
+                                <span class="dp-n">{p ? p.name : '—'}{#if p}<span class="ovr dp-o" style="--c:{ovrColor(ovrAs(p, r))}" title="Rating in this role">{ovrAs(p, r)}</span>{/if}</span>
                                 <span class="dp-c">{#if c}{cf === 'fav' ? '★ ' : cf === 'pool' ? '◆ ' : ''}{champName(c)}{:else}<span class="muted">…</span>{/if}</span>
                                 {#if mu !== null}<span class="mu mu-{matchupWord(mu).tone}" title="Lane matchup">{matchupWord(mu).word}</span>{/if}
                             </div>
@@ -501,11 +536,18 @@
                     <div class="tiles">
                         {#each tiles as x (x.id)}
                             {@const gone = blocked.has(x.id)}
-                            <button class="tile ban" disabled={gone} on:click={() => myBan(x.id)} title={gone ? lockedReason(x.id) : 'Ban ' + champName(x.id)}>
+                            {@const sig = theirSignature(x.id)}
+                            <button class="tile ban" class:sig={!!sig} disabled={gone} on:click={() => myBan(x.id)} title={gone ? lockedReason(x.id) : 'Ban ' + champName(x.id)}>
                                 <b>{champName(x.id)}</b>
                                 {#if gone}<span class="t-x">{lockedReason(x.id)}</span>
-                                {:else if x.why}<span class="t-why">{x.why}</span>
-                                {:else if metaTag(x.id, year, split)}<span class="tag" class:up={metaTag(x.id, year, split) === 'strong'}>{metaTag(x.id, year, split) === 'strong' ? 'Meta ↑' : 'Meta ↓'}</span>{/if}
+                                {:else}
+                                    {#if x.why}<span class="t-why">{x.why}</span>{/if}
+                                    <span class="t-tags">
+                                        {#if sig}<span class="tag tg-fav">★ {sig.name}'s signature</span>{/if}
+                                        {#if metaTag(x.id, year, split)}<span class="tag" class:up={metaTag(x.id, year, split) === 'strong'} class:down={metaTag(x.id, year, split) !== 'strong'}>{metaTag(x.id, year, split) === 'strong' ? 'Meta ↑' : 'Meta ↓'}</span>{/if}
+                                        {#if fitsPlan(x.id, aiTactic)}<span class="tag tg-plan" title="Fits their plan">Fits their {TACTIC_BY_ID[aiTactic].short}</span>{/if}
+                                    </span>
+                                {/if}
                             </button>
                         {/each}
                     </div>
@@ -529,6 +571,7 @@
                                         {#if i.enemy}<span class="tag mu-{matchupWord(i.mu).tone}">{matchupWord(i.mu).word} vs {champName(i.enemy)}</span>{/if}
                                         {#each i.duos as d}<span class="tag tg-syn">+ {d.name}</span>{/each}
                                         {#if i.style}<span class="tag tg-syn">→ {i.style.name}</span>{/if}
+                                        {#if fitsPlan(x.id, myTactic)}<span class="tag tg-plan">Fits {TACTIC_BY_ID[myTactic].short}</span>{/if}
                                         {#if i.recent}<span class="tag tg-rec">Played recently</span>{/if}
                                     </span>
                                 {/if}
@@ -641,6 +684,24 @@
                     </section>
                 {/each}
             </div>
+            {#if !seriesOver}
+                <section class="panel subs">
+                    <div class="ph"><h3><Icon name="squad" size={14} /> Lineup for game {gameNo + 2}</h3><span class="muted small">Bring a sub in or swap two players before the next game</span></div>
+                    <div class="sub-row">
+                        {#each ROLE_IDS as role (role)}
+                            {@const cur = A0.lineup[role]}
+                            <label class="sub-seat">
+                                <span class="sub-role">{role}</span>
+                                <select class="sel" value={cur ? cur.id : ''} on:change={(e) => swapIn(role, e.currentTarget.value)}>
+                                    {#each roster as p (p.id)}
+                                        <option value={p.id}>{p.name} · {p.role}{p.role !== role ? ' (off-role)' : ''} · {ovrAs(p, role)}</option>
+                                    {/each}
+                                </select>
+                            </label>
+                        {/each}
+                    </div>
+                </section>
+            {/if}
             <div class="post-btns">
                 {#if seriesOver}
                     <button class="btn btn-p big" on:click={() => (phase = 'end')}>See the series <Icon name="arrow" size={14} stroke={2.4} /></button>
@@ -721,6 +782,13 @@
 
     .champ { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 8px; font-family: inherit; font-size: 12px; font-weight: 700; color: #e2e8f0; background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(71, 85, 105, 0.5); }
     .ban-them { color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
+    .scoutb { align-self: flex-start; margin: 4px 0 8px; }
+    .pred.rep { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    .plan-info { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; font-size: 13px; color: #e2e8f0; background: rgba(2, 6, 23, 0.45); border-left: 3px solid var(--c); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+    .plan-info b { color: var(--c); }
+    .tg-plan { color: #a7f3d0; border-color: rgba(52, 211, 153, 0.45); background: rgba(16, 185, 129, 0.12); }
+    .tile.sig { border-color: rgba(251, 191, 36, 0.55); }
+    .dp-o { margin-left: 6px; font-size: 10.5px; min-width: 24px; height: 18px; }
 
     /* draft */
     .dbar { display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto auto; column-gap: 16px; row-gap: 8px; align-items: center; padding: 12px 16px; border-radius: 14px; background: rgba(15, 23, 42, 0.75); border: 1px solid var(--line); }
@@ -848,6 +916,12 @@
     .b-calls { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; }
     .box { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
     .post-btns { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subs { margin-bottom: 12px; }
+    .sub-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+    .sub-seat { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .sub-seat .sel { width: 100%; min-width: 0; }
+    .sub-role { font-size: 10px; font-weight: 900; color: #6ee7b7; letter-spacing: 0.5px; }
+    @media (max-width: 800px) { .sub-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .pick-side { width: 100%; text-align: center; font-weight: 800; color: #fde68a; }
     .bsub { font-weight: 600; opacity: 0.75; }
     .side-b { background: linear-gradient(135deg, #60a5fa, #3b82f6); color: #04122b; }

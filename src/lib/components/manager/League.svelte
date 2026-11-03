@@ -1,7 +1,7 @@
 <script>
     import { manager, mgrModal } from '../../stores/manager.js';
     import { myTeam, currentStep, leagueName, tableRows, annualRows, leagueKey, worldsRace } from '../../manager/engine.js';
-    import { REGIONS, REGION_BY_ID, TIER2_NAME, LEAGUE_WEEKS, WORLDS_SLOTS_BY_RANK, ROLE_IDS } from '../../manager/data.js';
+    import { REGIONS, REGION_BY_ID, TIER2_NAME, LEAGUE_WEEKS, WORLDS_SLOTS_BY_RANK, ROLE_IDS, CUP_WEEKS } from '../../manager/data.js';
     import { teamStrength } from '../../manager/match.js';
     import { ovrColor, ordinal } from '../../manager/ui.js';
     import Icon from '../ui/Icon.svelte';
@@ -30,12 +30,13 @@
     $: playoff = S.playoffs[leagueKey(region, tier) + ':' + (split === 'annual' ? 'summer' : split)];
     $: race = worldsRace(s);
     $: promo = S.promo[region];
+    $: cupR = s.cup && s.cup.year === s.time.year ? s.cup.regions[region] : null;
 
     const TABS = [
-        ['league', 'Leagues'], ['playoffs', 'Playoffs'], ['msi', 'MSI'], ['worlds', 'Worlds'], ['race', 'Road to Worlds'], ['history', 'History'],
+        ['league', 'Leagues'], ['playoffs', 'Playoffs'], ['cup', 'Cup'], ['msi', 'MSI'], ['worlds', 'Worlds'], ['race', 'Road to Worlds'], ['history', 'History'],
     ];
     const open = (id) => mgrModal.set({ kind: 'team', id });
-    const name = (id) => (s.teams[id] ? s.teams[id].name : '—');
+    const name = (id) => (s.teams[id] ? s.teams[id].name : s.defunct && s.defunct[id] ? s.defunct[id].name : '—');
 </script>
 
 <div class="lg">
@@ -125,10 +126,27 @@
             <section class="panel">
                 <div class="ph"><h3><Icon name="upgrade" size={15} /> Promotion & relegation · {REGION_BY_ID[region].league}</h3></div>
                 <ul class="promo">
-                    {#if promo.up}<li><span class="good">Up:</span> {name(promo.up)} (tier 2 summer champion)</li>{/if}
-                    {#if promo.down}<li><span class="bad">Down:</span> {name(promo.down)} (last over both splits)</li>{/if}
+                    {#if promo.up}<li><span class="good">Up:</span> {name(promo.up)}{#if promo.up2}{' and '}{name(promo.up2)}{/if} (tier 2 summer finalists)</li>{/if}
+                    {#if promo.down}<li><span class="bad">Down:</span> {name(promo.down)}{#if promo.down2}{' and '}{name(promo.down2)}{/if} (bottom two over both splits)</li>{/if}
                     {#if promo.tie}<li><span class="warn">Promotion series:</span> {name(promo.tie.a)} vs {name(promo.tie.b)}{#if promo.tie.score}{' · '}{promo.tie.score.join('–')}, {name(promo.tie.winner)} {promo.tie.winner === promo.tie.a ? 'stay up' : 'go up'}{/if}</li>{/if}
                 </ul>
+            </section>
+        {/if}
+    {:else if tab === 'cup'}
+        <div class="seg">{#each REGIONS as r (r.id)}<button class:on={region === r.id} on:click={() => (region = r.id)}>{r.id}</button>{/each}</div>
+        <section class="panel">
+            <div class="ph"><h3><Icon name="shield" size={15} /> {region} Regional Cup {s.time.year}</h3><span class="muted small">Tier 1 and tier 2 · spring weeks {CUP_WEEKS.map(w => w + 1).join(', ')} · Bo3, final Bo5</span></div>
+            {#if cupR}<Bracket bracket={cupR} teams={s.teams} {me} />
+            {:else}<div class="empty">Drawn in the second week of the spring split.</div>{/if}
+        </section>
+        {#if s.allStar && s.allStar.year === s.time.year}
+            <section class="panel">
+                <div class="ph"><h3><Icon name="star" size={15} /> All-Star {s.time.year}</h3><span class="chip" style="--c:#facc15">{s.allStar.winner === 'east' ? 'East' : 'West'} won</span></div>
+                <div class="as">
+                    {#each [['east', 'East · LCK, LPL, LCP'], ['west', 'West · LEC, LCS, CBLOL']] as [k, lbl]}
+                        <div><b class="small">{lbl}</b><ul class="promo">{#each ROLE_IDS.filter(r => s.allStar[k][r]) as r}<li><span class="muted small">{r}</span> <button class="lnk" on:click={() => mgrModal.set({ kind: 'player', id: s.allStar[k][r] })}>{s.players[s.allStar[k][r]] ? s.players[s.allStar[k][r]].name : '—'}</button></li>{/each}</ul></div>
+                    {/each}
+                </div>
             </section>
         {/if}
     {:else if tab === 'msi'}
@@ -211,6 +229,10 @@
     .fx-t.win { color: #e2e8f0; }
     .fx-s { font-size: 12px; font-weight: 900; color: #cbd5e1; }
     .promo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+    .as { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .as .promo { margin-top: 6px; }
+    .lnk { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: #e2e8f0; cursor: pointer; }
+    .lnk:hover { color: #6ee7b7; }
     .race { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
     .rc { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
     .rc li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: #94a3b8; }

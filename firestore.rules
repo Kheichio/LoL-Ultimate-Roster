@@ -73,6 +73,20 @@ service cloud.firestore {
         && ownsCareerEntry(entryId, request.auth.uid);
     }
 
+    // ---- Manager board ----
+    // Ultimate Manager's public ranking: one row per save slot, same ownership
+    // proof as the career board (uid__1..3). Deleting is how a manager hides.
+    match /managerBoard/{entryId} {
+      allow read: if true;
+
+      allow create, update: if request.auth != null
+        && ownsCareerSlot(entryId, request.auth.uid)
+        && validManagerRow(request.resource.data);
+
+      allow delete: if request.auth != null
+        && ownsCareerSlot(entryId, request.auth.uid);
+    }
+
     // ---- Cloud saves ----
     // Strictly personal: only the owner can read or write their save.
     match /saves/{userId} {
@@ -192,6 +206,26 @@ service cloud.firestore {
       && d.teamId is string && d.teamId.size() <= 32
       && d.role is string && d.role.size() <= 8
       && d.region is string && d.region.size() <= 16;
+  }
+
+  // ---- Manager board validation ----
+  // Same philosophy as the career row: bound the field count and every string,
+  // type-check every field, and range only the ranked number. The client
+  // re-clamps on read (stores/managerBoard.js sanitizeManagerRow).
+  function validManagerRow(d) {
+    return d.keys().size() <= 22
+      && d.v is int && d.slot is int && d.tier is int
+      && d.year is int && d.startYear is int && d.level is int
+      && d.worlds is int && d.msi is int && d.leagues is int && d.promotions is int
+      && d.seasons is int && d.wins is int && d.losses is int
+      && d.updatedAt is int
+      && d.score is int && d.score >= 0 && d.score <= 1000000
+      && d.name is string && d.name.size() <= 24
+      && d.displayName is string && d.displayName.size() <= 64
+      && d.team is string && d.team.size() <= 40
+      && d.short is string && d.short.size() <= 8
+      && d.region is string && d.region.size() <= 8
+      && d.color is string && d.color.size() <= 9;
   }
 
   // A 24-year career compacts to about 8kb. The client re-parses and re-clamps

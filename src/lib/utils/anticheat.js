@@ -184,9 +184,11 @@ export const CAREER_DOSSIER_KEYS = 5;
 // Maximum realistic values — generous enough for legit play, low enough to flag hacks
 export const BOUNDS = {
     be:        { min: 0,   max: 50_000_000 },
-    level:     { min: 1,   max: 1000       },
+    // Level and skill points go to 1M: the reusable LEVELS100K code adds 100,000 of each.
+    // The leaderboard still publishes managerLevel clamped to 1..1000 (its rule's range).
+    level:     { min: 1,   max: 1_000_000  },
     xp:        { min: 0,   max: 50_000_000 },
-    sp:        { min: 0,   max: 500        },
+    sp:        { min: 0,   max: 1_000_000  },
     prestige:  { min: 0,   max: 50         },
     skill:     { min: 0,   max: 20         },
     trophies:  { min: 0,   max: 100_000    },

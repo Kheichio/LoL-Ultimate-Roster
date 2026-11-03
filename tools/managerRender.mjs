@@ -109,7 +109,7 @@ async function render(name, props, state, minText = 60) {
     return html;
 }
 
-const SCREENS = ['Home', 'Squad', 'Tactics', 'Training', 'League', 'Transfers', 'History', 'Club', 'Inbox', 'Trophies'];
+const SCREENS = ['Home', 'Squad', 'Tactics', 'Training', 'League', 'Transfers', 'History', 'Club', 'Inbox', 'Trophies', 'Jobs', 'Facilities', 'Stats', 'Sponsors'];
 function setSave(save) {
     ST.manager.set(save);
     ST.mgrModal.set(null);
@@ -119,7 +119,7 @@ function setSave(save) {
 async function renderState(label, save, extra = {}) {
     setSave(save);
     for (const sc of SCREENS) await render(sc, {}, label);
-    for (const tab of ['playoffs', 'msi', 'worlds', 'race', 'history']) await render('League', { initialTab: tab }, label + ':' + tab, 20);
+    for (const tab of ['playoffs', 'cup', 'msi', 'worlds', 'race', 'history']) await render('League', { initialTab: tab }, label + ':' + tab, 20);
     for (const tab of ['free', 'bids', 'list', 'mine']) await render('Transfers', { initialTab: tab }, label + ':transfers-' + tab, 20);
     // Modals: an own player, a rival's, a free agent and a random player.
     const me = E.myTeam(save);
@@ -225,6 +225,14 @@ sum = advanceTo(run, 'offseason');
 }
 const off = E.advance(run);
 await renderState('after-offseason', run, { report: off.offseason, summary: off });
+{
+    // A retired player's overview, and a club's history with a season on record.
+    const gone = Object.keys(run.retired || {});
+    if (!gone.length) problems.push('FIXTURE  nobody retired, so the retired overview went unrendered');
+    for (const id of gone.slice(0, 2)) await render('PlayerModal', { id }, 'after-offseason:player-retired');
+    const rival = Object.values(run.teams).find(t => t.tier === 1 && t.id !== run.manager.teamId);
+    await render('History', { initialTeam: rival.id }, 'after-offseason:history-rival-season');
+}
 
 // Trophies and achievements, which a short harness run rarely earns.
 {

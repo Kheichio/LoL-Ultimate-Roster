@@ -6,7 +6,16 @@
     //  like CareerShell. The shared look of every manager screen (panels,
     //  buttons, chips, tables) is defined once here, scoped under .mgr.
     import { onDestroy } from 'svelte';
+    import { get } from 'svelte/store';
+    import { publishManager } from '../../stores/managerBoard.js';
+    import ManagerBoard from './ManagerBoard.svelte';
+    import Stats from './Stats.svelte';
+    import Facilities from './Facilities.svelte';
+    import Jobs from './Jobs.svelte';
     import { openMenu } from '../../stores/menu.js';
+    import { openSettings } from '../../stores/ui.js';
+    import { showToast } from '../../stores/toasts.js';
+    import { activeSlot } from '../../utils/storage.js';
     import { playSound } from '../../utils/sound.js';
     import { manager, mgrScreen, mgrMatch, mgrModal, mgrFx, initManager, flushManager, goNext } from '../../stores/manager.js';
     import { myTeam, currentStep, userFixture, blockInfo, nextOpponent, leagueName, fearlessOn, ownerStake, hasBoard } from '../../manager/engine.js';
@@ -26,6 +35,7 @@
     import Trophies from './Trophies.svelte';
     import Training from './Training.svelte';
     import History from './History.svelte';
+    import Sponsors from './Sponsors.svelte';
     import MatchFlow from './MatchFlow.svelte';
     import PlayerModal from './PlayerModal.svelte';
     import TeamModal from './TeamModal.svelte';
@@ -35,7 +45,12 @@
 
     initManager();
 
-    const autoSave = setInterval(() => flushManager(), 60 * 1000);
+    // Save every minute, and keep this slot's row on the manager board current.
+    const autoSave = setInterval(() => {
+        flushManager();
+        const sv = get(manager);
+        if (sv) publishManager(sv, activeSlot('manager'));
+    }, 60 * 1000);
     onDestroy(() => { clearInterval(autoSave); flushManager(); });
 
     const SCREENS = [
@@ -45,9 +60,14 @@
         { id: 'training', name: 'Training', icon: 'dumbbell' },
         { id: 'league', name: 'Competitions', icon: 'ranking' },
         { id: 'transfers', name: 'Transfers', icon: 'trade' },
+        { id: 'sponsors', name: 'Sponsors', icon: 'coins' },
+        { id: 'facilities', name: 'Staff', icon: 'home' },
         { id: 'history', name: 'History', icon: 'archive' },
         { id: 'trophies', name: 'Trophies', icon: 'trophy' },
+        { id: 'stats', name: 'Stats', icon: 'ranking' },
+        { id: 'board', name: 'Ranking', icon: 'trophy' },
         { id: 'club', name: 'Club', icon: 'briefcase' },
+        { id: 'jobs', name: 'Jobs', icon: 'briefcase' },
         { id: 'inbox', name: 'Inbox', icon: 'chat' },
     ];
 
@@ -86,6 +106,12 @@
         playSound('click');
         mgrScreen.set(id);
         if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+    }
+
+    function saveNow() {
+        playSound('click');
+        flushManager();
+        showToast(`Saved to slot ${activeSlot('manager')}.`, 'success', 2500);
     }
 
     function leave() {
@@ -163,6 +189,12 @@
                     {/if}
                 </div>
 
+                <button class="bell" on:click={saveNow} title="Save now (the game also saves itself every step and every minute)" aria-label="Save">
+                    <Icon name="check" size={18} stroke={2.4} />
+                </button>
+                <button class="bell" on:click={() => { playSound('click'); openSettings('display'); }} title="Settings" aria-label="Settings">
+                    <Icon name="settings" size={19} stroke={2.1} />
+                </button>
                 <button class="bell" class:hot={decisions > 0} class:has={unread > 0} on:click={() => go('inbox')} title={decisions ? `${decisions} decision${decisions === 1 ? '' : 's'} waiting` : unread ? `${unread} unread` : 'Inbox'} aria-label="Inbox, {unread} unread">
                     <Icon name="chat" size={19} stroke={2.1} />
                     {#if unread}<span class="bell-n">{unread}</span>{/if}
@@ -197,6 +229,11 @@
                     {:else if $mgrScreen === 'tactics'}<Tactics />
                     {:else if $mgrScreen === 'training'}<Training />
                     {:else if $mgrScreen === 'history'}<History />
+                    {:else if $mgrScreen === 'sponsors'}<Sponsors />
+                    {:else if $mgrScreen === 'board'}<ManagerBoard />
+                    {:else if $mgrScreen === 'stats'}<Stats />
+                    {:else if $mgrScreen === 'facilities'}<Facilities />
+                    {:else if $mgrScreen === 'jobs'}<Jobs />
                     {:else if $mgrScreen === 'league'}<League />
                     {:else if $mgrScreen === 'transfers'}<Transfers />
                     {:else if $mgrScreen === 'trophies'}<Trophies />
