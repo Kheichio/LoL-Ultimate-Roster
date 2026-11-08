@@ -13,7 +13,7 @@ import { STEPS_PER_YEAR } from './data.js';
 import { clamp } from './util.js';
 import { ownerStake } from './market.js';
 
-export const VACANCY_WEEKS = 8;
+export const VACANCY_WEEKS = 14;
 const absStep = (save) => save.time.year * STEPS_PER_YEAR + save.time.step;
 
 /** Live vacancies, newest first: not the manager's own club and not a folded one. */

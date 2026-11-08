@@ -8,9 +8,9 @@
     import { showToast } from '../../stores/toasts.js';
     import {
         myTeam, currentStep, userFixture, blockInfo, nextOpponent, scoutReport, winChance, leagueName, tableRows, leagueOf,
-        undecidedContracts, answerEvent, leagueKey, fearlessOn, hasBoard,
+        undecidedContracts, answerEvent, leagueKey, fearlessOn, hasBoard, liveEvent,
     } from '../../manager/engine.js';
-    import { TACTIC_BY_ID, TACTIC_BEATS, ROLE_IDS, CALENDAR, SEASON_PHASES, phaseOfStep } from '../../manager/data.js';
+    import { TACTIC_BY_ID, TACTIC_BEATS, ROLE_IDS, SPLIT_NAME } from '../../manager/data.js';
     import { lineupOf, teamStrength } from '../../manager/match.js';
     import { ovrOf, ageOf } from '../../manager/people.js';
     import { renewalDemand, letContractRun, renewContract, renewAllExpiring, renewalBlock } from '../../manager/market.js';
@@ -18,6 +18,8 @@
     import Icon from '../ui/Icon.svelte';
     import TeamBadge from './TeamBadge.svelte';
     import PName from './PName.svelte';
+    import EventRoad from './EventRoad.svelte';
+    import Bracket from './Bracket.svelte';
 
     export let busy = false;
     const dispatch = createEventDispatcher();
@@ -37,7 +39,8 @@
     $: theirTac = scout ? TACTIC_BY_ID[scout.tactic] : null;
     $: counters = theirTac ? Object.entries(TACTIC_BEATS).filter(([, beats]) => beats.includes(theirTac.id)).map(([id]) => TACTIC_BY_ID[id]) : [];
     $: L = team ? leagueOf(s, team.id) : null;
-    $: split = step.split || 'spring';
+    $: split = step.split || 'winter';
+    $: live = team ? liveEvent(s) : null;
     $: rows = L ? tableRows(L, split, s) : [];
     $: myRank = rows.findIndex(r => r.id === (team && team.id)) + 1;
     $: last = s.last;
@@ -53,7 +56,6 @@
     $: expiring = team ? roster.filter(p => p.until <= s.time.year) : [];
     $: undecided = team ? undecidedContracts(s) : [];
     $: alerts = buildAlerts(s, team, roster);
-    $: phaseIdx = SEASON_PHASES.findIndex(p => p.id === phaseOfStep(step));
     $: road = goldenRoad(s, team);
 
     function buildAlerts(s, team, roster) {
@@ -62,7 +64,7 @@
         const sad = roster.filter(p => (p.mor || 0) < 40);
         if (sad.length) out.push({ tone: 'bad', icon: 'heart', text: `${sad.map(p => p.name).join(', ')} ${sad.length === 1 ? 'is' : 'are'} unhappy`, go: 'squad' });
         if ((s.offers || []).length) out.push({ tone: 'good', icon: 'coins', text: `${s.offers.length} offer${s.offers.length === 1 ? '' : 's'} for your players: answer before the window closes`, go: 'transfers' });
-        if (s.manager.points) out.push({ tone: 'good', icon: 'star', text: `${s.manager.points} perk point${s.manager.points === 1 ? '' : 's'} to spend`, go: 'club' });
+        if (s.manager.points) out.push({ tone: 'good', icon: 'star', text: `${s.manager.points} perk point${s.manager.points === 1 ? '' : 's'} to spend`, go: 'profile' });
         if (roster.length < 6) out.push({ tone: 'warn', icon: 'squad', text: `Only ${roster.length} players: sign depth before someone is needed`, go: 'transfers' });
         const retiring = roster.filter(p => p.retiring === s.time.year);
         if (retiring.length) out.push({ tone: 'warn', icon: 'clock', text: `${retiring.map(p => p.name).join(', ')} will retire at the end of the season`, go: 'squad' });
@@ -128,9 +130,9 @@
                 <Icon name="briefcase" size={30} />
                 <div>
                     <h2>You are between jobs</h2>
-                    <p class="dim">Pick one of your job offers on the Club screen to carry on.</p>
+                    <p class="dim">Take an offer, apply for an opening, or found a club with your own money.</p>
                 </div>
-                <button class="btn btn-p big" on:click={() => mgrScreen.set('club')}>See job offers</button>
+                <button class="btn btn-p big" on:click={() => mgrScreen.set('jobs')}>See the job market</button>
             </div>
         {:else if fixture && opp}
             <div class="nx-comp">
@@ -199,14 +201,18 @@
     </section>
 
     <!-- ══════ THE YEAR ══════ -->
-    <section class="year">
-        {#each SEASON_PHASES as p, i}
-            <span class="yp" class:done={i < phaseIdx} class:now={i === phaseIdx} style="--pc:{p.color}" title={p.name}>
-                <span class="yp-dot"><Icon name={p.icon} size={13} stroke={2.2} /></span>
-                <span class="yp-n">{p.short}</span>
-            </span>
-        {/each}
-    </section>
+    {#if team}<EventRoad compact />{/if}
+
+    <!-- ══════ THE TOURNAMENT YOU ARE WATCHING ══════ -->
+    {#if live}
+        <section class="panel">
+            <div class="ph">
+                <h3><Icon name="trophy" size={15} /> {live.name}</h3>
+                <span class="muted small">{live.detail}{#if live.prizes.length}{' · '}winners get {fmtMoney(live.prizes[0][1])}{/if}</span>
+            </div>
+            <Bracket bracket={live.bracket} teams={s.teams} me={team.id} />
+        </section>
+    {/if}
 
     <!-- ══════ NEEDS YOU ══════ -->
     {#if pending.length || undecided.length || expiring.length}
@@ -271,7 +277,7 @@
             {#if L && team}
                 <section class="panel">
                     <div class="ph">
-                        <h3><Icon name="ranking" size={15} /> {leagueName(team.region, team.tier)} · {split === 'spring' ? 'Spring' : 'Summer'}</h3>
+                        <h3><Icon name="ranking" size={15} /> {leagueName(team.region, team.tier)} · {SPLIT_NAME[split]}</h3>
                         {#if myRank}<span class="chip" style="--c:#34d399">You: {ordinal(myRank)}</span>{/if}
                     </div>
                     <div class="tbl-wrap">
@@ -280,7 +286,7 @@
                             <tbody>
                                 {#each rows as r, i (r.id)}
                                     {@const t = s.teams[r.id]}
-                                    <tr class:me={r.id === team.id} class="click" class:cut={i === 3} on:click={() => mgrModal.set({ kind: 'team', id: r.id })}>
+                                    <tr class:me={r.id === team.id} class="click" class:cut={i === 3} class:zone={team.tier === 1 && i >= rows.length - 3} on:click={() => mgrModal.set({ kind: 'team', id: r.id })}>
                                         <td class="num muted">{i + 1}</td>
                                         <td><span class="trow"><TeamBadge team={t} size={22} /> {t.name}</span></td>
                                         <td class="c num">{r.w}</td>
@@ -292,7 +298,7 @@
                             </tbody>
                         </table>
                     </div>
-                    <p class="legend muted">Top four reach the playoffs.{#if team.tier === 1} Last over both splits is relegated; ninth plays a promotion series.{:else} The summer champion is promoted; the runner-up plays a promotion series.{/if}</p>
+                    <p class="legend muted">Top four reach the playoffs.{' '}{#if team.tier === 1}Over the whole year the bottom two go down, and third from bottom plays the league below's third to stay up.{:else}The summer finalists go up; the third-placed side plays the top league's third from bottom.{/if}</p>
                 </section>
             {/if}
 
@@ -373,7 +379,7 @@
                             <span class="rd-i rd-{it.st}"><Icon name={ROAD_ICON[it.st]} size={13} stroke={2.6} /> {it.name}</span>
                         {/each}
                     </div>
-                    <p class="muted small">Win Spring, MSI, Summer and Worlds in one year.</p>
+                    <p class="muted small">Win Spring, MSI, Summer and Worlds in one year. Winter and First Stand are the warm-up.</p>
                 </section>
             {/if}
 
@@ -388,7 +394,7 @@
                     </ul>
                 {:else}
                     <div class="ph"><h3><Icon name="crown" size={15} /> Your club</h3><span class="chip" style="--c:#fbbf24">Owner · 100%</span></div>
-                    <p class="own small">You own all of {team ? team.name : 'the club'}: no board, no objectives, no wage limit. Only the balance can stop you signing. Selling a stake is on the Club screen.</p>
+                    <p class="own small">You own all of {team ? team.name : 'the club'}: no board, no objectives, no wage limit. Only the balance can stop you signing. Your salary and bank are on your Profile.</p>
                 {/if}
                 <div class="money">
                     <span class="muted small">Balance</span><b class="num" class:bad={s.finance.balance < 0}>{fmtMoney(s.finance.balance)}</b>
@@ -411,7 +417,8 @@
 </div>
 
 <style>
-    .home { display: flex; flex-direction: column; gap: 14px; }
+    .home { display: flex; flex-direction: column; gap: 12px; }
+    tr.zone td { box-shadow: inset 0 -1px 0 rgba(248, 113, 113, 0.12); background: rgba(248, 113, 113, 0.05); }
     .next { position: relative; overflow: hidden; background: radial-gradient(80% 140% at 0% 0%, color-mix(in srgb, var(--c) 20%, transparent), transparent 60%), radial-gradient(60% 120% at 100% 100%, color-mix(in srgb, var(--t) 14%, transparent), transparent 60%), rgba(15, 23, 42, 0.72); padding: 20px 22px; border-color: color-mix(in srgb, var(--c) 45%, var(--line)); border-top: 4px solid var(--c); }
     .nx-comp { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
     .nc-ico { width: 46px; height: 46px; flex-shrink: 0; display: grid; place-items: center; border-radius: 13px; color: #0b1120; background: var(--c); box-shadow: 0 0 22px color-mix(in srgb, var(--c) 50%, transparent); }
@@ -420,7 +427,8 @@
     .nc-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 22px; font-weight: 700; color: #fff; }
     .nc-chips { display: flex; gap: 6px; flex-wrap: wrap; }
     .vs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; }
-    .side { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+    .side { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+    .side:last-child { flex-direction: row-reverse; }
     .s-name { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 20px; font-weight: 700; color: #fff; }
     .mid { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 140px; }
     .odds-n { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 42px; font-weight: 700; line-height: 1; }
@@ -440,14 +448,6 @@
     .nx-empty h2 { margin: 2px 0 4px; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 22px; color: #fff; }
     .nx-empty p { margin: 0 0 6px; font-size: 14px; line-height: 1.55; }
 
-    .year { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
-    .yp { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 4px; border-radius: 11px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.4); color: #64748b; }
-    .yp-dot { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: rgba(51, 65, 85, 0.4); }
-    .yp-n { font-size: 10.5px; font-weight: 800; letter-spacing: 0.3px; text-transform: uppercase; white-space: nowrap; }
-    .yp.done { color: #a5b4cf; }
-    .yp.done .yp-dot { background: color-mix(in srgb, var(--pc) 30%, #1e293b); color: #e2e8f0; }
-    .yp.now { color: #fff; border-color: var(--pc); background: color-mix(in srgb, var(--pc) 14%, rgba(15, 23, 42, 0.7)); box-shadow: 0 0 18px color-mix(in srgb, var(--pc) 22%, transparent); }
-    .yp.now .yp-dot { background: var(--pc); color: #0b1120; }
 
     .needs { display: flex; flex-direction: column; gap: 10px; }
     .decide { padding: 14px 16px; border-radius: 15px; background: rgba(244, 114, 182, 0.08); border: 1px solid rgba(244, 114, 182, 0.55); box-shadow: 0 0 22px rgba(244, 114, 182, 0.1); }
@@ -530,13 +530,11 @@
     @media (max-width: 1000px) {
         .cols { grid-template-columns: 1fr; }
         .intel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .year { grid-template-columns: repeat(5, minmax(0, 1fr)); }
     }
     @media (max-width: 560px) {
         .nc-chips { width: 100%; }
         .nc-name { font-size: 19px; }
         .vs { grid-template-columns: 1fr; }
         .s-name { font-size: 16px; }
-        .yp-n { font-size: 9px; }
     }
 </style>

@@ -102,7 +102,7 @@
             <div class="sec"><div class="sec-h"><Icon name="sparkle" size={14} /> Rookies arriving in {report.year + 1}</div><p>{report.debuts.slice(0, 30).join(', ')}{report.debuts.length > 30 ? ` and ${report.debuts.length - 30} more` : ''}</p></div>
         {/if}
         {#if report.offers.length && !report.sacked}
-            <div class="sec"><div class="sec-h"><Icon name="briefcase" size={14} /> Job offers</div><p>{report.offers.map(name).join(', ')} want you. See the Club screen.</p></div>
+            <div class="sec"><div class="sec-h"><Icon name="briefcase" size={14} /> Job offers</div><p>{report.offers.map(name).join(', ')} want you. See the Jobs screen.</p></div>
         {/if}
 
         <div class="btns"><button class="btn btn-p" on:click={close}>{s.jobless ? 'See job offers' : `Into the ${report.year + 1} preseason`} <Icon name="arrow" size={14} stroke={2.4} /></button></div>

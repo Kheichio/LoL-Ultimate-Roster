@@ -12,6 +12,10 @@
     import Stats from './Stats.svelte';
     import Facilities from './Facilities.svelte';
     import Jobs from './Jobs.svelte';
+    import Scouting from './Scouting.svelte';
+    import Academy from './Academy.svelte';
+    import Profile from './Profile.svelte';
+    import Legends from './Legends.svelte';
     import { openMenu } from '../../stores/menu.js';
     import { openSettings } from '../../stores/ui.js';
     import { showToast } from '../../stores/toasts.js';
@@ -53,23 +57,18 @@
     }, 60 * 1000);
     onDestroy(() => { clearInterval(autoSave); flushManager(); });
 
-    const SCREENS = [
-        { id: 'home', name: 'Home', icon: 'home' },
-        { id: 'squad', name: 'Squad', icon: 'squad' },
-        { id: 'tactics', name: 'Tactics', icon: 'target' },
-        { id: 'training', name: 'Training', icon: 'dumbbell' },
-        { id: 'league', name: 'Competitions', icon: 'ranking' },
-        { id: 'transfers', name: 'Transfers', icon: 'trade' },
-        { id: 'sponsors', name: 'Sponsors', icon: 'coins' },
-        { id: 'facilities', name: 'Staff', icon: 'home' },
-        { id: 'history', name: 'History', icon: 'archive' },
-        { id: 'trophies', name: 'Trophies', icon: 'trophy' },
-        { id: 'stats', name: 'Stats', icon: 'ranking' },
-        { id: 'board', name: 'Ranking', icon: 'trophy' },
-        { id: 'club', name: 'Club', icon: 'briefcase' },
-        { id: 'jobs', name: 'Jobs', icon: 'briefcase' },
-        { id: 'inbox', name: 'Inbox', icon: 'chat' },
+    // Eight sections. A section with more than one screen shows them as tabs under the header.
+    const NAV = [
+        { id: 'home', name: 'Home', icon: 'home', subs: [['home', 'Home']] },
+        { id: 'team', name: 'Team', icon: 'squad', subs: [['squad', 'Squad'], ['tactics', 'Tactics'], ['training', 'Training']] },
+        { id: 'comps', name: 'Competitions', icon: 'ranking', subs: [['league', 'Competitions'], ['stats', 'Stats']] },
+        { id: 'recruit', name: 'Recruitment', icon: 'trade', subs: [['transfers', 'Transfers'], ['scouting', 'Scouting'], ['academy', 'Academy']] },
+        { id: 'club', name: 'Club', icon: 'briefcase', subs: [['club', 'Club'], ['facilities', 'Staff and facilities'], ['sponsors', 'Sponsors']] },
+        { id: 'you', name: 'Manager', icon: 'user', subs: [['profile', 'Profile'], ['jobs', 'Jobs'], ['trophies', 'Trophies']] },
+        { id: 'past', name: 'History', icon: 'archive', subs: [['history', 'Clubs'], ['legends', 'All-time greats'], ['board', 'Ranking']] },
+        { id: 'inbox', name: 'Inbox', icon: 'chat', subs: [['inbox', 'Inbox']] },
     ];
+    const sectionOf = (screen) => NAV.find(n => n.subs.some(([id]) => id === screen)) || NAV[0];
 
     $: s = $manager;
     $: team = s ? myTeam(s) : null;
@@ -88,14 +87,15 @@
     $: xpPct = s ? Math.min(100, (s.manager.xp / MGR_XP_PER_LEVEL) * 100) : 0;
     $: block = s ? blockInfo(s) : null;
     $: atHome = $mgrScreen === 'home';
-    $: nextLabel = !s ? '' : s.jobless ? 'Choose a new club'
+    $: section = sectionOf($mgrScreen);
+    $: nextLabel = !s ? '' : s.jobless ? 'Find a new club'
         : !atHome ? 'Back to Home'
         : block ? 'Needs you'
         : fixture ? `Play ${opp ? 'vs ' + opp.short : 'match'}`
         : step && step.kind === 'offseason' ? 'Start the offseason'
-        : step && step.kind === 'window' ? (step.id === 'preseason' ? 'Start the Spring Split' : 'Start the Summer Split')
+        : step && step.kind === 'window' ? (step.id === 'preseason' ? 'Start the Winter Split' : 'Start the Summer Split')
         : 'Continue';
-    $: nextSub = !s ? '' : s.jobless ? 'Job offers are on the Club screen'
+    $: nextSub = !s ? '' : s.jobless ? 'See the Jobs screen'
         : !atHome ? 'You continue from the club home'
         : block ? block.msg
         : fixture ? fixture.comp
@@ -209,13 +209,13 @@
 
             <nav class="nav" aria-label="Manager sections">
                 <div class="nav-in">
-                    {#each SCREENS as sc}
-                        <button class="tab" class:on={$mgrScreen === sc.id} on:click={() => go(sc.id)} aria-current={$mgrScreen === sc.id ? 'page' : undefined}>
+                    {#each NAV as sc (sc.id)}
+                        <button class="tab" class:on={section.id === sc.id} on:click={() => go(sc.subs[0][0])} aria-current={section.id === sc.id ? 'page' : undefined}>
                             <Icon name={sc.icon} size={16} stroke={2} />
                             <span class="tab-t">{sc.name}</span>
                             {#if sc.id === 'inbox' && unread}<span class="badge" class:badge-hot={decisions > 0}>{unread}</span>{/if}
-                            {#if sc.id === 'transfers' && offers}<span class="badge">{offers}</span>{/if}
-                            {#if sc.id === 'club' && points}<span class="badge badge-pt">+{points}</span>{/if}
+                            {#if sc.id === 'recruit' && offers}<span class="badge">{offers}</span>{/if}
+                            {#if sc.id === 'you' && points}<span class="badge badge-pt">+{points}</span>{/if}
                         </button>
                     {/each}
                 </div>
@@ -223,6 +223,13 @@
         </header>
 
         <main class="mm">
+            {#if section.subs.length > 1}
+                <div class="subnav">
+                    {#each section.subs as [id, name] (id)}
+                        <button class:on={$mgrScreen === id} on:click={() => go(id)}>{name}</button>
+                    {/each}
+                </div>
+            {/if}
             {#key $mgrScreen}
                 <div class="screen">
                     {#if $mgrScreen === 'squad'}<Squad />
@@ -234,6 +241,10 @@
                     {:else if $mgrScreen === 'stats'}<Stats />
                     {:else if $mgrScreen === 'facilities'}<Facilities />
                     {:else if $mgrScreen === 'jobs'}<Jobs />
+                    {:else if $mgrScreen === 'scouting'}<Scouting />
+                    {:else if $mgrScreen === 'academy'}<Academy />
+                    {:else if $mgrScreen === 'profile'}<Profile />
+                    {:else if $mgrScreen === 'legends'}<Legends />
                     {:else if $mgrScreen === 'league'}<League />
                     {:else if $mgrScreen === 'transfers'}<Transfers />
                     {:else if $mgrScreen === 'trophies'}<Trophies />
@@ -267,6 +278,11 @@
         flex: 1 0 auto; display: flex; flex-direction: column; width: 100%; min-height: 100%;
         color: #d5deeb; font-size: 14px;
     }
+
+    .subnav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; padding: 3px; width: fit-content; max-width: 100%; border-radius: 11px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(71, 85, 105, 0.4); }
+    .subnav button { padding: 6px 14px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 700; color: #a5b4cf; background: none; border: none; cursor: pointer; }
+    .subnav button:hover { color: #fff; }
+    .subnav button.on { color: #052e1f; background: #34d399; }
 
     /* ═══════════ HEADER ═══════════ */
     .mh {
@@ -329,7 +345,7 @@
     .badge-hot { color: #fff; background: #f472b6; }
     .badge-pt { background: #34d399; }
 
-    .mm { flex: 1; width: 100%; max-width: 1500px; margin: 0 auto; padding: 22px 20px 60px; }
+    .mm { flex: 1; width: 100%; max-width: 1500px; margin: 0 auto; padding: 14px 20px 44px; }
     .screen { animation: mFade 0.25s ease both; }
     @keyframes mFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -359,7 +375,7 @@
     .mgr :global(.ph h3) { display: flex; align-items: center; gap: 8px; margin: 0; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: #c3cfe2; }
     .mgr :global(.ph h3 .ico) { color: #34d399; }
     .mgr :global(.page-h) { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #fff; margin: 0 0 4px; }
-    .mgr :global(.page-sub) { font-size: 14px; color: #a5b4cf; margin: 0 0 18px; line-height: 1.6; }
+    .mgr :global(.page-sub) { font-size: 13.5px; color: #a5b4cf; margin: 0 0 10px; line-height: 1.5; }
     .mgr :global(.btn) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 14px; border-radius: 11px; font-family: inherit; font-size: 13px; font-weight: 700; color: #cbd5e1; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(71, 85, 105, 0.5); cursor: pointer; white-space: nowrap; }
     .mgr :global(.btn:hover:not(:disabled)) { color: #fff; border-color: rgba(52, 211, 153, 0.55); }
     .mgr :global(.btn:disabled) { opacity: 0.45; cursor: not-allowed; }

@@ -1,13 +1,14 @@
 <script>
     import { manager, mgrModal } from '../../stores/manager.js';
     import { myTeam, currentStep, leagueName, tableRows, annualRows, leagueKey, worldsRace } from '../../manager/engine.js';
-    import { REGIONS, REGION_BY_ID, TIER2_NAME, LEAGUE_WEEKS, WORLDS_SLOTS_BY_RANK, ROLE_IDS, CUP_WEEKS } from '../../manager/data.js';
+    import { REGIONS, REGION_BY_ID, TIER2_NAME, WORLDS_SLOTS_BY_RANK, ROLE_IDS, CUP_WEEKS, SPLITS, SPLIT_NAME, weeksOf } from '../../manager/data.js';
     import { teamStrength } from '../../manager/match.js';
     import { ovrColor, ordinal } from '../../manager/ui.js';
     import Icon from '../ui/Icon.svelte';
     import RegionIcon from '../ui/RegionIcon.svelte';
     import TeamBadge from './TeamBadge.svelte';
     import Bracket from './Bracket.svelte';
+    import EventRoad from './EventRoad.svelte';
 
     $: s = $manager;
     $: S = s.season;
@@ -16,24 +17,24 @@
     $: step = currentStep(s);
     /** Which tab opens first. The screen never passes it; tools/managerRender does,
      *  because every tab but the first is otherwise reachable only by a click. */
-    export let initialTab = 'league';
+    export let initialTab = 'season';
     let tab = initialTab;
     let region = null;
     let tier = null;
     let split = null;
     $: if (region === null) region = team ? team.region : 'LCK';
     $: if (tier === null) tier = team ? team.tier : 1;
-    $: if (split === null) split = step.split || 'spring';
+    $: if (split === null) split = step.split || 'winter';
     $: L = S.leagues[leagueKey(region, tier)];
-    $: rows = L ? (split === 'annual' ? annualRows(L, s) : tableRows(L, split === 'annual' ? 'spring' : split, s)) : [];
-    $: fixtures = L && split !== 'annual' ? L[split].fixtures : [];
+    $: rows = L ? (split === 'annual' ? annualRows(L, s) : tableRows(L, split, s)) : [];
+    $: fixtures = L && split !== 'annual' && L[split] ? L[split].fixtures : [];
     $: playoff = S.playoffs[leagueKey(region, tier) + ':' + (split === 'annual' ? 'summer' : split)];
     $: race = worldsRace(s);
     $: promo = S.promo[region];
     $: cupR = s.cup && s.cup.year === s.time.year ? s.cup.regions[region] : null;
 
     const TABS = [
-        ['league', 'Leagues'], ['playoffs', 'Playoffs'], ['cup', 'Cup'], ['msi', 'MSI'], ['worlds', 'Worlds'], ['race', 'Road to Worlds'], ['history', 'History'],
+        ['season', 'This year'], ['league', 'Leagues'], ['playoffs', 'Playoffs'], ['cup', 'Cup'], ['firststand', 'First Stand'], ['msi', 'MSI'], ['worlds', 'Worlds'], ['race', 'Road to Worlds'], ['history', 'History'],
     ];
     const open = (id) => mgrModal.set({ kind: 'team', id });
     const name = (id) => (s.teams[id] ? s.teams[id].name : s.defunct && s.defunct[id] ? s.defunct[id].name : '—');
@@ -43,7 +44,7 @@
     <div class="top">
         <div>
             <h1 class="page-h">Competitions</h1>
-            <p class="page-sub">{s.time.year} · {step.name}. Every region plays the same calendar: Spring, MSI, Summer, promotion, Worlds.</p>
+            <p class="page-sub">{s.time.year} · {step.name}. Every region plays the same calendar: Winter, First Stand, Spring, MSI, Summer, promotion, Worlds.</p>
         </div>
         <div class="seg">
             {#each TABS as [id, lbl]}<button class:on={tab === id} on:click={() => (tab = id)}>{lbl}</button>{/each}
@@ -60,19 +61,20 @@
                 <button class:on={tier === 2} on:click={() => (tier = 2)}>{TIER2_NAME[region]}</button>
             </div>
             <div class="seg">
-                <button class:on={split === 'spring'} on:click={() => (split = 'spring')}>Spring</button>
-                <button class:on={split === 'summer'} on:click={() => (split = 'summer')}>Summer</button>
+                {#each SPLITS as sp (sp)}<button class:on={split === sp} on:click={() => (split = sp)}>{SPLIT_NAME[sp]}</button>{/each}
                 {#if tab === 'league'}<button class:on={split === 'annual'} on:click={() => (split = 'annual')}>Year</button>{/if}
             </div>
         </div>
     {/if}
 
-    {#if tab === 'league' && L}
+    {#if tab === 'season'}
+        <EventRoad />
+    {:else if tab === 'league' && L}
         <div class="two">
             <section class="panel">
                 <div class="ph">
-                    <h3><RegionIcon region={region} size={14} /> {leagueName(region, tier)} · {split === 'annual' ? 'both splits' : split}</h3>
-                    {#if split === 'annual'}<span class="muted small">{tier === 1 ? 'Bottom: relegated · 9th: promotion series' : 'Promotion comes from the summer playoffs'}</span>{/if}
+                    <h3><RegionIcon region={region} size={14} /> {leagueName(region, tier)} · {split === 'annual' ? 'the whole year' : SPLIT_NAME[split]}</h3>
+                    {#if split === 'annual'}<span class="muted small">{tier === 1 ? 'Bottom two: relegated · third from bottom: plays to stay up' : 'Promotion comes from the summer playoffs'}</span>{/if}
                 </div>
                 <div class="tbl-wrap">
                     <table class="tbl">
@@ -80,7 +82,7 @@
                         <tbody>
                             {#each rows as r, i (r.id)}
                                 {@const t = s.teams[r.id]}
-                                <tr class="click" class:me={r.id === me} class:cut={split !== 'annual' && i === 3} class:rel={split === 'annual' && tier === 1 && i >= rows.length - 2} on:click={() => open(r.id)}>
+                                <tr class="click" class:me={r.id === me} class:cut={split !== 'annual' && i === 3} class:rel={split === 'annual' && tier === 1 && i >= rows.length - 2} class:po={split === 'annual' && tier === 1 && i === rows.length - 3} on:click={() => open(r.id)}>
                                     <td class="num muted">{i + 1}</td>
                                     <td><span class="trow"><TeamBadge team={t} size={22} /> {t.name}{#if !t.real}<span class="chip" style="--c:#fbbf24">Random</span>{/if}</span></td>
                                     <td class="c num">{r.w}</td>
@@ -118,16 +120,16 @@
         </div>
     {:else if tab === 'playoffs'}
         <section class="panel">
-            <div class="ph"><h3><Icon name="trophy" size={15} /> {leagueName(region, tier)} {split === 'summer' ? 'Summer' : 'Spring'} Playoffs</h3><span class="muted small">Top four · best of 5</span></div>
+            <div class="ph"><h3><Icon name="trophy" size={15} /> {leagueName(region, tier)} {SPLIT_NAME[split] || 'Summer'} Playoffs</h3><span class="muted small">Top four · best of 5</span></div>
             {#if playoff}<Bracket bracket={playoff} teams={s.teams} {me} />
-            {:else}<div class="empty">Drawn when the regular season ends (after week {LEAGUE_WEEKS}).</div>{/if}
+            {:else}<div class="empty">Drawn when the regular season ends (after week {weeksOf(split)}).</div>{/if}
         </section>
         {#if promo && (promo.tie || promo.up)}
             <section class="panel">
                 <div class="ph"><h3><Icon name="upgrade" size={15} /> Promotion & relegation · {REGION_BY_ID[region].league}</h3></div>
                 <ul class="promo">
                     {#if promo.up}<li><span class="good">Up:</span> {name(promo.up)}{#if promo.up2}{' and '}{name(promo.up2)}{/if} (tier 2 summer finalists)</li>{/if}
-                    {#if promo.down}<li><span class="bad">Down:</span> {name(promo.down)}{#if promo.down2}{' and '}{name(promo.down2)}{/if} (bottom two over both splits)</li>{/if}
+                    {#if promo.down}<li><span class="bad">Down:</span> {name(promo.down)}{#if promo.down2}{' and '}{name(promo.down2)}{/if} (bottom two over the whole year)</li>{/if}
                     {#if promo.tie}<li><span class="warn">Promotion series:</span> {name(promo.tie.a)} vs {name(promo.tie.b)}{#if promo.tie.score}{' · '}{promo.tie.score.join('–')}, {name(promo.tie.winner)} {promo.tie.winner === promo.tie.a ? 'stay up' : 'go up'}{/if}</li>{/if}
                 </ul>
             </section>
@@ -135,9 +137,9 @@
     {:else if tab === 'cup'}
         <div class="seg">{#each REGIONS as r (r.id)}<button class:on={region === r.id} on:click={() => (region = r.id)}>{r.id}</button>{/each}</div>
         <section class="panel">
-            <div class="ph"><h3><Icon name="shield" size={15} /> {region} Regional Cup {s.time.year}</h3><span class="muted small">Tier 1 and tier 2 · spring weeks {CUP_WEEKS.map(w => w + 1).join(', ')} · Bo3, final Bo5</span></div>
+            <div class="ph"><h3><Icon name="shield" size={15} /> {region} Regional Cup {s.time.year}</h3><span class="muted small">Tier 1 and tier 2 · spring weeks {CUP_WEEKS.map(w => w + 1).join(', ')} · Bo3, final Bo5 · a trophy and prize money, with a choice of who plays each round</span></div>
             {#if cupR}<Bracket bracket={cupR} teams={s.teams} {me} />
-            {:else}<div class="empty">Drawn in the second week of the spring split.</div>{/if}
+            {:else}<div class="empty">Drawn in week {CUP_WEEKS[0] + 1} of the spring split.</div>{/if}
         </section>
         {#if s.allStar && s.allStar.year === s.time.year}
             <section class="panel">
@@ -149,6 +151,12 @@
                 </div>
             </section>
         {/if}
+    {:else if tab === 'firststand'}
+        <section class="panel">
+            <div class="ph"><h3><Icon name="flag" size={15} /> First Stand {s.time.year}</h3><span class="muted small">Six winter champions + the runners-up of the two strongest regions · best of 5</span></div>
+            {#if S.firststand}<Bracket bracket={S.firststand} teams={s.teams} {me} />
+            {:else}<div class="empty">Drawn when the winter finals are over.</div>{/if}
+        </section>
     {:else if tab === 'msi'}
         <section class="panel">
             <div class="ph"><h3><Icon name="globe" size={15} /> MSI {s.time.year}</h3><span class="muted small">Six spring champions + the runners-up of the two strongest regions · best of 5</span></div>
@@ -183,7 +191,7 @@
             <div class="hist">
                 {#each s.history.slice().reverse() as h (h.year)}
                     <section class="panel">
-                        <div class="ph"><h3>{h.year}</h3>{#if h.me}<span class="muted small">You: {h.me.teamName}{h.me.spring ? ` · spring ${ordinal(h.me.spring)}` : ''}{h.me.summer ? ` · summer ${ordinal(h.me.summer)}` : ''}{h.me.worlds ? ` · Worlds ${h.me.worlds === 1 ? 'CHAMPIONS' : 'top ' + (h.me.worlds <= 2 ? 2 : h.me.worlds <= 4 ? 4 : h.me.worlds <= 8 ? 8 : 16)}` : ''}</span>{/if}</div>
+                        <div class="ph"><h3>{h.year}</h3>{#if h.me}<span class="muted small">You: {h.me.teamName}{h.me.winter ? ` · winter ${ordinal(h.me.winter)}` : ''}{h.me.spring ? ` · spring ${ordinal(h.me.spring)}` : ''}{h.me.summer ? ` · summer ${ordinal(h.me.summer)}` : ''}{h.me.worlds ? ` · Worlds ${h.me.worlds === 1 ? 'CHAMPIONS' : 'top ' + (h.me.worlds <= 2 ? 2 : h.me.worlds <= 4 ? 4 : h.me.worlds <= 8 ? 8 : 16)}` : ''}</span>{/if}</div>
                         <div class="h-top">
                             <span class="h-big"><Icon name="trophy" size={14} /> Worlds: <b>{name(h.worlds)}</b></span>
                             <span class="h-big"><Icon name="globe" size={14} /> MSI: <b>{name(h.msi)}</b></span>
@@ -219,6 +227,7 @@
     .trow { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: #e2e8f0; }
     tr.cut td { border-bottom: 1px dashed rgba(52, 211, 153, 0.5); }
     tr.rel td { background: rgba(239, 68, 68, 0.07); }
+    tr.po td { background: rgba(251, 191, 36, 0.06); }
     .weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; max-height: 640px; overflow-y: auto; }
     .wk { display: flex; flex-direction: column; gap: 4px; }
     .wk-h { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }

@@ -10,6 +10,31 @@
 
 export const UPDATES = [
     {
+        ver: 'Beta 1.8.17',
+        title: 'Ultimate Manager — A Bigger World, Your Own Money, and a Cleaner Game',
+        summary: 'Thirteen-club leagues, a Winter Split and First Stand, a personal bank account with salaries and club ownership you keep when you leave, clubs that invest and train like real orgs, full records for every club and player, an all-time greats list, one academy and a Scouting screen, import limits, and the whole mode reorganised into eight sections.',
+        details: [
+            'NEW (Manager) — thirteen clubs in every league. The bottom two go down, and third from bottom plays the league below\'s third, best of five: win and stay, lose and swap.',
+            'NEW (Manager) — the Winter Split and First Stand. The year is now Winter, First Stand, Spring, MSI, Summer, promotion, Worlds.',
+            'NEW (Manager) — a live view of the year: every competition with where you stand, how to qualify and exactly what it pays, and the bracket you are in on your Home screen.',
+            'NEW (Manager) — your own bank account. A club pays you a salary; if you own all of it you set your own. Your money follows you, you can put it into your club, and it can buy a stake.',
+            'NEW (Manager) — leave a club you own and keep your share: it pays you a part of its profit every year, you can sell it, and with a majority you can walk back in.',
+            'NEW (Manager) — found a club at any time of year if you can pay for it, by buying a league place. With full ownership you can rename and rebrand any club.',
+            'NEW (Manager) — AI clubs invest: they upgrade training centres, staff, studios and academies with their income and their transfer profits.',
+            'NEW (Manager) — training clubs. Talent factories train players up and sell them at a profit; dynasty builders train them and keep them.',
+            'NEW (Manager) — every club and every player keeps a full record: games, wins, K/D/A, rating and MVPs per club per year, for AI clubs too, plus the year each player turned pro.',
+            'NEW (Manager) — the All-Time Greats list: every player in your world ranked on titles, awards, peak and longevity.',
+            'NEW (Manager) — players train themselves: solo queue XP every week, at any club or none, and a player well short of his potential catches up into his mid-twenties.',
+            'NEW (Manager) — ten more personalities, stronger effects, and sixteen personality combos. Every player now has a play style, with ten style combos, more champion duos and three new team comps.',
+            'NEW (Manager) — one academy: every club you run has one, and every prospect goes into it. A new Scouting screen sends scouts by region and role, holds their reports, shows who would improve your squad, and keeps your shortlist.',
+            'NEW (Manager) — at most two imports a club. Five years in a row in one region can naturalise a player.',
+            'NEW (Manager) — choose your club\'s language. A squad course gets cheaper the more of them already speak it.',
+            'Real orgs earn more than generated clubs, and take their real new names when the year comes: SKT become T1, Samsung become Gen.G, DAMWON become Dplus KIA.',
+            'The mode is reorganised from fifteen tabs into eight sections, with tighter layouts throughout.',
+            'Manager saves are now compressed, so a long career fits in your browser, and the game tells you if a save ever fails. Existing saves carry over: the season in progress finishes on its old format and the new one starts next year.',
+        ],
+    },
+    {
         ver: 'Beta 1.8.16',
         title: 'Ultimate Manager — Cups, All-Stars, a Job Market, Injuries and Loans',
         summary: 'A Regional Cup in every region, an All-Star event at the break, a real job market where you apply for openings, proper injuries at every club, and loans in both directions.',

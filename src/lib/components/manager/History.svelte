@@ -184,7 +184,7 @@
                     <div class="yr">
                         <div class="yr-h num">{yr.y}</div>
                         <div class="yr-splits">
-                            {#each [['sp', 'Spring'], ['su', 'Summer']] as [k, label] (k)}
+                            {#each [['wi', 'Winter'], ['sp', 'Spring'], ['su', 'Summer']].filter(([k]) => k !== 'wi' || yr.wi) as [k, label] (k)}
                                 {@const r = yr[k]}
                                 <div class="sp" class:won={r && (r.w.includes('league') || r.w.includes('tier2') || r.w.includes('msi') || r.w.includes('worlds'))} class:down={r && r.w.includes('down')}>
                                     {#if r}
@@ -283,7 +283,7 @@
     .timeline { display: flex; flex-direction: column; gap: 12px; }
     .yr { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; }
     .yr-h { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 22px; font-weight: 700; color: #fff; padding-top: 8px; border-right: 2px solid color-mix(in srgb, var(--c, #34d399) 60%, transparent); }
-    .yr-splits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .yr-splits { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
     .sp { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; border-radius: 12px; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(51, 65, 85, 0.5); }
     .sp.won { border-color: rgba(250, 204, 21, 0.6); background: linear-gradient(160deg, rgba(250, 204, 21, 0.1), rgba(2, 6, 23, 0.45) 60%); }
     .sp.down { border-color: rgba(248, 113, 113, 0.5); }

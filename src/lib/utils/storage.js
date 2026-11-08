@@ -18,6 +18,8 @@
 //  never namespaced — a player who switches slot should not lose their theme and
 //  get their audio unmuted. A new setting belongs here too.
 
+import { pack, unpack, isPacked } from './pack.js';
+
 const DEVICE_KEYS = new Set(['lur_sound_muted', 'lur_sound_volume', 'lur_light_mode', 'lur_display_scale', 'lur_match_cards', 'lur_player_photos', 'lur_drill_briefs', 'lur_career_skip_minigames']);
 
 // Slot bookkeeping lives under its own prefix so it can never be namespaced by
@@ -150,21 +152,30 @@ function enumerateKeys() {
 // ─────────────────────────────────────────────────────────────────────────
 //  PUBLIC API
 // ─────────────────────────────────────────────────────────────────────────
+/** A manager save is megabytes of JSON, so it is stored compressed (utils/pack.js). */
+const encode = (key, value) => {
+    const json = JSON.stringify(value);
+    return familyOf(key) === 'manager' ? pack(json) : json;
+};
+const decode = (raw) => JSON.parse(isPacked(raw) ? unpack(raw) : raw);
+
+/** Returns false when the write failed (usually a full browser storage). */
 export function saveToStorage(key, value) {
     const resolved = resolveKey(key);
     try {
-        localStorage.setItem(resolved, JSON.stringify(value));
+        localStorage.setItem(resolved, encode(key, value));
     } catch (e) {
         console.warn(`Failed to save ${key}:`, e);
-        return;
+        return false;
     }
     if (familyOf(key)) rememberKey(key);
+    return true;
 }
 
 export function loadFromStorage(key) {
     try {
         const raw = rawGet(resolveKey(key));
-        return raw !== null ? JSON.parse(raw) : null;
+        return raw !== null ? decode(raw) : null;
     } catch (e) {
         console.warn(`Failed to load ${key}:`, e);
         return null;
@@ -180,7 +191,7 @@ export function removeFromStorage(key) {
  *  from rather than dropping them all into whichever slot happens to be open. */
 export function saveToSlot(key, value, slot) {
     try {
-        localStorage.setItem(resolveKey(key, slot), JSON.stringify(value));
+        localStorage.setItem(resolveKey(key, slot), encode(key, value));
     } catch (e) {
         console.warn(`Failed to save ${key} to slot ${slot}:`, e);
         return false;
@@ -194,7 +205,7 @@ export function saveToSlot(key, value, slot) {
 export function loadFromSlot(key, slot) {
     try {
         const raw = rawGet(resolveKey(key, slot));
-        return raw !== null ? JSON.parse(raw) : null;
+        return raw !== null ? decode(raw) : null;
     } catch (e) {
         return null;
     }

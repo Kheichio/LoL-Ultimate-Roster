@@ -1,7 +1,7 @@
 <script>
     // The job market: your reputation, the offers on the table, and every club looking
     // for a manager. Apply once per opening; a yes becomes an offer you can take.
-    import { manager, mutate } from '../../stores/manager.js';
+    import { manager, mutate, mgrScreen } from '../../stores/manager.js';
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal } from '../../stores/ui.js';
     import { myTeam, acceptJob, leagueName, ownerStake } from '../../manager/engine.js';
@@ -41,9 +41,10 @@
     <div class="grid2">
         <section class="panel">
             <div class="ph"><h3><Icon name="star" size={15} /> Your reputation</h3><span class="chip" style="--c:{repWord[1]}">{repWord[0]}</span></div>
-            <div class="bar"><span><i style="width:{m.rep}%; background:{repWord[1]}"></i></span><b class="num">{Math.round(m.rep)}</b></div>
+            <div class="rep"><span class="rep-t"><i style="width:{m.rep}%; background:{repWord[1]}"></i></span><b class="num">{Math.round(m.rep)}</b></div>
             <p class="muted small">{m.titles || 0} title{m.titles === 1 ? '' : 's'} · sacked {m.sacked || 0} time{m.sacked === 1 ? '' : 's'}{team ? ` · now at ${team.name}` : ' · out of work'}. Titles, promotions and All-Star picks raise it; a sacking costs 15.</p>
-            {#if owner >= 50}<p class="muted small">You own {team.name}: sell your majority stake before you can apply elsewhere.</p>{/if}
+            {#if owner >= 50}<p class="muted small">You own {team.name}: sell your majority stake before you can apply elsewhere, or leave the club from your Profile and keep your share of its profits.</p>{/if}
+            <button class="btn btn-sm" on:click={() => mgrScreen.set('profile')}><Icon name="sparkle" size={12} /> Found a club of your own</button>
         </section>
         <section class="panel">
             <div class="ph"><h3><Icon name="briefcase" size={15} /> Offers</h3></div>
@@ -82,9 +83,10 @@
     .jobs { display: flex; flex-direction: column; gap: 14px; }
     .small { font-size: 12.5px; }
     .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-    .bar span { flex: 1; height: 8px; border-radius: 5px; background: rgba(51, 65, 85, 0.6); overflow: hidden; }
-    .bar i { display: block; height: 100%; }
+    .rep { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .rep-t { flex: 1; height: 8px; border-radius: 5px; background: rgba(51, 65, 85, 0.6); overflow: hidden; }
+    .rep-t i { display: block; height: 100%; }
+    .rep b { color: #fff; }
     .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
     .list li { display: flex; align-items: center; gap: 10px; }
     .nm { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }

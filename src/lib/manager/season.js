@@ -1,25 +1,26 @@
 // ===========================================================================
 //  ULTIMATE MANAGER -- the competition
 //
-//  Per region, two leagues: tier 1 (ten teams, nine weeks) and tier 2 (eight
-//  teams, seven weeks and two byes). Each split is a single round robin of best
-//  of three series, then a top-four bracket of best of fives.
+//  Per region, two leagues of thirteen clubs. Winter is the first seven rounds of a
+//  round robin; spring and summer are a full single round robin (thirteen weeks, one
+//  bye each). All are best of three, then a top-four bracket of best of fives.
 //
-//    MSI      the six spring champions, plus the spring runners-up of the two
+//    First Stand  the six winter champions, plus the winter runners-up of the two
 //             strongest regions. Eight teams, best of five throughout.
+//    MSI      the same, from the spring.
 //    Worlds   sixteen teams. Slots 4/4/3/2/2/1 by region strength. Each
 //             region sends its summer champion, then its summer runner-up,
 //             then the highest championship points.
-//    Promotion  tier 1's last team (over both splits) goes down and the tier 2
-//             summer champion comes up; tier 1's ninth plays the tier 2 summer
-//             runner-up, best of five, for the last place.
+//    Promotion  tier 1's last two (over the whole year) go down and the tier 2 summer
+//             finalists come up; tier 1's third-from-bottom plays tier 2's third,
+//             best of five: win and stay, lose and they swap.
 //
 //  Region strength is the mean of each region's four strongest tier 1 teams,
 //  measured in the preseason.
 // ===========================================================================
 import {
     REGION_IDS, TIER1_SIZE, LEAGUE_BEST_OF, KNOCKOUT_BEST_OF, CHAMP_POINTS, MSI_EXTRA_REGIONS,
-    WORLDS_SLOTS_BY_RANK, LEAGUE_WEEKS, REGION_BY_ID, TIER2_NAME,
+    WORLDS_SLOTS_BY_RANK, LEAGUE_WEEKS, WINTER_WEEKS, REGION_BY_ID, TIER2_NAME, SPLITS, SPLIT_NAME,
 } from './data.js';
 import { teamStrength } from './match.js';
 import { rngFor, shuffle } from './util.js';
@@ -49,10 +50,10 @@ function newTie(a, b, bo) {
     return { a, b, bo, score: null, winner: null };
 }
 
-function newSplit(ids, rng) {
+function newSplit(ids, rng, weeks = LEAGUE_WEEKS) {
     const rounds = roundRobin(ids, rng);
     const fixtures = [];
-    for (let w = 0; w < LEAGUE_WEEKS; w++) fixtures.push((rounds[w] || []).map(([a, b]) => newTie(a, b, LEAGUE_BEST_OF)));
+    for (let w = 0; w < weeks; w++) fixtures.push((rounds[w] || []).map(([a, b]) => newTie(a, b, LEAGUE_BEST_OF)));
     const table = {};
     for (const id of ids) table[id] = { w: 0, l: 0, gw: 0, gl: 0 };
     return { fixtures, table };
@@ -66,7 +67,7 @@ export function newSeason(save) {
     for (const region of REGION_IDS) {
         for (const tier of [1, 2]) {
             const ids = Object.values(save.teams).filter(t => t.region === region && t.tier === tier).map(t => t.id);
-            leagues[leagueKey(region, tier)] = { region, tier, teams: ids, spring: newSplit(ids, rng), summer: newSplit(ids, rng) };
+            leagues[leagueKey(region, tier)] = { region, tier, teams: ids, winter: newSplit(ids, rng, WINTER_WEEKS), spring: newSplit(ids, rng), summer: newSplit(ids, rng) };
         }
     }
     const power = {};
@@ -75,25 +76,32 @@ export function newSeason(save) {
         power[region] = s.length ? s.reduce((x, y) => x + y, 0) / s.length : 0;
     }
     const rank = REGION_IDS.slice().sort((a, b) => power[b] - power[a]);
-    save.season = { year, leagues, power, rank, playoffs: {}, msi: null, worlds: null, promo: {}, points: {}, places: {} };
+    save.season = { year, leagues, power, rank, playoffs: {}, firststand: null, msi: null, worlds: null, promo: {}, points: {}, places: {} };
     return save.season;
 }
 
 // ---------------------------------------------------------------- tables
+const BLANK_ROW = { w: 0, l: 0, gw: 0, gl: 0 };
+const byRecord = (x, y) => ((y.w - y.l) - (x.w - x.l)) || (y.w - x.w) || ((y.gw - y.gl) - (x.gw - x.gl)) || (y.gw - x.gw);
+
+/** A split's table. Wins minus losses, not wins: in winter a club with a bye has played one series fewer. */
 export function tableRows(league, split, save) {
-    const s = league[split];
-    return league.teams.map(id => ({ id, ...(s.table[id] || { w: 0, l: 0, gw: 0, gl: 0 }) }))
-        .sort((x, y) => (y.w - x.w) || ((y.gw - y.gl) - (x.gw - x.gl)) || (y.gw - x.gw)
+    const s = league[split] || { table: {} };
+    return league.teams.map(id => ({ id, ...(s.table[id] || BLANK_ROW) }))
+        .sort((x, y) => byRecord(x, y)
             || (teamStrength(save.teams[y.id], save.players) - teamStrength(save.teams[x.id], save.players)));
 }
 
-/** Both splits added together: what relegation is decided on. */
+/** Every split added together: what relegation is decided on. */
 export function annualRows(league, save) {
     return league.teams.map(id => {
-        const a = league.spring.table[id] || { w: 0, l: 0, gw: 0, gl: 0 };
-        const b = league.summer.table[id] || { w: 0, l: 0, gw: 0, gl: 0 };
-        return { id, w: a.w + b.w, l: a.l + b.l, gw: a.gw + b.gw, gl: a.gl + b.gl };
-    }).sort((x, y) => (y.w - x.w) || ((y.gw - y.gl) - (x.gw - x.gl)) || (y.gw - x.gw));
+        const row = { id, ...BLANK_ROW };
+        for (const sp of SPLITS) {
+            const r = (league[sp] && league[sp].table[id]) || BLANK_ROW;
+            row.w += r.w; row.l += r.l; row.gw += r.gw; row.gl += r.gl;
+        }
+        return row;
+    }).sort(byRecord);
 }
 
 export function recordLeagueTie(league, split, tie) {
@@ -162,7 +170,7 @@ export function buildPlayoffs(save, split) {
         const seeds = rows.slice(0, 4).map(r => r.id);
         const lname = L.tier === 1 ? REGION_BY_ID[L.region].league : TIER2_NAME[L.region];
         S.playoffs[key + ':' + split] = newBracket({
-            id: key + ':' + split, name: `${lname} ${split === 'spring' ? 'Spring' : 'Summer'} Playoffs`, kind: 'playoffs', seeds,
+            id: key + ':' + split, name: `${lname} ${SPLIT_NAME[split]} Playoffs`, kind: 'playoffs', seeds,
         });
         // Regular season placements for points (playoff teams are overwritten when the bracket ends).
         rows.forEach((r, i) => {
@@ -185,7 +193,8 @@ export function settleSplit(save, split) {
         if (L.tier !== 1) continue;
         for (const id of L.teams) {
             const pl = (S.places[id] || {})[split] || 10;
-            S.points[id] = (S.points[id] || 0) + (CHAMP_POINTS[pl] || 0);
+            // The short split is worth half: it is seven weeks, not thirteen.
+            S.points[id] = (S.points[id] || 0) + (CHAMP_POINTS[pl] || 0) * (split === 'winter' ? 0.5 : 1);
         }
     }
 }
@@ -213,20 +222,33 @@ function crossRegionPairs(seeds, save) {
     return pairs;
 }
 
-export function buildMSI(save) {
+/** An eight-team international: a split's six champions and the two strongest regions' runners-up. */
+function splitChampionsField(save, split) {
     const S = save.season;
     const field = [];
     for (const region of REGION_IDS) {
-        const b = S.playoffs[leagueKey(region, 1) + ':spring'];
+        const b = S.playoffs[leagueKey(region, 1) + ':' + split];
         if (b && b.champion) field.push(b.champion);
     }
     for (const region of S.rank.slice(0, MSI_EXTRA_REGIONS)) {
-        const b = S.playoffs[leagueKey(region, 1) + ':spring'];
+        const b = S.playoffs[leagueKey(region, 1) + ':' + split];
         if (b && b.runnerUp) field.push(b.runnerUp);
     }
-    const seeds = field.sort((a, b) => teamStrength(save.teams[b], save.players) - teamStrength(save.teams[a], save.players));
+    return field.sort((a, b) => teamStrength(save.teams[b], save.players) - teamStrength(save.teams[a], save.players));
+}
+
+export function buildMSI(save) {
+    const S = save.season;
+    const seeds = splitChampionsField(save, 'spring');
     S.msi = newBracket({ id: 'msi', name: `MSI ${S.year}`, kind: 'msi', seeds, pairs: crossRegionPairs(seeds, save) });
     return S.msi;
+}
+
+export function buildFirstStand(save) {
+    const S = save.season;
+    const seeds = splitChampionsField(save, 'winter');
+    S.firststand = newBracket({ id: 'firststand', name: `First Stand ${S.year}`, kind: 'firststand', seeds, pairs: crossRegionPairs(seeds, save) });
+    return S.firststand;
 }
 
 /** Each region's Worlds entrants, in qualification order. */
@@ -260,8 +282,8 @@ export function buildWorlds(save) {
 // ---------------------------------------------------------------- promotion
 /**
  * Two up and two down each year, and a play-off: the last two of the top league
- * swap with the second tier's summer champion and runner-up, and the eighth plays
- * the second tier's best semi-finalist (Bo5) for the last place.
+ * swap with the second tier's summer champion and runner-up, and the third from
+ * bottom plays the second tier's third (Bo5). Win and stay; lose and they swap.
  */
 export function buildPromotion(save) {
     const S = save.season;
@@ -271,11 +293,11 @@ export function buildPromotion(save) {
         const annual = annualRows(L1, save);
         const at = (k) => (annual[annual.length - k] ? annual[annual.length - k].id : null);
         const third = b2 ? (b2.teams || []).find(id => id !== b2.champion && id !== b2.runnerUp && (b2.places || {})[id] === 3) || null : null;
-        const eighth = at(3);
+        const thirdLast = at(3);
         S.promo[region] = {
             down: at(1), down2: at(2),
             up: b2 ? b2.champion : null, up2: b2 ? b2.runnerUp : null,
-            tie: eighth && third ? newTie(eighth, third, KNOCKOUT_BEST_OF) : null,
+            tie: thirdLast && third ? newTie(thirdLast, third, KNOCKOUT_BEST_OF) : null,
         };
     }
 }

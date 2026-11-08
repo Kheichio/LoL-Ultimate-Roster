@@ -72,6 +72,7 @@ const MK = await load('lib/manager/market.js');
 const E = await load('lib/manager/engine.js');
 
 const STORE = await load('lib/stores/manager.js');
+const PACK = await load('lib/utils/pack.js');
 const db = CARDS.getDB();
 E.setDB(db);
 const cardById = new Map(db.map(c => [c.id, c]));
@@ -303,7 +304,7 @@ function emergencyTest(save0) {
     for (const p of Object.values(save.players)) {
         if (cheap.length >= 2) break;
         if (!p.team || p.team === me.id || PE.fx(p).hardToBuy || PE.ovrOf(p) >= 72 || !MK.willingness(save, p, me).ok) continue;
-        if (cheap.some(x => x.role === p.role) || MK.roleCount(save, me, p.role) >= D.ROLE_MAX) continue;
+        if (cheap.some(x => x.role === p.role) || MK.roleCount(save, me, p.role) >= D.ROLE_MAX || PE.isImport(p, me.region)) continue;
         cheap.push(p);
     }
     if (cheap.length < 2) return 'skipped';
@@ -369,7 +370,7 @@ function ownershipHistoryTraining() {
     check('selling a majority lets the board sack you', MK.ownerStake(f) === 40 && MK.boardCanSack(f));
     E.sellStake(f, 25);
     check('you always keep a stake', MK.ownerStake(f) >= 10, `${MK.ownerStake(f)}`);
-    f.finance.balance = 1e9;
+    f.manager.bank = 1e9;
     for (let i = 0; i < 6 && MK.ownerStake(f) < 100; i++) E.buyStake(f, 25);
     check('buying it all back dissolves the board', MK.ownerStake(f) === 100 && !MK.hasBoard(f) && f.board.objectives.length === 0, `${MK.ownerStake(f)}`);
     // A save from 1.8.8: a founded club with no stake recorded is owned outright.
@@ -454,7 +455,7 @@ function worldRecords() {
     const s = E.finalizeSave(w, { name: 'Rec', teamId: kt.id, startYear: 2017, seed: SEED + 9 });
     check('every club has a personality', Object.values(s.teams).every(t => D.CLUB_STYLE_BY_ID[t.style]));
     check('random players have a nationality', Object.values(s.players).filter(p => !p.real).every(p => p.cc && p.flag));
-    for (let i = 0; i < 40 && s.time.year === 2017; i++) {
+    for (let i = 0; i < D.STEPS_PER_YEAR + 5 && s.time.year === 2017; i++) {
         E.autoLineup(s);
         for (const m of s.inbox) if (m.options && !m.answered && !E.answerEvent(s, m.id, m.options[0].id).ok) E.answerEvent(s, m.id, m.options[m.options.length - 1].id);
         const me = E.myTeam(s);
@@ -464,10 +465,10 @@ function worldRecords() {
     check('the year completed', s.time.year === 2018, `${s.time.year}`);
     // Clubs that arrived with the new year (the living league) have no 2017 rows.
     const clubs = Object.values(s.teams).filter(t => (t.sh || []).length);
-    check('every club has its two splits on record', clubs.every(t => (t.sh || []).filter(r => r.y === 2017).length === 2), clubs.filter(t => (t.sh || []).filter(r => r.y === 2017).length !== 2).map(t => t.short).join(','));
+    check('every club has its three splits on record', clubs.every(t => (t.sh || []).filter(r => r.y === 2017).length === 3), clubs.filter(t => (t.sh || []).filter(r => r.y === 2017).length !== 3).map(t => t.short).join(','));
     const folded = Object.values(s.defunct || {});
     check('the living league folds clubs and keeps their history', folded.every(t => t.defunct === 2018 && !t.roster.length && !s.teams[t.id]), folded.map(t => t.short).join(','));
-    check('leagues keep their sizes after new clubs arrive', D.REGION_IDS.every(r => Object.values(s.teams).filter(t => t.region === r && t.tier === 1).length === 10 && Object.values(s.teams).filter(t => t.region === r && t.tier === 2).length === 8));
+    check('leagues keep their sizes after new clubs arrive', D.REGION_IDS.every(r => Object.values(s.teams).filter(t => t.region === r && t.tier === 1).length === D.TIER1_SIZE && Object.values(s.teams).filter(t => t.region === r && t.tier === 2).length === D.TIER2_SIZE));
     check('every split row has five starters', clubs.every(t => (t.sh || []).every(r => H.unpackFive(r.f).filter(x => x.id).length === 5)));
     const worlds = clubs.filter(t => (t.sh || []).some(r => r.w.includes('worlds')));
     check('one world champion on record', worlds.length === 1, worlds.map(t => t.short).join(','));
@@ -755,7 +756,7 @@ function runSave(save, label, years, measure = true) {
         {
             const h0 = save.history[save.history.length - 1];
             if (measure && h0 && h0.me && expectedAtStart) {
-                for (const sp of ['spring', 'summer']) if (h0.me[sp]) { overPerf.n++; overPerf.sum += expectedAtStart - h0.me[sp]; }
+                for (const sp of D.SPLITS) if (h0.me[sp]) { overPerf.n++; overPerf.sum += expectedAtStart - h0.me[sp]; }
             }
             expectedAtStart = save.board.expected;
         }
@@ -838,9 +839,12 @@ for (const start of STARTS) {
         }
         if (E.myTeam(save)) check('the emergency signing test ran', emergencyTest(save) !== 'failed');
     }
-    const size = JSON.stringify(save).length;
-    console.log(`  save size ${Math.round(size / 1024)}kb, ${Object.keys(save.players).length} players, manager trophies ${save.manager.trophies.length}, achievements ${Object.keys(save.manager.ach || {}).length}`);
-    check('save stays under 1.5MB', size < 1.5 * 1024 * 1024, `${Math.round(size / 1024)}kb`);
+    // What counts against the browser's ~5M characters is the packed save, for three slots.
+    const json = JSON.stringify(save);
+    const packed = PACK.pack(json);
+    console.log(`  save size ${Math.round(json.length / 1024)}kb of JSON, ${Math.round(packed.length / 1024)}k characters packed, ${Object.keys(save.players).length} players, manager trophies ${save.manager.trophies.length}, achievements ${Object.keys(save.manager.ach || {}).length}`);
+    check('a save survives packing', PACK.unpack(packed) === json);
+    check('three packed saves fit in browser storage', packed.length * 3 < 3 * 1024 * 1024, `${Math.round(packed.length / 1024)}k characters`);
 }
 
 console.log('');

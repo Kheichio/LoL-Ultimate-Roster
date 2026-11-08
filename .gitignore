@@ -2,7 +2,6 @@ node_modules/
 dist/
 .vite/
 *.local
-CLAUDE (2).md
 CLAUDE.md
 CLAUDE.md
 *.md
@@ -15,3 +14,4 @@ firestore.rules
 CLAUDE.md
 firestore.rules
 *.md
+CLAUDE.md

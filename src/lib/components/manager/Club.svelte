@@ -4,13 +4,14 @@
     import { activeSlot, slotHasData } from '../../utils/storage.js';
     import { showToast } from '../../stores/toasts.js';
     import {
-        myTeam, buyPerk, spendPoint, acceptJob, leagueName, fearlessOn, ownerStake, hasBoard, boardCanSack, clubValuation,
-        sellStake, buyStake, stakePrice,
+        myTeam, fearlessOn, ownerStake, hasBoard, boardCanSack, clubValuation, sellStake, buyStake, stakePrice,
+        setTeamLanguage, languageSwitchCost, languageCourse, languageCourseCost, teamComms,
     } from '../../manager/engine.js';
-    import { PERKS, PERK_BRANCHES, POINT_ACTIONS, MGR_XP_PER_LEVEL, STEPS_PER_YEAR, FEARLESS_FROM, STAKE_TRANCHES, MIN_STAKE, CLUB_COLORS, TEAM_EMBLEMS } from '../../manager/data.js';
+    import { STEPS_PER_YEAR, FEARLESS_FROM, STAKE_TRANCHES, MIN_STAKE, CLUB_COLORS, TEAM_EMBLEMS, LANGUAGE_NAMES, REGION_LANGUAGE, teamLanguage } from '../../manager/data.js';
     import { sponsorIncome, wageBill, wageBudget, baseWageBudget, wageBoost, emergencyLeft, emergencyAllowance, ownerFunding, ownerInvestment } from '../../manager/market.js';
-    import { teamStrength } from '../../manager/match.js';
     import { clubIncome } from '../../manager/sponsors.js';
+    import { langLevel } from '../../manager/people.js';
+    import { bankOf, salaryOf, rebrandClub } from '../../manager/owner.js';
     import { fmtMoney } from '../../manager/ui.js';
     import { ordinal } from '../../manager/util.js';
     import Icon from '../ui/Icon.svelte';
@@ -23,9 +24,6 @@
     $: bill = team ? wageBill(s, team) : 0;
     $: budget = team ? wageBudget(s, team) : 0;
     $: funding = team ? ownerFunding(s, team) : 0;
-    $: offers = (s.jobOffers || []).map(id => s.teams[id]).filter(Boolean);
-    $: spent = Object.values(m.perks || {}).reduce((a, b) => a + b, 0);
-    $: maxRanks = PERKS.reduce((a, p) => a + p.max, 0);
     $: forced = s.time.year >= FEARLESS_FROM;
     $: stake = ownerStake(s);
     $: board = hasBoard(s);
@@ -52,28 +50,23 @@
         else go();
     }
 
-    /** A founded club's colour and emblem can change at any time. */
+    /** A club you own outright can change its name, tag, colour and emblem at any time. */
+    let newName = null, newShort = null;
+    $: if (team && newName === null) { newName = team.name; newShort = team.short; }
     function setBadge(v) {
-        mutate(sv => { const t = sv.teams[sv.manager.teamId]; if (t && t.custom) Object.assign(t, v); });
+        mutate(sv => { const t = sv.teams[sv.manager.teamId]; if (t) Object.assign(t, v, { rebranded: true }); });
     }
-
-    function perk(id) {
-        const r = mutate(s => buyPerk(s, id));
+    function rename() {
+        const r = mutate(sv => rebrandClub(sv, { name: newName, short: newShort, color: team.color }));
         if (r) showToast(r.msg, r.ok ? 'success' : 'error', 4000);
     }
-    function action(a) {
-        openConfirmModal(`Spend a perk point on ${a.name}? ${a.blurb}`, () => {
-            const r = mutate(s => spendPoint(s, a.id));
-            if (r) showToast(r.msg, r.ok ? 'success' : 'error', 4000);
-        });
+    function run(fn) {
+        const r = mutate(fn);
+        if (r) showToast(r.msg, r.ok ? 'success' : 'error', 4000);
     }
-    function take(id) {
-        const t = s.teams[id];
-        openConfirmModal(`Take the job at ${t.name}? You leave ${team ? team.name : 'nothing'} behind${team ? ' at once' : ''}.`, () => {
-            const r = mutate(s => acceptJob(s, id));
-            if (r) showToast(r.msg, r.ok ? 'success' : 'error', 4000);
-        });
-    }
+    $: lang = team ? teamLanguage(team) : 'en';
+    $: comms = team ? teamComms(team, s.players) : 100;
+    $: speakers = (code) => (team ? team.roster.filter(id => langLevel(s.players[id], code) >= 60).length : 0);
     function setting(key, v) {
         mutate(s => { s.settings = { ...(s.settings || {}), [key]: v }; });
     }
@@ -85,66 +78,8 @@
 <div class="cl">
     <div>
         <h1 class="page-h">Club</h1>
-        <p class="page-sub">Money, the board, your skill tree and the house rules.</p>
+        <p class="page-sub">The club's money, who owns it, the board, and how it runs.</p>
     </div>
-
-    {#if offers.length}
-        <section class="panel jobs">
-            <div class="ph"><h3><Icon name="briefcase" size={15} /> Job offers</h3><span class="muted small">{s.jobless ? 'Pick one to carry on' : 'Open until the season starts'}</span></div>
-            <div class="job-list">
-                {#each offers as t (t.id)}
-                    <div class="job">
-                        <TeamBadge team={t} size={40} />
-                        <div class="job-t">
-                            <b>{t.name}</b>
-                            <span class="muted small">{leagueName(t.region, t.tier)} · team OVR {Math.round(teamStrength(t, s.players))} · reputation {t.rep}</span>
-                        </div>
-                        <button class="btn btn-p" on:click={() => take(t.id)}>Take the job</button>
-                    </div>
-                {/each}
-            </div>
-        </section>
-    {/if}
-
-    <!-- ══════ SKILL TREE ══════ -->
-    <section class="panel tree">
-        <div class="ph">
-            <h3><Icon name="skills" size={15} /> Manager skill tree</h3>
-            <div class="pts-box">
-                <span class="pts-n" class:has={m.points > 0}>{m.points}</span>
-                <span class="pts-l">perk point{m.points === 1 ? '' : 's'} to spend<br /><span class="muted">{spent} of {maxRanks} ranks learned</span></span>
-            </div>
-        </div>
-        <div class="lvl"><span class="muted small">Level {m.level}</span><span class="bar"><i style="width:{(m.xp / MGR_XP_PER_LEVEL) * 100}%"></i></span><span class="muted small">{m.xp} / {MGR_XP_PER_LEVEL} XP to level {m.level + 1}</span></div>
-        <p class="muted small how">Every level is a perk point: series won, titles, objectives met and promotions all give XP. Many achievements give a point the first time too.</p>
-        <div class="branches">
-            {#each PERK_BRANCHES as b}
-                <div class="branch" style="--bc:{b.color}">
-                    <div class="b-h"><span class="b-ico"><Icon name={b.icon} size={17} stroke={2.2} /></span><div><b>{b.name}</b><span>{b.blurb}</span></div></div>
-                    {#each PERKS.filter(p => p.branch === b.id) as p (p.id)}
-                        {@const rank = (m.perks || {})[p.id] || 0}
-                        <div class="perk" class:maxed={rank >= p.max} class:learned={rank > 0}>
-                            <div class="pk-top"><Icon name={p.icon} size={15} /><b>{p.name}</b><span class="pips">{#each Array(p.max) as _, i}<i class:on={i < rank}></i>{/each}</span></div>
-                            <p class="pk-b">{p.blurb}</p>
-                            {#if rank}<p class="pk-now"><Icon name="check" size={11} stroke={2.6} /> {p.rank(rank)}</p>{/if}
-                            {#if rank < p.max}<p class="pk-next">Rank {rank + 1}: {p.rank(rank + 1)}</p>{/if}
-                            <button class="btn btn-sm" class:btn-p={m.points > 0 && rank < p.max} disabled={m.points < 1 || rank >= p.max} on:click={() => perk(p.id)}>{rank >= p.max ? 'Maxed' : rank ? 'Upgrade' : 'Learn'}</button>
-                        </div>
-                    {/each}
-                </div>
-            {/each}
-        </div>
-        <div class="acts-h"><Icon name="bolt" size={15} /> <b>Spend a point now</b> <span class="muted small">One-off boosts, any time. Useful once the tree is full, or when something is needed today.</span></div>
-        <div class="acts">
-            {#each POINT_ACTIONS as a (a.id)}
-                <button class="act" disabled={m.points < 1 || !team || (a.id === 'board' && !board)} on:click={() => action(a)}>
-                    <span class="act-ico"><Icon name={a.icon} size={18} /></span>
-                    <span class="act-t"><b>{a.name}</b><span>{a.blurb}</span></span>
-                    <span class="act-c">1 pt</span>
-                </button>
-            {/each}
-        </div>
-    </section>
 
     {#if team}
         <section class="panel own">
@@ -152,7 +87,7 @@
             <div class="own-top">
                 <div class="stake"><span class="stake-ring" style="--p:{stake}"><b>{stake}%</b></span><span class="muted small">{stake >= 100 ? 'All of it' : `${100 - stake}% with ${founder ? 'investors' : 'the owners'}`}</span></div>
                 <div class="own-t">
-                    <p>{#if stake >= 100}<b>{team.name} is yours.</b> No board, no objectives, no wage limit and nobody who can sack you. The only limit is the balance: you cannot add wages while the club is in debt.{:else if stake >= 50}<b>You hold a majority.</b> The {founder ? 'investors sit' : 'owners sit'} on a board with objectives and a wage limit, but they cannot sack you.{:else if stake > 0}<b>The {founder ? 'investors' : 'owners'} hold a majority.</b> The board can sack you if it loses confidence.{:else}<b>You were hired to run {team.name}.</b> Earn a stake with perk points (Ownership Stake, 10% a point) or buy one with the club's money: own half and the board cannot sack you, own it all and the board is gone.{/if}</p>
+                    <p>{#if stake >= 100}<b>{team.name} is yours.</b> No board, no objectives, no wage limit and nobody who can sack you. The only limit is the balance: you cannot add wages while the club is in debt.{:else if stake >= 50}<b>You hold a majority.</b> The {founder ? 'investors sit' : 'owners sit'} on a board with objectives and a wage limit, but they cannot sack you.{:else if stake > 0}<b>The {founder ? 'investors' : 'owners'} hold a majority.</b> The board can sack you if it loses confidence.{:else}<b>You were hired to run {team.name}.</b> Earn a stake with perk points (Ownership Stake, 10% a point) or buy one with your own money: own half and the board cannot sack you, own it all and the board is gone.{/if}</p>
                     <p class="muted small">The club is valued at <b class="num">{fmtMoney(valuation)}</b>: sponsor income, the squad's market value and the titles it has won.</p>
                 </div>
             </div>
@@ -164,17 +99,23 @@
                 {/if}
                 {#if stake < 100}
                     {#each STAKE_TRANCHES as pct}
-                        <button class="btn" disabled={stakePrice(s, Math.min(pct, 100 - stake), true) > s.finance.balance} on:click={() => buy(pct)}><Icon name="upgrade" size={14} /> {founder ? 'Buy back' : 'Buy'} {Math.min(pct, 100 - stake)}% · {fmtMoney(stakePrice(s, Math.min(pct, 100 - stake), true))}</button>
+                        <button class="btn" disabled={stakePrice(s, Math.min(pct, 100 - stake), true) > bankOf(s)} on:click={() => buy(pct)}><Icon name="upgrade" size={14} /> {founder ? 'Buy back' : 'Buy'} {Math.min(pct, 100 - stake)}% · {fmtMoney(stakePrice(s, Math.min(pct, 100 - stake), true))}</button>
                     {/each}
                 {/if}
             </div>
-            <p class="muted small">{founder ? `You always keep at least ${MIN_STAKE}% of a club you founded. ` : ''}Buying costs 15% more than selling. At 100%, the board is dissolved.</p>
+            <p class="muted small">{founder ? `You always keep at least ${MIN_STAKE}% of a club you founded. ` : ''}Selling brings money into the club; buying comes out of your own bank ({fmtMoney(bankOf(s))}), at 15% more. At 100% the board is dissolved, and you can rebrand the club and set your own salary. You keep what you own if you leave.</p>
         </section>
     {/if}
 
-    {#if founder}
+    {#if team && stake >= 100}
         <section class="panel">
-            <div class="ph"><h3><Icon name="sparkle" size={15} /> Club badge</h3><TeamBadge {team} size={40} /></div>
+            <div class="ph"><h3><Icon name="sparkle" size={15} /> Rebrand the club</h3><TeamBadge {team} size={40} /></div>
+            <div class="rename">
+                <input class="inp" maxlength="28" placeholder="Club name" bind:value={newName} aria-label="Club name" />
+                <input class="inp tag" maxlength="5" placeholder="Tag" bind:value={newShort} aria-label="Club tag" />
+                <button class="btn btn-sm btn-p" on:click={rename}>Rename</button>
+            </div>
+            {#if (team.names || []).length}<p class="muted small">Formerly {team.names.map(n => `${n.name} (to ${n.y})`).join(', ')}.</p>{/if}
             <div class="badge-row">
                 <span class="muted small">Colour</span>
                 <div class="swatches">{#each CLUB_COLORS as c}<button class="sw" class:on={team.color === c} style="--sw:{c}" on:click={() => setBadge({ color: c })} aria-label="Colour {c}"></button>{/each}</div>
@@ -193,6 +134,18 @@
 
     <div class="grid">
         {#if team}
+            <section class="panel">
+                <div class="ph"><h3><Icon name="chat" size={15} /> Club language</h3><span class="chip" style="--c:{comms >= 85 ? '#34d399' : comms >= 60 ? '#fbbf24' : '#f87171'}">Comms {comms}%</span></div>
+                <div class="langs">
+                    {#each Object.keys(LANGUAGE_NAMES) as code (code)}
+                        <button class="lg" class:on={lang === code} disabled={team.langYear === s.time.year && lang !== code} on:click={() => openConfirmModal(`Make ${LANGUAGE_NAMES[code]} the club's language for ${fmtMoney(languageSwitchCost(s))}? You can change it once a year.`, () => run(sv => setTeamLanguage(sv, code)))}>
+                            <b>{LANGUAGE_NAMES[code]}</b><span class="muted small">{speakers(code)}/{team.roster.length} speak it{REGION_LANGUAGE[team.region] === code ? ' · league' : ''}</span>
+                        </button>
+                    {/each}
+                </div>
+                <button class="btn btn-sm" on:click={() => run(sv => languageCourse(sv))}><Icon name="chat" size={12} /> Squad course in {LANGUAGE_NAMES[lang]} · {fmtMoney(languageCourseCost(s))}</button>
+                <p class="muted small">A five that cannot talk gives away edge in every game. Pick what most of your squad already speaks: the course gets cheaper the more of them are fluent, and a room that speaks it teaches it faster.</p>
+            </section>
             {#if board}
                 <section class="panel">
                     <div class="ph"><h3><Icon name="briefcase" size={15} /> The board</h3><span class="chip" style="--c:{s.board.confidence >= 60 ? '#34d399' : s.board.confidence >= 35 ? '#fbbf24' : '#f87171'}">{Math.round(s.board.confidence)}% confidence</span></div>
@@ -217,11 +170,12 @@
                     <div><span class="muted small">Base revenue and sponsors per year</span><b class="num good">{fmtMoney(income)}</b><button class="btn btn-sm" on:click={() => mgrScreen.set('sponsors')}><Icon name="coins" size={12} /> Sponsors</button></div>
                     {#if funding > 0}<div><span class="muted small">Owner investment per year</span><b class="num good">{fmtMoney(funding)}</b><span class="muted small">+{Math.round((ownerInvestment(team) - 1) * 100)}% on the wage limit, fading each year</span></div>{/if}
                     <div><span class="muted small">Wages per year</span><b class="num bad">{fmtMoney(bill)}</b></div>
+                    <div><span class="muted small">Your salary</span><b class="num bad">{fmtMoney(salaryOf(s))}</b><button class="btn btn-sm" on:click={() => mgrScreen.set('profile')}><Icon name="user" size={12} /> Your bank</button></div>
                     <div><span class="muted small">Wage limit</span><b class="num">{Number.isFinite(budget) ? fmtMoney(budget) : 'No limit'}</b>{#if Number.isFinite(budget) && boost > 1.001}<span class="good small">+{Math.round((boost - 1) * 100)}% for results (base {fmtMoney(baseWageBudget(s, team))})</span>{/if}</div>
-                    <div><span class="muted small">Net per week</span><b class="num" class:good={income + funding >= bill} class:bad={income + funding < bill}>{fmtMoney((income + funding - bill) / STEPS_PER_YEAR)}</b></div>
+                    <div><span class="muted small">Net per week</span><b class="num" class:good={income + funding >= bill + salaryOf(s)} class:bad={income + funding < bill + salaryOf(s)}>{fmtMoney((income + funding - bill - salaryOf(s)) / STEPS_PER_YEAR)}</b></div>
                     <div><span class="muted small">Emergency signings left</span><b class="num">{emergencyLeft(s)} / {emergencyAllowance(s)}</b></div>
                 </div>
-                <p class="muted small">Half of a club's commercial income is base revenue that grows with its reputation and with the game itself; the rest comes from the sponsors you land on the Sponsors screen, and brands only sign a club that wins. Prize money comes from playoffs, MSI and Worlds.</p>
+                <p class="muted small">Half of a club's commercial income is base revenue that grows with its reputation and with the game itself; the rest comes from the sponsors you land on the Sponsors screen, and brands only sign a club that wins. Prize money comes from playoffs, the Regional Cup, First Stand, MSI and Worlds.</p>
                 {#if s.finance.log.length}
                     <ul class="ledger">
                         {#each s.finance.log.slice(0, 10) as e, i (i)}
@@ -231,23 +185,6 @@
                 {/if}
             </section>
         {/if}
-
-        <section class="panel">
-            <div class="ph"><h3><Icon name="user" size={15} /> {m.name}</h3><span class="chip" style="--c:#34d399">Level {m.level}</span></div>
-            <div class="rec">
-                <div><span class="muted small">Series record</span><b class="num">{m.wins}–{m.losses}</b></div>
-                <div><span class="muted small">Titles</span><b class="num">{m.titles}</b></div>
-                <div><span class="muted small">Reputation</span><b class="num">{m.rep}</b></div>
-                <div><span class="muted small">Sackings</span><b class="num">{m.sacked}</b></div>
-            </div>
-            <button class="btn btn-sm" on:click={() => mgrScreen.set('trophies')}><Icon name="trophy" size={13} /> Trophy cabinet and achievements</button>
-            <ul class="career">
-                {#each m.history as h, i (i)}
-                    <li><span class="muted">{h.year}</span> Left {h.teamName} ({h.left})</li>
-                {/each}
-                {#if team}<li><span class="muted">{m.joined}–</span> <b>{team.name}</b>{#if team.custom && m.founded === team.id}<span class="chip" style="--c:#34d399">Founded</span>{/if}</li>{/if}
-            </ul>
-        </section>
 
         <section class="panel">
             <div class="ph"><h3><Icon name="settings" size={15} /> Settings</h3></div>
@@ -271,51 +208,11 @@
 </div>
 
 <style>
-    .cl { display: flex; flex-direction: column; gap: 14px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; align-items: start; }
+    .cl { display: flex; flex-direction: column; gap: 12px; }
+    /* Packed columns: panels of different heights leave no holes. */
+    .grid { columns: 3 320px; column-gap: 12px; }
+    .grid > :global(.panel) { break-inside: avoid; margin-bottom: 12px; }
     .small { font-size: 12.5px; line-height: 1.5; }
-    .jobs { border-color: rgba(52, 211, 153, 0.55); }
-    .job-list { display: flex; flex-direction: column; gap: 8px; }
-    .job { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(2, 6, 23, 0.45); flex-wrap: wrap; }
-    .job-t { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 180px; }
-    .job-t b { color: #fff; }
-    .tree { border-color: rgba(52, 211, 153, 0.35); }
-    .pts-box { display: flex; align-items: center; gap: 10px; }
-    .pts-n { font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 30px; font-weight: 700; color: #64748b; min-width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: rgba(2, 6, 23, 0.5); border: 1px solid var(--line); }
-    .pts-n.has { color: #052e1f; background: #34d399; border-color: #34d399; box-shadow: 0 0 18px rgba(52, 211, 153, 0.45); }
-    .pts-l { font-size: 12.5px; font-weight: 700; color: #f1f5f9; line-height: 1.35; }
-    .lvl { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
-    .how { margin: 8px 0 12px; }
-    .branches { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-    .branch { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px; background: linear-gradient(180deg, color-mix(in srgb, var(--bc) 10%, rgba(2, 6, 23, 0.4)), rgba(2, 6, 23, 0.3)); border: 1px solid color-mix(in srgb, var(--bc) 30%, var(--line)); }
-    .b-h { display: flex; align-items: center; gap: 9px; margin-bottom: 2px; }
-    .b-ico { width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center; border-radius: 10px; color: #0b1120; background: var(--bc); }
-    .b-h div { display: flex; flex-direction: column; gap: 1px; }
-    .b-h b { font-family: 'Space Grotesk', 'Quicksand', sans-serif; color: #fff; font-size: 14.5px; }
-    .b-h span { font-size: 11px; color: #a5b4cf; line-height: 1.35; }
-    .perk { display: flex; flex-direction: column; gap: 5px; padding: 10px; border-radius: 11px; background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(71, 85, 105, 0.45); }
-    .perk.learned { border-color: color-mix(in srgb, var(--bc) 50%, transparent); }
-    .perk.maxed { border-color: var(--bc); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc) 35%, transparent); }
-    .pk-top { display: flex; align-items: center; gap: 6px; color: var(--bc); }
-    .pk-top b { flex: 1; color: #fff; font-size: 13px; }
-    .pips { display: inline-flex; gap: 3px; }
-    .pips i { width: 8px; height: 8px; border-radius: 50%; background: rgba(148, 163, 184, 0.22); }
-    .pips i.on { background: var(--bc); box-shadow: 0 0 6px var(--bc); }
-    .pk-b { font-size: 11.5px; color: #a5b4cf; margin: 0; line-height: 1.4; }
-    .pk-now { display: flex; gap: 4px; align-items: flex-start; font-size: 11.5px; color: #6ee7b7; margin: 0; line-height: 1.4; }
-    .pk-next { font-size: 11.5px; color: #cbd5e1; margin: 0; line-height: 1.4; }
-    .perk .btn { margin-top: auto; }
-    .acts-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0 8px; color: #fde68a; }
-    .acts-h b { color: #fff; }
-    .acts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
-    .act { display: flex; align-items: center; gap: 10px; padding: 11px; border-radius: 12px; text-align: left; cursor: pointer; font-family: inherit; color: #e2e8f0; background: rgba(2, 6, 23, 0.5); border: 1px solid rgba(251, 191, 36, 0.35); }
-    .act:hover:not(:disabled) { border-color: #fbbf24; background: rgba(251, 191, 36, 0.07); }
-    .act:disabled { opacity: 0.45; cursor: not-allowed; }
-    .act-ico { width: 36px; height: 36px; flex-shrink: 0; display: grid; place-items: center; border-radius: 10px; color: #3b1d00; background: #fbbf24; }
-    .act-t { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-    .act-t b { font-size: 13.5px; color: #fff; }
-    .act-t span { font-size: 11.5px; color: #a5b4cf; line-height: 1.35; }
-    .act-c { font-size: 11px; font-weight: 900; color: #fde68a; }
     .conf { margin-bottom: 12px; }
     .own { border-color: rgba(251, 191, 36, 0.5); background: radial-gradient(70% 120% at 0% 0%, rgba(251, 191, 36, 0.1), transparent 60%), var(--card); }
     .own-top { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -340,20 +237,22 @@
     .o-dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
     .o-dot.met { background: #34d399; }
     .o-dot.miss { background: #f87171; }
-    .fin, .rec { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
-    .fin div, .rec div { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border-radius: 10px; background: rgba(2, 6, 23, 0.45); }
-    .fin b, .rec b { font-size: 16px; color: #f1f5f9; }
+    .rename { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .rename .inp { flex: 1; min-width: 150px; }
+    .rename .tag { flex: 0 0 80px; min-width: 0; }
+    .langs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
+    .lg { display: flex; flex-direction: column; gap: 1px; padding: 7px 9px; border-radius: 9px; font: inherit; text-align: left; color: #e2e8f0; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(71, 85, 105, 0.45); cursor: pointer; }
+    .lg.on { border-color: #34d399; }
+    .lg:disabled { opacity: 0.5; cursor: not-allowed; }
+    .fin { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .fin div { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border-radius: 10px; background: rgba(2, 6, 23, 0.45); }
+    .fin b { font-size: 16px; color: #f1f5f9; }
     .ledger { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
     .ledger li { display: flex; gap: 8px; align-items: baseline; }
     .lg-l { flex: 1; color: #dbe4f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .career { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: #f1f5f9; }
-    .career li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .tog { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; color: #dbe4f0; margin-bottom: 12px; cursor: pointer; line-height: 1.4; }
     .tog b { color: #fff; }
     .tog input { accent-color: #10b981; width: 17px; height: 17px; margin-top: 2px; flex-shrink: 0; }
     .tog.off { cursor: default; }
     .newg { margin-top: 6px; }
-    @media (max-width: 1250px) { .branches { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-    @media (max-width: 800px) { .branches { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 520px) { .branches { grid-template-columns: 1fr; } }
 </style>

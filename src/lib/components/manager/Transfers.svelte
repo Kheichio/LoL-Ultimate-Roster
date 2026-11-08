@@ -2,9 +2,9 @@
     import { manager, mutate, mgrModal } from '../../stores/manager.js';
     import { showToast } from '../../stores/toasts.js';
     import { myTeam, currentStep, isScouted } from '../../manager/engine.js';
-    import { REGIONS, ROLE_IDS, CALENDAR, ROSTER_MAX } from '../../manager/data.js';
-    import { askingPrice, wageAsk, wageBill, wageBudget, windowOpen, acceptBid, removeOffer, renewalTerms, emergencyLeft, emergencyAllowance, unlistPlayer } from '../../manager/market.js';
-    import { ovrOf, ageOf, potentialView, marketValue } from '../../manager/people.js';
+    import { REGIONS, ROLE_IDS, CALENDAR, ROSTER_MAX, IMPORT_MAX } from '../../manager/data.js';
+    import { askingPrice, wageAsk, wageBill, wageBudget, windowOpen, acceptBid, removeOffer, renewalTerms, emergencyLeft, emergencyAllowance, unlistPlayer, signingCheck, toggleShortlist, importCount } from '../../manager/market.js';
+    import { ovrOf, ageOf, potentialView, marketValue, isImport } from '../../manager/people.js';
     import { ovrColor, fmtMoney, contractWord } from '../../manager/ui.js';
     import Icon from '../ui/Icon.svelte';
     import TeamBadge from './TeamBadge.svelte';
@@ -32,6 +32,8 @@
 
     $: pool = Object.values(s.players).filter(p => {
         if (team && p.team === team.id) return false;
+        // A scouted prospect is on the Scouting screen until he is signed or passed on.
+        if (p.prospectFor) return false;
         if (tab === 'free' && p.team) return false;
         if (tab === 'market' && !p.team) return false;
         if (role !== 'all' && p.role !== role) return false;
@@ -69,6 +71,9 @@
         if (r) showToast(r.msg, 'info', 3000);
     }
     const view = (p) => mgrModal.set({ kind: 'player', id: p.id });
+    /** Why he cannot be signed right now, or ''. */
+    const blocked = (p) => signingCheck(s, p, { fee: p.team ? askingPrice(s, p) : 0, wage: wageAsk(s, p, team) });
+    const star = (p) => mutate(sv => toggleShortlist(sv, p.id));
 </script>
 
 {#if team}
@@ -76,7 +81,7 @@
     <div class="top">
         <div>
             <h1 class="page-h">Transfers</h1>
-            <p class="page-sub">Clubs sell in a window: the preseason and the mid-season break. Outside one you get a single emergency signing a season. Free agents sign any time. Open a player to bid, sign, scout, or put one of yours on the transfer list.</p>
+            <p class="page-sub">Clubs sell in a window: the preseason and the mid-season break. Outside one you get a single emergency signing a season. Free agents sign any time. Open a player to bid, sign, borrow, scout, or list one of yours.</p>
         </div>
         <div class="wins">
             <div class="win" class:open>
@@ -99,7 +104,7 @@
         {:else}
             <div class="mc"><span class="muted small">Wage bill</span><b class="num">{fmtMoney(bill)} <span class="muted small">· no limit, you own the club</span></b></div>
         {/if}
-        <div class="mc"><span class="muted small">Roster</span><b class="num">{team.roster.length} / {ROSTER_MAX}</b></div>
+        <div class="mc"><span class="muted small">Roster · imports</span><b class="num">{team.roster.length} / {ROSTER_MAX} · {importCount(s, team)} / {IMPORT_MAX}</b></div>
     </div>
 
     <div class="seg">
@@ -123,27 +128,29 @@
             </div>
             <div class="tbl-wrap">
                 <table class="tbl">
-                    <thead><tr><th>Player</th><th>Role</th><th>{tab === 'market' ? 'Club' : 'Last region'}</th><th class="c">Age</th><th class="c">OVR</th><th class="c">Potential</th>{#if tab === 'market'}<th class="r">Asking</th>{/if}<th class="r">Wage ask</th><th></th></tr></thead>
+                    <thead><tr><th></th><th>Player</th><th>Role</th><th>{tab === 'market' ? 'Club' : 'Last region'}</th><th class="c">Age</th><th class="c">OVR</th><th class="c">Potential</th>{#if tab === 'market'}<th class="r">Asking</th>{/if}<th class="r">Wage ask</th><th></th></tr></thead>
                     <tbody>
                         {#each rows as p (p.id)}
                             {@const pv = potentialView(p, { scouted: isScouted(s, p), scoutRank })}
+                            {@const why = blocked(p)}
                             <tr class="click" on:click={() => view(p)}>
-                                <td><PName {p} /></td>
+                                <td><button class="star" class:on={(s.shortlist || []).includes(p.id)} on:click|stopPropagation={() => star(p)} title="Shortlist" aria-label="Shortlist {p.name}">★</button></td>
+                                <td><PName {p} />{#if isImport(p, team.region)}<span class="imp" title="He would be an import at your club">IMP</span>{/if}</td>
                                 <td class="dim">{p.role}</td>
-                                <td>{#if p.team}<span class="trow"><TeamBadge team={s.teams[p.team]} size={20} /> {s.teams[p.team].short}</span>{:else}<span class="dim">{p.reg || p.nat}</span>{#if p.prospectFor === team.id}<span class="chip" style="--c:#34d399">Your prospect</span>{/if}{/if}</td>
+                                <td>{#if p.team}<span class="trow"><TeamBadge team={s.teams[p.team]} size={20} /> {s.teams[p.team].short}</span>{:else}<span class="dim">{p.reg || p.nat}</span>{/if}</td>
                                 <td class="c num">{ageOf(p, year)}</td>
                                 <td class="c"><span class="ovr" style="--c:{ovrColor(ovrOf(p))}">{ovrOf(p)}</span></td>
                                 <td class="c num" class:dim={!pv.exact}>{pv.exact ? pv.lo : `${pv.lo}–${pv.hi}`}</td>
                                 {#if tab === 'market'}<td class="r num">{fmtMoney(askingPrice(s, p))}</td>{/if}
                                 <td class="r num">{fmtMoney(wageAsk(s, p, team))}</td>
-                                <td class="r"><button class="btn btn-sm" on:click|stopPropagation={() => view(p)}>View</button></td>
+                                <td class="r">{#if why}<span class="no" title={why}>Not now</span>{:else}<button class="btn btn-sm btn-p" on:click|stopPropagation={() => view(p)}>Sign</button>{/if}</td>
                             </tr>
                         {/each}
                     </tbody>
                 </table>
                 {#if !rows.length}<div class="empty">Nobody matches. Loosen the filters.</div>{/if}
             </div>
-            <p class="muted small">Showing up to 80. Potential is a range until you scout a player (or own him). Random players are generated for this save and labelled.</p>
+            <p class="muted small">Showing up to 80. Potential is a range until you scout a player (or own him). Hover "Not now" to see what stands in the way. Star a player to keep him on your shortlist in Scouting.</p>
         </section>
     {:else if tab === 'bids'}
         <section class="panel">
@@ -218,11 +225,15 @@
     {/if}
 </div>
 {:else}
-    <div class="panel empty">You have no club right now. Pick one of your job offers on the Club screen.</div>
+    <div class="panel empty">You have no club right now. See the Jobs screen.</div>
 {/if}
 
 <style>
-    .tf { display: flex; flex-direction: column; gap: 14px; }
+    .tf { display: flex; flex-direction: column; gap: 12px; }
+    .star { padding: 0 4px; font-size: 15px; line-height: 1; color: #475569; background: none; border: none; cursor: pointer; }
+    .star:hover, .star.on { color: #fbbf24; }
+    .imp { margin-left: 6px; padding: 1px 4px; border-radius: 4px; font-size: 9px; font-weight: 800; letter-spacing: 0.4px; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.5); }
+    .no { font-size: 11.5px; color: #94a3b8; cursor: help; text-decoration: underline dotted; }
     .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
     .wins { display: flex; gap: 8px; flex-wrap: wrap; }
     .win { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; color: #f87171; background: rgba(127, 29, 29, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); }

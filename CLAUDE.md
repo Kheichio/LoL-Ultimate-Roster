@@ -13,6 +13,11 @@ Svelte + Vite rebuild of LoL Ultimate Team. Same game, modern architecture.
 - `npm run build` — production build to dist/
 - `npm run preview` — preview production build
 
+## Publishing and the server: see SANDBOX-SISL.md
+(„Publikacja i serwer: patrz SANDBOX-SISL.md”.) Since 27.10.2026 the SISL box gives `user1` no shell and no
+Docker: the site is the git repo `user1@141.98.86.242:lol-ultimate-roster.xyz.git`, and publishing is building
+locally, copying `dist/` into that repo's `site/` and `git push` to `main`.
+
 ## Architecture
 ```
 src/
@@ -199,8 +204,9 @@ until you sell a stake. No minigames; growth is levels and attributes.
 
 ```
 src/lib/manager/
-  data.js     — every table: start years, regions, attributes + ROLE_WEIGHTS, 12 personalities, 5 tactics in a
-                counter circle, training, calendar (33 steps), prizes, perks, champion release years, team names
+  data.js     — every table: start years, regions, attributes + ROLE_WEIGHTS, 23 personalities + combos, play styles,
+                5 tactics in a counter circle, training, calendar (53 steps), prizes, perks, champion release years,
+                team names
   util.js     — seeded rng helpers, money formatting
   people.js   — a player: real (from a card) or random; OVR, potential, wages, value, XP/levels, ageing, retiring
   world.js    — the persons index over the card DB, building a world for a start year, yearly debuts, prospects
@@ -209,7 +215,11 @@ src/lib/manager/
   market.js   — asking prices, willingness, bids, free agents, renewals, releases, the AI clubs' market
   engine.js   — advance() one step for the whole world, the week, the board, the offseason, inbox events,
                 stakes, sessions, bootcamps, the development forecast
-  history.js  — club history: the record book kept in the save, real history from the card DB, legends
+  history.js  — club history: the record book kept in the save, real history from the card DB, legends, all-time list
+  owner.js    — the manager's own money: bank, salary, stakes in clubs he left, founding costs, rebranding
+  npc.js      — what AI clubs do with their money: facilities, staff, academies
+  academy.js  — the academy (the one home of prospects), loans, scouting trips and reports
+  jobs.js     — the job market
   ui.js       — display helpers
 src/lib/stores/manager.js        — the save (`lurm_manager`), hydrate, mutate/playStep/goNext, slot summaries
 src/lib/components/manager/      — ManagerShell + NewManager, Home, Squad, Tactics, Training, League, Transfers,
@@ -221,10 +231,152 @@ src/lib/components/manager/      — ManagerShell + NewManager, Home, Squad, Tac
   never a Champion/MVP/legacy/award/Hall of Legends print. A person is every standard card of one name; two people
   who share a name are split by holding cards in the same year (`r:ninja#2`). managerSmoke asserts every real
   player's `cid` is a standard card.
-- **Random players are always labelled.** `real: false`, named by `makeHandle()` against every name on any card
-  (coaches and special prints included), and drawn through `PName.svelte` with a "Random" chip; PlayerModal adds a
-  "Random player: generated for this save" banner and TeamBadge dashes a random team's border. Never render a
-  player's name outside PName in a list.
+- **Random players are labelled in their overview.** `real: false`, named by `makeHandle()` (regional names,
+  `HANDLE_WORDS`/`_EXTRA`, or syllables joined by `syllableHandle`) against every name on any card (coaches and
+  special prints included), with a nationality (`p.cc`, `randomNation` over `NATIONS_BY_REGION`, flag from
+  `flagOf`; `p.nat` stays the REGION, Transfers reads it). Since 1.8.11 the user asked that lists show the flag,
+  not a "Random" chip: `PName` shows one only with `chip`, and PlayerModal's "Random player: generated for this
+  save" banner is the label. TeamBadge still dashes a random team's border.
+- **Squads: `ROSTER_MAX` 10, `ROLE_MAX` 2 a role** (`roleCount`). `signingCheck` refuses a third of a role; AI
+  windows trim to both rules; buyers of the manager's players need room in that role.
+- **Every club's history** (1.8.11, `history.js`). `recordSplits` (after `settleSplit`) writes `team.sh` rows for
+  every club: `{ y, s: 'sp'|'su', t: tier, p: place, f: 'pid~ovr,...' (five starters in role order), w: [...] }`;
+  `markSplit` adds `msi`/`worlds` (and `msi2`/`worlds2` finals, `mp`/`wp` placings) from `crownIntl`, and `up`/`down`
+  from `applyPromotion`. `recordYear` appends `p.cy = [[year, teamId, ovr]]` at the offseason. A player deleted at
+  retirement or by free-agency pruning is kept in `save.retired` by `archivePlayer` ONLY if he played games
+  (`car.g > 0`; archiving everyone was 1,043 players / 278 KB in a decade). `personOf` reads alive or retired;
+  `playerCareer` (PlayerCareer.svelte, in PlayerModal and its retired view) combines real cards before the save,
+  split rows and `cy`. `clubHistory` merges real history, split rows (seasons and titles for ANY club) and
+  `team.hist` (games, wins, awards, the bench — managed clubs only), and returns `seasons` for History's timeline.
+  Measured: a 2013 save is 1,305 KB after ten years (split rows 213 KB, `cy` 107 KB, archive 133 KB) against the
+  1.5 MB smoke guard, so a long save needs compression or trimming before these grow further.
+- **Club personalities** (`CLUB_STYLES`, ids are save data, `clubStyle(team)` stable per id, `assignStyles` at world
+  build and in hydrate): `money` scales sponsor income (big spenders 1.25), youth clubs sign and keep prospects,
+  loyal clubs renew veterans, star hunters poach more. Read in `aiWindow`, `aiRenewals` and `sponsorIncome`.
+- **Stakes in a hired club**: `ownerStake` reads `t.mstake` for a club the manager did not found (`setOwnerStake`
+  writes either field). The `stake` POINT_ACTION gives `STAKE_PER_POINT` (10%); `buyStake` works at any club,
+  `gainStake` announces a majority and dissolves the board at 100.
+- **Lineup between games**: MatchFlow's post-game screen calls `setLineup` and rebuilds `A0` from `sideFor`.
+- **The living league** (1.8.11.1, `livingLeague` in engine.js, first thing of the new year in `runOffseason`,
+  before debuts and history moves). Per region, while the card data has the year (25+ cards): real orgs with 5+
+  cards that year and no existing club of the same org (`sameOrg`) arrive, strongest first, up to
+  `NEW_CLUBS_PER_YEAR` (2). Each takes the place of a dying club: a real org with no cards from that year on, then
+  a random team, weakest first; never the manager's or a founded club. The folded club MOVES to `save.defunct`
+  (`defunct: year`, roster released to free agency), so every loop over `save.teams` stays the live world and old
+  ids still resolve through `anyTeam` (History's "Folded clubs", PlayerCareer, League/OffseasonReport `name`).
+  `makeOrg` (world.js) builds the newcomer from its cards: pros taken from AI clubs or free agency, undebuted ones
+  debut there, never from the manager's club. It inherits the folded club's tier (and at least its rep). Measured
+  from 2013: 6-12 arrivals a year, 62 folds in eight years; DWG enters tier 2 in 2019 and is the LCK's strongest
+  side by 2021. Nothing happens after the card data ends.
+- **Sponsors** (1.8.12, `manager/sponsors.js`, Sponsors.svelte). Only the MANAGER's money changed: weekly income
+  is `clubIncome` = `baseRevenue` (`SPONSOR_BASE_SHARE` 0.5 of `sponsorIncome`) + `dealIncome`. `sponsorIncome`
+  stays the market figure that AI clubs earn and that the wage limit, costs and valuation scale with, so the economy
+  calibration is untouched. `save.sponsors = { deals, offers, pitched, log }`; four `SPONSOR_SLOTS` with `share`
+  and `diff`; `sponsorAppeal` (rep 40%, this year's league record shrunk to even 35%, last year's best finish 15%,
+  titles of the last two years, x0.8 in tier 2) sets `pitchChance` (appeal x1.3 − diff) and offer value
+  (`share` x (0.6 + appeal x 0.9), x the goal's tier). Goals are board objective ids judged by the exported
+  `objectiveMet` in `settleSponsors` at the year end (before `yearReview`): met pays `bonus`, missed ends the deal.
+  `brandsKnock` → `inboundSponsor` after a manager title and at a new year with appeal ≥ 0.6. `ensureSponsors`
+  (fresh on `finalizeSave`/`acceptJob`, once in hydrate) gives a taken-over club its shirt and hardware deals to the
+  end of the year; a founded club starts with none. managerSmoke's scripted manager pitches and signs every week.
+- **The manager board** (1.8.13, `stores/managerBoard.js`, ManagerBoard.svelte, the Ranking tab). One row per
+  slot at `managerBoard/{uid}__{slot}`, guarded in firestore.rules by `ownsCareerSlot` + `validManagerRow`
+  (≤22 keys, every field typed, every string capped, only `score` ranged). **The rules must be pasted into the
+  console by hand before the board works** — Firestore denies an unknown collection. On by default; publishing
+  rides ManagerShell's 60s autosave (30s floor + signature skip); `settings.boardHidden` deletes the row. Rows
+  are re-clamped by `sanitizeManagerRow`, colour hex-checked. Every call gates on `window.fbDb` (SSR safe).
+- **Languages** (1.8.13): `REGION_LANGUAGE` per league, `p.lang = { code: 0..100 }` (fractional). Real players
+  are fluent in every region language they held a card in by that year (`makeRealPlayer`); generated players
+  speak `COUNTRY_LANGUAGE[cc]` (else English). `immerse` adds `LANG_IMMERSION` x (1 − level/100) a step for
+  every rostered player in his club's language; the `language` session adds `LANG_LESSON`. `teamComms` (mean
+  of the five) costs `LANG_EDGE_MAX` x (1 − comms/100) in `sideFor`'s `extraEdge`, for AI clubs too. Old saves:
+  `hydrate` gives a player already at a club that club's language.
+- **Draft aids**: `TACTIC_ARCHETYPES` (plan → archetypes, read off `COMP_STYLES`) tags champions "Fits <plan>";
+  plan tooltips and an info strip; both fives show `ovrAs`; ban tiles show the enemy's signature (`favs`), meta and
+  fit with their plan. A new save before `FEARLESS_FROM` asks for fearless (`finalizeSave({ fearless })`).
+- **Saving in the mode**: header Save (flush) and Settings (`openSettings`); Club settings has Save / Copy to slot
+  (`copyManagerToSlot` → `saveToSlot`). The manager save is still local only: ~1 MB cannot share the 1 MB
+  `saves/{uid}` cloud document, so cloud backup of manager saves waits for the own-backend plan.
+- **Free agency never empties a role**: `freeAgentFloor` (end of `aiWindow`, and `openWindow`) keeps 2 free
+  agents of each role per region. A founded LCK club once lost its ADC mid-season with 0 ADCs in free agency and
+  the save could not continue.
+- **Rare ceilings** (1.8.11.3): `makeRandomPlayer` squeezes a non-wonderkid's potential above `HIGH_POT` (86) to
+  `HIGH_POT_SQUEEZE` (0.35) of the excess; `WONDERKID_CHANCE` 2.5%. Measured on 2,000 prospects: 5.1% reach 88+,
+  1.4% 90+. `aiWindow` step 2b signs free agents of `ELITE_PROSPECT` (88+) aged 20 or under: youth clubs 85% of
+  windows, big spenders 40%, others 12%. Potential stays a soft cap (training goes past it).
+- **Club emblems**: `TEAM_EMBLEMS` (16 filled 24x24 paths, ids are save data). TeamBadge draws `team.emblem`, or a
+  stable emblem per id for any random team; real orgs keep their tag until real logos exist. A founded club picks
+  one (`custom.emblem` → `foundClub`) and can change colour and emblem on the Club screen. `CLUB_COLORS` is 34.
+- **Two up, two down**: `buildPromotion` writes `down`/`down2` (bottom two over both splits), `up`/`up2` (tier-2
+  summer finalists) and a Bo5 `tie` of the eighth against tier 2's best third-placed semi-finalist. Read through
+  `promoUps`/`promoDowns`; `applyPromotion` swaps both pairs.
+- **Academy, loans, scouting trips** (1.8.15, `manager/academy.js`, panels on the Staff screen, buttons in
+  PlayerModal). `team.acaLevel` 0-3 (`ACADEMY_LEVELS`), `team.academy` = ids; an academy player keeps
+  `p.team = club` and `p.aca`, but is NOT in `team.roster`, so the roster/free-agency invariants hold. Upkeep rides
+  `weekly`'s `runCosts`; `academyWeek` (XP + `team.acaRec`), `academyIntake` at the new year; `dissolveAcademy` on
+  `sack`/`acceptJob`. Loans: `p.loanFrom`/`p.loanYear`, host pays; `recallLoans` at the offseason; loanees are
+  skipped by AI trims, renewals, poaching, history moves and `signingCheck`. `runScoutingTrip` (engine, once a week,
+  `save.lastTrip`) adds prospects with `prospectFor` and scouts the region's free agents. The `'leave'` inbox event
+  is a transfer request.
+- **The year** (1.8.17). `CALENDAR` is 53 steps: preseason, Winter (`WINTER_WEEKS` 7), playoffs, First Stand (8 teams,
+  `S.firststand`, step `event: 'firststand'`), Spring (13), playoffs, MSI, break, Summer (13), playoffs, promotion, Worlds,
+  offseason. Thirteen clubs a league (`TIER1_SIZE`/`TIER2_SIZE`), one bye each; winter is the first seven rounds, so
+  tables sort on wins MINUS losses (a club with a bye has played less). `XP_PER_LEVEL` went 300 → 480 and
+  `MGR_XP_PER_LEVEL` 400 → 640 so growth per YEAR is what it was; any per-week rate must be read against 53 steps.
+  **Old saves**: `migrateCalendar` (hydrate, `save.calV`) finds the step by id in `OLD_CALENDAR`. In the preseason it
+  redraws the year; later the season runs on with no winter and quiet weeks past its nine rounds, and `fillLeagues`
+  (`addRandomTeam`, names from `CLUB_CITIES` × `CLUB_MASCOTS`) brings leagues to 13 at the next offseason.
+  `eventRoad(save)` is the one reader of "the year as the manager stands in it" (status, detail, prizes, bracket):
+  EventRoad.svelte on Home (compact) and Competitions, `liveEvent` for Home's bracket.
+- **Saves are compressed** (`utils/pack.js`, LZW over UTF-8, 15 bits a character, ~1/7 the characters). storage.js packs
+  the `manager` family only and detects by first character, so a plain old save still loads. `saveToStorage` returns
+  false on failure and `writeSave` shows a toast: a quota failure used to be a silent `console.warn`. A step is written
+  by the debounced `saveManager`, not `flushManager`, because packing takes tens of milliseconds. Measured: a decade from
+  2013 is 2.6 MB of JSON, 394k characters packed; smoke asserts three packed saves fit.
+- **Records** (1.8.17). `p.cy` rows are `[year, club, ovr, g, w, k, d, a, ratingSum, mvp]`, one per club per year:
+  `closeStint` (signTo, release) files a mid-year move, `stintRow` is what is left since `p.stOff`. `clubRecord` derives
+  any club's full player record from those rows, so AI clubs carry no ledger. `p.car` holds career totals, `car.t`
+  titles by kind (`creditTitle`), `car.aw` award counts, `car.peak`. `allTimeBest` ranks on `greatness`; a real pro's
+  titles before the save come from `preSaveTitles`. `p.pro` is the year he turned pro: his first card, or his first
+  contract (`signTo`). Legends.svelte.
+- **The manager's money** (`owner.js`). `manager.bank` is personal and follows him; `bankMove` writes `bankLog`.
+  `salaryOf`: `hiredSalary`, or a sole owner's `t.ownerPay` up to `ownerSalaryMax`; `paySalary` runs in `weekly`, out of the
+  club. `buyStake` is paid from the bank; `sellStake` still pays the club. `keepStake` moves his stake to `manager.stakes`
+  when he leaves (`moveToClub`, `sack`, `resignJob`), `restoreStake` when he comes back; `payDividends` at the offseason.
+  **`foundNewClub` buys a place**: it renames the weakest AI club of that tier IN PLACE, keeping its id, so every fixture
+  still holds and it works in any week. `rebrandClub` needs `soleOwner`; `t.rebranded` stops `realRenames` touching it.
+- **AI clubs** (`npc.js`). `t.fund` (income share + transfer fees); `clubsInvest` buys one upgrade a year off
+  `PRIORITY[style]`: `t.fac`, `t.acaLevel`, `t.staffLv` (coach rating, physio). `academyGraduates` puts a young sub on
+  the roster instead of storing 150 academy squads. `seedClubs` sets the start (`restyle` gives old saves training
+  clubs, since `t.style` is stored). Styles `factory` (train, `sellable`, sells to bigger clubs, asks ×0.85) and `dynasty`
+  (train, asks ×1.5, not poached). `realRenames` moves a real org to its new tag via `sameOrg` when the year's cards do.
+  `REAL_CLUB_MONEY` 1.3 in `sponsorIncome`.
+- **Who a player is** (1.8.17). `fx(p)` keys added: `selfTrain`, `mentorXp`, `squadMorale`, `fanPull` (weekly), `langMult`
+  (immerse), `edge`, `seat` (seatPerf), `lateGrowth` (xpMultiplier), `injuryMult`, `moneyFirst` (willingness), `lossMorale`
+  (applySeries). `playStyleOf` is derived from attributes (no save data). `lineupEdge` = personality edges +
+  `PERSONALITY_COMBOS` + `PLAYSTYLE_COMBOS` (40% off-plan), added to `sideFor`'s `extraEdge` for every club. Measured:
+  mean +0.6, range about 0 to +1.4 of team edge. Players train themselves: `SELF_TRAIN_XP`, `SELF_TRAIN_FREE_AGENT`, and
+  `CATCH_UP_MAX` in `xpMultiplier`. Tier-1 mean OVR measures about 3 over the card curve by 2023: watch it before adding XP.
+- **Recruitment** (1.8.17). The academy is the ONE home of prospects: `academyAdd` takes a pro debuting through the org,
+  the perk's class and a signed report. `p.prospectFor` now means only "a scouting report on the desk"
+  (`scoutReports`, `signProspect`, `passProspect`), hidden from Transfers and the AI. `recommendations`, `toggleShortlist`
+  (`save.shortlist`). Imports: `isImport` reads `homeRegion` (`FLAG_REGION` for a real pro, else `p.nat`) and `p.natz`;
+  `importRoom` in `signingCheck`, `loanInCheck` and every AI signing; real history moves and start rosters are exempt.
+  `residency` (`p.res`) naturalises after `IMPORT_RESIDENCY` years. `teamLanguage(t)` is `t.lang` or the league's.
+- **Screens** (1.8.17). `NAV` in ManagerShell: eight sections, each listing its `subs`; `mgrScreen` still holds the screen
+  id, so `go: 'transfers'` and friends keep working. Profile.svelte took the skill tree from Club; jobless routes to Jobs.
+- **Cup, All-Star, jobs, injuries, loans in** (1.8.16). The Regional Cup (`ensureCup`/`playCupRound`/`crownCup` in
+  engine.js, `save.cup = { year, regions: { R: { teams, start, rounds, champion, runnerUp } } }`) has NO calendar step:
+  its rounds run inside the spring league steps in `CUP_WEEKS`, so old saves keep their step indices. Before the
+  manager's tie, `cupEvent` posts a `'cup'` inbox decision (best five / rotate → `save.cupChoice`); cup games are
+  `quickSeries` only, never league stats. Trophy kind `'cup'` (TROPHY_META). `allStar` runs as the calendar enters
+  `midseason` (`save.allStar`, `p.allStar` count). Jobs: `manager/jobs.js`, `save.vacancies` with absolute-step
+  `from`/`until`; opened at the offseason, the break, 8% a week and on a sacking; `applyForJob` adds to
+  `save.jobOffers`, which `acceptJob` takes; an expired vacancy's offer lapses. Injuries: `INJURIES` in clublife.js
+  (`p.injT` ids are save data), AI clubs roll too (`rollInjuries(..., ai)`), free agents and academy players heal.
+  Loans in: `loanInCheck`/`loanIn` (academy.js), window or injury cover; `p.loanFrom` = the lending club, and
+  `recallLoans` sends every loanee to his `loanFrom` club. A loanee cannot be listed, released or renewed and
+  draws no bids.
 - **The world for a year.** Each region uses its own cards if it has 6+ teams that year, else the nearest year
   (`DATA_LOOKBACK` 4 back, `DATA_LOOKAHEAD` 2 ahead); a borrowed year is held `BORROWED_REGION_GAP` under the two
   strongest regions, because 2015's NA cards otherwise made NA the best league of 2013. Tier 1 is the ten strongest
@@ -400,7 +552,9 @@ src/lib/components/manager/      — ManagerShell + NewManager, Home, Squad, Tac
   every Transfers tab (`initialTab`), the wizard's later steps (`initialYear`/`initialStage`), every StageFx card, a
   contract deadline with every contract shape, a full trophy cabinet, a founded club (sole owner, a stake sold, the
   majority sold, an owner in debt with every training setting moved), History for a rival and for a club after a
-  full season, and a signed and an expiring PlayerModal: 650 renders, 0 crashes.
+  full season, and a signed and an expiring PlayerModal: 917 renders, 0 crashes. `node tools/managerSystems.mjs` covers
+  1.8.17 directly: an old save migrating in the preseason and mid-spring, bank, stakes, founding, imports, language,
+  scouting, and a ten-year run printing OVR drift, renames, save size and the all-time list.
   Those props exist for the harness only. The dump goes to `tools/.render-dump-manager/`; delete it afterwards.
 - **Svelte drops the whitespace at the edges of an `{#if}` block**, so `{a}{#if b} · {c}{/if}` renders "a· c". Write
   the separator as an expression: `{#if b}{' · '}{c}{/if}`. Twelve of them had shipped.

@@ -4,7 +4,7 @@
     import { leagueName, scoutReport, isScouted, teamComms } from '../../manager/engine.js';
     import { ROLE_IDS, TACTIC_BY_ID } from '../../manager/data.js';
     import { lineupOf, teamStrength } from '../../manager/match.js';
-    import { clubStyle } from '../../manager/market.js';
+    import { clubStyle, importCount } from '../../manager/market.js';
     import { isRival } from '../../manager/clublife.js';
     import { ovrOf, ageOf, potentialView } from '../../manager/people.js';
     import { ovrColor, fmtMoney, persona, champName } from '../../manager/ui.js';
@@ -44,6 +44,15 @@
                 <span class="ovr big" style="--c:{ovrColor(teamStrength(t, s.players))}">{Math.round(teamStrength(t, s.players))}</span>
             </div>
         </div>
+        <div class="tm-inv">
+            <span>Training centre <b>{(t.fac || {}).training || 0}</b></span>
+            <span>Gaming house <b>{(t.fac || {}).house || 0}</b></span>
+            <span>Studio <b>{(t.fac || {}).studio || 0}</b></span>
+            <span>Academy <b>{t.acaLevel || 0}</b></span>
+            {#if !mine}<span>Staff <b>{t.staffLv || 0}</b></span>{/if}
+            <span>Imports <b>{importCount(s, t)}</b></span>
+            {#if (t.names || []).length}<span>Formerly <b>{t.names[t.names.length - 1].name}</b></span>{/if}
+        </div>
         <button class="btn btn-sm hist" on:click={() => { mgrHistTeam.set(t.id); mgrModal.set(null); mgrScreen.set('history'); }}><Icon name="archive" size={13} /> Club history and legends</button>
         {#if rep && !mine}
             <p class="plan">Usually plays <b style="color:{TACTIC_BY_ID[rep.tactic].color}">{TACTIC_BY_ID[rep.tactic].name}</b>{#if rep.star}{' · '}star player <b>{rep.star.name}</b>{/if}</p>
@@ -73,6 +82,8 @@
 {/if}
 
 <style>
+    .tm-inv { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; font-size: 12px; color: #a5b4cf; }
+    .tm-inv b { color: #f1f5f9; }
     .tm-top { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; padding-right: 40px; }
     .tm-top > div:nth-child(2) { flex: 1; min-width: 200px; }
     .tm-top h2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 4px; font-family: 'Space Grotesk', 'Quicksand', sans-serif; font-size: 22px; color: #f1f5f9; }

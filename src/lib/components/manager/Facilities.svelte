@@ -5,11 +5,8 @@
     import { manager, mutate } from '../../stores/manager.js';
     import { showToast } from '../../stores/toasts.js';
     import { openConfirmModal } from '../../stores/ui.js';
-    import { myTeam, runScoutingTrip } from '../../manager/engine.js';
-    import { ACADEMY_LEVELS, academyLevel, academyIds, academyCost, academyUpkeep, buildAcademy, fromAcademy, releaseAcademy, tripCost } from '../../manager/academy.js';
-    import { REGION_IDS } from '../../manager/data.js';
-    import { ovrOf, ageOf } from '../../manager/people.js';
-    import { mgrModal } from '../../stores/manager.js';
+    import { myTeam } from '../../manager/engine.js';
+    import { academyUpkeep } from '../../manager/academy.js';
     import { rngFor } from '../../manager/util.js';
     import {
         STAFF_ROLES, staffCandidates, staffOf, staffWages, hireStaff, fireStaff, FACILITIES, FACILITY_MAX, facLevel,
@@ -39,14 +36,6 @@
         const r = mutate(sv => fireStaff(sv, role.id));
         if (r) showToast(r.msg, r.ok ? 'info' : 'error', 3500);
     }
-    $: aLv = team ? academyLevel(team) : 0;
-    $: aca = team ? academyIds(s, team).map(id => s.players[id]) : [];
-    $: loaned = team ? Object.values(s.players).filter(p => p.loanFrom === team.id) : [];
-    $: tripStamp = s.time.year * 100 + s.time.step;
-    function run(fn) {
-        const r = mutate(fn);
-        if (r) showToast(r.msg, r.ok ? 'success' : 'error', r.found ? 9000 : 4000);
-    }
     function upgrade(f) {
         const r = mutate(sv => upgradeFacility(sv, f.id));
         if (r) showToast(r.msg, r.ok ? 'success' : 'error', 4000);
@@ -57,7 +46,7 @@
 <div class="fac">
     <div>
         <h1 class="page-h">Staff and facilities</h1>
-        <p class="page-sub">The people behind the five and the buildings they work in. Staff wages and running costs come out of the balance every week ({fmtMoney(staffWages(s) + facilityUpkeep(s))} a year right now).</p>
+        <p class="page-sub">The people behind the five and the buildings they work in. Staff wages and running costs come out of the balance every week ({fmtMoney(staffWages(s) + facilityUpkeep(s) + academyUpkeep(s))} a year right now).</p>
     </div>
 
     <div class="grid3">
@@ -93,31 +82,6 @@
             {/each}
         </div>
     </section>
-
-    <div class="grid2">
-        <section class="panel">
-            <div class="ph"><h3><Icon name="academy" size={15} /> Academy</h3>{#if aLv}<span class="chip" style="--c:#34d399">{ACADEMY_LEVELS[aLv].name} · {aca.length}/{ACADEMY_LEVELS[aLv].slots}</span>{/if}</div>
-            {#if !aLv}
-                <p class="muted small">An academy holds young players outside the ten-man squad. They train every week, play academy games and a new prospect joins every year. Send players down or call them up in a transfer window.</p>
-            {:else}
-                <p class="muted small">{ACADEMY_LEVELS[aLv].xp} XP a week each, {ACADEMY_LEVELS[aLv].intake} new prospect{ACADEMY_LEVELS[aLv].intake === 1 ? '' : 's'} a year · upkeep {fmtMoney(academyUpkeep(s))}/yr{#if team.acaRec && team.acaRec.y === s.time.year}{' · '}this year {team.acaRec.w}-{team.acaRec.l}{/if}</p>
-                {#if aca.length}
-                    <ul class="riv">{#each aca as p (p.id)}<li><button class="lnk" on:click={() => mgrModal.set({ kind: 'player', id: p.id })}><PName {p} /></button><span class="muted small">{p.role} · {ageOf(p, s.time.year)} · <b style="color:{ovrColor(ovrOf(p))}">{ovrOf(p)}</b> / pot {p.pot}</span><span class="acts"><button class="btn btn-sm" on:click={() => run(sv => fromAcademy(sv, p.id))}>Call up</button><button class="btn btn-sm" on:click={() => openConfirmModal(`Release ${p.name} from the academy?`, () => run(sv => releaseAcademy(sv, p.id)))}>Release</button></span></li>{/each}</ul>
-                {:else}<p class="muted small">Empty. A player of 21 or under can be sent down from his overview in a window.</p>{/if}
-            {/if}
-            {#if aLv < 3}<button class="btn btn-sm btn-p" disabled={academyCost(s) > s.finance.balance} on:click={() => run(sv => buildAcademy(sv))}><Icon name="upgrade" size={12} /> {aLv ? 'Upgrade' : 'Build an academy'} · {fmtMoney(academyCost(s))}</button>{/if}
-            {#if loaned.length}
-                <h4 class="sub">Out on loan</h4>
-                <ul class="riv">{#each loaned as p (p.id)}<li><PName {p} /><span class="muted small">{p.role} at {s.teams[p.team] ? s.teams[p.team].name : 'free agency'} · back at the offseason</span></li>{/each}</ul>
-            {/if}
-        </section>
-        <section class="panel">
-            <div class="ph"><h3><Icon name="search" size={15} /> Scouting trips</h3><span class="muted small">{fmtMoney(tripCost(s))} a trip</span></div>
-            <p class="muted small">Send your scouts to a region for a week: they scout every free agent there and turn up two or three hidden prospects (three with a scout of 80+), held for you in free agency through the window. One trip a week.</p>
-            <div class="regs">{#each REGION_IDS as r (r)}<button class="btn btn-sm" disabled={s.lastTrip === tripStamp || tripCost(s) > s.finance.balance} on:click={() => run(sv => runScoutingTrip(sv, r))}>{r}</button>{/each}</div>
-            {#if s.lastTrip === tripStamp}<p class="muted tiny">Your scouts are out this week. Find what they turned up in Transfers → Free agents.</p>{/if}
-        </section>
-    </div>
 
     <section class="panel">
         <div class="ph"><h3><Icon name="squad" size={15} /> Staff</h3><span class="muted small">New candidates every half-season</span></div>
@@ -166,12 +130,5 @@
     .cands { display: flex; flex-direction: column; gap: 4px; }
     .cand { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; font: inherit; font-size: 13px; color: #e2e8f0; background: none; border: 1px solid rgba(51, 65, 85, 0.6); cursor: pointer; text-align: left; }
     .cand:hover:not(:disabled) { border-color: #34d399; }
-    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .grid2 .panel { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-    .grid2 .riv { width: 100%; }
-    .acts { margin-left: auto; display: flex; gap: 4px; }
-    .lnk { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
-    .sub { margin: 6px 0 0; font-size: 13px; color: #cbd5e1; }
-    .regs { display: flex; flex-wrap: wrap; gap: 6px; }
-    @media (max-width: 960px) { .grid3, .grid2, .facs { grid-template-columns: 1fr; } }
+    @media (max-width: 960px) { .grid3, .facs { grid-template-columns: 1fr; } }
 </style>

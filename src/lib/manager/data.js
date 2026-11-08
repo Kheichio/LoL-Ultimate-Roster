@@ -8,8 +8,8 @@
 //             players generated for the save, who are always labelled as such
 //    teams    the real orgs of a region in the start year, plus random teams
 //             where a region has fewer real orgs than its leagues need
-//    a year   Spring split, playoffs, MSI, Summer split, playoffs, promotion
-//             and relegation, Worlds, then the offseason
+//    a year   Winter split, playoffs, First Stand, Spring split, playoffs, MSI,
+//             Summer split, playoffs, promotion and relegation, Worlds, the offseason
 //    you      a manager with a level, perks, a board and a budget
 //
 //  Ids written into a save (personality, tactic, training, perk, attribute,
@@ -114,20 +114,20 @@ export const ROLE_WEIGHTS = {
 export const PERSONALITIES = [
     { id: 'leader',       name: 'Leader',       color: '#facc15', weight: 7,
       blurb: 'Takes charge in comms and pulls the team together.',
-      does: ['Team chemistry grows faster while they start', 'Leadership grows faster when they level up'],
-      effects: { chemPerStep: 1.0, focusBias: 'ldr' } },
+      does: ['Team chemistry grows much faster while they start', 'Leadership grows faster when they level up', 'A small edge in every game while they start'],
+      effects: { chemPerStep: 1.3, focusBias: 'ldr', edge: 0.15 } },
     { id: 'professional', name: 'Professional', color: '#60a5fa', weight: 10,
       blurb: 'Shows up, does the work, never makes headlines.',
-      does: ['+15% training XP', 'Plays closer to their level every game', 'Declines more slowly with age'],
-      effects: { xpMult: 1.15, varianceMult: 0.75, declineMult: 0.7 } },
+      does: ['+15% training XP', 'Practises on their own: +30% personal training', 'Plays closer to their level every game', 'Declines more slowly with age'],
+      effects: { xpMult: 1.15, selfTrain: 1.3, varianceMult: 0.75, declineMult: 0.7 } },
     { id: 'prodigy',      name: 'Prodigy',      color: '#c084fc', weight: 6,
       blurb: 'Gifted and knows it. Grows fast, sulks on the bench.',
-      does: ['+30% XP while 21 or younger', 'Morale drops twice as fast when benched'],
-      effects: { youngXpMult: 1.3, benchMoraleMult: 2 } },
+      does: ['+40% XP while 21 or younger', 'Morale drops twice as fast when benched'],
+      effects: { youngXpMult: 1.4, benchMoraleMult: 2 } },
     { id: 'hothead',      name: 'Hothead',      color: '#f87171', weight: 7,
       blurb: 'All gas. Can take over a game, or tilt it away.',
       does: ['Much bigger swings game to game, both ways', 'Morale swings harder after results', 'Two Hotheads in a lineup cost chemistry'],
-      effects: { varianceMult: 1.6, resultMoraleMult: 1.5, clash: true } },
+      effects: { varianceMult: 1.8, resultMoraleMult: 1.5, clash: true } },
     { id: 'teamplayer',   name: 'Team Player',  color: '#34d399', weight: 10,
       blurb: 'Plays for the five, accepts any role you give them.',
       does: ['Chemistry grows faster while they start', 'Never loses morale on the bench'],
@@ -135,15 +135,15 @@ export const PERSONALITIES = [
     { id: 'showman',      name: 'Showman',      color: '#fb923c', weight: 6,
       blurb: 'Lives for the crowd. The bigger the stage, the better.',
       does: ['Plays above their level in playoffs and at MSI and Worlds', 'Unhappy on the bench'],
-      effects: { bigStage: 3, benchMoraleMult: 1.5 } },
+      effects: { bigStage: 4, benchMoraleMult: 1.5 } },
     { id: 'grinder',      name: 'Grinder',      color: '#a3e635', weight: 8,
       blurb: 'Sixteen hours of solo queue a day, every day.',
-      does: ['+30% training XP'],
-      effects: { xpMult: 1.3 } },
+      does: ['+30% training XP', 'Personal training counts double'],
+      effects: { xpMult: 1.3, selfTrain: 2 } },
     { id: 'laidback',     name: 'Laid-back',    color: '#94a3b8', weight: 7,
       blurb: 'Nothing gets to them. Nothing motivates them much either.',
-      does: ['Morale barely moves, good or bad', '-15% training XP'],
-      effects: { xpMult: 0.85, resultMoraleMult: 0.5 } },
+      does: ['Morale barely moves, good or bad', '-15% training XP', 'Hardly practises on their own'],
+      effects: { xpMult: 0.85, selfTrain: 0.4, resultMoraleMult: 0.5 } },
     { id: 'ambitious',    name: 'Ambitious',    color: '#f472b6', weight: 7,
       blurb: 'Here to win titles, and wants paying like it.',
       does: ['+10% training XP', 'Asks for 20% higher wages', 'Loses morale while the team sits outside the top four'],
@@ -155,13 +155,101 @@ export const PERSONALITIES = [
     { id: 'clutch',       name: 'Clutch',       color: '#fbbf24', weight: 5,
       blurb: 'Wants the ball when the series is on the line.',
       does: ['Plays well above their level in a deciding game'],
-      effects: { decider: 4 } },
+      effects: { decider: 5 } },
     { id: 'nervous',      name: 'Nervous',      color: '#a78bfa', weight: 5,
       blurb: 'Brilliant in scrims. The lights get to them.',
       does: ['Plays below their level in playoffs and at MSI and Worlds', 'Calmer with every big series they play'],
-      effects: { bigStage: -3 } },
+      effects: { bigStage: -4 } },
+    { id: 'mentor',       name: 'Mentor',       color: '#fde68a', weight: 5,
+      blurb: 'Has seen it all, and enjoys passing it on.',
+      does: ['Teammates of 22 or under gain extra XP every week', 'Chemistry grows while they start', 'Declines a little more slowly'],
+      effects: { mentorXp: 6, chemPerStep: 0.4, declineMult: 0.85 } },
+    { id: 'streamer',     name: 'Streamer',     color: '#e879f9', weight: 5,
+      blurb: 'Half a pro, half a brand. The fans love them.',
+      does: ['Brings your club new fans every week', '-10% training XP', 'Asks for 5% higher wages'],
+      effects: { fanPull: 0.12, xpMult: 0.9, wageMult: 1.05 } },
+    { id: 'perfectionist', name: 'Perfectionist', color: '#7dd3fc', weight: 5,
+      blurb: 'Rewatches every death. Nothing is ever good enough.',
+      does: ['+20% training XP', 'Personal training +50%', 'Takes defeats far harder than anyone else'],
+      effects: { xpMult: 1.2, selfTrain: 1.5, lossMorale: 1.7 } },
+    { id: 'shotcaller',   name: 'Shotcaller',   color: '#fcd34d', weight: 5,
+      blurb: 'The voice everybody listens to in comms.',
+      does: ['A real edge in every game while they start', 'Leadership grows faster', 'Chemistry grows while they start'],
+      effects: { edge: 0.25, focusBias: 'ldr', chemPerStep: 0.3 } },
+    { id: 'lonewolf',     name: 'Lone Wolf',    color: '#fca5a5', weight: 4,
+      blurb: 'Plays their own game. It usually works, for them.',
+      does: ['Plays above their level every game', 'Costs chemistry every week they start'],
+      effects: { seat: 1.5, chemPerStep: -0.6 } },
+    { id: 'adaptive',     name: 'Adaptive',     color: '#5eead4', weight: 5,
+      blurb: 'Settles anywhere and picks things up fast.',
+      does: ['Learns a language more than twice as fast', 'Personal training +20%'],
+      effects: { langMult: 2.2, selfTrain: 1.2 } },
+    { id: 'latebloomer',  name: 'Late Bloomer', color: '#bef264', weight: 5,
+      blurb: 'Written off at twenty, peaks at twenty-five.',
+      does: ['Keeps growing like a player three years younger', 'Declines a little more slowly'],
+      effects: { lateGrowth: true, declineMult: 0.85 } },
+    { id: 'mercenary',    name: 'Mercenary',    color: '#fdba74', weight: 4,
+      blurb: 'Goes where the money is, and says so.',
+      does: ['Will sign for any club that pays', 'Asks for 15% higher wages and 10% more to renew'],
+      effects: { moneyFirst: true, wageMult: 1.15, renewMult: 1.1 } },
+    { id: 'ironwill',     name: 'Iron Will',    color: '#cbd5e1', weight: 5,
+      blurb: 'Plays through anything. Never misses a scrim.',
+      does: ['Far fewer injuries', 'Declines more slowly', 'Morale stays steadier'],
+      effects: { injuryMult: 0.4, declineMult: 0.8, resultMoraleMult: 0.8 } },
+    { id: 'joker',        name: 'Joker',        color: '#f9a8d4', weight: 5,
+      blurb: 'Keeps the room laughing, on and off the Rift.',
+      does: ['Lifts the morale of the whole squad every week', 'Chemistry grows while they start', 'A little less consistent'],
+      effects: { squadMorale: 0.35, chemPerStep: 0.3, varianceMult: 1.15 } },
+    { id: 'glasscannon',  name: 'Glass Cannon', color: '#fb7185', weight: 4,
+      blurb: 'Incredible hands, and the wrists to match.',
+      does: ['Plays above their level every game', 'Gets injured far more often'],
+      effects: { seat: 1.2, injuryMult: 1.9 } },
 ];
 export const PERSONALITY_BY_ID = Object.fromEntries(PERSONALITIES.map(p => [p.id, p]));
+
+/** Two personalities in one five. `edge` is team edge, for clubs of every kind. */
+export const PERSONALITY_COMBOS = [
+    { a: 'leader', b: 'prodigy', name: 'Captain and Protege', edge: 0.2, blurb: 'A young star who listens to a real captain.' },
+    { a: 'mentor', b: 'prodigy', name: 'Master and Apprentice', edge: 0.25, blurb: 'The veteran brings the talent along.' },
+    { a: 'hothead', b: 'laidback', name: 'Fire and Ice', edge: 0.2, blurb: 'Nothing tilts the laid-back one, and it rubs off.' },
+    { a: 'showman', b: 'clutch', name: 'Big Game Duo', edge: 0.25, blurb: 'Both want the ball when it matters.' },
+    { a: 'grinder', b: 'perfectionist', name: 'Scrim Monsters', edge: 0.2, blurb: 'Nobody leaves the practice room first.' },
+    { a: 'shotcaller', b: 'teamplayer', name: 'One Voice', edge: 0.25, blurb: 'A clear call, and someone who will always follow it.' },
+    { a: 'leader', b: 'loyal', name: 'Heart of the Club', edge: 0.2, blurb: 'The dressing room runs itself.' },
+    { a: 'lonewolf', b: 'teamplayer', name: 'Carry and Enabler', edge: 0.15, blurb: 'One plays for himself, one plays for him.' },
+    { a: 'nervous', b: 'leader', name: 'Steadying Hand', edge: 0.15, blurb: 'A calm voice on the big stage.' },
+    { a: 'professional', b: 'professional', name: 'Total Professionals', edge: 0.2, blurb: 'A room with no drama in it.' },
+    { a: 'ambitious', b: 'ambitious', name: 'Title or Bust', edge: 0.15, blurb: 'Two people who will not accept second.' },
+    { a: 'joker', b: 'nervous', name: 'Taking the Edge Off', edge: 0.15, blurb: 'Hard to be nervous when you are laughing.' },
+    { a: 'hothead', b: 'hothead', name: 'Powder Keg', edge: -0.3, blurb: 'Two tempers, one comms channel.' },
+    { a: 'shotcaller', b: 'shotcaller', name: 'Two Voices', edge: -0.25, blurb: 'Nobody knows whose call to follow.' },
+    { a: 'lonewolf', b: 'lonewolf', name: 'Nobody Passes', edge: -0.3, blurb: 'Two players, two different games.' },
+    { a: 'mercenary', b: 'loyal', name: 'Culture Clash', edge: -0.2, blurb: 'One is here for the club, one for the cheque.' },
+];
+
+// ---------------------------------------------------------------- play styles
+// How a player plays, read off the attribute he is strongest in for his role, so it moves
+// as he develops and needs no save data. Styles that fit together are a combo below.
+export const PLAYSTYLES = {
+    TOP: [{ id: 'carrytop', name: 'Carry Top', attr: 'mec' }, { id: 'frontline', name: 'Frontline', attr: 'tmf' }, { id: 'splitter', name: 'Split Pusher', attr: 'map' }, { id: 'weakside', name: 'Weak-Side Anchor', attr: 'cmp' }],
+    JNG: [{ id: 'invader', name: 'Invader', attr: 'mec' }, { id: 'ganker', name: 'Early Ganker', attr: 'frm' }, { id: 'pathing', name: 'Pathing Genius', attr: 'map' }, { id: 'engagejg', name: 'Engage Jungler', attr: 'tmf' }],
+    MID: [{ id: 'playmaker', name: 'Playmaker', attr: 'mec' }, { id: 'roamer', name: 'Roaming Mid', attr: 'map' }, { id: 'controlmid', name: 'Control Mage', attr: 'tmf' }, { id: 'anchormid', name: 'Lane Anchor', attr: 'cmp' }],
+    ADC: [{ id: 'lanebully', name: 'Lane Bully', attr: 'mec' }, { id: 'hypercarry', name: 'Hypercarry', attr: 'tmf' }, { id: 'safeadc', name: 'Safe Scaler', attr: 'cmp' }, { id: 'utilityadc', name: 'Utility Marksman', attr: 'map' }],
+    SUP: [{ id: 'engagesup', name: 'Engage Support', attr: 'tmf' }, { id: 'roamsup', name: 'Roaming Support', attr: 'map' }, { id: 'enchanter', name: 'Enchanter', attr: 'cmp' }, { id: 'shotsup', name: 'Shotcalling Support', attr: 'ldr' }],
+};
+/** Styles that fit together. Worth `edge` of team edge on the plan named, 40% of it on any other. */
+export const PLAYSTYLE_COMBOS = [
+    { id: 'stranglehold', name: 'Early Stranglehold', tactic: 'early', edge: 0.4, need: { JNG: ['invader', 'ganker'], MID: ['roamer', 'playmaker'] }, blurb: 'Mid and jungle win the map before anyone has an item.' },
+    { id: 'botkingdom', name: 'Bot Kingdom', tactic: 'early', edge: 0.35, need: { ADC: ['lanebully'], SUP: ['engagesup'] }, blurb: 'A bot lane that kills from level two.' },
+    { id: 'hyperprotect', name: 'Protect the Hypercarry', tactic: 'scaling', edge: 0.4, need: { ADC: ['hypercarry', 'safeadc'], SUP: ['enchanter'] }, blurb: 'Everything goes through one carry who must not die.' },
+    { id: 'weakside', name: 'Weak-Side Bargain', tactic: 'scaling', edge: 0.3, need: { TOP: ['weakside', 'frontline'], ADC: ['hypercarry'] }, blurb: 'Top survives alone so bot can have everything.' },
+    { id: 'controlcore', name: 'Control Core', tactic: 'scaling', edge: 0.3, need: { MID: ['controlmid', 'anchormid'], ADC: ['safeadc', 'utilityadc'] }, blurb: 'Nothing happens until they say so.' },
+    { id: 'sidelane', name: 'Side-Lane Pressure', tactic: 'split', edge: 0.4, need: { TOP: ['splitter', 'carrytop'], JNG: ['pathing'] }, blurb: 'A top laner the jungler can always cover for.' },
+    { id: 'mapcontrol', name: 'Map Control', tactic: 'vision', edge: 0.4, need: { JNG: ['pathing'], SUP: ['roamsup', 'shotsup'] }, blurb: 'They are always where you are going to be.' },
+    { id: 'roamduo', name: 'Roaming Duo', tactic: 'vision', edge: 0.3, need: { MID: ['roamer'], SUP: ['roamsup'] }, blurb: 'Two players who are never in lane.' },
+    { id: 'frontback', name: 'Front to Back', tactic: 'teamfight', edge: 0.35, need: { TOP: ['frontline'], ADC: ['hypercarry', 'utilityadc'] }, blurb: 'A wall, and someone shooting over it.' },
+    { id: 'engagechain', name: 'Engage Chain', tactic: 'teamfight', edge: 0.4, need: { JNG: ['engagejg'], SUP: ['engagesup'] }, blurb: 'One lock-down after another.' },
+];
 
 // ---------------------------------------------------------------- tactics
 // Five plans in a circle: each beats the next two and loses to the two before it.
@@ -276,6 +364,20 @@ export const DUO_SYNERGIES = [
     { a: 'zilean', b: 'kayle', name: 'Second Life', bonus: 0.4 },
     { a: 'sett', b: 'yasuo', name: 'Showstopper Combo', bonus: 0.4 },
     { a: 'ivern', b: 'kindred', name: 'Jungle Friends', bonus: 0.3 },
+    { a: 'nilah', b: 'seraphine', name: 'Shared Shields', bonus: 0.6 },
+    { a: 'nilah', b: 'leona', name: 'Dive Partners', bonus: 0.5 },
+    { a: 'xayah', b: 'nautilus', name: 'Feather Lock', bonus: 0.4 },
+    { a: 'vayne', b: 'lulu', name: 'Hypercarry Lulu', bonus: 0.6 },
+    { a: 'ashe', b: 'braum', name: 'Freljord Lane', bonus: 0.6 },
+    { a: 'sejuani', b: 'ashe', name: 'Winter\'s Claw', bonus: 0.4 },
+    { a: 'jarvan', b: 'galio', name: 'Cataclysm Taunt', bonus: 0.5 },
+    { a: 'lillia', b: 'kennen', name: 'Sleeping Storm', bonus: 0.4 },
+    { a: 'rumble', b: 'jarvan', name: 'Equalizer Trap', bonus: 0.5 },
+    { a: 'ziggs', b: 'lulu', name: 'Pocket Bomb', bonus: 0.3 },
+    { a: 'renekton', b: 'nidalee', name: 'Shurima Dive', bonus: 0.4 },
+    { a: 'pantheon', b: 'twistedfate', name: 'Falling Star', bonus: 0.5 },
+    { a: 'sylas', b: 'jarvan', name: 'Stolen Cataclysm', bonus: 0.4 },
+    { a: 'ryze', b: 'twistedfate', name: 'Global Rift', bonus: 0.4 },
 ];
 
 /**
@@ -302,6 +404,15 @@ export const COMP_STYLES = [
     { id: 'split', name: 'Split Push', color: '#f59e0b', icon: 'swords', bonus: 0.4, tactic: 'split',
       blurb: 'A duelist in the side lane that nobody can stop alone.', need: 'A duelist, skirmisher or juggernaut top, and one more.',
       test: (n, top) => ['Duelist', 'Skirmisher', 'Juggernaut'].includes(top) && (n.Duelist + n.Skirmisher + n.Juggernaut) >= 2 },
+    { id: 'frontback', name: 'Front to Back', color: '#84cc16', icon: 'shield', bonus: 0.5, tactic: 'teamfight',
+      blurb: 'A wall up front and a carry behind it. Simple and hard to break.', need: 'Two frontliners and a marksman.',
+      test: (n) => (n.Juggernaut + n.Vanguard + n.Warden) >= 2 && (n.Marksman + n.Hypercarry) >= 1 },
+    { id: 'skirmish', name: 'Skirmish', color: '#fb923c', icon: 'swords', bonus: 0.45, tactic: 'early',
+      blurb: 'Small fights all over the map, won on mechanics.', need: 'Three duelists, skirmishers or lane bullies.',
+      test: (n) => (n.Duelist + n.Skirmisher + n['Lane Bully']) >= 3 },
+    { id: 'kite', name: 'Disengage and Kite', color: '#a78bfa', icon: 'target', bonus: 0.45, tactic: 'scaling',
+      blurb: 'They run at you, you walk away, and they die.', need: 'A marksman, a warden or enchanter, and a mage or poke.',
+      test: (n) => (n.Marksman + n.Hypercarry) >= 1 && (n.Warden + n.Enchanter) >= 1 && (n.Mage + n.Poke) >= 1 },
 ];
 export const COMP_STYLE_BY_ID = Object.fromEntries(COMP_STYLES.map(c => [c.id, c]));
 /**
@@ -337,14 +448,23 @@ export const TRAINING = [
 export const TRAINING_BY_ID = Object.fromEntries(TRAINING.map(t => [t.id, t]));
 
 // ---------------------------------------------------------------- the level system
-export const XP_PER_LEVEL = 300;
+// 480, not 300: the year grew from 33 steps to 53, and every weekly and match XP figure
+// was tuned on a level per so many weeks. Growth per YEAR stays what it was.
+export const XP_PER_LEVEL = 480;
 export const POINTS_PER_LEVEL = 2;
 /** What one attribute point is worth once a player's OVR has reached their potential. */
 export const PAST_CEILING_FACTOR = 0.25;
 export const MATCH_XP = { series: 30, gameWon: 10, mvp: 20, bench: 8 };
+/** XP a player earns on his own every week: solo queue and VODs, club or no club, before
+ *  his personality's `selfTrain`. A free agent has nothing else, so he gets a little more. */
+export const SELF_TRAIN_XP = 4;
+export const SELF_TRAIN_FREE_AGENT = 7;
+/** A player well short of his potential makes up ground: up to +60% XP at this gap. */
+export const CATCH_UP_GAP = 12;
+export const CATCH_UP_MAX = 0.6;
 
 // ---------------------------------------------------------------- manager level
-export const MGR_XP_PER_LEVEL = 400;
+export const MGR_XP_PER_LEVEL = 640;
 export const MGR_XP = { seriesWin: 40, seriesLoss: 12, title: 300, intlTitle: 500, worlds: 900, objective: 150, promotion: 250 };
 
 /** The skill tree: five branches. Every `rank` line is read by the engine and
@@ -383,7 +503,7 @@ export const PERKS = [
       rank: (n) => `+${n * 50}% XP for players who do not start` },
     { id: 'youth',      branch: 'development', name: 'Academy Director', icon: 'sparkle', max: 3,
       blurb: 'Your academy finds talent every year.',
-      rank: (n) => `${n} academy prospect${n === 1 ? '' : 's'} with real potential every preseason, held for you` },
+      rank: (n) => `${n} academy prospect${n === 1 ? '' : 's'} with real potential join your academy every preseason` },
     // Man management
     { id: 'motivator',  branch: 'people', name: 'Motivator',       icon: 'heart',    max: 3,
       blurb: 'Team talks land, defeats sting less.',
@@ -427,7 +547,8 @@ export const POINT_ACTIONS = [
 export const ACHIEVEMENTS = [
     { id: 'first_title', name: 'First Silverware', icon: 'trophy', point: true, desc: 'Win any title.' },
     { id: 'league_title', name: 'Domestic Champions', icon: 'trophy', desc: 'Win a split title in your league.' },
-    { id: 'double', name: 'Domestic Double', icon: 'medal', point: true, desc: 'Win the Spring and Summer titles in the same year.' },
+    { id: 'double', name: 'Domestic Double', icon: 'medal', point: true, desc: 'Win two domestic titles in the same year.' },
+    { id: 'first_stand', name: 'First to the Flag', icon: 'flag', point: true, desc: 'Win First Stand.' },
     { id: 'msi', name: 'Mid-Season Kings', icon: 'globe', point: true, desc: 'Win MSI.' },
     { id: 'worlds', name: 'World Champions', icon: 'crown', point: true, desc: 'Win Worlds.' },
     { id: 'intl_double', name: 'International Double', icon: 'gem', point: true, desc: 'Win MSI and Worlds in the same year.' },
@@ -475,7 +596,7 @@ export const INTENSITY_BY_ID = Object.fromEntries(INTENSITY.map(x => [x.id, x]))
 export const BENCH_PROGRAMS = [
     { id: 'none', name: 'No programme', xp: 0, morale: 0, cost: 0, blurb: 'Subs train with the team and wait for a chance.' },
     { id: 'reserve', name: 'Reserve scrims', xp: 20, morale: 0, cost: 0.004, blurb: 'Your subs scrim other clubs\' academies every week.' },
-    { id: 'academy', name: 'Academy league', xp: 40, morale: 1, cost: 0.008, blurb: 'Your subs play real academy matches. The most growth there is for players who do not start.' },
+    { id: 'academy', name: 'Reserve league', xp: 40, morale: 1, cost: 0.008, blurb: 'Your subs play real reserve matches. The most growth there is for players who do not start.' },
 ];
 export const BENCH_PROGRAM_BY_ID = Object.fromEntries(BENCH_PROGRAMS.map(x => [x.id, x]));
 
@@ -515,6 +636,9 @@ export const CLUB_STYLES = [
     { id: 'rich', name: 'Big spender', color: '#fbbf24', weight: 14, money: 1.25, blurb: 'Sponsors pour money in: a bigger wage budget than its size.' },
     { id: 'loyal', name: 'Loyal', color: '#60a5fa', weight: 17, money: 1, blurb: 'Keeps its veterans and renews almost everyone.' },
     { id: 'stars', name: 'Star hunter', color: '#f472b6', weight: 17, money: 1.05, blurb: 'Buys the best player it can afford from smaller clubs.' },
+    // Training clubs: both make players far better than anyone else does. One sells them on.
+    { id: 'factory', name: 'Talent factory', color: '#22d3ee', weight: 11, money: 0.95, train: 1.4, blurb: 'Trains young players hard, then sells them on for a profit. Its best prospects are for sale at a fair price.' },
+    { id: 'dynasty', name: 'Dynasty builder', color: '#c084fc', weight: 9, money: 1, train: 1.3, blurb: 'Trains its players up and keeps them. Almost never sells, and asks a fortune when it does.' },
 ];
 export const CLUB_STYLE_BY_ID = Object.fromEntries(CLUB_STYLES.map(x => [x.id, x]));
 
@@ -525,11 +649,45 @@ export const CLUB_STYLE_BY_ID = Object.fromEntries(CLUB_STYLES.map(x => [x.id, x
 // LANG_EDGE_MAX of team edge. Living there teaches it (LANG_IMMERSION a week at level 0,
 // slowing as it rises), and Language lessons teach it faster. Codes are save data.
 export const REGION_LANGUAGE = { LCK: 'ko', LPL: 'zh', LEC: 'en', LCS: 'en', LCP: 'en', CBLOL: 'pt' };
+/** A club's working language: its league's, unless the manager has chosen another. */
+export const teamLanguage = (team) => (team && team.lang) || REGION_LANGUAGE[team && team.region] || 'en';
 export const LANGUAGE_NAMES = { ko: 'Korean', zh: 'Chinese', en: 'English', pt: 'Portuguese' };
 export const COUNTRY_LANGUAGE = { KR: 'ko', CN: 'zh', TW: 'zh', HK: 'zh', BR: 'pt', PT: 'pt' };
-export const LANG_IMMERSION = 5;
+export const LANG_IMMERSION = 3.1;
 export const LANG_EDGE_MAX = 1.5;
 export const LANG_LESSON = 22;
+/** A language course for the whole squad, as a share of a year's sponsor income, before
+ *  the discount: the more of the squad already speak it, the cheaper it is. */
+export const LANG_COURSE_COST = 0.06;
+/** Language lessons a course is worth, for every player at the club. */
+export const LANG_COURSE_LESSONS = 2;
+/** Changing a club's working language, as a share of a year's sponsor income, once a year. */
+export const LANG_SWITCH_COST = 0.02;
+
+// ---------------------------------------------------------------- imports
+// A club may field at most IMPORT_MAX players from outside its region. A player who has
+// played IMPORT_RESIDENCY years in a row in one region may be naturalised there (a roll
+// each year) and stops counting as an import in it.
+export const IMPORT_MAX = 2;
+/** Where a real pro is really from, by his flag: a Korean in the LPL is an import. */
+export const FLAG_REGION = { '🇰🇷': 'LCK', '🇨🇳': 'LPL', '🇧🇷': 'CBLOL', '🇺🇸': 'LCS', '🇨🇦': 'LCS', '🇹🇼': 'LCP', '🇭🇰': 'LCP', '🇻🇳': 'LCP', '🇯🇵': 'LCP', '🇦🇺': 'LCP', '🇵🇭': 'LCP', '🇹🇭': 'LCP', '🇸🇬': 'LCP', '🇲🇾': 'LCP', '🇮🇩': 'LCP', '🇳🇿': 'LCP', '🇪🇺': 'LEC', '🇩🇪': 'LEC', '🇫🇷': 'LEC', '🇪🇸': 'LEC', '🇬🇧': 'LEC', '🇵🇱': 'LEC', '🇸🇪': 'LEC', '🇩🇰': 'LEC', '🇳🇱': 'LEC', '🇧🇪': 'LEC', '🇨🇿': 'LEC', '🇸🇮': 'LEC', '🇭🇷': 'LEC', '🇬🇷': 'LEC', '🇮🇹': 'LEC', '🇵🇹': 'LEC', '🇳🇴': 'LEC', '🇫🇮': 'LEC', '🇷🇴': 'LEC', '🇧🇬': 'LEC', '🇱🇹': 'LEC', '🇷🇸': 'LEC', '🇹🇷': 'LEC' };
+export const IMPORT_RESIDENCY = 5;
+export const NATURALISE_CHANCE = 0.45;
+
+// ---------------------------------------------------------------- the manager's money
+/** What a hired manager earns a year, as a share of his club's market income. */
+export const MANAGER_SALARY_SHARE = 0.055;
+export const MANAGER_SALARY_MIN = 30000;
+/** The most an owner may pay himself, as a share of his club's market income. */
+export const OWNER_SALARY_MAX_SHARE = 0.2;
+/** What a manager has in the bank on day one. */
+export const MANAGER_START_BANK = 25000;
+/** Buying a league place and founding a club there, at the reference economy. */
+export const FOUND_COST = { 1: 5000000, 2: 1200000 };
+/** Share of a held club's market income paid out to its owners each year. */
+export const DIVIDEND_SHARE = 0.1;
+/** A real org's commercial pull: more base income than a generated club of the same size. */
+export const REAL_CLUB_MONEY = 1.3;
 
 // ---------------------------------------------------------------- sponsors
 // The manager's club earns a base revenue (streaming, merchandise, its league share)
@@ -556,14 +714,14 @@ export const SPONSOR_GOALS = {
     1: [
         { id: 'tophalf', text: 'Finish in the top half of the league', tier: 0 },
         { id: 'playoffs1', text: 'Reach the playoffs at least once', tier: 0 },
-        { id: 'playoffs2', text: 'Reach the playoffs in both splits', tier: 1 },
+        { id: 'playoffs2', text: 'Reach the playoffs in Spring and Summer', tier: 1 },
         { id: 'worlds', text: 'Qualify for Worlds', tier: 1 },
         { id: 'title', text: 'Win a domestic title', tier: 2 },
     ],
     2: [
         { id: 'tophalf', text: 'Finish in the top half of the league', tier: 0 },
         { id: 'playoffs1', text: 'Reach the playoffs at least once', tier: 0 },
-        { id: 'playoffs2', text: 'Reach the playoffs in both splits', tier: 1 },
+        { id: 'playoffs2', text: 'Reach the playoffs in Spring and Summer', tier: 1 },
         { id: 'promote', text: 'Win promotion', tier: 2 },
     ],
 };
@@ -606,6 +764,18 @@ export const TEAM_EMBLEMS = [
 ];
 export const TEAM_EMBLEM_BY_ID = Object.fromEntries(TEAM_EMBLEMS.map(e => [e.id, e]));
 
+// ---------------------------------------------------------------- generated clubs
+// A region with few real orgs in a year needs up to twenty generated clubs.
+export const CLUB_CITIES = {
+    LCK: ['Seoul', 'Busan', 'Incheon', 'Daegu', 'Daejeon', 'Gwangju', 'Ulsan', 'Suwon', 'Changwon', 'Jeju', 'Pohang', 'Jeonju', 'Goyang', 'Yongin', 'Sejong', 'Gimhae'],
+    LPL: ['Shanghai', 'Beijing', 'Chengdu', 'Wuhan', 'Hangzhou', 'Shenzhen', 'Chongqing', 'Xian', 'Nanjing', 'Suzhou', 'Guangzhou', 'Tianjin', 'Qingdao', 'Harbin', 'Kunming', 'Dalian'],
+    LEC: ['Berlin', 'Paris', 'London', 'Madrid', 'Stockholm', 'Warsaw', 'Rome', 'Amsterdam', 'Copenhagen', 'Prague', 'Lisbon', 'Vienna', 'Hamburg', 'Barcelona', 'Milan', 'Oslo', 'Dublin', 'Lyon'],
+    LCS: ['Los Angeles', 'New York', 'Chicago', 'Seattle', 'Austin', 'Toronto', 'Miami', 'Boston', 'Denver', 'Atlanta', 'Vancouver', 'Dallas', 'Portland', 'Phoenix', 'Detroit', 'Montreal', 'Houston', 'San Diego'],
+    LCP: ['Tokyo', 'Taipei', 'Manila', 'Sydney', 'Saigon', 'Osaka', 'Hong Kong', 'Singapore', 'Jakarta', 'Bangkok', 'Melbourne', 'Hanoi', 'Kuala Lumpur', 'Auckland', 'Kyoto', 'Kaohsiung'],
+    CBLOL: ['Rio', 'Sao Paulo', 'Recife', 'Brasilia', 'Salvador', 'Curitiba', 'Fortaleza', 'Manaus', 'Porto Alegre', 'Belo Horizonte', 'Goiania', 'Belem', 'Florianopolis', 'Vitoria', 'Natal', 'Campinas'],
+};
+export const CLUB_MASCOTS = ['Vipers', 'Ravens', 'Kings', 'Knights', 'Hawks', 'Wolves', 'Titans', 'Comets', 'Storm', 'Phantoms', 'Rangers', 'Sentinels', 'Raiders', 'Legion', 'Apex', 'Vortex', 'Eclipse', 'Nova', 'Pulse', 'Zenith', 'Ember', 'Monarchs', 'Drift', 'Rogues', 'Guardians', 'Strikers', 'Dynamo', 'Spectres', 'Crown', 'Forge'];
+
 // ---------------------------------------------------------------- team talks
 export const TALKS = [
     { id: 'praise',    name: 'Praise',      icon: 'star',  blurb: 'Tell them they are playing well. Lands best after a good game.' },
@@ -615,9 +785,28 @@ export const TALKS = [
 
 // ---------------------------------------------------------------- the calendar
 // One step at a time. Every region and both tiers move together.
-export const LEAGUE_WEEKS = 9;
+// Thirteen clubs a league: a single round robin is thirteen weeks with one bye each.
+// Winter is the short split: the first seven of those rounds, so a club plays six or
+// seven series and the table is read on wins minus losses.
+export const LEAGUE_WEEKS = 13;
+export const WINTER_WEEKS = 7;
+export const weeksOf = (split) => (split === 'winter' ? WINTER_WEEKS : LEAGUE_WEEKS);
+export const SPLITS = ['winter', 'spring', 'summer'];
+export const SPLIT_NAME = { winter: 'Winter', spring: 'Spring', summer: 'Summer' };
+/** What a split is called in a club's history rows (`team.sh`), which are save data. */
+export const SPLIT_CODE = { winter: 'wi', spring: 'sp', summer: 'su' };
+export const SPLIT_BY_CODE = { wi: 'Winter', sp: 'Spring', su: 'Summer' };
+/** The step ids of the 33-step year, in order: how a save from before the winter split finds its place. */
+export const OLD_CALENDAR = ['preseason', ...Array.from({ length: 9 }, (_, i) => 'spring_w' + (i + 1)), 'spring_sf', 'spring_f', 'msi_qf', 'msi_sf', 'msi_f', 'midseason',
+    ...Array.from({ length: 9 }, (_, i) => 'summer_w' + (i + 1)), 'summer_sf', 'summer_f', 'promotion', 'worlds_r16', 'worlds_qf', 'worlds_sf', 'worlds_f', 'offseason'];
 function buildCalendar() {
-    const out = [{ id: 'preseason', kind: 'window', name: 'Preseason', short: 'Preseason', split: 'spring' }];
+    const out = [{ id: 'preseason', kind: 'window', name: 'Preseason', short: 'Preseason', split: 'winter' }];
+    for (let i = 0; i < WINTER_WEEKS; i++) out.push({ id: 'winter_w' + (i + 1), kind: 'league', split: 'winter', md: i, name: `Winter Split · Week ${i + 1}`, short: `Winter W${i + 1}` });
+    out.push({ id: 'winter_sf', kind: 'playoffs', split: 'winter', round: 0, name: 'Winter Playoffs · Semifinals', short: 'Winter SF' });
+    out.push({ id: 'winter_f', kind: 'playoffs', split: 'winter', round: 1, name: 'Winter Final', short: 'Winter Final' });
+    out.push({ id: 'fs_qf', kind: 'intl', event: 'firststand', round: 0, split: 'winter', name: 'First Stand · Quarterfinals', short: 'FS QF' });
+    out.push({ id: 'fs_sf', kind: 'intl', event: 'firststand', round: 1, split: 'winter', name: 'First Stand · Semifinals', short: 'FS SF' });
+    out.push({ id: 'fs_f', kind: 'intl', event: 'firststand', round: 2, split: 'winter', name: 'First Stand Final', short: 'FS Final' });
     for (let i = 0; i < LEAGUE_WEEKS; i++) out.push({ id: 'spring_w' + (i + 1), kind: 'league', split: 'spring', md: i, name: `Spring Split · Week ${i + 1}`, short: `Spring W${i + 1}` });
     out.push({ id: 'spring_sf', kind: 'playoffs', split: 'spring', round: 0, name: 'Spring Playoffs · Semifinals', short: 'Spring SF' });
     out.push({ id: 'spring_f', kind: 'playoffs', split: 'spring', round: 1, name: 'Spring Final', short: 'Spring Final' });
@@ -638,17 +827,22 @@ function buildCalendar() {
 }
 export const CALENDAR = buildCalendar();
 export const STEPS_PER_YEAR = CALENDAR.length;
+/** Bumped when the year's steps change; a save below it is moved by migrateCalendar. */
+export const CALENDAR_VERSION = 2;
 export const STEP_INDEX = Object.fromEntries(CALENDAR.map((s, i) => [s.id, i]));
 
 /** The stages of a year, in order. Moving from one to the next is what the
  *  transition screen announces. */
 export const SEASON_PHASES = [
     { id: 'preseason', name: 'Preseason', short: 'Preseason', icon: 'trade', color: '#22d3ee', blurb: 'Transfer window open. Build the roster, set the plan.' },
-    { id: 'spring', name: 'Spring Split', short: 'Spring', icon: 'calendar', color: '#34d399', blurb: 'Nine weeks of best-of-three. The top four make the playoffs.' },
+    { id: 'winter', name: 'Winter Split', short: 'Winter', icon: 'calendar', color: '#7dd3fc', blurb: 'Seven short weeks. The top four make the playoffs.' },
+    { id: 'winter_po', name: 'Winter Playoffs', short: 'Playoffs', icon: 'trophy', color: '#fbbf24', blurb: 'Best of five. The champion goes to First Stand.' },
+    { id: 'firststand', name: 'First Stand', short: 'First Stand', icon: 'flag', color: '#f472b6', blurb: 'The first international of the year: the winter champions, best of five.' },
+    { id: 'spring', name: 'Spring Split', short: 'Spring', icon: 'calendar', color: '#34d399', blurb: 'Thirteen weeks of best-of-three. The top four make the playoffs.' },
     { id: 'spring_po', name: 'Spring Playoffs', short: 'Playoffs', icon: 'trophy', color: '#fbbf24', blurb: 'Best of five. The champion goes to MSI.' },
     { id: 'msi', name: 'Mid-Season Invitational', short: 'MSI', icon: 'globe', color: '#38bdf8', blurb: 'The spring champions of the world, best of five.' },
     { id: 'midseason', name: 'Mid-Season Break', short: 'Break', icon: 'trade', color: '#22d3ee', blurb: 'The second transfer window of the year.' },
-    { id: 'summer', name: 'Summer Split', short: 'Summer', icon: 'calendar', color: '#fb923c', blurb: 'Nine more weeks. Relegation is decided over both splits.' },
+    { id: 'summer', name: 'Summer Split', short: 'Summer', icon: 'calendar', color: '#fb923c', blurb: 'Thirteen more weeks. Relegation is decided over the whole year.' },
     { id: 'summer_po', name: 'Summer Playoffs', short: 'Playoffs', icon: 'trophy', color: '#fbbf24', blurb: 'Best of five. The finalists go to Worlds.' },
     { id: 'promotion', name: 'Promotion Series', short: 'Promotion', icon: 'upgrade', color: '#a78bfa', blurb: 'One best-of-five for a place in the top league.' },
     { id: 'worlds', name: 'World Championship', short: 'Worlds', icon: 'crown', color: '#facc15', blurb: 'Sixteen teams. One trophy.' },
@@ -667,10 +861,9 @@ export function phaseOfStep(step) {
 export const LEAGUE_BEST_OF = 3;
 export const KNOCKOUT_BEST_OF = 5;
 
-// Tier sizes. Tier 1 is always ten (nine weeks, one series each); tier 2 is
-// eight, so its teams have two bye weeks a split.
-export const TIER1_SIZE = 10;
-export const TIER2_SIZE = 8;
+// Tier sizes: thirteen clubs in both leagues of every region.
+export const TIER1_SIZE = 13;
+export const TIER2_SIZE = 13;
 export const ROSTER_MIN = 6;
 export const ROSTER_MAX = 10;
 /** At most two players of a role: a starter and a sub. */
@@ -690,12 +883,15 @@ export const WORLDS_SLOTS_BY_RANK = [4, 4, 3, 2, 2, 1];
 export const PRIZES = {
     league: { 1: 250000, 2: 120000, 3: 60000, 4: 60000 },
     tier2:  { 1: 60000, 2: 30000 },
+    firststand: { 1: 300000, 2: 150000, 3: 75000, 4: 75000, 5: 35000 },
     msi:    { 1: 600000, 2: 300000, 3: 150000, 4: 150000, 5: 70000 },
     worlds: { 1: 2000000, 2: 900000, 3: 450000, 4: 450000, 5: 220000, 9: 100000 },
     cup:    { 1: 120000, 2: 50000 },
 };
+/** A winter title pays this share of a spring or summer one: seven weeks are not thirteen. */
+export const WINTER_PRIZE_SHARE = 0.5;
 /** The Regional Cup: tier 1 and tier 2 of a region, 16 clubs, a round on these spring weeks (md). */
-export const CUP_WEEKS = [1, 3, 5, 7];
+export const CUP_WEEKS = [2, 5, 8, 11];
 export const CUP_SIZE = 16;
 
 // ---------------------------------------------------------------- champion release years

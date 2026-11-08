@@ -112,6 +112,7 @@ export function msgKind(k) {
 export const TROPHY_META = {
     worlds: { name: 'World Championship', short: 'Worlds', icon: 'crown', color: '#facc15' },
     msi: { name: 'Mid-Season Invitational', short: 'MSI', icon: 'globe', color: '#38bdf8' },
+    firststand: { name: 'First Stand', short: 'First Stand', icon: 'flag', color: '#f472b6' },
     league: { name: 'League title', short: 'League', icon: 'trophy', color: '#fbbf24' },
     tier2: { name: 'Second-tier title', short: 'Tier 2', icon: 'trophy', color: '#cbd5e1' },
     promotion: { name: 'Promotion', short: 'Promotion', icon: 'upgrade', color: '#a78bfa' },

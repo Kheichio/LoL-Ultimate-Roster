@@ -11,7 +11,7 @@
     $: m = s.manager;
     $: team = myTeam(s);
     $: trophies = (m.trophies || []).slice().reverse();
-    $: byKind = ['worlds', 'msi', 'league', 'cup', 'tier2', 'promotion'].map(k => ({ k, meta: TROPHY_META[k], list: trophies.filter(t => t.kind === k) }));
+    $: byKind = ['worlds', 'msi', 'firststand', 'league', 'cup', 'tier2', 'promotion'].map(k => ({ k, meta: TROPHY_META[k], list: trophies.filter(t => t.kind === k) }));
     $: ach = m.ach || {};
     $: unlocked = ACHIEVEMENTS.filter(a => ach[a.id]).length;
     $: seasons = Math.max(1, s.time.year - s.time.startYear + (s.time.step > 0 ? 1 : 0));
@@ -109,7 +109,7 @@
                         <li>
                             <span class="sy num">{h.year}</span>
                             <span class="sn">{h.me.teamName}</span>
-                            <span class="muted small">{h.me.spring ? `Spring ${h.me.spring}` : ''}{h.me.summer ? ` · Summer ${h.me.summer}` : ''}{h.me.msi ? ` · MSI ${placeWord(h.me.msi)}` : ''}{h.me.worlds ? ` · Worlds ${placeWord(h.me.worlds)}` : ''}</span>
+                            <span class="muted small">{h.me.winter ? `Winter ${h.me.winter} · ` : ''}{h.me.spring ? `Spring ${h.me.spring}` : ''}{h.me.summer ? ` · Summer ${h.me.summer}` : ''}{h.me.firststand ? ` · First Stand ${placeWord(h.me.firststand)}` : ''}{h.me.msi ? ` · MSI ${placeWord(h.me.msi)}` : ''}{h.me.worlds ? ` · Worlds ${placeWord(h.me.worlds)}` : ''}</span>
                         </li>
                     {/each}
                 </ul>

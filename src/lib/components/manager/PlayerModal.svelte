@@ -3,12 +3,13 @@
     import { openConfirmModal } from '../../stores/ui.js';
     import { showToast } from '../../stores/toasts.js';
     import { myTeam, teamTalk, scoutPlayer, scoutCost, isScouted, setFocus, currentStep, devForecast } from '../../manager/engine.js';
-    import { ATTRS, TALKS, XP_PER_LEVEL, ROLE_BY_ID, SQUAD_STATUS, EMERGENCY_PREMIUM, COUNTRY_NAME, REGION_LANGUAGE, LANGUAGE_NAMES } from '../../manager/data.js';
+    import { ATTRS, TALKS, XP_PER_LEVEL, ROLE_BY_ID, SQUAD_STATUS, EMERGENCY_PREMIUM, COUNTRY_NAME, LANGUAGE_NAMES, teamLanguage, SELF_TRAIN_XP, IMPORT_RESIDENCY } from '../../manager/data.js';
     import {
         askingPrice, wageAsk, signingCheck, bidForPlayer, signFreeAgent, releasePlayer, releaseCost, windowOpen,
         renewalDemand, renewalOdds, negotiateRenewal, letContractRun, listPlayer, unlistPlayer, isEmergency, emergencyLeft,
     } from '../../manager/market.js';
-    import { ovrOf, ageOf, potentialView, focusAttr, marketValue, langLevel } from '../../manager/people.js';
+    import { ovrOf, ageOf, potentialView, focusAttr, marketValue, langLevel, playStyleOf, isImport, homeRegion, fx } from '../../manager/people.js';
+    import { toggleShortlist } from '../../manager/market.js';
     import { ovrColor, fmtMoney, moraleWord, formWord, persona, champName, metaTag, cardFor, avgRating, kda, contractWord } from '../../manager/ui.js';
     import Card from '../card/Card.svelte';
     import Icon from '../ui/Icon.svelte';
@@ -42,6 +43,10 @@
     $: emergency = p && !mine ? isEmergency(s, p) : false;
     $: dev = p && mine ? devForecast(s, p) : null;
     $: cw = p && mine ? contractWord(p, year) : null;
+    $: tongue = team ? teamLanguage(team) : null;
+    $: starred = p ? (s.shortlist || []).includes(p.id) : false;
+    $: importHere = p && me ? isImport(p, me.region) : false;
+    $: selfXp = p ? Math.round(SELF_TRAIN_XP * (fx(p).selfTrain || 1)) : 0;
 
     // ── a new contract ──
     let nYears = 2;
@@ -139,7 +144,12 @@
                     {#if p.roles.length > 1}<span class="chip">Also {p.roles.filter(r => r !== p.role).join(', ')}</span>{/if}
                     <span class="chip">Age {ageOf(p, year)}</span>
                     {#if p.cc && COUNTRY_NAME[p.cc]}<span class="chip">{p.flag || ''} {COUNTRY_NAME[p.cc]}</span>{/if}
-                    {#if team && REGION_LANGUAGE[team.region]}<span class="chip" style="--c:{langLevel(p, REGION_LANGUAGE[team.region]) >= 90 ? '#34d399' : langLevel(p, REGION_LANGUAGE[team.region]) >= 60 ? '#fbbf24' : '#f87171'}" title="His level in the language of his league">{LANGUAGE_NAMES[REGION_LANGUAGE[team.region]]} {Math.round(langLevel(p, REGION_LANGUAGE[team.region]))}%</span>{/if}
+                    {#if tongue}<span class="chip" style="--c:{langLevel(p, tongue) >= 90 ? '#34d399' : langLevel(p, tongue) >= 60 ? '#fbbf24' : '#f87171'}" title="His level in his club's language">{LANGUAGE_NAMES[tongue]} {Math.round(langLevel(p, tongue))}%</span>{/if}
+                    <span class="chip" style="--c:#7dd3fc" title="How he plays. Styles combine: see Squad.">{playStyleOf(p).name}</span>
+                    {#if p.pro}<span class="chip" title="The year he turned pro">Pro since {p.pro}</span>{:else}<span class="chip" title="He has never signed a contract">Not yet pro</span>{/if}
+                    {#if importHere}<span class="chip" style="--c:#a78bfa" title="From {homeRegion(p)}. At most two imports a club. {IMPORT_RESIDENCY} years in a row in one region can naturalise a player{p.res ? ` (${p.res.y} so far in ${p.res.r})` : ''}.">{mine ? 'Import' : 'Would be an import'}</span>{/if}
+                    {#if (p.natz || []).length}<span class="chip" style="--c:#34d399">Naturalised: {p.natz.join(', ')}</span>{/if}
+                    <button class="chip star" class:on={starred} on:click={() => mutate(sv => toggleShortlist(sv, p.id))} title="Your shortlist, on the Scouting screen">★ {starred ? 'Shortlisted' : 'Shortlist'}</button>
                     {#if team}<span class="chip tm"><TeamBadge {team} size={16} /> {team.name}</span>{:else}<span class="chip" style="--c:#fbbf24">Free agent</span>{/if}
                     {#if p.inj > 0}<span class="chip" style="--c:#f87171"><Icon name="alert" size={12} /> {injuryName(p)} · {p.inj} week{p.inj === 1 ? '' : 's'}</span>{/if}
                     {#if p.loanFrom && s.teams[p.loanFrom]}<span class="chip" style="--c:#38bdf8">On loan from {s.teams[p.loanFrom].short || s.teams[p.loanFrom].name}</span>{/if}
@@ -157,6 +167,7 @@
                     <span class="pers-n">{per.name}</span>
                     <span class="pers-b">{per.blurb}</span>
                     <ul>{#each per.does as d}<li>{d}</li>{/each}</ul>
+                    <p class="muted tiny">Practises on his own: +{selfXp} XP a week, at any club or none.</p>
                 </div>
             </div>
         </div>
@@ -265,7 +276,12 @@
                 {#if lc.ok}<button class="btn btn-sm btn-p" on:click={() => act(loanIn)}><Icon name="trade" size={13} /> Take him on loan</button>{:else}<p class="why"><Icon name="alert" size={13} /> {lc.msg}</p>{/if}
             </section>
         {/if}
-        {#if mine && !p.loanFrom}
+        {#if p.aca && mine}
+            <section class="panel neg">
+                <div class="ph"><h3><Icon name="academy" size={14} /> In your academy</h3></div>
+                <p class="muted small">He trains and plays with the academy, outside the ten-man squad. Move him on the Academy screen, in a transfer window.</p>
+            </section>
+        {:else if mine && !p.loanFrom}
             <div class="deal">
                 {#if p.until > year}
                 <section class="panel neg signed" class:fresh={justSigned}>
@@ -360,6 +376,8 @@
 <style>
     .pm { max-width: 1020px; }
     .career { margin-top: 14px; }
+    .star { font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; background: none; color: #94a3b8; }
+    .star.on { color: #fbbf24; }
     .moves { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
     .pm-top { display: flex; gap: 22px; margin-bottom: 16px; flex-wrap: wrap; }
     .pm-card { flex-shrink: 0; }

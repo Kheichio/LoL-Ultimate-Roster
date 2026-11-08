@@ -7,6 +7,7 @@
     import { leagueName } from '../../manager/engine.js';
     import { ordinal } from '../../manager/util.js';
     import { ovrColor } from '../../manager/ui.js';
+    import { SPLIT_BY_CODE } from '../../manager/data.js';
     import { getDB } from '../../utils/cards.js';
     import Icon from '../ui/Icon.svelte';
     import TeamBadge from './TeamBadge.svelte';
@@ -16,7 +17,7 @@
     $: c = playerCareer(s, getDB(), id);
     $: medals = countTitles(c.titles);
 
-    const TITLE = { worlds: ['World champion', '#facc15', 'crown'], msi: ['MSI champion', '#38bdf8', 'globe'], league: ['League champion', '#fbbf24', 'trophy'], tier2: ['Second-tier champion', '#cbd5e1', 'trophy'], firststand: ['First Stand champion', '#f472b6', 'flag'] };
+    const TITLE = { worlds: ['World champion', '#facc15', 'crown'], msi: ['MSI champion', '#38bdf8', 'globe'], league: ['League champion', '#fbbf24', 'trophy'], tier2: ['Second-tier champion', '#cbd5e1', 'trophy'], firststand: ['First Stand champion', '#f472b6', 'flag'], cup: ['Regional Cup winner', '#fb923c', 'shield'] };
     function countTitles(list) {
         const m = {};
         for (const t of list) m[t.kind] = (m[t.kind] || 0) + 1;
@@ -27,6 +28,8 @@
         if (r.w.includes('worlds')) bits.push(['World champions', '#facc15']);
         else if (r.w.includes('worlds2')) bits.push(['Worlds final', '#e2e8f0']);
         else if (r.wp) bits.push([`Worlds top ${r.wp <= 4 ? 4 : r.wp <= 8 ? 8 : 16}`, '#a5b4fc']);
+        if (r.w.includes('firststand')) bits.push(['First Stand champions', '#f472b6']);
+        else if (r.w.includes('firststand2')) bits.push(['First Stand final', '#e2e8f0']);
         if (r.w.includes('msi')) bits.push(['MSI champions', '#38bdf8']);
         else if (r.w.includes('msi2')) bits.push(['MSI final', '#e2e8f0']);
         if (r.w.includes('league') || r.w.includes('tier2')) bits.push(['Champions', '#fbbf24']);
@@ -60,7 +63,7 @@
                     {#each c.splits as r, i (i)}
                         {@const t = anyTeam(s, r.teamId)}
                         <tr>
-                            <td class="num">{r.y} {r.s === 'sp' ? 'Spring' : 'Summer'}</td>
+                            <td class="num">{r.y} {SPLIT_BY_CODE[r.s] || ''}</td>
                             <td>{#if t}<button class="cl" on:click={() => club(t.id)}><TeamBadge team={t} size={18} /> {t.short}</button>{/if}</td>
                             <td class="dim">{t ? leagueName(t.region, r.tier) : ''}</td>
                             <td class="c num">{r.p ? ordinal(r.p) : '—'}</td>
@@ -72,12 +75,25 @@
             </table>
         </div>
         {#if c.years.length}
-            <div class="years">
-                <span class="muted tiny">Rating by year</span>
-                {#each c.years as y (y.y)}
-                    {@const t = y.teamId ? anyTeam(s, y.teamId) : null}
-                    <span class="yr" title={t ? t.name : 'Free agent'}><b class="num">{y.y}</b><span class="ovr" style="--c:{ovrColor(y.ovr)}">{y.ovr}</span><span class="dim tiny">{t ? t.short : 'FA'}</span></span>
-                {/each}
+            <div class="tbl-wrap">
+                <table class="tbl small">
+                    <thead><tr><th>Year</th><th>Club</th><th class="c">OVR</th><th class="c">Games</th><th class="c">Win</th><th class="c">K/D/A</th><th class="c">Rating</th><th class="c">MVP</th></tr></thead>
+                    <tbody>
+                        {#each c.years as y, i (i)}
+                            {@const t = y.teamId ? anyTeam(s, y.teamId) : null}
+                            <tr>
+                                <td class="num">{y.y}{#if y.live}{' '}<span class="dim tiny">so far</span>{/if}</td>
+                                <td>{#if t}<button class="cl" on:click={() => club(t.id)}><TeamBadge team={t} size={16} /> {t.short}</button>{:else}<span class="dim">Free agent</span>{/if}</td>
+                                <td class="c"><span class="ovr" style="--c:{ovrColor(y.ovr)}">{y.ovr}</span></td>
+                                <td class="c num">{y.g || '—'}</td>
+                                <td class="c num">{y.g ? Math.round(y.w / y.g * 100) + '%' : '—'}</td>
+                                <td class="c num">{y.g ? `${y.k}/${y.d}/${y.a}` : '—'}</td>
+                                <td class="c num">{y.g ? (y.rs / y.g).toFixed(2) : '—'}</td>
+                                <td class="c num">{y.mvp || '—'}</td>
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
             </div>
         {/if}
     {/if}
@@ -93,6 +109,4 @@
     .cl { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 700; color: #e2e8f0; background: none; border: none; padding: 0; cursor: pointer; }
     .cl:hover { color: #6ee7b7; }
     td .chip { margin-right: 4px; }
-    .years { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-    .yr { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 8px; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(51, 65, 85, 0.5); }
 </style>

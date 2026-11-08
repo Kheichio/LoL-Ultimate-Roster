@@ -14,7 +14,7 @@ import {
     XP_PER_LEVEL, POINTS_PER_LEVEL, PAST_CEILING_FACTOR, REGION_MONEY, WAGE_STEP, WAGE_KNEE, WAGE_TOP_STEP, champsFor,
     HANDLE_WORDS, HANDLE_REGIONAL, HANDLE_SUFFIX, ROLE_IDS, HANDLE_WORDS_EXTRA, HANDLE_SYL_START, HANDLE_SYL_MID,
     HANDLE_SYL_END, NATIONS_BY_REGION, flagOf, HIGH_POT, HIGH_POT_SQUEEZE, WONDERKID_CHANCE,
-    REGION_LANGUAGE, COUNTRY_LANGUAGE,
+    REGION_LANGUAGE, COUNTRY_LANGUAGE, PERSONALITY_COMBOS, PLAYSTYLES, PLAYSTYLE_COMBOS, CATCH_UP_GAP, CATCH_UP_MAX, FLAG_REGION,
 } from './data.js';
 import { clamp, pick, weightedPick, normal, randInt, shuffle, rngFor } from './util.js';
 
@@ -45,6 +45,50 @@ export function persOf(p) {
 }
 export function fx(p) {
     return persOf(p).effects || {};
+}
+
+/** The region a player is from: his flag for a real pro, else where he was generated. */
+export const homeRegion = (p) => (p && p.real && FLAG_REGION[p.flag]) || (p && p.nat) || null;
+/** Does he count as an import in this region? Not at home, and not where he has been naturalised. */
+export const isImport = (p, region) => !!(p && region && homeRegion(p) !== region && !(p.natz || []).includes(region));
+
+/** How he plays: the style of the attribute he stands out in most, for his role. */
+export function playStyleOf(p, role = p && p.role) {
+    const styles = PLAYSTYLES[role] || PLAYSTYLES.MID;
+    if (!p || !p.a) return styles[0];
+    let best = styles[0], top = -Infinity;
+    for (const st of styles) {
+        const v = (Number(p.a[st.attr]) || 0) - weightedOVR(p.a, role);
+        if (v > top) { top = v; best = st; }
+    }
+    return best;
+}
+/** The personality combos active in a five (an array of players). */
+export function fiveCombos(five) {
+    const list = (five || []).filter(Boolean);
+    const out = [];
+    for (const c of PERSONALITY_COMBOS) {
+        const hasA = list.filter(p => p.pers === c.a).length;
+        const hasB = list.filter(p => p.pers === c.b).length;
+        if (c.a === c.b ? hasA >= 2 : hasA && hasB) out.push(c);
+    }
+    return out;
+}
+/** The play-style combos active in a lineup ({ TOP: player, ... }), each with what it is worth on `tactic`. */
+export function styleCombos(lineup, tactic) {
+    const out = [];
+    for (const c of PLAYSTYLE_COMBOS) {
+        const met = Object.entries(c.need).every(([role, ids]) => lineup && lineup[role] && ids.includes(playStyleOf(lineup[role], role).id));
+        if (met) out.push({ ...c, on: c.tactic === tactic, worth: c.tactic === tactic ? c.edge : c.edge * 0.4 });
+    }
+    return out;
+}
+/** Team edge a lineup carries from who its players are: personalities, their combos, and play styles. */
+export function lineupEdge(lineup, tactic) {
+    const five = Object.values(lineup || {}).filter(Boolean);
+    return five.reduce((s, p) => s + (fx(p).edge || 0), 0)
+        + fiveCombos(five).reduce((s, c) => s + c.edge, 0)
+        + styleCombos(lineup, tactic).reduce((s, c) => s + c.worth, 0);
 }
 
 /** What a potential reading looks like to this manager: exact once scouted (or
@@ -158,6 +202,8 @@ export function makeRealPlayer(person, card, year, rng) {
         mor: 70, form: 0,
         team: null, wage: 0, until: year,
         firstReal: person.firstYear, lastReal: person.lastYear,
+        // The year he turned pro: his first card, whenever this save picks him up.
+        pro: Math.min(person.firstYear, year),
         big: 0, last: [],
         st: blankStats(), car: { g: 0, w: 0, titles: 0 },
         joined: year,
@@ -217,7 +263,7 @@ export function makeRandomPlayer({ id, role, region, year, target, age, takenNam
         recent: [],
         mor: 70, form: 0,
         team: null, wage: 0, until: year,
-        firstReal: null, lastReal: null,
+        firstReal: null, lastReal: null, pro: null,
         big: 0, last: [],
         st: blankStats(), car: { g: 0, w: 0, titles: 0 },
         joined: year,
@@ -226,6 +272,20 @@ export function makeRandomPlayer({ id, role, region, year, target, age, takenNam
 
 export function blankStats() {
     return { g: 0, w: 0, k: 0, d: 0, as: 0, rs: 0, mvp: 0 };
+}
+
+/** A player's numbers at his current club this year: [year, club, ovr, g, w, k, d, a, rating sum, mvps]. */
+export function stintRow(p, year) {
+    const s = p.st || blankStats(), o = p.stOff || blankStats();
+    return [year, p.team || null, ovrOf(p), s.g - o.g, s.w - o.w, s.k - o.k, s.d - o.d, s.as - o.as, Math.round((s.rs - o.rs) * 10) / 10, s.mvp - o.mvp];
+}
+/** He is leaving a club mid-year: what he did there is filed under it, not under the next one. */
+export function closeStint(p, year) {
+    if (!p.team) return;
+    const row = stintRow(p, year);
+    if (row[3] <= 0) return;
+    p.cy = [...(p.cy || []), row];
+    p.stOff = { ...(p.st || blankStats()) };
 }
 
 // ---------------------------------------------------------------- languages
@@ -331,9 +391,12 @@ export function xpMultiplier(p, year, { coach = 0, developer = 0 } = {}) {
     // Teenagers grow fast, players in their mid-twenties have mostly become who
     // they are. A starter earns ~1,700 XP a year at 1.0x, which is ~11 points:
     // about +3 OVR at 18, +1 at 22, almost nothing past 25.
-    const age = ageOf(p, year);
-    let m = age <= 19 ? 1.3 : age <= 21 ? 0.85 : age <= 23 ? 0.45 : age <= 25 ? 0.25 : age <= 27 ? 0.12 : 0.06;
     const e = fx(p);
+    const age = ageOf(p, year) - (e.lateGrowth ? 3 : 0);
+    let m = age <= 19 ? 1.3 : age <= 21 ? 0.85 : age <= 23 ? 0.45 : age <= 25 ? 0.25 : age <= 27 ? 0.12 : 0.06;
+    // A player well short of what he could be makes up ground into his mid-twenties,
+    // so a late developer is not stuck where his teens left him.
+    if (age >= 22 && age <= 27) m *= 1 + CATCH_UP_MAX * clamp((Number(p.pot) - ovrOf(p)) / CATCH_UP_GAP, 0, 1);
     if (e.xpMult) m *= e.xpMult;
     if (e.youngXpMult && age <= 21) m *= e.youngXpMult;
     m *= 1 + clamp(coach, 0, 99) / 400;

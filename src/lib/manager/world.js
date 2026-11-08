@@ -5,9 +5,9 @@
 //    - every real pro is a PERSON: all their STANDARD cards (Bronze..Challenger,
 //      never a Champion/MVP/legacy/award/Hall of Legends print), grouped by name
 //    - each region's leagues are that region's real teams of the start year
-//      (or the nearest year with cards, see DATA_LOOKBACK), strongest ten in
-//      tier 1, the rest in tier 2, and RANDOM teams of random players wherever a
-//      league is short
+//      (or the nearest year with cards, see DATA_LOOKBACK), the strongest thirteen
+//      in tier 1, the next thirteen in tier 2, and RANDOM teams of random players
+//      wherever a league is short
 //  Then, every new year, the pros whose cards begin that year DEBUT: into their
 //  real org if it exists in this world, otherwise into free agency.
 // ===========================================================================
@@ -15,9 +15,9 @@ import { TIER_ORDER } from '../utils/cards.js';
 import { FICTIONAL_SETS } from '../utils/world.js';
 import {
     REGION_IDS, ROLE_IDS, TEAM_NAMES, TEAM_COLORS, colorFromName, sameOrg, DATA_LOOKBACK, DATA_LOOKAHEAD,
-    TIER1_SIZE, TIER2_SIZE, TACTICS, ROSTER_MAX, BORROWED_REGION_GAP, REGION_LEVEL,
+    TIER1_SIZE, TIER2_SIZE, TACTICS, ROSTER_MAX, BORROWED_REGION_GAP, REGION_LEVEL, CLUB_CITIES, CLUB_MASCOTS,
 } from './data.js';
-import { makeRealPlayer, makeRandomPlayer, wageDemand, ovrOf, pickPersonality } from './people.js';
+import { makeRealPlayer, makeRandomPlayer, wageDemand, ovrOf, pickPersonality, closeStint } from './people.js';
 import { bestLineup, bestTactic, lineupOf, teamStrength } from './match.js';
 import { clamp, randInt, rngFor, pick, shuffle, hash32 } from './util.js';
 
@@ -156,6 +156,7 @@ export function signTo(save, p, team, { years = null, wage = null, rng = Math.ra
     const year = save.time.year;
     if (p.team && save.teams[p.team]) {
         const old = save.teams[p.team];
+        closeStint(p, year);
         old.roster = old.roster.filter(id => id !== p.id);
         for (const r of ROLE_IDS) if (old.lineup[r] === p.id) delete old.lineup[r];
     }
@@ -163,6 +164,7 @@ export function signTo(save, p, team, { years = null, wage = null, rng = Math.ra
     p.wage = wage != null ? wage : Math.round(wageDemand(p, year, team.region) * (0.85 + rng() * 0.15) / 1000) * 1000;
     p.until = year + (years != null ? years : contractYears(rng));
     p.joined = year;
+    if (!p.pro) p.pro = year;      // the year he turned pro: his first contract
     if (!team.roster.includes(p.id)) team.roster.push(p.id);
     const fa = save.freeAgents;
     const i = fa.indexOf(p.id);
@@ -172,6 +174,7 @@ export function signTo(save, p, team, { years = null, wage = null, rng = Math.ra
 export function release(save, p) {
     const t = p.team && save.teams[p.team];
     if (t) {
+        closeStint(p, save.time.year);
         t.roster = t.roster.filter(id => id !== p.id);
         for (const r of ROLE_IDS) if (t.lineup[r] === p.id) delete t.lineup[r];
     }
@@ -248,12 +251,11 @@ export function buildWorld(db, startYear, seed) {
         for (const t of spare) for (const id of t.roster) { const p = save.players[id]; p.team = null; save.freeAgents.push(id); }
 
         const t1Level = t1.length ? t1.map(t => teamStrengthQuick(t, save.players)).reduce((s, v) => s + v, 0) / t1.length : 74;
-        const names = shuffle(rng, (FICTIONAL_SETS[region] || []).slice());
         let made = 0;
         const randomTeam = (tier, target) => {
             made++;
-            const nm = names.pop() || `${region} Rising ${made}`;
-            const short = nm.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 3);
+            const nm = clubName(save, region, rng, [...t1, ...t2].map(t => t.name));
+            const short = clubShort(save, nm, [...t1, ...t2].map(t => t.short));
             const t = newTeam({ id: 'x:' + region + ':' + made, short, name: nm, region, tier, real: false });
             for (const role of ROLE_IDS) {
                 const p = makeRandomPlayer({ id: nextGenId(save), role, region, year: startYear, target: target + randInt(rng, -3, 3), age: randInt(rng, 18, 25), takenNames: taken }, rng);
@@ -279,8 +281,8 @@ export function buildWorld(db, startYear, seed) {
             save.teams[t.id] = t;
         }
         // Reputation by standing: the best tier 1 sides are the biggest clubs.
-        t1.forEach((t, i) => { t.rep = clamp(Math.round(92 - i * 5 + (t.real ? 0 : -8)), 30, 95); });
-        t2.forEach((t, i) => { t.rep = clamp(Math.round(42 - i * 3 + (t.real ? 4 : 0)), 12, 50); });
+        t1.forEach((t, i) => { t.rep = clamp(Math.round(92 - i * 4 + (t.real ? 0 : -8)), 30, 95); });
+        t2.forEach((t, i) => { t.rep = clamp(Math.round(42 - i * 2 + (t.real ? 4 : 0)), 12, 50); });
     }
 
     // Hold a region built from another year's cards under the two strongest
@@ -367,10 +369,10 @@ export function debutsFor(save, db, year, userTeamId, rng) {
         // A club the manager founded is never anybody's real org, whatever its tag.
         const home = Object.values(save.teams).find(t => t.real && !t.custom && t.region === card.region && sameOrg(card.region, t.short, card.team));
         if (home && home.id === userTeamId) {
-            save.freeAgents.push(p.id);
-            p.prospectFor = home.id;
+            // He comes through the manager's own organisation: the engine puts him in the academy.
             out.push({ player: p, team: home, forUser: true });
         } else if (home && home.roster.length < ROSTER_MAX) {
+            p.pro = year;
             signTo(save, p, home, { rng });
             out.push({ player: p, team: home, forUser: false });
         } else {
@@ -413,6 +415,57 @@ export function makeOrg(save, db, region, tag, tier, year, list, rng, userTeamId
     team.coach = randomCoach(rng, lvl - 2);
     save.teams[team.id] = team;
     return team;
+}
+
+/** A name for a generated club: the region's set first, then a city and a mascot. */
+function clubName(save, region, rng, also = []) {
+    const used = new Set([...Object.values(save.teams).map(t => t.name), ...Object.values(save.defunct || {}).map(t => t.name), ...also]);
+    const set = (FICTIONAL_SETS[region] || []).filter(n => !used.has(n));
+    if (set.length) return pick(rng, set);
+    const cities = CLUB_CITIES[region] || CLUB_CITIES.LCK;
+    for (let i = 0; i < 60; i++) {
+        const nm = pick(rng, cities) + ' ' + pick(rng, CLUB_MASCOTS);
+        if (!used.has(nm)) return nm;
+    }
+    return `${pick(rng, cities)} ${pick(rng, CLUB_MASCOTS)} ${randInt(rng, 2, 99)}`;
+}
+/** A tag no club in the world already wears. */
+function clubShort(save, name, also = []) {
+    const used = new Set([...Object.values(save.teams).map(t => t.short), ...also]);
+    const words = name.split(/\s+/);
+    const first = words.map(w => w[0]).join('').toUpperCase().slice(0, 3);
+    const options = [first, (words[0].slice(0, 2) + (words[1] || 'X')[0]).toUpperCase(), (words[0][0] + (words[1] || 'XX').slice(0, 2)).toUpperCase(), words[0].slice(0, 3).toUpperCase()];
+    const free = options.find(o => !used.has(o));
+    if (free) return free;
+    for (let i = 2; i < 100; i++) if (!used.has(first + i)) return first + i;
+    return first;
+}
+
+/** A new random club for a league that is short of thirteen (an old save, or a fold with no replacement). */
+export function addRandomTeam(save, region, tier, year, rng, taken) {
+    const lvl = (REGION_LEVEL[region] || 78) - (tier === 1 ? 6 : 12);
+    let n = 1;
+    let id = 'x:' + region + ':a' + n;
+    while (save.teams[id] || (save.defunct && save.defunct[id])) id = 'x:' + region + ':a' + (++n);
+    const nm = clubName(save, region, rng);
+    const short = clubShort(save, nm);
+    const t = newTeam({ id, short, name: nm, region, tier, real: false });
+    for (let i = 0; i < 7; i++) {
+        const role = ROLE_IDS[i % 5];
+        const p = makeRandomPlayer({ id: nextGenId(save), role, region, year, target: lvl + randInt(rng, -3, 3) - (i >= 5 ? 6 : 0), age: randInt(rng, 18, 25), takenNames: taken }, rng);
+        save.players[p.id] = p;
+        p.team = t.id; p.pro = year;
+        p.wage = Math.round(wageDemand(p, year, region) * 0.9 / 1000) * 1000;
+        p.until = year + 1 + (i % 2);
+        t.roster.push(p.id);
+    }
+    t.coach = randomCoach(rng, lvl);
+    t.rep = tier === 1 ? 38 : 16;
+    t.lineup = bestLineup(t, save.players);
+    t.tactic = bestTactic(lineupOf(t, save.players));
+    t.pref = t.tactic;
+    save.teams[t.id] = t;
+    return t;
 }
 
 /** Random prospects for a region's free agency, built around the region's level:

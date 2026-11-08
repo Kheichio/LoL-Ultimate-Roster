@@ -13,7 +13,7 @@
 //  (market.sponsorIncome); only the manager's money flows through here.
 // ===========================================================================
 import {
-    SPONSOR_SLOTS, SPONSOR_SLOT_BY_ID, SPONSOR_BRANDS, SPONSOR_GOALS, SPONSOR_BASE_SHARE, SPONSOR_PITCHES_PER_WEEK,
+    SPONSOR_SLOTS, SPONSOR_SLOT_BY_ID, SPONSOR_BRANDS, SPONSOR_GOALS, SPONSOR_BASE_SHARE, SPONSOR_PITCHES_PER_WEEK, SPLITS,
 } from './data.js';
 import { clamp, pick, randInt, shuffle } from './util.js';
 import { sponsorIncome, earn } from './market.js';
@@ -32,7 +32,7 @@ function seasonRecord(save, team) {
     const S = save.season;
     const L = S && S.leagues ? S.leagues[leagueKey(team.region, team.tier)] : null;
     let w = 0, l = 0;
-    for (const sp of ['spring', 'summer']) {
+    for (const sp of SPLITS) {
         const r = L && L[sp] && L[sp].table ? L[sp].table[team.id] : null;
         if (r) { w += Number(r.w) || 0; l += Number(r.l) || 0; }
     }
@@ -52,7 +52,7 @@ export function sponsorAppeal(save) {
     const form = (w + 2) / (w + l + 4);
     const last = (save.history || []).slice(-1)[0];
     const me = last && last.me && last.me.teamId === t.id ? last.me : null;
-    const best = me ? Math.min(me.spring || 99, me.summer || 99) : 99;
+    const best = me ? Math.min(me.winter || 99, me.spring || 99, me.summer || 99) : 99;
     let lastYear = best === 1 ? 1 : best === 2 ? 0.8 : best <= 4 ? 0.6 : best <= 6 ? 0.35 : me ? 0.15 : 0.3;
     if (me && me.worlds) lastYear = Math.min(1, lastYear + 0.2);
     const titles = (save.manager.trophies || []).filter(x => x.teamId === t.id && x.kind !== 'promotion' && x.year >= save.time.year - 1).length;

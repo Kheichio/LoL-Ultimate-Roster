@@ -1,29 +1,33 @@
 // ===========================================================================
 //  ULTIMATE MANAGER -- academy, loans, scouting trips
 //
-//  ACADEMY  built and paid for (ACADEMY_LEVELS). Its players belong to the club
+//  ACADEMY  the ONE place a club's prospects live. Every club the manager runs has
+//           one, at level 1 or better (ACADEMY_LEVELS). Its players belong to the club
 //           (p.team = club id, p.aca = true) but sit in `team.academy`, NOT in
 //           `team.roster`: they never count toward the squad limit, never start
 //           and never reach a lineup. The academy plays its own season (weekly
 //           XP and a simulated record), takes a local intake every new year, and
-//           players move up or down only while a transfer window is open.
+//           players move up or down only while a transfer window is open. A pro who
+//           debuts through the org, the Academy Director's class and anyone the
+//           scouts bring in all arrive here.
 //  LOANS    a young player who is not starting is lent to an AI club for the
 //           rest of the season (p.loanFrom = the manager's club). He plays real
 //           games there and comes home at the offseason. AI clubs never release,
 //           sell or move a loanee (market.js and engine.js skip p.loanFrom).
 //  SCOUTING TRIPS send scouts to a region: its free agents are scouted and a few
-//           hidden prospects turn up, held for the manager through the window.
+//           hidden prospects turn up as reports (p.prospectFor) on the Scouting screen.
+//           A report is signed into the academy, or passed on and left to the market.
 // ===========================================================================
-import { ROLE_IDS, ROSTER_MAX, ROLE_MAX, REGION_LEVEL, REGION_IDS } from './data.js';
+import { ROLE_IDS, ROSTER_MAX, ROLE_MAX, REGION_LEVEL, REGION_IDS, IMPORT_MAX } from './data.js';
 import { clamp, pick, randInt } from './util.js';
 import { ovrOf, ageOf, grantXP, makeRandomPlayer, xpMultiplier, marketValue } from './people.js';
 import { lineupOf } from './match.js';
-import { sponsorIncome, roleCount, windowOpen } from './market.js';
+import { sponsorIncome, roleCount, windowOpen, importRoom } from './market.js';
 import { nextGenId } from './world.js';
 
 export const ACADEMY_LEVELS = [
     null,
-    { slots: 4, xp: 30, intake: 1, cost: 0.35, upkeep: 0.03, name: 'Academy' },
+    { slots: 4, xp: 30, intake: 1, cost: 0.35, upkeep: 0.01, name: 'Academy' },
     { slots: 6, xp: 45, intake: 2, cost: 0.5, upkeep: 0.05, name: 'Academy league side' },
     { slots: 8, xp: 60, intake: 2, cost: 0.75, upkeep: 0.07, name: 'Elite academy' },
 ];
@@ -55,12 +59,32 @@ export function buildAcademy(save) {
     return { ok: true, msg: `${ACADEMY_LEVELS[lv + 1].name}: ${ACADEMY_LEVELS[lv + 1].slots} places.` };
 }
 
+/** Every club the manager runs has an academy, however small. */
+export function ensureAcademy(team) {
+    if (!team) return;
+    if (!(Number(team.acaLevel) >= 1)) team.acaLevel = 1;
+    if (!Array.isArray(team.academy)) team.academy = [];
+}
+/** A prospect joins the manager's academy. `force` goes over the places (a debut through the org). */
+export function academyAdd(save, p, { force = false } = {}) {
+    const t = myTeam(save);
+    if (!t || !p) return false;
+    ensureAcademy(t);
+    if (!force && academyIds(save, t).length >= ACADEMY_LEVELS[academyLevel(t)].slots) return false;
+    save.freeAgents = save.freeAgents.filter(id => id !== p.id);
+    delete p.prospectFor;
+    p.team = t.id; p.aca = true; p.wage = 0; p.until = save.time.year + 3; p.reg = t.region;
+    if (!p.pro) p.pro = save.time.year;
+    t.academy = [...academyIds(save, t), p.id];
+    save.scouted = [...new Set([...(save.scouted || []), p.id])];
+    return true;
+}
+
 /** Send a young player down: he leaves the main roster for the academy (window only). */
 export function toAcademy(save, pid) {
     const t = myTeam(save);
     const p = save.players[pid];
     if (!t || !p || p.team !== t.id || !t.roster.includes(pid)) return { ok: false, msg: 'Not one of your players.' };
-    if (!academyLevel(t)) return { ok: false, msg: 'Build an academy first (Staff screen).' };
     if (!windowOpen(save)) return { ok: false, msg: 'Players move between the academy and the main roster only in a transfer window.' };
     if (ageOf(p, save.time.year) > 21) return { ok: false, msg: 'The academy is for players 21 and under.' };
     if (academyIds(save, t).length >= ACADEMY_LEVELS[academyLevel(t)].slots) return { ok: false, msg: 'The academy is full.' };
@@ -174,6 +198,7 @@ export function loanInCheck(save, pid) {
     if (!t || !p || !from || from.id === t.id) return { ok: false, msg: 'He is not at another club.' };
     if (p.loanFrom) return { ok: false, msg: 'He is already on loan.' };
     if (p.aca || p.retiring) return { ok: false, msg: 'He is not available.' };
+    if (!importRoom(save, t, p)) return { ok: false, msg: `He would be an import, and you already have ${IMPORT_MAX}.` };
     const cover = t.roster.some(id => { const x = save.players[id]; return x && x.role === p.role && x.inj > 0; });
     if (!windowOpen(save) && !cover) return { ok: false, msg: 'Loans are arranged in a transfer window, or any time as cover for an injured player of the same role.' };
     if (t.roster.length >= ROSTER_MAX) return { ok: false, msg: `Your squad is full (${ROSTER_MAX}).` };
@@ -236,10 +261,10 @@ export function tripCost(save) {
     return t ? Math.round(sponsorIncome(save, t) * 0.03 * (1.3 - scout / 200) / 1000) * 1000 : 0;
 }
 /** Send scouts to a region: its free agents are scouted, and a few hidden prospects turn up. */
-export function scoutingTrip(save, region, rng, taken) {
+export function scoutingTrip(save, region, rng, taken, { role = null } = {}) {
     const t = myTeam(save);
     if (!t || !REGION_IDS.includes(region)) return { ok: false, msg: 'Pick a region.' };
-    const stamp = save.time.year * 100 + save.time.step;
+    const stamp = save.time.year * 1000 + save.time.step;
     if (save.lastTrip === stamp) return { ok: false, msg: 'Your scouts are already out this week.' };
     const cost = tripCost(save);
     if (cost > save.finance.balance) return { ok: false, msg: `A scouting trip costs ${Math.round(cost / 1000)}K. You cannot afford it.` };
@@ -250,7 +275,7 @@ export function scoutingTrip(save, region, rng, taken) {
     const n = scout >= 80 ? 3 : 2;
     const found = [];
     for (let i = 0; i < n; i++) {
-        const p = makeRandomPlayer({ id: nextGenId(save), role: pick(rng, ROLE_IDS), region, year: save.time.year, target: (REGION_LEVEL[region] || 78) - 14 + randInt(rng, 0, 6), age: randInt(rng, 16, 19), takenNames: taken }, rng);
+        const p = makeRandomPlayer({ id: nextGenId(save), role: role && ROLE_IDS.includes(role) ? role : pick(rng, ROLE_IDS), region, year: save.time.year, target: (REGION_LEVEL[region] || 78) - 14 + randInt(rng, 0, 6), age: randInt(rng, 16, 19), takenNames: taken }, rng);
         p.pot = clamp(ovrOf(p) + randInt(rng, 8, 14 + Math.round((scout - 55) / 6)), ovrOf(p), 96);
         p.reg = region; p.prospectFor = t.id;
         save.players[p.id] = p;
@@ -259,5 +284,28 @@ export function scoutingTrip(save, region, rng, taken) {
     }
     const fa = save.freeAgents.filter(id => { const x = save.players[id]; return x && (x.reg || x.nat) === region; });
     save.scouted = [...new Set([...(save.scouted || []), ...fa])];
-    return { ok: true, msg: `Your scouts found ${found.map(p => `${p.name} (${p.role}, ${ovrOf(p)}, potential ${p.pot})`).join(', ')}. They are held for you in free agency through this window, and every free agent in ${region} is scouted.`, found };
+    return { ok: true, msg: `Your scouts found ${found.map(p => `${p.name} (${p.role}, ${ovrOf(p)}, potential ${p.pot})`).join(', ')}. Every free agent in ${region} is scouted too.`, found };
+}
+/** The scouts' reports still on the desk. */
+export const scoutReports = (save) => Object.values(save.players).filter(p => p.prospectFor && !p.team && p.prospectFor === (save.manager && save.manager.teamId));
+/** What it costs to bring a reported prospect in. */
+export const prospectFee = (save, p) => Math.max(5000, Math.round(marketValue(p, save.time.year) * 0.08 / 1000) * 1000);
+/** Sign a reported prospect into the academy. */
+export function signProspect(save, pid) {
+    const t = myTeam(save);
+    const p = save.players[pid];
+    if (!t || !p || p.team || p.prospectFor !== t.id) return { ok: false, msg: 'That report has gone cold.' };
+    const fee = prospectFee(save, p);
+    if (fee > save.finance.balance) return { ok: false, msg: `Bringing him in costs ${Math.round(fee / 1000)}K. You cannot afford it.` };
+    if (!academyAdd(save, p)) return { ok: false, msg: 'Your academy is full. Upgrade it, call someone up or release someone.' };
+    save.finance.balance -= fee;
+    save.finance.log.unshift({ y: save.time.year, s: save.time.step, label: `Academy signing: ${p.name}`, amount: -fee });
+    return { ok: true, msg: `${p.name} joins your academy.` };
+}
+/** Pass on a report: he stays in free agency, for anyone to find. */
+export function passProspect(save, pid) {
+    const p = save.players[pid];
+    if (!p || p.prospectFor !== (save.manager && save.manager.teamId)) return { ok: false, msg: 'That report has gone cold.' };
+    delete p.prospectFor;
+    return { ok: true, msg: `You pass on ${p.name}.` };
 }

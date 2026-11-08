@@ -431,6 +431,7 @@ function seatPerf(p, role, ctx, side, rng) {
         v += b;
     }
     if (ctx.decider && e.decider) v += e.decider;
+    if (e.seat) v += e.seat;
     if (side.bonus && side.bonus[role]) v += side.bonus[role];
     // Consistency shrinks the spread; personality widens or narrows it.
     let vm = e.varianceMult || 1;

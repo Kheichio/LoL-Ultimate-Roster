@@ -181,7 +181,7 @@
     </section>
 </div>
 {:else}
-    <div class="panel empty">You have no club right now. Pick one of your job offers on the Club screen.</div>
+    <div class="panel empty">You have no club right now. See the Jobs screen.</div>
 {/if}
 
 <style>

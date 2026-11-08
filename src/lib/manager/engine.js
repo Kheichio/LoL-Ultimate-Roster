@@ -16,18 +16,21 @@
 // ===========================================================================
 import {
     CALENDAR, STEPS_PER_YEAR, ROLE_IDS, ROLE_BY_ID, TRAINING_BY_ID, MATCH_XP, MGR_XP, MGR_XP_PER_LEVEL, PERK_BY_ID,
-    LEAGUE_WEEKS, PRIZES, CUP_WEEKS, CUP_SIZE, TACTICS, TACTIC_BY_ID, REGION_IDS, MANAGER_SAVE_VERSION, ROSTER_MAX, TALKS,
+    LEAGUE_WEEKS, PRIZES, CUP_WEEKS, CUP_SIZE, SPLIT_NAME, SPLITS, weeksOf, WINTER_PRIZE_SHARE, TACTICS, TACTIC_BY_ID, REGION_IDS, MANAGER_SAVE_VERSION, ROSTER_MAX, TALKS,
     champsFor, CHAMP_RELEASE, ATTR_KEYS, FREE_AGENT_FLOOR, FEARLESS_FROM, ACH_BY_ID, POINT_ACTIONS, REGION_LEVEL,
-    SQUAD_STATUS_BY_ID, phaseOfStep, SEASON_PHASE_BY_ID, TIER1_SIZE, TIER2_SIZE, colorFromName,
+    SQUAD_STATUS_BY_ID, phaseOfStep, SEASON_PHASE_BY_ID, TIER1_SIZE, TIER2_SIZE, colorFromName, OLD_CALENDAR, STEP_INDEX, CALENDAR_VERSION,
     INTENSITY_BY_ID, BENCH_PROGRAM_BY_ID, SESSIONS_PER_WEEK, SESSION_BY_ID, BOOTCAMP_BY_ID, STAKE_TRANCHES, MIN_STAKE,
+    SELF_TRAIN_XP, SELF_TRAIN_FREE_AGENT, IMPORT_RESIDENCY, NATURALISE_CHANCE, MANAGER_START_BANK, teamLanguage, LANG_COURSE_COST, LANG_COURSE_LESSONS, LANG_SWITCH_COST,
     BUYBACK_PREMIUM, STAKE_PER_POINT, TEAM_EMBLEM_BY_ID, SPONSOR_SLOT_BY_ID, REGION_LANGUAGE, LANGUAGE_NAMES,
     LANG_IMMERSION, LANG_EDGE_MAX, LANG_LESSON, XP_PER_LEVEL, POINTS_PER_LEVEL, ROLE_WEIGHTS, PAST_CEILING_FACTOR, PRESTIGE,
 } from './data.js';
 import {
     ovrOf, fx, grantXP, xpMultiplier, ageDecline, retiresNow, formFrom, ageOf, blankStats, anchorToCard,
-    pickPool, makeRandomPlayer, makeRealPlayer, focusAttr, weightedOVR, langLevel, immerse, marketValue,
+    pickPool, makeRandomPlayer, makeRealPlayer, focusAttr, weightedOVR, langLevel, immerse, marketValue, lineupEdge, isImport,
 } from './people.js';
-import { academyUpkeep, academyWeek, academyIntake, recallLoans, dissolveAcademy, scoutingTrip } from './academy.js';
+import { academyUpkeep, academyWeek, academyIntake, academyAdd, ensureAcademy, recallLoans, dissolveAcademy, scoutingTrip } from './academy.js';
+import { bankOf, bankMove, paySalary, keepStake, restoreStake, payDividends, foundCost, cleanIdentity, renameClub } from './owner.js';
+import { seedClubs, clubsInvest, academyGraduates } from './npc.js';
 import {
     afterMySeries, fansForTitle, patchNotes, fansOf, ANGRY_FANS, scoutCostFor, oppScoutKey, facLevel, staffWages, facilityUpkeep,
     rollInjuries, analystEdge, moveFans,
@@ -40,7 +43,7 @@ import {
     lineupOf, bestLineup, bestTactic, quickSeries, teamStrength, tacticFit, quickGame, autoDraft,
 } from './match.js';
 import {
-    newSeason, buildPlayoffs, advanceBracket, recordLeagueTie, settleSplit, buildMSI, buildWorlds,
+    newSeason, buildPlayoffs, advanceBracket, recordLeagueTie, settleSplit, buildMSI, buildFirstStand, buildWorlds,
     buildPromotion, applyPromotion, promoUps, promoDowns, tableRows, annualRows, leagueKey, leagueOf, worldsQualifiers, tieFor, leagueName,
 } from './season.js';
 import {
@@ -52,7 +55,7 @@ import {
 const NEW_CLUBS_PER_YEAR = 2;
 export { ownerStake, soleOwner, hasBoard, boardCanSack, clubValuation };
 import {
-    buildWorld, debutsFor, regensFor, personsIndex, hasCardAfter, takenNames, release, signTo, nextGenId, dataYearFor, makeOrg,
+    buildWorld, debutsFor, regensFor, personsIndex, hasCardAfter, takenNames, release, signTo, nextGenId, dataYearFor, makeOrg, addRandomTeam, teamName,
 } from './world.js';
 import { sameOrg } from './data.js';
 import { clamp, pick, randInt, shuffle, rngFor, ordinal } from './util.js';
@@ -113,6 +116,7 @@ export function finalizeSave(world, { name, teamId, startYear, seed, custom = nu
             rep: clamp(Math.round((team.rep || 50) * 0.5), 10, 60),
             wins: 0, losses: 0, titles: 0, sacked: 0, prep: 0, joined: startYear,
             history: [], trophies: [], ach: {}, tier2Clubs: [], founded: custom ? teamId : null,
+            bank: MANAGER_START_BANK, bankLog: [], stakes: {},
         },
         board: { confidence: 60, objectives: [], expected: 5 },
         finance: { balance: 0, log: [] },
@@ -126,6 +130,7 @@ export function finalizeSave(world, { name, teamId, startYear, seed, custom = nu
         inbox: [], news: [], offers: [], scouted: [],
         settings: { autoCalls: false, autoDraft: false, fearless: !!fearless },
         emergency: { year: startYear, used: 0 },
+        calV: CALENDAR_VERSION,
         history: [],
         last: null,
         jobOffers: [],
@@ -140,7 +145,13 @@ export function finalizeSave(world, { name, teamId, startYear, seed, custom = nu
     if (custom) team.stake = 100;
     if (team.tier === 2) save.manager.tier2Clubs.push(team.id);
     trackClub(save, team);
-    for (const p of Object.values(save.players)) p.ovr0 = ovrOf(p);
+    ensureAcademy(team);
+    seedClubs(save);
+    for (const p of Object.values(save.players)) {
+        p.ovr0 = ovrOf(p);
+        // Anyone already at a club turned pro before the save: at 18, as far as anyone knows.
+        if (p.team && !p.pro) p.pro = Math.min(startYear, Number(p.born) + 18 || startYear);
+    }
     setObjectives(save);
     ensureSponsors(save, { fresh: true });
     inbox(save, 'board', `Welcome to ${team.name}`, welcomeText(save));
@@ -148,6 +159,39 @@ export function finalizeSave(world, { name, teamId, startYear, seed, custom = nu
         inbox(save, 'board', 'An empty room', `${team.name} exists on paper and nowhere else, and it is yours: you own 100% of it. There is no board to answer to and no wage limit, only the balance. Free agency is open all year: sign at least one player for every role before the preseason window closes. Every free agent in ${leagueName(team.region, team.tier)} is on the Transfers screen, real pros and random prospects alike.`);
     }
     return save;
+}
+
+/** Every league back to thirteen clubs: a save from before the expansion, or a fold nobody replaced. */
+function fillLeagues(save, year, rng, taken) {
+    for (const region of REGION_IDS) {
+        for (const [tier, size] of [[1, TIER1_SIZE], [2, TIER2_SIZE]]) {
+            let have = Object.values(save.teams).filter(t => t.region === region && t.tier === tier).length;
+            for (; have < size; have++) {
+                const t = addRandomTeam(save, region, tier, year, rng, taken);
+                news(save, `${t.name} join ${leagueName(region, tier)}.`, 'world');
+            }
+        }
+    }
+}
+
+/**
+ * A save from the 33-step year keeps its place by step id. In the preseason nothing has
+ * been played, so the year is simply redrawn on the new format; later in the year the
+ * season it is in runs on: it has no winter, and the weeks past its fixtures are quiet.
+ * Thirteen-club leagues then start with the next year.
+ */
+export function migrateCalendar(save) {
+    if (Number(save.calV) >= CALENDAR_VERSION) return false;
+    const old = OLD_CALENDAR[clamp(Math.round(Number(save.time.step) || 0), 0, OLD_CALENDAR.length - 1)];
+    save.time.step = STEP_INDEX[old] || 0;
+    save.calV = CALENDAR_VERSION;
+    if (old === 'preseason') {
+        const rng = rngFor('expand:' + save.seed + ':' + save.time.year);
+        fillLeagues(save, save.time.year, rng, takenNames(save, dbOf()));
+        newSeason(save);
+        if (myTeam(save)) setObjectives(save);
+    }
+    return true;
 }
 
 /** Make the manager's own club. Returns its id. The weakest side of that tier
@@ -210,9 +254,9 @@ function foundClub(world, custom, year, seed) {
 
 function welcomeText(save) {
     const t = myTeam(save);
-    if (soleOwner(save)) return `${t.name} start life in ${leagueName(t.region, t.tier)} in ${save.time.year}. Nobody sets you objectives: the goals are yours.\n\nThe preseason transfer window is open: sign your players, set your lineup and tactics before the Spring Split.`;
+    if (soleOwner(save)) return `${t.name} start life in ${leagueName(t.region, t.tier)} in ${save.time.year}. Nobody sets you objectives: the goals are yours.\n\nThe preseason transfer window is open: sign your players, set your lineup and tactics before the Winter Split.`;
     const obj = save.board.objectives.map(o => '• ' + o.text).join('\n');
-    return `The board has handed you the keys for ${save.time.year}. ${leagueName(t.region, t.tier)} expects a lot.\n\nThis year's objectives:\n${obj}\n\nThe preseason transfer window is open: sign, sell, and set your lineup and tactics before the Spring Split.`;
+    return `The board has handed you the keys for ${save.time.year}. ${leagueName(t.region, t.tier)} expects a lot.\n\nThis year's objectives:\n${obj}\n\nThe preseason transfer window is open: sign, sell, and set your lineup and tactics before the Winter Split.`;
 }
 
 // ---------------------------------------------------------------- lookups
@@ -245,8 +289,10 @@ export function userFixture(save) {
     if (!S || !t) return null;
     if (step.kind === 'league') {
         const L = leagueOf(save, me);
-        const tie = L && L[step.split].fixtures[step.md].find(x => x.a === me || x.b === me);
-        return tie ? { tie, comp: `${leagueName(t.region, t.tier)} ${step.split === 'spring' ? 'Spring' : 'Summer'} · Week ${step.md + 1}`, kind: 'league', bigStage: false, stage: `Week ${step.md + 1} of ${LEAGUE_WEEKS}` } : null;
+        // A season from before the longer calendar has no fixtures in its last weeks.
+        const week = L && L[step.split] ? L[step.split].fixtures[step.md] || [] : [];
+        const tie = week.find(x => x.a === me || x.b === me);
+        return tie ? { tie, comp: `${leagueName(t.region, t.tier)} ${SPLIT_NAME[step.split]} · Week ${step.md + 1}`, kind: 'league', bigStage: false, stage: `Week ${step.md + 1} of ${weeksOf(step.split)}` } : null;
     }
     if (step.kind === 'playoffs') {
         const b = S.playoffs[leagueKey(t.region, t.tier) + ':' + step.split];
@@ -254,7 +300,7 @@ export function userFixture(save) {
         return tie ? { tie, comp: b.name + (step.round ? ' · Final' : ' · Semifinal'), kind: 'playoffs', bigStage: true, final: step.round === 1, stage: step.round ? 'Final' : 'Semifinal' } : null;
     }
     if (step.kind === 'intl') {
-        const b = step.event === 'msi' ? S.msi : S.worlds;
+        const b = S[step.event];
         const tie = tieFor(b, step.round, me);
         const last = b ? Math.log2(b.teams.length) - 1 : 0;
         return tie ? { tie, comp: step.name, kind: step.event, bigStage: true, final: step.round === last, stage: step.name.split('·').pop().trim() } : null;
@@ -280,9 +326,9 @@ export function undecidedContracts(save) {
  * { msg, go: screen id }.
  */
 export function blockInfo(save) {
-    if (save.jobless) return { msg: 'You have no club. Accept a job offer to carry on.', go: 'club' };
+    if (save.jobless) return { msg: 'You have no club. Find a job, or found a club of your own.', go: 'jobs' };
     const t = myTeam(save);
-    if (!t) return { msg: 'No club.', go: 'club' };
+    if (!t) return { msg: 'No club.', go: 'jobs' };
     const pending = (save.inbox || []).find(m => m.options && !m.answered);
     if (pending) return { msg: `A decision is waiting in your inbox: "${pending.title}".`, go: 'inbox' };
     const step = currentStep(save);
@@ -313,7 +359,7 @@ function aiTactic(team, P, rng) {
 /** Everything a side brings to a series. */
 /** How well a club's five can talk in its league's language, 0..100. */
 export function teamComms(team, players) {
-    const code = REGION_LANGUAGE[team && team.region];
+    const code = teamLanguage(team);
     const five = Object.values(lineupOf(team, players));
     if (!code || !five.length) return 100;
     return Math.round(five.reduce((s, p) => s + langLevel(p, code), 0) / five.length);
@@ -325,10 +371,12 @@ export function sideFor(save, teamId, rng = Math.random) {
     const perks = isUser ? save.manager.perks || {} : {};
     const coach = team.coach ? team.coach.rating : 70;
     const coachRank = clamp(Math.round((coach - 72) / 10), 0, 2);
+    const lineup = lineupOf(team, save.players);
+    const tactic = isUser ? (team.tactic || 'early') : aiTactic(team, save.players, rng);
     return {
         team,
-        lineup: lineupOf(team, save.players),
-        tactic: isUser ? (team.tactic || 'early') : aiTactic(team, save.players, rng),
+        lineup,
+        tactic,
         chem: team.chem,
         drafter: isUser ? perks.drafter || 0 : coachRank,
         poolRank: isUser ? perks.poolmaster || 0 : coachRank,
@@ -338,7 +386,8 @@ export function sideFor(save, teamId, rng = Math.random) {
         steady: isUser ? perks.psychologist || 0 : 0,
         prep: isUser ? Number(save.manager.prep) || 0 : 0,
         // A five that cannot talk to each other gives away up to LANG_EDGE_MAX of team edge.
-        extraEdge: clamp((coach - 75) / 20, -1, 1) - LANG_EDGE_MAX * (1 - teamComms(team, save.players) / 100) + (isUser ? analystEdge(save) : 0),
+        // Who the five are matters too: their personalities, how those mix, and how their styles fit.
+        extraEdge: clamp((coach - 75) / 20, -1, 1) - LANG_EDGE_MAX * (1 - teamComms(team, save.players) / 100) + (isUser ? analystEdge(save) : 0) + lineupEdge(lineup, tactic),
     };
 }
 
@@ -380,6 +429,9 @@ function applySeries(save, tie, res, ctxKind) {
                 if (g.mvp === l.id) p.st.mvp++;
                 p.car = p.car || { g: 0, w: 0, titles: 0 };
                 p.car.g++; if (g.w === side) p.car.w++;
+                p.car.k = (p.car.k || 0) + l.k; p.car.d = (p.car.d || 0) + l.d; p.car.a = (p.car.a || 0) + l.a;
+                p.car.rs = Math.round(((p.car.rs || 0) + l.rating) * 10) / 10;
+                if (g.mvp === l.id) p.car.mvp = (p.car.mvp || 0) + 1;
                 ratingSum[l.id] = (ratingSum[l.id] || 0) + l.rating;
                 gamesN[l.id] = (gamesN[l.id] || 0) + 1;
                 // The champions he has been playing, newest first.
@@ -404,7 +456,7 @@ function applySeries(save, tie, res, ctxKind) {
                 // winning run plays with the same confidence yours would.
                 const e = fx(p);
                 const motiv = teamId === me ? (save.manager.perks || {}).motivator || 0 : 0;
-                const d = won ? 4 : -4 * (1 - motiv * 0.15);
+                const d = won ? 4 : -4 * (1 - motiv * 0.15) * (e.lossMorale || 1);
                 p.mor = clamp((Number(p.mor) || 65) + d * (e.resultMoraleMult || 1), 0, 100);
             } else {
                 const lv = grantXP(p, MATCH_XP.bench * mult * (teamId === me ? 1 + mentor * 0.5 : 1));
@@ -520,22 +572,22 @@ export function advance(save, mySeries = null, rng = Math.random) {
 
     if (step.kind === 'league') {
         for (const L of Object.values(S.leagues)) {
-            for (const tie of L[step.split].fixtures[step.md] || []) {
+            for (const tie of (L[step.split] && L[step.split].fixtures[step.md]) || []) {
                 play(tie, 'league');
                 recordLeagueTie(L, step.split, tie);
             }
         }
         playCupRound(save, rng, step);
-        if (step.md === LEAGUE_WEEKS - 1) {
+        if (step.md === weeksOf(step.split) - 1) {
             const t = myTeam(save);
             const L = leagueOf(save, me);
             const row = L && L[step.split].table[me];
-            if (row && row.l === 0 && row.w >= (L.tier === 1 ? TIER1_SIZE - 1 : TIER2_SIZE - 1)) recordAch(save, 'perfect_split', `${leagueName(t.region, t.tier)} ${step.split === 'spring' ? 'Spring' : 'Summer'} ${save.time.year}, ${row.w}-0`);
+            if (row && row.l === 0 && row.w >= weeksOf(step.split) - 1) recordAch(save, 'perfect_split', `${leagueName(t.region, t.tier)} ${SPLIT_NAME[step.split]} ${save.time.year}, ${row.w}-0`);
             buildPlayoffs(save, step.split);
             const b = S.playoffs[leagueKey(t.region, t.tier) + ':' + step.split];
             summary.notes.push(b && b.teams.includes(me)
-                ? `You are in the ${step.split === 'spring' ? 'Spring' : 'Summer'} Playoffs as the number ${b.teams.indexOf(me) + 1} seed.`
-                : `You missed the ${step.split === 'spring' ? 'Spring' : 'Summer'} Playoffs.`);
+                ? `You are in the ${SPLIT_NAME[step.split]} Playoffs as the number ${b.teams.indexOf(me) + 1} seed.`
+                : `You missed the ${SPLIT_NAME[step.split]} Playoffs.`);
         }
     } else if (step.kind === 'playoffs') {
         for (const [key, b] of Object.entries(S.playoffs)) {
@@ -548,7 +600,11 @@ export function advance(save, mySeries = null, rng = Math.random) {
             settleSplit(save, step.split);
             recordSplits(save, step.split);
             splitReview(save, step.split);
-            if (step.split === 'spring') {
+            if (step.split === 'winter') {
+                const fs = buildFirstStand(save);
+                summary.notes.push(fs.teams.includes(me) ? 'You have qualified for First Stand.' : 'First Stand goes on without you.');
+                news(save, `First Stand ${S.year}: ${fs.teams.map(id => save.teams[id].short).join(', ')}.`, 'intl');
+            } else if (step.split === 'spring') {
                 const msi = buildMSI(save);
                 summary.notes.push(msi.teams.includes(me) ? 'You have qualified for MSI.' : 'MSI goes on without you.');
                 news(save, `MSI ${S.year}: ${msi.teams.map(id => save.teams[id].short).join(', ')}.`, 'intl');
@@ -557,7 +613,7 @@ export function advance(save, mySeries = null, rng = Math.random) {
             }
         }
     } else if (step.kind === 'intl') {
-        const b = step.event === 'msi' ? S.msi : S.worlds;
+        const b = S[step.event];
         if (b && b.rounds[step.round]) {
             for (const tie of b.rounds[step.round]) play(tie, step.event);
             advanceBracket(b);
@@ -619,6 +675,7 @@ function enterStep(save, rng) {
         const gone = refreshVacancies(save, rng, 2, 'after a poor spring');
         if (gone.length) news(save, `After a poor spring, ${gone.map(x => x.name).join(' and ')} are looking for a new manager.`, 'world');
     }
+    if (step.id === 'spring_w1') inbox(save, 'news', `Patch notes: Spring ${save.time.year}`, `The meta shifts for the spring split. Strong (↑) and weak (↓) champions by role:\n\n${patchNotes(save.time.year, 'spring')}`);
     if (step.id === 'midseason') inbox(save, 'news', `Patch notes: Summer ${save.time.year}`, `The meta shifts for the summer split. Strong (↑) and weak (↓) champions by role:\n\n${patchNotes(save.time.year, 'summer')}`);
     // A knockout series coming up: the press wants a word first.
     const fixture = userFixture(save);
@@ -683,30 +740,48 @@ function weekly(save, rng) {
     const me = save.manager.teamId;
     const perks = save.manager.perks || {};
     const devRank = perks.developer || 0;
-    for (const id of save.freeAgents) { const p = save.players[id]; if (p && p.inj > 0 && --p.inj <= 0) { delete p.inj; delete p.injT; } }
+    for (const id of save.freeAgents) {
+        const p = save.players[id];
+        if (!p) continue;
+        if (p.inj > 0 && --p.inj <= 0) { delete p.inj; delete p.injT; }
+        // Nobody is paying him, but he can still play solo queue: a free agent keeps improving.
+        grantXP(p, SELF_TRAIN_FREE_AGENT * (fx(p).selfTrain || 1) * xpMultiplier(p, year));
+    }
     // The job market: openings close, and now and then a club parts with its manager.
     for (const t of expireVacancies(save)) news(save, `${t.name} have appointed a new manager.`, 'world');
-    if (rng() < 0.08) for (const t of refreshVacancies(save, rng, 1, 'parted ways with their manager')) news(save, `${t.name} have parted ways with their manager.`, 'world');
+    if (rng() < 0.05) for (const t of refreshVacancies(save, rng, 1, 'parted ways with their manager')) news(save, `${t.name} have parted ways with their manager.`, 'world');
     for (const t of Object.values(save.teams)) {
         const mine = t.id === me;
         // Every club loses players to injury; the manager's are rolled below with his staff and intensity.
         if (!mine) rollInjuries(save, t, rng, null, true);
         const tr = TRAINING_BY_ID[mine ? t.training : 'balanced'] || TRAINING_BY_ID.balanced;
         const coach = t.coach ? t.coach.rating - 60 : 10;
+        const clubTrain = mine ? 1 : clubStyle(t).train || 1;      // a training club's players improve faster
+        const trainingCentre = 1 + 0.07 * facLevel(t, 'training');
+        // What the squad does for itself: a mentor brings the kids on, a joker lifts the room.
+        let mentorXp = 0, squadMorale = 0, fanPull = 0;
+        for (const id of t.roster) { const e = fx(save.players[id]); mentorXp += e.mentorXp || 0; squadMorale += e.squadMorale || 0; fanPull += e.fanPull || 0; }
         // The manager's club: each player's intensity, and the bench programme for subs.
         const five = mine ? new Set(Object.values(lineupOf(t, save.players)).map(p => p.id)) : null;
         const bench = mine ? BENCH_PROGRAM_BY_ID[t.bench] || BENCH_PROGRAM_BY_ID.none : null;
-        const tongue = REGION_LANGUAGE[t.region];
+        const tongue = teamLanguage(t);
+        // A room that already speaks it teaches it faster.
+        const speakers = t.roster.filter(id => langLevel(save.players[id], tongue) >= 60).length / Math.max(1, t.roster.length);
+        if (fanPull && mine) moveFans(t, fanPull);
         for (const id of t.roster) {
             const p = save.players[id];
             if (!p) continue;
+            const e0 = fx(p);
             // Living there teaches the club's language.
-            if (tongue) immerse(p, tongue, LANG_IMMERSION);
-            let xp = tr.xp;
+            if (tongue) immerse(p, tongue, LANG_IMMERSION * (e0.langMult || 1) * (0.6 + speakers * 0.8));
+            if (squadMorale && (Number(p.mor) || 65) < 80) p.mor = clamp((Number(p.mor) || 65) + squadMorale, 0, 100);
+            let xp = tr.xp + SELF_TRAIN_XP * (e0.selfTrain || 1);
+            if (mentorXp && ageOf(p, year) <= 22 && !e0.mentorXp) xp += mentorXp;
+            if (ageOf(p, year) <= 24) xp *= clubTrain;
+            xp *= trainingCentre;
             if (mine) {
                 xp *= (INTENSITY_BY_ID[p.intensity] || INTENSITY_BY_ID.normal).xp;
                 if (!five.has(id)) xp += bench.xp;
-                xp *= 1 + 0.07 * facLevel(t, 'training');
                 // The gaming house and the psychologist keep heads up.
                 const house = facLevel(t, 'house');
                 if (house && (Number(p.mor) || 65) < 75) p.mor = clamp((Number(p.mor) || 65) + 0.25 * house, 0, 100);
@@ -780,7 +855,7 @@ function weekly(save, rng) {
         if (runCosts) save.finance.balance -= runCosts;
         academyWeek(save, rng, currentStep(save).kind === 'league');
         for (const note of rollInjuries(save, t, rng, (p) => (INTENSITY_BY_ID[p.intensity] || INTENSITY_BY_ID.normal).xp)) inbox(save, 'squad', note.includes('fit again') ? 'Back in training' : 'Injury', note);
-        const out = Math.round(wageBill(save, t) / STEPS_PER_YEAR) + benchCost(save, t);
+        const out = Math.round(wageBill(save, t) / STEPS_PER_YEAR) + benchCost(save, t) + paySalary(save);
         save.finance.balance += inc - out;
         save.manager.prep = t.training === 'draft' ? TRAINING_BY_ID.draft.draftPrep : 0;
     }
@@ -794,9 +869,51 @@ function celebrate(save, item) {
 
 /** Pay for a report on the next opponent: their likely bans, comfort picks and plan. */
 /** A scouting trip from the Staff screen: names must not collide with any card or player. */
-export function runScoutingTrip(save, region) {
+export function runScoutingTrip(save, region, role = null) {
     const rng = rngFor(`trip:${save.time.year}:${save.time.step}:${region}:${save.seed || 0}`);
-    return scoutingTrip(save, region, rng, takenNames(save, dbOf()));
+    return scoutingTrip(save, region, rng, takenNames(save, dbOf()), { role });
+}
+
+/** The club's working language. Changing it costs a little, and only once a year. */
+export function languageSwitchCost(save) {
+    const t = myTeam(save);
+    return t ? Math.round(sponsorIncome(save, t) * LANG_SWITCH_COST / 1000) * 1000 : 0;
+}
+export function setTeamLanguage(save, code) {
+    const t = myTeam(save);
+    if (!t || !LANGUAGE_NAMES[code]) return { ok: false, msg: 'Pick a language.' };
+    if (teamLanguage(t) === code) return { ok: false, msg: `${t.name} already work in ${LANGUAGE_NAMES[code]}.` };
+    if (t.langYear === save.time.year) return { ok: false, msg: 'The club has already changed language this year.' };
+    const cost = languageSwitchCost(save);
+    if (cost > save.finance.balance) return { ok: false, msg: `Changing the club's language costs ${fmtK(cost)}.` };
+    save.finance.balance -= cost;
+    save.finance.log.unshift({ y: save.time.year, s: save.time.step, label: `Club language: ${LANGUAGE_NAMES[code]}`, amount: -cost });
+    t.lang = code;
+    t.langYear = save.time.year;
+    return { ok: true, msg: `${t.name} now work in ${LANGUAGE_NAMES[code]}.` };
+}
+/** A course for the whole squad. The more of them already speak it, the less there is to teach. */
+export function languageCourseCost(save) {
+    const t = myTeam(save);
+    if (!t) return 0;
+    const code = teamLanguage(t);
+    const fluent = t.roster.filter(id => langLevel(save.players[id], code) >= 80).length / Math.max(1, t.roster.length);
+    return Math.round(sponsorIncome(save, t) * LANG_COURSE_COST * (1 - fluent * 0.85) / 1000) * 1000;
+}
+export function languageCourse(save) {
+    const t = myTeam(save);
+    if (!t) return { ok: false, msg: 'You have no club.' };
+    const code = teamLanguage(t);
+    const need = t.roster.map(id => save.players[id]).filter(p => p && langLevel(p, code) < 100);
+    if (!need.length) return { ok: false, msg: `Everyone at the club already speaks ${LANGUAGE_NAMES[code]}.` };
+    if (t.courseStamp === save.time.year * 1000 + save.time.step) return { ok: false, msg: 'The squad has had its course this week.' };
+    const cost = languageCourseCost(save);
+    if (cost > save.finance.balance) return { ok: false, msg: `The course costs ${fmtK(cost)}.` };
+    save.finance.balance -= cost;
+    save.finance.log.unshift({ y: save.time.year, s: save.time.step, label: `Language course: ${LANGUAGE_NAMES[code]}`, amount: -cost });
+    t.courseStamp = save.time.year * 1000 + save.time.step;
+    for (const p of need) immerse(p, code, LANG_LESSON * LANG_COURSE_LESSONS * (fx(p).langMult || 1));
+    return { ok: true, msg: `${need.length} player${need.length === 1 ? '' : 's'} took the ${LANGUAGE_NAMES[code]} course.` };
 }
 
 export function scoutOpponent(save) {
@@ -978,6 +1095,7 @@ function playCupRound(save, rng, step) {
 function crownCup(save, region, R) {
     const champ = save.teams[R.champion];
     if (!champ) return;
+    creditTitle(save, champ, 'cup');
     news(save, `${champ.name} win the ${region} Regional Cup, beating ${save.teams[R.runnerUp] ? save.teams[R.runnerUp].name : 'their rivals'} in the final.`, 'world');
     const me = save.manager.teamId;
     if (R.runnerUp === me) {
@@ -1040,20 +1158,32 @@ function allStar(save, rng) {
     }
 }
 
+/** A medal for everyone who played for the club this year, and the current five. */
+function creditTitle(save, team, kind) {
+    const five = new Set(Object.values(lineupOf(team, save.players)).map(p => p.id));
+    for (const id of team.roster) {
+        const p = save.players[id];
+        if (!p || (!five.has(id) && !(p.st && p.st.g > 0))) continue;
+        p.car = p.car || { g: 0, w: 0, titles: 0 };
+        p.car.titles = (p.car.titles || 0) + 1;
+        p.car.t = { ...(p.car.t || {}), [kind]: ((p.car.t || {})[kind] || 0) + 1 };
+    }
+}
+
 function crownLeague(save, key, b, split) {
     const S = save.season;
     const L = S.leagues[key];
     const champ = save.teams[b.champion];
     const me = save.manager.teamId;
-    const title = `${leagueName(L.region, L.tier)} ${split === 'spring' ? 'Spring' : 'Summer'} ${S.year}`;
+    const title = `${leagueName(L.region, L.tier)} ${SPLIT_NAME[split]} ${S.year}`;
     news(save, `${champ.name} win the ${title}, beating ${save.teams[b.runnerUp].name} in the final.`, L.tier === 1 ? 'title' : 'world');
-    for (const id of champ.roster) if (save.players[id]) save.players[id].car.titles = (save.players[id].car.titles || 0) + 1;
+    creditTitle(save, champ, L.tier === 1 ? 'league' : 'tier2');
     histTitle(save, champ, L.tier === 1 ? 'league' : 'tier2');
     champ.rep = clamp((champ.rep || 50) + (L.tier === 1 ? 3 : 2), 0, 100);
     // Prize money for the manager's club.
     if (L.teams.includes(me)) {
         const place = b.places[me] || (S.places[me] || {})[split];
-        const prize = prizeMoney(save, L.tier === 1 ? PRIZES.league : PRIZES.tier2, place);
+        const prize = Math.round(prizeMoney(save, L.tier === 1 ? PRIZES.league : PRIZES.tier2, place) * (split === 'winter' ? WINTER_PRIZE_SHARE : 1) / 1000) * 1000;
         if (prize) earn(save, prize, `${title}: ${place === 1 ? 'champions' : place === 2 ? 'runners-up' : 'semifinal'}`);
         if (b.champion === me) {
             const t = myTeam(save);
@@ -1075,13 +1205,13 @@ function crownIntl(save, b, event) {
     const me = save.manager.teamId;
     const champ = save.teams[b.champion];
     news(save, `${champ.name} are ${b.name} champions!`, 'title');
-    for (const id of champ.roster) if (save.players[id]) save.players[id].car.titles = (save.players[id].car.titles || 0) + 1;
+    creditTitle(save, champ, event);
     histTitle(save, champ, event);
     // Every entrant's split row learns how far it went.
-    const split = event === 'msi' ? 'spring' : 'summer';
+    const split = event === 'firststand' ? 'winter' : event === 'msi' ? 'spring' : 'summer';
     for (const id of b.teams) {
         const tag = id === b.champion ? event : id === b.runnerUp ? event + '2' : null;
-        markSplit(save.teams[id], S.year, split, tag, { [event === 'msi' ? 'mp' : 'wp']: b.places[id] || null });
+        markSplit(save.teams[id], S.year, split, tag, { [event === 'firststand' ? 'fp' : event === 'msi' ? 'mp' : 'wp']: b.places[id] || null });
     }
     champ.rep = clamp((champ.rep || 50) + (event === 'worlds' ? 8 : 5), 0, 100);
     if (b.teams.includes(me)) {
@@ -1097,8 +1227,8 @@ function crownIntl(save, b, event) {
             grantMgrXP(save, event === 'worlds' ? MGR_XP.worlds : MGR_XP.intlTitle);
             brandsKnock(save);
             fansForTitle(save, event);
-            inbox(save, 'title', `${b.name} champions!`, `${champ.name} are the best team in the world${event === 'msi' ? ' this spring' : ''}. ${fmtK(prize)} of prize money, and a place in history.`);
-            celebrate(save, { kind: 'title', trophy: event, title: event === 'worlds' ? `World Champions ${S.year}` : `${b.name} Champions`, sub: `${t.name} beat ${save.teams[b.runnerUp].name} in the final`, color: event === 'worlds' ? '#facc15' : '#38bdf8' });
+            inbox(save, 'title', `${b.name} champions!`, `${champ.name} are the best team in the world${event === 'msi' ? ' this spring' : event === 'firststand' ? ' this winter' : ''}. ${fmtK(prize)} of prize money, and a place in history.`);
+            celebrate(save, { kind: 'title', trophy: event, title: event === 'worlds' ? `World Champions ${S.year}` : `${b.name} Champions`, sub: `${t.name} beat ${save.teams[b.runnerUp].name} in the final`, color: event === 'worlds' ? '#facc15' : event === 'firststand' ? '#f472b6' : '#38bdf8' });
             titleAchievements(save, event, null, b.name);
         }
     }
@@ -1118,6 +1248,7 @@ function titleAchievements(save, kind, split, name) {
         if ((m.tier2Clubs || []).includes(t.id)) recordAch(save, 'basement', `${name} with ${t.name}`);
     }
     if (kind === 'msi') recordAch(save, 'msi', name);
+    if (kind === 'firststand') recordAch(save, 'first_stand', name);
     if (kind === 'worlds') {
         recordAch(save, 'worlds', name);
         if (mine.some(x => x.kind === 'msi')) recordAch(save, 'intl_double', `${year}`);
@@ -1147,7 +1278,7 @@ export function recordAch(save, id, detail = null, { once = false } = {}) {
     if (first && def.point) {
         m.points = (Number(m.points) || 0) + 1;
     }
-    inbox(save, 'achievement', `${first ? 'Achievement unlocked' : 'Achievement'}: ${def.name}`, `${def.desc}${detail ? `\n\n${detail}.` : ''}${first && def.point ? '\n\nA perk point has been added: spend it on the Club screen.' : cur.n ? `\n\nThat makes ${cur.n + 1}.` : ''}`);
+    inbox(save, 'achievement', `${first ? 'Achievement unlocked' : 'Achievement'}: ${def.name}`, `${def.desc}${detail ? `\n\n${detail}.` : ''}${first && def.point ? '\n\nA perk point has been added: spend it on your Profile.' : cur.n ? `\n\nThat makes ${cur.n + 1}.` : ''}`);
     celebrate(save, { kind: 'achievement', id, title: def.name, sub: def.desc, count: cur.n + 1, point: first && !!def.point, color: '#a78bfa' });
     return true;
 }
@@ -1196,13 +1327,13 @@ export function setObjectives(save) {
     if (soleOwner(save)) { save.board.objectives = []; return; }
     const out = [];
     if (t.tier === 1) {
-        if (exp <= 2) out.push({ id: 'title', text: 'Win a domestic title (Spring or Summer)' }, { id: 'worlds', text: 'Qualify for Worlds' });
-        else if (exp <= 4) out.push({ id: 'worlds', text: 'Qualify for Worlds' }, { id: 'playoffs2', text: 'Reach the playoffs in both splits' });
-        else if (exp <= 7) out.push({ id: 'playoffs1', text: 'Reach the playoffs at least once' });
+        if (exp <= 2) out.push({ id: 'title', text: 'Win a domestic title (Winter, Spring or Summer)' }, { id: 'worlds', text: 'Qualify for Worlds' });
+        else if (exp <= 4) out.push({ id: 'worlds', text: 'Qualify for Worlds' }, { id: 'playoffs2', text: 'Reach the playoffs in Spring and Summer' });
+        else if (exp <= 9) out.push({ id: 'playoffs1', text: 'Reach the playoffs at least once' });
         else out.push({ id: 'survive', text: 'Avoid relegation' });
     } else {
         if (exp <= 3) out.push({ id: 'promote', text: 'Win promotion to the top league' });
-        else out.push({ id: 'tophalf', text: 'Finish in the top half over both splits' });
+        else out.push({ id: 'tophalf', text: 'Finish in the top half over the whole year' });
     }
     out.push({ id: 'money', text: 'Keep the balance above zero' });
     save.board.objectives = out.map(o => ({ ...o, met: null }));
@@ -1216,7 +1347,7 @@ export function objectiveMet(save, o) {
     const pl = S.places[me] || {};
     const key = leagueKey(t.region, t.tier);
     switch (o.id) {
-        case 'title': return ['spring', 'summer'].some(s => (S.playoffs[key + ':' + s] || {}).champion === me);
+        case 'title': return SPLITS.some(s => (S.playoffs[key + ':' + s] || {}).champion === me);
         case 'worlds': return !!(S.worlds && S.worlds.teams.includes(me));
         case 'playoffs2': return (pl.spring || 99) <= 4 && (pl.summer || 99) <= 4;
         case 'playoffs1': return (pl.spring || 99) <= 4 || (pl.summer || 99) <= 4;
@@ -1253,13 +1384,14 @@ function splitReview(save, split) {
     const place = (save.season.places[me] || {})[split] || L.teams.length;
     const exp = save.board.expected || 5;
     if (!hasBoard(save)) {
-        inbox(save, 'board', `${split === 'spring' ? 'Spring' : 'Summer'} review`, `${t.name} finished ${ordinalWord(place)} in the ${split} split, against a squad strength ranked ${ordinalWord(exp)}. You own the club: the verdict is yours.`);
+        inbox(save, 'board', `${SPLIT_NAME[split]} review`, `${t.name} finished ${ordinalWord(place)} in the ${split} split, against a squad strength ranked ${ordinalWord(exp)}. You own the club: the verdict is yours.`);
         return;
     }
-    const d = place <= exp - 2 ? 8 : place <= exp ? 4 : place <= exp + 2 ? -3 : -9;
+    // Winter is seven weeks: the board notes it, and judges the year on the long splits.
+    const d = (place <= exp - 2 ? 8 : place <= exp ? 4 : place <= exp + 2 ? -3 : -9) * (split === 'winter' ? 0.5 : 1);
     boardMove(save, d);
     const tone = d > 0 ? 'pleased with' : d > -5 ? 'watching' : 'unhappy with';
-    inbox(save, 'board', `${split === 'spring' ? 'Spring' : 'Summer'} review`, `${t.name} finished ${ordinalWord(place)} in the ${split} split. The board expected around ${ordinalWord(exp)} and is ${tone} the results. Board confidence: ${Math.round(save.board.confidence)}%.${boardCanSack(save) ? '' : ' You hold a majority of the club: they cannot sack you.'}`);
+    inbox(save, 'board', `${SPLIT_NAME[split]} review`, `${t.name} finished ${ordinalWord(place)} in the ${split} split. The board expected around ${ordinalWord(exp)} and is ${tone} the results. Board confidence: ${Math.round(save.board.confidence)}%.${boardCanSack(save) ? '' : ' You hold a majority of the club: they cannot sack you.'}`);
     if (split === 'spring' && save.board.confidence <= 5 && boardCanSack(save)) sack(save, 'after a disastrous spring');
 }
 
@@ -1285,11 +1417,12 @@ function yearReview(save) {
 
 function sack(save, why) {
     const t = myTeam(save);
+    keepStake(save);
     dissolveAcademy(save, t);
     save.manager.sacked++;
     save.manager.history.push({ year: save.time.year, teamId: t.id, teamName: t.name, left: 'sacked' });
     save.manager.rep = clamp(save.manager.rep - 15, 0, 100);
-    inbox(save, 'board', 'You have been sacked', `The board of ${t.name} has dismissed you ${why}. Other clubs have been in touch: pick one of their offers to carry on.`);
+    inbox(save, 'board', 'You have been sacked', `The board of ${t.name} has dismissed you ${why}. Other clubs have been in touch: see the Jobs screen to carry on.`);
     save.jobOffers = jobOffers(save, true, rngFor('jobs:' + save.seed + ':' + save.time.year + ':' + save.time.step));
     // A sacked manager can always see openings to apply for, beyond the offers.
     const open = (save.vacancies || []).filter(v => save.teams[v.teamId] && v.teamId !== t.id).length;
@@ -1315,7 +1448,68 @@ function jobOffers(save, sacked, rng) {
 export function acceptJob(save, teamId) {
     const t = save.teams[teamId];
     if (!t || !(save.jobOffers || []).includes(teamId)) return { ok: false, msg: 'That offer is gone.' };
+    return moveToClub(save, teamId);
+}
+
+/** Walk back into a club he holds a majority of. */
+export function returnToClub(save, teamId) {
+    if (!save.teams[teamId] || ((save.manager.stakes || {})[teamId] || 0) < 50) return { ok: false, msg: 'You need a majority of the club.' };
+    return moveToClub(save, teamId);
+}
+
+/** Leave the club. What he owns of it stays his and keeps paying; he is free to find another job. */
+export function resignJob(save) {
+    const t = myTeam(save);
+    if (!t) return { ok: false, msg: 'You have no club.' };
+    keepStake(save);
+    dissolveAcademy(save, t);
+    save.manager.history.push({ year: save.time.year, teamId: t.id, teamName: t.name, left: 'resigned' });
+    for (const id of t.roster) {
+        const p = save.players[id];
+        if (p) { delete p.listed; delete p.leaving; delete p.status; delete p.promise; }
+    }
+    const open = (save.vacancies || []).filter(v => save.teams[v.teamId] && v.teamId !== t.id).length;
+    if (open < 4) refreshVacancies(save, rngFor('vac:' + save.seed + ':' + save.time.year + ':' + save.time.step), 4 - open, 'looking for a manager');
+    save.manager.teamId = null;
+    save.jobless = true;
+    save.offers = [];
+    t.lineup = bestLineup(t, save.players);
+    inbox(save, 'board', `You left ${t.name}`, `You are a free agent yourself now. Apply for a job on the Jobs screen${bankOf(save) >= foundCost(save, 2) ? ', or found a club of your own' : ''}.`);
+    return { ok: true, msg: `You have left ${t.name}.` };
+}
+
+/**
+ * Found a club at any point of a year, with the manager's own money. It buys the league
+ * place of the weakest club of that tier in the region, which keeps its fixtures, so no
+ * calendar has to change: that club takes the new name, and its squad comes with the place.
+ */
+export function foundNewClub(save, cfg) {
+    const region = REGION_IDS.includes(cfg.region) ? cfg.region : 'LCK';
+    const tier = cfg.tier === 1 ? 1 : 2;
+    const cost = foundCost(save, tier);
+    if (bankOf(save) < cost) return { ok: false, msg: `A place in ${leagueName(region, tier)} costs ${fmtK(cost)}. You have ${fmtK(bankOf(save))}.` };
+    const id = cleanIdentity(save, cfg);
+    if (!id.ok) return id;
+    const me = save.manager.teamId;
+    const held = save.manager.stakes || {};
+    const slot = Object.values(save.teams).filter(t => t.region === region && t.tier === tier && t.id !== me && !t.custom && !held[t.id])
+        .sort((a, b) => teamStrength(a, save.players) - teamStrength(b, save.players))[0];
+    if (!slot) return { ok: false, msg: 'There is no place to buy in that league.' };
+    const old = slot.name;
+    bankMove(save, -cost, `Founded ${id.name}`);
+    renameClub(save, slot, { name: id.name, short: id.short, color: cfg.color, emblem: cfg.emblem || null });
+    Object.assign(slot, { custom: true, real: true, rebranded: true, style: 'balanced', stake: 100, rep: Math.max(Number(slot.rep) || 0, tier === 1 ? 45 : 28) });
+    delete slot.mstake; delete slot.invest;
+    news(save, `${old} are sold and become ${slot.name}, a new club in ${leagueName(region, tier)}.`, 'world');
+    moveToClub(save, slot.id, { founding: true });
+    return { ok: true, msg: `${slot.name} is born. You own all of it.` };
+}
+
+function moveToClub(save, teamId, { founding = false } = {}) {
+    const t = save.teams[teamId];
     const prev = myTeam(save);
+    keepStake(save);
+    if (founding) save.manager.founded = teamId;
     dissolveAcademy(save, prev);
     if (prev) {
         save.manager.history.push({ year: save.time.year, teamId: prev.id, teamName: prev.name, left: 'moved' });
@@ -1326,6 +1520,8 @@ export function acceptJob(save, teamId) {
     }
     save.manager.teamId = teamId;
     save.manager.joined = save.time.year;
+    restoreStake(save);
+    ensureAcademy(t);
     save.jobless = false;
     save.jobOffers = [];
     save.vacancies = (save.vacancies || []).filter(v => v.teamId !== teamId);
@@ -1382,9 +1578,8 @@ export function buyStake(save, pct) {
     pct = Math.min(pct, 100 - own);
     if (pct <= 0) return { ok: false, msg: 'You already own all of it.' };
     const price = stakePrice(save, pct, true);
-    if (price > save.finance.balance) return { ok: false, msg: `Buying ${pct}% costs ${fmtK(price)}. The club cannot afford it.` };
-    save.finance.balance -= price;
-    save.finance.log.unshift({ y: save.time.year, s: save.time.step, label: `Bought ${pct}% of ${t.name}`, amount: -price });
+    if (price > bankOf(save)) return { ok: false, msg: `Buying ${pct}% costs ${fmtK(price)}, and you have ${fmtK(bankOf(save))} in the bank.` };
+    bankMove(save, -price, `Bought ${pct}% of ${t.name}`);
     return { ...gainStake(save, own + pct), msg: `You bought ${pct}% for ${fmtK(price)}. You own ${ownerStake(save)}%.` };
 }
 
@@ -1410,7 +1605,7 @@ export function grantMgrXP(save, n) {
         m.xp -= MGR_XP_PER_LEVEL;
         m.level++;
         m.points++;
-        inbox(save, 'level', `Manager level ${m.level}`, 'You have a perk point to spend on the Club screen.');
+        inbox(save, 'level', `Manager level ${m.level}`, 'You have a perk point to spend on your Profile.');
     }
 }
 
@@ -1531,7 +1726,7 @@ export function runSession(save, id, pid = null) {
         p.pool = pool.slice(-6);
         msg = `${p.name} drills ${pickC.name} until it is in his pool${(meta[pickC.id] || 0) > 0 ? ' (strong this split)' : ''}.`;
     } else if (id === 'language') {
-        const code = REGION_LANGUAGE[t.region];
+        const code = teamLanguage(t);
         const before = langLevel(p, code);
         if (before >= 100) return { ok: false, msg: `${p.name} already speaks ${LANGUAGE_NAMES[code]} fluently.` };
         immerse(p, code, LANG_LESSON);
@@ -1547,7 +1742,7 @@ export function runSession(save, id, pid = null) {
     return { ok: true, msg };
 }
 
-const campKey = (save) => save.time.year + ':' + (currentStep(save).split || 'spring');
+const campKey = (save) => save.time.year + ':' + (currentStep(save).split || 'winter');
 /** Whether a bootcamp can be booked now, and why not. */
 export function bootcampState(save, id) {
     const b = BOOTCAMP_BY_ID[id];
@@ -1953,6 +2148,9 @@ function yearAwards(save) {
         const rookie = ps.filter(p => p.joined === year && ageOf(p, year) <= 20).sort((a, b) => avg(b) - avg(a))[0]
             || ps.filter(p => ageOf(p, year) <= 19).sort((a, b) => avg(b) - avg(a))[0];
         out[region] = { mvp: ref(mvp), allPro, rookie: ref(rookie) };
+        const award = (p, k) => { if (p) { p.car = p.car || { g: 0, w: 0, titles: 0 }; p.car.aw = { ...(p.car.aw || {}), [k]: ((p.car.aw || {})[k] || 0) + 1 }; } };
+        award(mvp, 'mvp'); award(rookie, 'rookie');
+        for (const r of ROLE_IDS) award(allPro[r] && save.players[allPro[r].id], 'allpro');
         if (mvp) { mvp.car.awards = [...(mvp.car.awards || []), `${year} ${leagueName(region, 1)} MVP`]; news(save, `${mvp.name} is the ${leagueName(region, 1)} Player of the Year.`, 'award'); }
         // The record books of the clubs the manager runs.
         const tracked = (p) => (p && p.team && save.teams[p.team] && save.teams[p.team].hist ? save.teams[p.team] : null);
@@ -1984,11 +2182,12 @@ function runOffseason(save, rng) {
     const t = myTeam(save);
     const myRow = t ? {
         teamId: t.id, teamName: t.name, tier: t.tier, region: t.region,
-        spring: (S.places[me] || {}).spring || null, summer: (S.places[me] || {}).summer || null,
+        winter: (S.places[me] || {}).winter || null, spring: (S.places[me] || {}).spring || null, summer: (S.places[me] || {}).summer || null,
+        firststand: S.firststand && S.firststand.teams.includes(me) ? S.firststand.places[me] || null : null,
         msi: S.msi && S.msi.teams.includes(me) ? S.msi.places[me] || null : null,
         worlds: S.worlds && S.worlds.teams.includes(me) ? S.worlds.places[me] || null : null,
     } : null;
-    save.history.push({ year, champs, msi: S.msi ? S.msi.champion : null, worlds: S.worlds ? S.worlds.champion : null, awards, me: myRow });
+    save.history.push({ year, champs, firststand: S.firststand ? S.firststand.champion : null, msi: S.msi ? S.msi.champion : null, worlds: S.worlds ? S.worlds.champion : null, awards, me: myRow });
     if (save.history.length > 40) save.history.shift();
     if (t && year - (save.manager.joined || year) + 1 >= 5) recordAch(save, 'loyal', `${t.name}, since ${save.manager.joined}`, { once: true });
 
@@ -2006,6 +2205,9 @@ function runOffseason(save, rng) {
             if (save.jobOffers.length) inbox(save, 'job', 'Other clubs want you', `Your work has been noticed. ${save.jobOffers.map(id => save.teams[id].name).join(' and ')} would like to talk. Offers are on the Jobs screen.`);
         }
     }
+    // Dividends from clubs the manager owns a part of, before the year's books close.
+    const paid = payDividends(save);
+    if (paid.length) inbox(save, 'board', 'Dividends', `Your clubs paid out for ${year}:\n\n${paid.map(d => `• ${d.name} (${d.pct}%): ${fmtK(d.amount)}`).join('\n')}`);
     {
         const gone = refreshVacancies(save, rng, 3 + Math.floor(rng() * 4), 'after a disappointing season');
         if (gone.length) news(save, `The managerial merry-go-round: ${gone.map(x => x.name).join(', ')} are looking for a new manager.`, 'world');
@@ -2023,6 +2225,7 @@ function runOffseason(save, rng) {
     //    decided before the offseason could start); AI clubs renew who they want.
     for (const tm of Object.values(save.teams)) if (tm.hist) histYearEnd(save, tm);
     recordYear(save, year);
+    residency(save, rng);
     // Loanees come home before contracts are looked at.
     const back = recallLoans(save);
     if (back.length) inbox(save, 'squad', 'Back from loan', back.join('\n'));
@@ -2067,6 +2270,7 @@ function runOffseason(save, rng) {
     for (const p of Object.values(save.players)) {
         ageDecline(p, year, rng);
         p.st = blankStats();
+        delete p.stOff;
         p.big = Math.max(0, (Number(p.big) || 0) - 2);
         maybeNewFav(p, year + 1, rng);
         delete p.retiring;
@@ -2080,10 +2284,14 @@ function runOffseason(save, rng) {
     const ny = save.time.year;
     if (db) {
         report.newClubs = livingLeague(save, db, ny, rng);
+        realRenames(save, db, ny);
         const deb = debutsFor(save, db, ny, save.manager.teamId, rng);
         for (const d of deb) {
             report.debuts.push(d.player.name);
-            if (d.forUser) inbox(save, 'prospect', `Academy prospect: ${d.player.name}`, `${d.player.name} (${d.player.role}, ${ovrOf(d.player)} OVR) has come through your organisation and wants to sign. He is waiting in free agency for you, and no other club can sign him this preseason.`, { pid: d.player.id });
+            if (d.forUser) {
+                academyAdd(save, d.player, { force: true });
+                inbox(save, 'prospect', `Academy: ${d.player.name}`, `${d.player.name} (${d.player.role}, ${ovrOf(d.player)} OVR) has come through your organisation and joins your academy. Call him up in a transfer window when he is ready.`, { pid: d.player.id });
+            }
         }
         if (deb.length) news(save, `Rookies debuting in ${ny}: ${deb.slice(0, 10).map(d => d.player.name).join(', ')}${deb.length > 10 ? ` and ${deb.length - 10} more` : ''}.`, 'world');
         // History: AI clubs make the moves that really happened, when both clubs
@@ -2117,6 +2325,7 @@ function runOffseason(save, rng) {
         }
     }
     const taken = takenNames(save, db);
+    fillLeagues(save, ny, rng, taken);
     pruneFreeAgents(save);
     // A new class of prospects every year, and enough of them that free agency
     // never runs dry once the card database has no more real rookies to send.
@@ -2132,14 +2341,17 @@ function runOffseason(save, rng) {
         for (let i = 0; i < youth; i++) {
             const p = makeRandomPlayer({ id: nextGenId(save), role: pick(rng, ROLE_IDS), region: mt.region, year: ny, target: (REGION_LEVEL[mt.region] || 78) - 12 + randInt(rng, 0, 4), age: randInt(rng, 16, 17), takenNames: taken }, rng);
             p.pot = clamp(ovrOf(p) + randInt(rng, 14, 24), ovrOf(p), 97);
-            p.prospectFor = mt.id;
             save.players[p.id] = p;
-            save.freeAgents.push(p.id);
-            save.scouted = [...(save.scouted || []), p.id];
+            academyAdd(save, p, { force: true });
             names.push(`${p.name} (${p.role}, ${ovrOf(p)} OVR, potential ${p.pot})`);
         }
-        inbox(save, 'prospect', 'Your academy class', `Your academy director has ${names.length === 1 ? 'a prospect' : 'prospects'} ready: ${names.join(', ')}. ${names.length === 1 ? 'He is' : 'They are'} held for you in free agency through the preseason.`);
+        inbox(save, 'prospect', 'Your academy class', `Your academy director has ${names.length === 1 ? 'a prospect' : 'prospects'} ready: ${names.join(', ')}. ${names.length === 1 ? 'He is' : 'They are'} in your academy now.`);
     }
+    // AI clubs: academies graduate, and the year's money goes into facilities and staff.
+    for (const { p, t: club } of academyGraduates(save, rng, taken)) {
+        if (ovrOf(p) >= 75 || p.pot >= 88) news(save, `${club.name} promote ${p.name} (${p.role}, ${ageOf(p, ny)}) from their academy.`, 'transfer');
+    }
+    for (const n of clubsInvest(save, rng).slice(0, 6)) news(save, n, 'world');
     aiWindow(save, rng, { taken });
     for (const p of Object.values(save.players)) if (p.prospectFor && p.team) delete p.prospectFor;
 
@@ -2168,7 +2380,7 @@ function runOffseason(save, rng) {
         const intake = academyIntake(save, rng, taken);
         if (intake.length) inbox(save, 'prospect', 'Academy intake', `New in your academy: ${intake.map(p => `${p.name} (${p.role}, ${ovrOf(p)} OVR, potential ${p.pot})`).join(', ')}.`);
         openWindow(save, rng);
-        inbox(save, 'news', `Patch notes: Spring ${ny}`, `A new season, a new meta. Strong (↑) and weak (↓) champions by role:\n\n${patchNotes(ny, 'spring')}`);
+        inbox(save, 'news', `Patch notes: Winter ${ny}`, `A new season, a new meta. Strong (↑) and weak (↓) champions by role:\n\n${patchNotes(ny, 'winter')}`);
         // Rivalries cool a little every year.
         for (const k of Object.keys(save.rivals || {})) { save.rivals[k] = Math.round(save.rivals[k] * 0.7 * 10) / 10; if (save.rivals[k] < 0.5) delete save.rivals[k]; }
     }
@@ -2177,6 +2389,45 @@ function runOffseason(save, rng) {
     report.offers = save.jobOffers || [];
     save.lastOffseason = report;
     return report;
+}
+
+/**
+ * Real orgs take their real new names when the year comes: SKT become T1, Samsung become
+ * Gen.G. A club the manager has rebranded, or founded, keeps the name it chose.
+ */
+function realRenames(save, db, year) {
+    const idx = personsIndex(db);
+    const tags = new Map();
+    for (const { card } of idx.byYear.get(year) || []) {
+        const k = card.region + ':' + card.team;
+        tags.set(k, (tags.get(k) || 0) + 1);
+    }
+    for (const t of Object.values(save.teams)) {
+        if (!t.real || t.custom || t.rebranded) continue;
+        if (tags.get(t.region + ':' + t.short) >= 3) continue;
+        const next = [...tags].find(([k, n]) => n >= 3 && k.startsWith(t.region + ':') && sameOrg(t.region, t.short, k.slice(t.region.length + 1)));
+        if (!next) continue;
+        const tag = next[0].slice(t.region.length + 1);
+        if (Object.values(save.teams).some(x => x !== t && x.region === t.region && x.short === tag)) continue;
+        const was = t.name;
+        renameClub(save, t, { name: teamName(t.region, tag), short: tag });
+        news(save, `${was} are now ${t.name}.`, 'world');
+        if (t.id === save.manager.teamId) inbox(save, 'board', 'A new name', `The org has rebranded for ${year}: ${was} are now ${t.name}.`);
+    }
+}
+
+/** Years in a row a player has played in a region. Five in a row can naturalise him there. */
+function residency(save, rng) {
+    for (const p of Object.values(save.players)) {
+        const region = p.team && save.teams[p.team] ? save.teams[p.team].region : null;
+        if (!region) { delete p.res; continue; }
+        p.res = p.res && p.res.r === region ? { r: region, y: p.res.y + 1 } : { r: region, y: 1 };
+        if (p.res.y >= IMPORT_RESIDENCY && isImport(p, region) && rng() < NATURALISE_CHANCE) {
+            p.natz = [...(p.natz || []), region];
+            if (p.team === save.manager.teamId) inbox(save, 'squad', `${p.name} is naturalised`, `After ${p.res.y} years in a row in ${region}, ${p.name} no longer counts as an import there.`, { pid: p.id });
+            else if (ovrOf(p) >= 82) news(save, `${p.name} is naturalised in ${region}.`, 'world');
+        }
+    }
 }
 
 /** Keep free agency to a sane size: drop the oldest and weakest unsigned players. */
@@ -2225,6 +2476,112 @@ function maybeNewFav(p, year, rng) {
 }
 
 // ---------------------------------------------------------------- readers for the screens
+/**
+ * Every competition of the year, in order, as the manager stands in it: what it is, how
+ * far along it is, how he is doing, who won, how you qualify and exactly what it pays.
+ * status: upcoming | live | won | done | out | missed.
+ */
+export function eventRoad(save) {
+    const S = save.season;
+    const t = myTeam(save);
+    if (!S) return [];
+    const me = t ? t.id : null;
+    const at = save.time.step;
+    const key = t ? leagueKey(t.region, t.tier) : null;
+    const L = t ? leagueOf(save, me) : null;
+    const nameOf = (id) => (save.teams[id] ? save.teams[id].name : '');
+    const pay = (table, k, share = 1) => Math.round(prizeMoney(save, table, k) * share / 1000) * 1000;
+    const out = [];
+    const addSplit = (sp, first, last, leads) => {
+        const b = key ? S.playoffs[key + ':' + sp] : null;
+        const rows = L && L[sp] ? tableRows(L, sp, save) : [];
+        const pos = rows.findIndex(r => r.id === me) + 1;
+        const row = rows[pos - 1];
+        const started = at >= STEP_INDEX[first], over = at > STEP_INDEX[last];
+        const played = row && (row.w + row.l) > 0;
+        const place = (S.places[me] || {})[sp] || 0;
+        let status = 'upcoming', detail = '';
+        if (b && b.champion === me) { status = 'won'; detail = 'Champions'; }
+        else if (over) { status = 'done'; detail = place ? `Finished ${ordinal(place)}${b && b.champion ? ` · ${nameOf(b.champion)} won it` : ''}` : 'Not played'; }
+        else if (b && !b.teams.includes(me)) { status = 'out'; detail = `Missed the playoffs (${ordinal(pos)})`; }
+        else if (b && b.places[me]) { status = 'out'; detail = `Out in the ${b.places[me] === 2 ? 'final' : 'semifinals'}`; }
+        else if (b) { status = 'live'; detail = `Playoffs, number ${b.teams.indexOf(me) + 1} seed`; }
+        else if (started) { status = 'live'; detail = played ? `${ordinal(pos)} of ${rows.length} · ${row.w}-${row.l}` : `Week 1 of ${weeksOf(sp)}`; }
+        else detail = `${weeksOf(sp)} weeks, then a top-four playoff`;
+        const share = sp === 'winter' ? WINTER_PRIZE_SHARE : 1;
+        const table = t && t.tier === 2 ? PRIZES.tier2 : PRIZES.league;
+        out.push({
+            id: sp, name: `${SPLIT_NAME[sp]} Split`, short: SPLIT_NAME[sp], kind: 'split', status, detail, leads, bracket: b || null,
+            prizes: [['Champions', pay(table, 1, share)], ['Runners-up', pay(table, 2, share)], ...(table[3] ? [['Semifinal', pay(table, 3, share)]] : [])],
+        });
+    };
+    const addIntl = (id, name, short, first, last, table, qualify) => {
+        const b = S[id];
+        const inIt = !!(b && b.teams.includes(me));
+        const over = at > STEP_INDEX[last];
+        let status = 'upcoming', detail = qualify;
+        if (b && b.champion === me) { status = 'won'; detail = 'Champions'; }
+        else if (b && inIt && b.places[me]) { status = over || b.champion ? 'done' : 'out'; detail = `Finished top ${b.places[me] <= 2 ? 2 : b.places[me] <= 4 ? 4 : b.places[me] <= 8 ? 8 : 16}${b.champion ? ` · ${nameOf(b.champion)} won it` : ''}`; }
+        else if (b && inIt) { status = 'live'; detail = `${b.teams.length} teams, and you are in it`; }
+        else if (b) { status = 'missed'; detail = b.champion ? `${nameOf(b.champion)} won it` : 'Going on without you'; }
+        out.push({
+            id, name, short, kind: 'intl', status, detail, bracket: b || null, leads: qualify,
+            prizes: [['Champions', pay(table, 1)], ['Runners-up', pay(table, 2)], ['Semifinal', pay(table, 3)], ['Quarterfinal', pay(table, 5)], ...(table[9] ? [['Round of 16', pay(table, 9)]] : [])],
+        });
+    };
+    addSplit('winter', 'winter_w1', 'winter_f', 'The champions go to First Stand');
+    addIntl('firststand', 'First Stand', 'First Stand', 'fs_qf', 'fs_f', PRIZES.firststand, 'Win the Winter Split');
+    addSplit('spring', 'spring_w1', 'spring_f', 'The champions go to MSI');
+    // The cup runs inside the spring.
+    {
+        const R = t && save.cup && save.cup.year === save.time.year ? save.cup.regions[t.region] : null;
+        const inIt = !!(R && R.teams.includes(me));
+        const mine = R ? R.rounds.flat().filter(x => x.a === me || x.b === me) : [];
+        const lost = mine.find(x => x.winner && x.winner !== me);
+        let status = 'upcoming', detail = `${CUP_SIZE} clubs of your region, knockout, during the spring`;
+        if (R && R.champion === me) { status = 'won'; detail = 'Winners'; }
+        else if (R && R.champion) { status = inIt ? 'done' : 'missed'; detail = `${nameOf(R.champion)} won it`; }
+        else if (R && !inIt) { status = 'missed'; detail = 'You did not make the draw'; }
+        else if (R && lost) { status = 'out'; detail = `Knocked out by ${nameOf(lost.winner)}`; }
+        else if (R) { status = 'live'; detail = `Still in it after ${mine.filter(x => x.winner).length} round${mine.filter(x => x.winner).length === 1 ? '' : 's'}`; }
+        out.push({ id: 'cup', name: 'Regional Cup', short: 'Cup', kind: 'cup', status, detail, bracket: R, leads: 'Tier 1 and tier 2 together', prizes: [['Winners', pay(PRIZES.cup, 1)], ['Runners-up', pay(PRIZES.cup, 2)]] });
+    }
+    addIntl('msi', 'Mid-Season Invitational', 'MSI', 'msi_qf', 'msi_f', PRIZES.msi, 'Win the Spring Split');
+    addSplit('summer', 'summer_w1', 'summer_f', 'The finalists go to Worlds');
+    // Promotion and relegation are read off the year as a whole.
+    if (t) {
+        const pr = S.promo[t.region];
+        const rows = L ? annualRows(L, save) : [];
+        const pos = rows.findIndex(r => r.id === me) + 1;
+        const n = rows.length;
+        let status = 'upcoming', detail = t.tier === 1 ? `You are ${ordinal(pos)} of ${n} over the year` : 'The summer finalists go up';
+        if (pr) {
+            const up = promoUps(pr).includes(me) || (pr.tie && pr.tie.b === me && pr.tie.winner === me);
+            const down = promoDowns(pr).includes(me) || (pr.tie && pr.tie.a === me && pr.tie.winner && pr.tie.winner !== me);
+            const inTie = pr.tie && (pr.tie.a === me || pr.tie.b === me) && !pr.tie.winner;
+            if (up) { status = 'won'; detail = 'Promoted'; }
+            else if (down) { status = 'out'; detail = 'Relegated'; }
+            else if (inTie) { status = 'live'; detail = t.tier === 1 ? 'Win this series or go down' : 'Win this series to go up'; }
+            else { status = 'done'; detail = t.tier === 1 ? 'Safe for another year' : 'Another year down here'; }
+        }
+        out.push({ id: 'promotion', name: 'Promotion and Relegation', short: t.tier === 1 ? 'Relegation' : 'Promotion', kind: 'promo', status, detail, bracket: null,
+            leads: 'Bottom two go down. Third from bottom plays the third-best of the league below, best of five: win and stay, lose and swap.', prizes: [] });
+    }
+    addIntl('worlds', 'World Championship', 'Worlds', 'worlds_r16', 'worlds_f', PRIZES.worlds, 'Reach the Summer final, or earn championship points');
+    return out;
+}
+
+/** The competition the calendar is in right now, if there is a bracket to watch. */
+export function liveEvent(save) {
+    const step = currentStep(save);
+    const road = eventRoad(save);
+    const id = step.kind === 'intl' ? step.event : step.kind === 'playoffs' ? step.split : null;
+    if (id) return road.find(e => e.id === id && e.bracket) || null;
+    // During the spring, the cup while the manager is still in it.
+    if (step.split === 'spring' && step.kind === 'league') return road.find(e => e.id === 'cup' && e.status === 'live') || null;
+    return null;
+}
+
 export function nextOpponent(save) {
     const f = userFixture(save);
     if (!f) return null;
@@ -2329,4 +2686,4 @@ export function phaseCard(save) {
     return { phase, year: save.time.year, title: def.name, sub, tone, color: def.color, icon: def.icon };
 }
 
-export { leagueName, tableRows, annualRows, leagueKey, leagueOf, TALKS };
+export { leagueName, tableRows, annualRows, leagueKey, leagueOf, TALKS, teamName };

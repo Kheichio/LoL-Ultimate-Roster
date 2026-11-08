@@ -15,7 +15,8 @@
 //                The answer is judged when the series is applied.
 // ===========================================================================
 import { clamp } from './util.js';
-import { ROLE_IDS, REGION_LANGUAGE } from './data.js';
+import { ROLE_IDS, REGION_LANGUAGE, STEP_INDEX } from './data.js';
+import { fx } from './people.js';
 import { metaFor, CHAMPION_BY_ID } from '../career/constants.js';
 import { sponsorIncome } from './market.js';
 
@@ -120,7 +121,7 @@ export function staffWage(save, rating) {
 }
 /** Who is available this window (or this half of the season outside one). */
 export function staffCandidates(save, rngFor) {
-    const half = save.time.step < 16 ? 'a' : 'b';
+    const half = save.time.step < STEP_INDEX.midseason ? 'a' : 'b';
     const rng = rngFor('staff:' + save.seed + ':' + save.time.year + ':' + half);
     const out = {};
     for (const role of STAFF_ROLES) {
@@ -215,7 +216,7 @@ export const injuryName = (p) => (p && p.inj > 0 ? (INJURY_BY_ID[p.injT] || INJU
 /** A week of injuries for one club. `ai` clubs use an average physio and normal intensity. */
 export function rollInjuries(save, team, rng, intensityXp, ai = false) {
     const notes = [];
-    const physio = ai ? 60 : staffRating(save, 'physio');
+    const physio = ai ? 60 + 8 * (Number(team.staffLv) || 0) : staffRating(save, 'physio');
     const rest = team.training === 'rest' ? 0.5 : 1;
     for (const id of team.roster) {
         const p = save.players[id];
@@ -228,7 +229,7 @@ export function rollInjuries(save, team, rng, intensityXp, ai = false) {
         }
         const age = save.time.year - (Number(p.born) || save.time.year - 22);
         const ix = ai ? 1 : intensityXp(p);
-        const chance = 0.005 * (ix > 1 ? 1.8 : ix < 1 ? 0.6 : 1) * (age >= 27 ? 1.3 : 1) * ((p.mor || 60) < 30 ? 1.4 : 1) * (1.2 - physio / 125) * rest;
+        const chance = (fx(p).injuryMult || 1) * 0.0032 * (ix > 1 ? 1.8 : ix < 1 ? 0.6 : 1) * (age >= 27 ? 1.3 : 1) * ((p.mor || 60) < 30 ? 1.4 : 1) * (1.2 - physio / 125) * rest;
         if (rng() < chance) {
             const pool = INJURIES.map(i => ({ i, w: i.w * (i.age && age >= 26 ? 2 : 1) * (i.mood && (p.mor || 60) < 35 ? 3 : 1) * (i.hands && ix > 1 ? 1.5 : 1) }));
             let r = rng() * pool.reduce((a, x) => a + x.w, 0);

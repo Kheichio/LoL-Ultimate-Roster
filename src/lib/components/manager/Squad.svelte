@@ -2,11 +2,11 @@
     import { manager, mutate, mgrModal } from '../../stores/manager.js';
     import { showToast } from '../../stores/toasts.js';
     import { myTeam, setLineup, autoLineup, isScouted, undecidedContracts, currentStep, teamComms } from '../../manager/engine.js';
-    import { ROLE_IDS, ROLE_BY_ID, XP_PER_LEVEL, SQUAD_STATUS_BY_ID, REGION_LANGUAGE, LANGUAGE_NAMES } from '../../manager/data.js';
+    import { ROLE_IDS, ROLE_BY_ID, XP_PER_LEVEL, SQUAD_STATUS_BY_ID, LANGUAGE_NAMES, teamLanguage, TACTIC_BY_ID, IMPORT_MAX } from '../../manager/data.js';
     import { lineupOf, teamStrength, OFF_ROLE_PENALTY } from '../../manager/match.js';
-    import { ovrOf, ovrAs, ageOf, potentialView, langLevel } from '../../manager/people.js';
+    import { ovrOf, ovrAs, ageOf, potentialView, langLevel, fiveCombos, styleCombos, playStyleOf, isImport } from '../../manager/people.js';
     const langColor = (v) => (v >= 90 ? '#34d399' : v >= 60 ? '#fbbf24' : '#f87171');
-    import { renewalDemand, letContractRun, renewContract, renewAllExpiring, renewalBlock } from '../../manager/market.js';
+    import { renewalDemand, letContractRun, renewContract, renewAllExpiring, renewalBlock, importCount } from '../../manager/market.js';
     import { ovrColor, fmtMoney, moraleWord, formWord, persona, champName, contractWord } from '../../manager/ui.js';
     import Icon from '../ui/Icon.svelte';
     import TeamBadge from './TeamBadge.svelte';
@@ -14,7 +14,7 @@
 
     $: s = $manager;
     $: team = myTeam(s);
-    $: tongue = team ? REGION_LANGUAGE[team.region] : 'en';
+    $: tongue = team ? teamLanguage(team) : 'en';
     $: comms = team ? teamComms(team, s.players) : 100;
     $: year = s.time.year;
     $: roster = team ? team.roster.map(id => s.players[id]).filter(Boolean) : [];
@@ -36,6 +36,9 @@
     $: lu = team ? lineupOf(team, s.players) : {};
     $: five = new Set(ROLE_IDS.map(r => lu[r] && lu[r].id));
     $: scoutRank = (s.manager.perks || {}).scout || 0;
+    $: pairs = fiveCombos(Object.values(lu));
+    $: styles = team ? styleCombos(lu, team.tactic) : [];
+    $: imports = team ? importCount(s, team) : 0;
     let sort = 'role';
     $: sorted = roster.slice().sort((a, b) => {
         if (sort === 'ovr') return ovrOf(b) - ovrOf(a);
@@ -70,7 +73,8 @@
         <div class="top-r">
             <div class="str"><span class="muted">Team OVR</span><span class="ovr" style="--c:{ovrColor(teamStrength(team, s.players))}">{Math.round(teamStrength(team, s.players))}</span></div>
             <div class="str"><span class="muted">Chemistry</span><b class="num">{Math.round(team.chem)}</b></div>
-            <div class="str" title="How well your five can talk in {LANGUAGE_NAMES[tongue]}. Below 100% it costs edge in every game; players learn by living here, and faster with Language lessons on the Training screen."><span class="muted">Comms</span><b class="num" style="color:{langColor(comms)}">{comms}%</b></div>
+            <div class="str" title="How well your five can talk in {LANGUAGE_NAMES[tongue]}. Below 100% it costs edge in every game; players learn by living here, and faster with a course on the Club screen."><span class="muted">Comms</span><b class="num" style="color:{langColor(comms)}">{comms}%</b></div>
+            <div class="str" title="Players from outside your region. The limit is {IMPORT_MAX}; five years in a row in one region can naturalise a player."><span class="muted">Imports</span><b class="num" style="color:{imports > IMPORT_MAX ? '#f87171' : '#e2e8f0'}">{imports}/{IMPORT_MAX}</b></div>
             <button class="btn" on:click={auto}><Icon name="sparkle" size={14} /> Best five</button>
         </div>
     </div>
@@ -122,6 +126,7 @@
                         <span class="seat-n">{p.name}</span>
                         {#if !p.real}<span class="chip" style="--c:#fbbf24">Random</span>{/if}
                         {#if p.role !== role && !p.roles.includes(role)}<span class="chip" style="--c:#f87171">Off-role</span>{/if}
+                        <span class="seat-style">{playStyleOf(p, role).name}{isImport(p, team.region) ? ' · import' : ''}</span>
                         <span class="seat-meta">
                             <span style="color:{moraleWord(p.mor).color}">{moraleWord(p.mor).word}</span>
                             <span style="color:{formWord(p.form).color}">{formWord(p.form).arrow} form</span>
@@ -141,6 +146,20 @@
             </div>
         {/each}
     </div>
+
+    <section class="panel room">
+        <div class="ph"><h3><Icon name="heart" size={15} /> How the five fit together</h3><span class="muted small">Personalities that click or clash, and play styles that combine. They change every game's odds, at every club.</span></div>
+        {#if pairs.length || styles.length}
+            <div class="fits">
+                {#each pairs as c (c.name)}
+                    <div class="fit" class:bad={c.edge < 0}><b>{c.name}</b><span class="muted small">{c.blurb}</span><i class="num">{c.edge > 0 ? '+' : ''}{c.edge.toFixed(2)}</i></div>
+                {/each}
+                {#each styles as c (c.id)}
+                    <div class="fit" class:on={c.on}><b>{c.name}</b><span class="muted small">{c.blurb}{c.on ? '' : ` Best on ${TACTIC_BY_ID[c.tactic].name}.`}</span><i class="num">+{c.worth.toFixed(2)}</i></div>
+                {/each}
+            </div>
+        {:else}<p class="muted small">Nothing yet. Try a Leader with a Prodigy, or an Engage Jungler with an Engage Support: a player's profile shows his personality and style.</p>{/if}
+    </section>
 
     <section class="panel">
         <div class="ph">
@@ -182,11 +201,19 @@
     </section>
 </div>
 {:else}
-    <div class="panel empty">You have no club right now. Pick one of your job offers on the Club screen.</div>
+    <div class="panel empty">You have no club right now. See the Jobs screen.</div>
 {/if}
 
 <style>
-    .sq { display: flex; flex-direction: column; gap: 14px; }
+    .sq { display: flex; flex-direction: column; gap: 12px; }
+    .seat-style { font-size: 11.5px; font-weight: 700; color: #a5b4cf; }
+    .fits { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+    .fit { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 8px 46px 8px 10px; border-radius: 10px; background: rgba(2, 6, 23, 0.45); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .fit.on { border-color: #34d399; }
+    .fit.bad { border-color: rgba(248, 113, 113, 0.5); }
+    .fit b { color: #fff; font-size: 13px; }
+    .fit i { position: absolute; top: 8px; right: 10px; font-style: normal; font-size: 12px; font-weight: 800; color: #6ee7b7; }
+    .fit.bad i { color: #fca5a5; }
     .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
     .top-r { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .str { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 11px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--line); font-size: 12px; }

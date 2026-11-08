@@ -44,7 +44,7 @@
     onDestroy(() => { if (timer) clearTimeout(timer); });
 
     $: phaseIdx = card && card.kind === 'phase' ? SEASON_PHASES.findIndex(p => p.id === card.phase) : -1;
-    $: trophyIcon = card && card.kind === 'title' ? (card.trophy === 'worlds' ? 'crown' : card.trophy === 'msi' ? 'globe' : card.trophy === 'promotion' ? 'upgrade' : 'trophy') : 'trophy';
+    $: trophyIcon = card && card.kind === 'title' ? (card.trophy === 'worlds' ? 'crown' : card.trophy === 'msi' ? 'globe' : card.trophy === 'firststand' ? 'flag' : card.trophy === 'cup' ? 'shield' : card.trophy === 'promotion' ? 'upgrade' : 'trophy') : 'trophy';
 </script>
 
 <svelte:window on:keydown={onKey} />

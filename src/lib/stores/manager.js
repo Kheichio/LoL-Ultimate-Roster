@@ -15,15 +15,17 @@
 import { writable, get } from 'svelte/store';
 import { saveToStorage, loadFromStorage, loadFromSlot, removeFromStorage, saveToSlot, activeSlot } from '../utils/storage.js';
 import { getDB } from '../utils/cards.js';
-import { setDB, previewWorld, finalizeSave, advance, userFixture, blockInfo, currentStep, phaseCard, applyPrestige } from '../manager/engine.js';
+import { setDB, previewWorld, finalizeSave, advance, userFixture, blockInfo, currentStep, phaseCard, applyPrestige, migrateCalendar } from '../manager/engine.js';
 import { showToast } from './toasts.js';
-import { MANAGER_SAVE_VERSION, CALENDAR, ROLE_IDS, phaseOfStep, WAGE_KNEE, WAGE_STEP, WAGE_TOP_STEP } from '../manager/data.js';
+import { MANAGER_SAVE_VERSION, MANAGER_START_BANK, CALENDAR, OLD_CALENDAR, STEP_INDEX, CALENDAR_VERSION, ROLE_IDS, phaseOfStep, WAGE_KNEE, WAGE_STEP, WAGE_TOP_STEP } from '../manager/data.js';
 import { teamName } from '../manager/world.js';
 import { ensurePool, ovrOf, randomNation } from '../manager/people.js';
 import { rngFor } from '../manager/util.js';
 import { flagOf, REGION_LANGUAGE } from '../manager/data.js';
 import { trackClub } from '../manager/history.js';
 import { soleOwner, refreshEconomy, settleInvestment, assignStyles } from '../manager/market.js';
+import { seedClubs } from '../manager/npc.js';
+import { ensureAcademy } from '../manager/academy.js';
 import { ensureSponsors } from '../manager/sponsors.js';
 
 const SAVE_KEY = 'lurm_manager';
@@ -61,21 +63,32 @@ function safeToPersist(s) {
     return true;
 }
 
+/** Write the save. A write that fails is shown: a save that silently stops saving is lost progress. */
+let _warned = 0;
+function writeSave(s) {
+    if (saveToStorage(SAVE_KEY, s)) { _warned = 0; return true; }
+    if (Date.now() - _warned > 60000) {
+        _warned = Date.now();
+        showToast('Your game could not be saved: this browser\'s storage is full. Delete a save slot you no longer need from the main menu.', 'error', 9000);
+    }
+    return false;
+}
+
 export function saveManager() {
     if (_debounce) clearTimeout(_debounce);
     _debounce = setTimeout(() => {
         _debounce = null;
         const s = get(manager);
         if (!s || !safeToPersist(s)) return;
-        saveToStorage(SAVE_KEY, s);
+        writeSave(s);
     }, 250);
 }
 
 export function flushManager() {
     if (_debounce) { clearTimeout(_debounce); _debounce = null; }
     const s = get(manager);
-    if (!s || !safeToPersist(s)) return;
-    saveToStorage(SAVE_KEY, s);
+    if (!s || !safeToPersist(s)) return false;
+    return writeSave(s);
 }
 
 /** Run a change against the live save, publish it, and schedule a write. */
@@ -101,7 +114,7 @@ export function playStep(series = null) {
     const beforeYear = s.time.year;
     const summary = advance(s, series);
     manager.set(s);
-    flushManager();
+    saveManager();
     if (!summary || summary.blocked) return summary;
     const after = phaseOfStep(currentStep(s));
     summary.phase = before !== after || s.time.year !== beforeYear ? { kind: 'phase', ...phaseCard(s), newYear: s.time.year !== beforeYear } : null;
@@ -116,7 +129,7 @@ export function playStep(series = null) {
 export function closeReport(summary) {
     mgrModal.set(null);
     const s = get(manager);
-    mgrScreen.set(s && s.jobless ? 'club' : 'home');
+    mgrScreen.set(s && s.jobless ? 'jobs' : 'home');
     if (typeof window !== 'undefined' && window.scrollTo) window.scrollTo({ top: 0 });
     if (summary && summary.phase) pushFx(summary.phase);
 }
@@ -129,7 +142,7 @@ export function closeReport(summary) {
 export function goNext() {
     const s = get(manager);
     if (!s) return;
-    if (s.jobless) { mgrModal.set(null); mgrScreen.set('club'); return; }
+    if (s.jobless) { mgrModal.set(null); mgrScreen.set('jobs'); return; }
     if (get(mgrScreen) !== 'home') { mgrModal.set(null); mgrScreen.set('home'); return; }
     const b = blockInfo(s);
     if (b) { mgrModal.set(null); showToast(b.msg, 'error', 4500); mgrScreen.set(b.go || 'home'); return; }
@@ -144,7 +157,6 @@ export function hydrate(raw) {
     if (!raw.manager || !raw.time || !raw.season) return null;
     const s = raw;
     s.v = MANAGER_SAVE_VERSION;
-    s.time.step = Math.max(0, Math.min(CALENDAR.length - 1, Math.round(Number(s.time.step) || 0)));
     s.time.year = Math.round(Number(s.time.year) || 2013);
     for (const k of ['inbox', 'news', 'offers', 'scouted', 'freeAgents', 'history', 'jobOffers', 'seen']) if (!Array.isArray(s[k])) s[k] = [];
     if (!s.finance || typeof s.finance !== 'object') s.finance = { balance: 0, log: [] };
@@ -162,7 +174,14 @@ export function hydrate(raw) {
     if (!Array.isArray(m.trophies)) m.trophies = [];
     if (!m.ach || typeof m.ach !== 'object') m.ach = {};
     if (!Array.isArray(m.tier2Clubs)) m.tier2Clubs = [];
+    // Saves from before the manager's bank: he starts with what a year of his job has saved him.
+    if (!Number.isFinite(Number(m.bank))) m.bank = MANAGER_START_BANK;
+    if (!Array.isArray(m.bankLog)) m.bankLog = [];
+    if (!m.stakes || typeof m.stakes !== 'object') m.stakes = {};
     if (m.teamId && !s.teams[m.teamId]) { m.teamId = null; s.jobless = true; }
+    // A save from the 33-step year finds its place on the new calendar, then the step is clamped.
+    migrateCalendar(s);
+    s.time.step = Math.max(0, Math.min(CALENDAR.length - 1, Math.round(Number(s.time.step) || 0)));
     // Rosters and players must agree; a dangling id is dropped rather than crashing a screen.
     for (const t of Object.values(s.teams)) {
         t.roster = (Array.isArray(t.roster) ? t.roster : []).filter(id => s.players[id]);
@@ -176,6 +195,8 @@ export function hydrate(raw) {
         ensurePool(p, s.time.year);
         if (!Array.isArray(p.recent)) p.recent = [];
         if (!Number.isFinite(Number(p.ovr0))) p.ovr0 = ovrOf(p);
+        // Saves from before pro years: his first card, or the first year he is on record.
+        if (!p.pro && (p.team || p.real)) p.pro = p.firstReal || (Array.isArray(p.cy) && p.cy[0] ? p.cy[0][0] : Number(s.time.startYear) || s.time.year);
         // Saves from before 1.8.13 have no languages: a player already at a club has
         // obviously been talking to it, so he speaks its language as well as his own.
         if (!p.lang) {
@@ -192,6 +213,9 @@ export function hydrate(raw) {
     if (mine && (!mine.hist || typeof mine.hist !== 'object')) trackClub(s, mine);
     // Saves from before 1.8.11: every club gets its personality.
     assignStyles(s);
+    // Saves from before AI clubs invested, and from before every club of the manager's had an academy.
+    seedClubs(s, { restyle: true });
+    if (mine) ensureAcademy(mine);
     // Saves from before 1.8.12: the club's current partners until the end of the year.
     if (m.teamId && s.teams[m.teamId]) ensureSponsors(s);
     // A club founded before ownership existed is owned outright: no board.
@@ -216,7 +240,7 @@ export function initManager() {
     const db = getDB();
     if (db) setDB(db);
     const raw = loadFromStorage(SAVE_KEY);
-    const repriced = !!(raw && raw.created && !raw.econ);
+    const repriced = !!(raw && raw.created && (!raw.econ || Number(raw.calV) < CALENDAR_VERSION || !raw.calV));
     const s = hydrate(raw);
     manager.set(s);
     // A save that hydrate just moved to the new economy is written back at once.
@@ -277,7 +301,8 @@ export function managerSlotSummary(slot) {
     const raw = loadFromSlot(SAVE_KEY, slot);
     if (!raw || !raw.created || !raw.manager || !raw.teams) return null;
     const t = raw.manager.teamId ? raw.teams[raw.manager.teamId] : null;
-    const step = CALENDAR[Math.max(0, Math.min(CALENDAR.length - 1, Number(raw.time && raw.time.step) || 0))];
+    const at = Math.max(0, Number(raw.time && raw.time.step) || 0);
+    const step = Number(raw.calV) >= CALENDAR_VERSION ? CALENDAR[Math.min(CALENDAR.length - 1, at)] : CALENDAR[STEP_INDEX[OLD_CALENDAR[at]] || 0];
     return {
         name: String(raw.manager.name || 'Manager').slice(0, 18),
         team: t ? t.name : 'Between jobs',

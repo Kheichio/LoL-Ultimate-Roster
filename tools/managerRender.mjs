@@ -109,7 +109,7 @@ async function render(name, props, state, minText = 60) {
     return html;
 }
 
-const SCREENS = ['Home', 'Squad', 'Tactics', 'Training', 'League', 'Transfers', 'History', 'Club', 'Inbox', 'Trophies', 'Jobs', 'Facilities', 'Stats', 'Sponsors'];
+const SCREENS = ['Home', 'Squad', 'Tactics', 'Training', 'League', 'Transfers', 'History', 'Club', 'Inbox', 'Trophies', 'Jobs', 'Facilities', 'Stats', 'Sponsors', 'Scouting', 'Academy', 'Profile', 'Legends', 'EventRoad'];
 function setSave(save) {
     ST.manager.set(save);
     ST.mgrModal.set(null);
@@ -119,7 +119,7 @@ function setSave(save) {
 async function renderState(label, save, extra = {}) {
     setSave(save);
     for (const sc of SCREENS) await render(sc, {}, label);
-    for (const tab of ['playoffs', 'cup', 'msi', 'worlds', 'race', 'history']) await render('League', { initialTab: tab }, label + ':' + tab, 20);
+    for (const tab of ['league', 'playoffs', 'cup', 'firststand', 'msi', 'worlds', 'race', 'history']) await render('League', { initialTab: tab }, label + ':' + tab, 20);
     for (const tab of ['free', 'bids', 'list', 'mine']) await render('Transfers', { initialTab: tab }, label + ':transfers-' + tab, 20);
     // Modals: an own player, a rival's, a free agent and a random player.
     const me = E.myTeam(save);

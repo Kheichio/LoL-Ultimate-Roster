@@ -13,6 +13,11 @@
 //                     (trackClub), written by the engine on every series, title
 //                     and award. Names are stored with ids: a player can retire
 //                     and the record must still read.
+//    EVERY PLAYER     `p.cy`, one row per club per year: [year, club, ovr, games,
+//                     wins, kills, deaths, assists, rating sum, mvps], and
+//                     `p.car`, his career totals. A club's full player record is
+//                     read back out of these rows (clubRecord), so the 150 AI clubs
+//                     keep a complete history without carrying a ledger each.
 //    EVERY CLUB       `team.sh`, one compact row per split for every club in the
 //                     world (recordSplits): tier, final place, the five starters
 //                     with their OVR, and what the split won or cost (league,
@@ -21,10 +26,10 @@
 //                     and a retired player is kept in `save.retired` so his
 //                     name and career still read after he leaves the world.
 // ===========================================================================
-import { sameOrg, ROLE_IDS } from './data.js';
+import { sameOrg, ROLE_IDS, SPLIT_CODE } from './data.js';
 import { personsIndex } from './world.js';
 import { lineupOf } from './match.js';
-import { ovrOf } from './people.js';
+import { ovrOf, stintRow } from './people.js';
 
 // ---------------------------------------------------------------- every club, every split
 /** A split row's starters: 'pid~ovr,pid~ovr,...' in role order. */
@@ -40,7 +45,7 @@ export function unpackFive(f) {
     });
 }
 function splitRow(team, year, split) {
-    const s = split === 'spring' || split === 'sp' ? 'sp' : 'su';
+    const s = SPLIT_CODE[split] || split;
     return (team.sh || []).find(r => r.y === year && r.s === s) || null;
 }
 /** After a split's playoffs: a row for every club in every league. */
@@ -57,7 +62,7 @@ export function recordSplits(save, split) {
             const w = [];
             if (b && b.champion === id) w.push(L.tier === 1 ? 'league' : 'tier2');
             else if (b && b.runnerUp === id) w.push(L.tier === 1 ? 'final' : 'final2');
-            t.sh.push({ y: S.year, s: split === 'spring' ? 'sp' : 'su', t: L.tier, p: (S.places[id] || {})[split] || null, f: packFive(save, t), w });
+            t.sh.push({ y: S.year, s: SPLIT_CODE[split], t: L.tier, p: (S.places[id] || {})[split] || null, f: packFive(save, t), w });
         }
     }
 }
@@ -77,18 +82,24 @@ export function archivePlayer(save, p, year) {
     if (!p || !(p.car && p.car.g > 0)) return;
     if (!save.retired || typeof save.retired !== 'object') save.retired = {};
     save.retired[p.id] = {
-        name: p.name, role: p.role, real: !!p.real, cc: p.cc || null, flag: p.flag || null,
-        y: year, peak: Math.max(ovrOf(p), ...(p.cy || []).map(x => x[2] || 0)),
-        cy: (p.cy || []).slice(), car: { titles: (p.car && p.car.titles) || 0 },
+        name: p.name, role: p.role, real: !!p.real, cc: p.cc || null, flag: p.flag || null, nat: p.nat || null,
+        y: year, peak: Math.max(ovrOf(p), Number(p.car && p.car.peak) || 0, ...(p.cy || []).map(x => x[2] || 0)),
+        pro: p.pro || null, born: p.born || null, pers: p.pers || null,
+        cy: (p.cy || []).slice(), car: { ...(p.car || {}) },
     };
 }
-/** The end of a year: where every player was and how good he was. */
+/** The end of a year: where every player was, how good he was and what he did there.
+ *  Anyone who moved during the year already has a row for the club he left. */
 export function recordYear(save, year) {
+    if (save.cyYear === year) return;
+    save.cyYear = year;
     for (const p of Object.values(save.players)) {
         if (!p) continue;
         if (!Array.isArray(p.cy)) p.cy = [];
-        if (p.cy.some(x => x[0] === year)) continue;
-        p.cy.push([year, p.team || null, ovrOf(p)]);
+        const row = stintRow(p, year);
+        if (p.team || row[3] > 0) p.cy.push(row[3] > 0 ? row : row.slice(0, 3));
+        p.car = p.car || { g: 0, w: 0, titles: 0 };
+        p.car.peak = Math.max(Number(p.car.peak) || 0, ovrOf(p));
     }
 }
 /** A club, alive or folded (the living league moves a folded club to `save.defunct`). */
@@ -101,6 +112,7 @@ export function personOf(save, id) {
 }
 
 const TAG_TITLE = { league: 'league', tier2: 'tier2', msi: 'msi', worlds: 'worlds', firststand: 'firststand' };
+const SPLIT_ORDER = ['wi', 'sp', 'su'];
 /**
  * A player's whole club career: real cards before the save, then every split he
  * started in the save (club, tier, place, his OVR, what it won), and his year-end
@@ -134,12 +146,20 @@ export function playerCareer(save, db, id) {
         for (const r of t.sh || []) {
             const me = unpackFive(r.f).find(x => x.id === id);
             if (!me) continue;
-            out.splits.push({ y: r.y, s: r.s, teamId: t.id, tier: r.t, p: r.p, ovr: me.ovr, w: r.w || [], wp: r.wp, mp: r.mp });
+            out.splits.push({ y: r.y, s: r.s, teamId: t.id, tier: r.t, p: r.p, ovr: me.ovr, w: r.w || [], wp: r.wp, mp: r.mp, fp: r.fp });
             for (const tag of r.w || []) if (TAG_TITLE[tag]) out.titles.push({ y: r.y, kind: TAG_TITLE[tag], teamId: t.id });
         }
     }
-    out.splits.sort((a, b) => a.y - b.y || (a.s === 'sp' ? -1 : 1));
-    out.years = (person.cy || []).map(([y, teamId, ovr]) => ({ y, teamId, ovr }));
+    out.splits.sort((a, b) => a.y - b.y || SPLIT_ORDER.indexOf(a.s) - SPLIT_ORDER.indexOf(b.s));
+    out.years = (person.cy || []).map(([y, teamId, ovr, g, w, k, d, a, rs, mvp]) => ({ y, teamId, ovr, g: g || 0, w: w || 0, k: k || 0, d: d || 0, a: a || 0, rs: rs || 0, mvp: mvp || 0 }));
+    // This year so far, before it is written down.
+    const live = save.players && save.players[id];
+    if (live && live.st && live.st.g && save.cyYear !== save.time.year) {
+        const [y, teamId, ovr, g, w, k, d, a, rs, mvp] = stintRow(live, save.time.year);
+        if (g > 0) out.years.push({ y, teamId, ovr, g, w, k, d, a, rs, mvp, live: true });
+    }
+    // The cup has no split row; a medal is a medal.
+    for (let i = 0; i < ((person.car && person.car.t && person.car.t.cup) || 0); i++) out.titles.push({ y: 0, kind: 'cup' });
     out.titles.sort((a, b) => a.y - b.y);
     return out;
 }
@@ -275,7 +295,8 @@ export function legendTier(score) {
 }
 export const titleCount = (e) => Object.entries(e.t || {}).reduce((s, [k, n]) => s + (k === 'worldsfinal' ? 0 : n), 0);
 
-/** Titles the club won in this save: league and second-tier splits, MSI, Worlds. */
+const splitWord = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+/** Titles the club won in this save: league and second-tier splits, First Stand, MSI, Worlds. */
 export function saveHonours(save, team) {
     const out = [];
     const add = (year, kind, name) => out.push({ year, kind, name });
@@ -283,8 +304,9 @@ export function saveHonours(save, team) {
         for (const [key, id] of Object.entries(h.champs || {})) {
             if (id !== team.id) continue;
             const [, tier, split] = key.split(':');
-            add(h.year, tier === '1' ? 'league' : 'tier2', split === 'spring' ? 'Spring' : 'Summer');
+            add(h.year, tier === '1' ? 'league' : 'tier2', splitWord(split));
         }
+        if (h.firststand === team.id) add(h.year, 'firststand', 'First Stand');
         if (h.msi === team.id) add(h.year, 'msi', 'MSI');
         if (h.worlds === team.id) add(h.year, 'worlds', 'Worlds');
     }
@@ -294,13 +316,85 @@ export function saveHonours(save, team) {
         for (const [key, b] of Object.entries(S.playoffs || {})) {
             if (b.champion !== team.id) continue;
             const [, tier, split] = key.split(':');
-            add(S.year, tier === '1' ? 'league' : 'tier2', split === 'spring' ? 'Spring' : 'Summer');
+            add(S.year, tier === '1' ? 'league' : 'tier2', splitWord(split));
         }
+        if (S.firststand && S.firststand.champion === team.id) add(S.year, 'firststand', 'First Stand');
         if (S.msi && S.msi.champion === team.id) add(S.year, 'msi', 'MSI');
         if (S.worlds && S.worlds.champion === team.id) add(S.year, 'worlds', 'Worlds');
     }
     for (const tr of (save.manager.trophies || [])) if (tr.kind === 'promotion' && tr.teamId === team.id) add(tr.year, 'promotion', 'Promotion');
     return out.sort((a, b) => a.year - b.year);
+}
+
+/** Everyone with a row at this club, alive or retired, added up: Map id -> totals. */
+export function clubRecord(save, teamId) {
+    const out = new Map();
+    const scan = (id, who) => {
+        for (const r of who.cy || []) {
+            if (r[1] !== teamId) continue;
+            let e = out.get(id);
+            if (!e) { e = { n: who.name, r: who.role, real: !!who.real, y0: r[0], y1: r[0], s: 0, ly: 0, g: 0, w: 0, k: 0, d: 0, a: 0, rs: 0, mvp: 0, best: 0 }; out.set(id, e); }
+            if (e.ly !== r[0]) { e.ly = r[0]; e.s++; }
+            e.y0 = Math.min(e.y0, r[0]); e.y1 = Math.max(e.y1, r[0]);
+            e.best = Math.max(e.best, r[2] || 0);
+            e.g += r[3] || 0; e.w += r[4] || 0; e.k += r[5] || 0; e.d += r[6] || 0; e.a += r[7] || 0; e.rs += r[8] || 0; e.mvp += r[9] || 0;
+        }
+    };
+    for (const [id, p] of Object.entries(save.players || {})) scan(id, p);
+    for (const [id, p] of Object.entries(save.retired || {})) if (!(save.players || {})[id]) scan(id, p);
+    return out;
+}
+
+// ---------------------------------------------------------------- the all-time list
+const _preTitles = { db: null, start: null, map: null };
+/** What real pros won before the save began, from the special prints: name -> { worlds, msi, firststand }. */
+function preSaveTitles(db, start) {
+    if (_preTitles.db === db && _preTitles.start === start) return _preTitles.map;
+    const map = new Map();
+    for (const c of db || []) {
+        const kind = PRINT_KIND[c.quality];
+        if (!kind || kind === 'worldsfinal' || c.year >= start) continue;
+        const k = String(c.name).toLowerCase();
+        const e = map.get(k) || {};
+        e[kind] = (e[kind] || 0) + 1;
+        map.set(k, e);
+    }
+    Object.assign(_preTitles, { db, start, map });
+    return map;
+}
+/** How a career ranks against every other. Titles first, then awards, then longevity and peak. */
+export function greatness(c, peak, pre = {}) {
+    const t = c.t || {};
+    const aw = c.aw || {};
+    return (t.worlds || 0) * 45 + (pre.worlds || 0) * 45 + (t.msi || 0) * 25 + (pre.msi || 0) * 25
+        + (t.firststand || 0) * 15 + (pre.firststand || 0) * 15 + (t.league || 0) * 18 + (t.cup || 0) * 6 + (t.tier2 || 0) * 5
+        + (aw.mvp || 0) * 22 + (aw.allpro || 0) * 9 + (aw.rookie || 0) * 6 + (c.mvp || 0) * 0.5 + (c.g || 0) * 0.08 + Math.max(0, (peak || 0) - 80) * 4;
+}
+/** Every player who has played in this save, alive or retired, best first. */
+export function allTimeBest(save, db, { role = null, region = null, limit = 50 } = {}) {
+    const pre = preSaveTitles(db, Number(save.time.startYear) || save.time.year);
+    const rows = [];
+    const add = (id, p, alive) => {
+        const c = p.car || {};
+        if (!(c.g > 0)) return;
+        if (role && p.role !== role) return;
+        const rowsOf = p.cy || [];
+        const home = rowsOf.length ? rowsOf[rowsOf.length - 1][1] : p.team;
+        if (region && p.nat !== region) return;
+        const peak = Math.max(Number(c.peak) || 0, Number(p.peak) || 0, alive ? ovrOf(p) : 0, ...rowsOf.map(x => x[2] || 0));
+        const was = p.real ? pre.get(String(p.name).toLowerCase()) || {} : {};
+        const t = c.t || {};
+        rows.push({
+            id, n: p.name, r: p.role, flag: p.flag || null, real: !!p.real, alive, team: alive ? p.team : null, last: home, peak,
+            g: c.g || 0, w: c.w || 0, k: c.k || 0, d: c.d || 0, a: c.a || 0, rs: c.rs || 0, mvp: c.mvp || 0,
+            worlds: (t.worlds || 0) + (was.worlds || 0), msi: (t.msi || 0) + (was.msi || 0), firststand: (t.firststand || 0) + (was.firststand || 0),
+            league: t.league || 0, cup: t.cup || 0, titles: c.titles || 0, aw: c.aw || {}, pro: p.pro || null,
+            score: Math.round(greatness(c, peak, was)),
+        });
+    };
+    for (const [id, p] of Object.entries(save.players || {})) add(id, p, true);
+    for (const [id, p] of Object.entries(save.retired || {})) if (!(save.players || {})[id]) add(id, p, false);
+    return rows.sort((a, b) => b.score - a.score || b.g - a.g).slice(0, limit);
 }
 
 /**
@@ -332,10 +426,23 @@ export function clubHistory(save, db, team) {
             for (const tag of r.w || []) if (TAG_TITLE[tag]) e.t[TAG_TITLE[tag]] = (e.t[TAG_TITLE[tag]] || 0) + 1;
         }
     }
+    // Games and wins of everyone who ever played here, starter or sub, from the players' own rows.
+    for (const [id, c] of clubRecord(save, team.id)) {
+        if (team.hist && team.hist[id]) continue;
+        let e = fromRows.get(id);
+        if (!e) {
+            e = { id, n: c.n, r: c.r, real: c.real, y0: c.y0, y1: c.y1, s: 0, ly: 0, g: 0, w: 0, mvp: 0, t: {}, aw: [], best: 0 };
+            fromRows.set(id, e);
+        }
+        e.g = c.g; e.w = c.w; e.mvp = c.mvp; e.k = c.k; e.d = c.d; e.a = c.a; e.rs = c.rs;
+        e.s = Math.max(e.s, c.s);
+        e.y0 = Math.min(e.y0, c.y0); e.y1 = Math.max(e.y1, c.y1);
+        e.best = Math.max(e.best, c.best);
+    }
     for (const [id, h] of fromRows) {
         const cur = merged.get(id);
         if (cur) {
-            cur.s += h.s; cur.y0 = Math.min(cur.y0, h.y0); cur.y1 = Math.max(cur.y1, h.y1);
+            cur.s += h.s; cur.g += h.g; cur.w += h.w; cur.mvp += h.mvp; cur.y0 = Math.min(cur.y0, h.y0); cur.y1 = Math.max(cur.y1, h.y1);
             for (const [k, n] of Object.entries(h.t)) cur.t[k] = (cur.t[k] || 0) + n;
             cur.inSave = true;
         } else merged.set(id, { ...h, inSave: true, pre: false });
@@ -368,7 +475,7 @@ export function clubHistory(save, db, team) {
     // The season-by-season story, newest first: both splits of each year with the five who started.
     const years = new Map();
     for (const r of team.sh || []) {
-        if (!years.has(r.y)) years.set(r.y, { y: r.y, sp: null, su: null });
+        if (!years.has(r.y)) years.set(r.y, { y: r.y, wi: null, sp: null, su: null });
         years.get(r.y)[r.s] = { ...r, five: unpackFive(r.f).map(x => ({ ...x, n: x.id ? (personOf(save, x.id) || {}).name || x.id.replace(/^[rg]:/, '') : null, alive: !!(x.id && save.players[x.id]), known: !!(x.id && personOf(save, x.id)) })) };
     }
     const seasons = [...years.values()].sort((a, b) => b.y - a.y);

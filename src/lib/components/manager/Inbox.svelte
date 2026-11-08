@@ -102,7 +102,7 @@
                         <button class="btn" on:click={() => mgrScreen.set('squad')}><Icon name="quests" size={14} /> Decide contracts</button>
                     {/if}
                     {#if sel.kind === 'job' || sel.kind === 'level' || (sel.kind === 'achievement' && /perk point/.test(sel.body))}
-                        <button class="btn" on:click={() => mgrScreen.set('club')}><Icon name="briefcase" size={14} /> Go to the Club screen</button>
+                        <button class="btn" on:click={() => mgrScreen.set('jobs')}><Icon name="briefcase" size={14} /> Go to the Jobs screen</button>
                     {/if}
                     {#if sel.kind === 'achievement' || sel.kind === 'title'}
                         <button class="btn" on:click={() => mgrScreen.set('trophies')}><Icon name="trophy" size={14} /> Trophy cabinet</button>
